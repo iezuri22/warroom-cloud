@@ -9,7 +9,10 @@
 
   // Keys we don't sync (UI state, caches that don't matter across devices)
   const SKIP_SYNC = new Set([
-    'cal-last-synced' // ephemeral timestamp, don't spam sync with it
+    'cal-last-synced',   // ephemeral timestamp
+    'active-task',       // running timer state is device-specific, shouldn't sync
+    'carry-collapsed',   // UI toggle
+    'cal-alerts-setting' // per-device setting
   ]);
 
   const pending = new Map();   // key -> value (latest pending write)
@@ -106,12 +109,14 @@
 
       // Merge cloud state into localStorage (cloud wins for now - last-write-wins policy)
       for (const [key, entry] of Object.entries(state || {})) {
-        // Stringify value for localStorage
+        if (SKIP_SYNC.has(key)) continue; // don't pull ephemeral state from cloud
         const val = typeof entry.value === 'string'
           ? entry.value
           : JSON.stringify(entry.value);
         origSetItem.call(localStorage, key, val);
       }
+      // Always clear any local active-task on fresh page load (stale timer prevention)
+      origRemoveItem.call(localStorage, 'active-task');
       lastSyncedAt = Date.now();
       updateSyncIndicator('synced');
       window.__warroomCloudReady = true;

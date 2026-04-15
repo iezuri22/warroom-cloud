@@ -75,9 +75,10 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 .plan-layout{display:flex;gap:20px;align-items:flex-start}
 .plan-layout .timeline{flex:1;min-width:0}
 .cal-sidebar{
-  width:280px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);
-  border-radius:12px;overflow:hidden;position:sticky;top:120px;
-  display:none;
+  width:320px;background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;overflow:auto;max-height:calc(100vh - 40px);
+  position:fixed;right:20px;top:20px;z-index:700;
+  display:none;box-shadow:0 12px 48px rgba(0,0,0,.15);
 }
 .cal-sidebar.open{display:block}
 .cal-sidebar-header{
@@ -791,7 +792,6 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 <div class="tabs">
   <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab active" data-tab="plan" onclick="switchTab('plan')">Today's Plan</div>
-  <div class="tab" data-tab="grocery" onclick="switchTab('grocery')">Grocery</div>
   <div class="tab" data-tab="coach" onclick="switchTab('coach')">Brain Dump</div>
   <div class="tab" data-tab="youtube" onclick="switchTab('youtube')">Watch Queue</div>
   <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">Analytics</div>
@@ -801,11 +801,6 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
   <!-- GOALS VIEW -->
   <div class="goals-view" id="goalsView" style="display:none">
     <iframe id="goalsFrame" src="about:blank" style="width:100%;border:none;background:var(--surface);border-radius:12px;min-height:calc(100vh - 200px)" loading="lazy"></iframe>
-  </div>
-
-  <!-- GROCERY VIEW -->
-  <div class="grocery-view" id="groceryView" style="display:none">
-    <iframe id="groceryFrame" src="about:blank" style="width:100%;border:none;background:#0a0a0a;border-radius:12px;min-height:calc(100vh - 200px)" loading="lazy"></iframe>
   </div>
 
   <!-- PLAN VIEW -->
@@ -847,18 +842,21 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="plan-list" id="list-night"></div>
     </div>
   </div><!-- /timeline -->
+  </div><!-- /plan-layout -->
 
-  <!-- CALENDAR SIDEBAR -->
+  <!-- CALENDAR SIDEBAR (moved outside plan-layout so it works from any tab) -->
   <div class="cal-sidebar" id="calSidebar">
     <div class="cal-sidebar-header">
       <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Calendar</h3>
-      <button class="cal-refresh" onclick="refreshApp()" title="Refresh app to get latest calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8"/><path d="M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 0 1-4 4H4.2"/></svg></button>
+      <div style="display:flex;gap:4px">
+        <button class="cal-refresh" onclick="syncCalendarNow()" title="Sync fresh events from Google"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7l3 2.7"/><path d="M21 3v6h-6"/></svg></button>
+        <button class="cal-refresh" onclick="toggleCalPanel()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
     </div>
     <div id="calMonthView"></div>
     <div class="cal-synced" id="calSynced"></div>
     <div id="calEvents"><div class="cal-loading">Loading calendar...</div></div>
   </div>
-  </div><!-- /plan-layout -->
 
   <!-- OUTCOME MODAL -->
   <div class="outcome-overlay" id="outcomeModal">
@@ -1179,6 +1177,18 @@ function toggleHeaderMore(){
   hr.querySelectorAll('.header-secondary').forEach(el=>el.classList.toggle('show'));
 }
 
+function syncCalendarNow(){
+  const btn=event&&event.currentTarget;
+  if(btn)btn.style.animation='spin .6s ease';
+  // Clear calendar cache so latest HTML seed is used
+  localStorage.removeItem('cal-events-cache');
+  localStorage.removeItem('cal-last-synced');
+  // Hard reload to re-fetch the HTML (which has the latest seed from scheduled sync)
+  caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).finally(()=>{
+    window.location.reload();
+  });
+}
+
 function refreshApp(){
   const btn=document.getElementById('refreshBtn');
   if(btn)btn.style.animation='spin .6s ease';
@@ -1228,9 +1238,18 @@ function restoreActiveTimer(){
     const raw=localStorage.getItem('active-task');
     if(!raw)return;
     const at=JSON.parse(raw);
+    // Clear stale active-task: no id/text, or item doesn't exist
+    if(!at||!at.id||!at.text){
+      localStorage.removeItem('active-task');
+      return;
+    }
     const{items}=currentPlan();
     const item=items.find(i=>i.id===at.id);
-    if(!item)return;
+    if(!item){
+      // Active task points to a deleted/missing item - clear it
+      localStorage.removeItem('active-task');
+      return;
+    }
     // Calculate elapsed since last broadcast
     const elapsed=Math.round((Date.now()-at.startedAt)/1000);
     const restoredSeconds=at.seconds+elapsed;
@@ -1861,23 +1880,20 @@ function switchTab(tab){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.getElementById('planView').style.display=tab==='plan'?'':'none';
   document.getElementById('goalsView').style.display=tab==='goals'?'':'none';
-  document.getElementById('groceryView').style.display=tab==='grocery'?'':'none';
   document.getElementById('coachView').classList.toggle('active',tab==='coach');
   document.getElementById('youtubeView').classList.toggle('active',tab==='youtube');
   document.getElementById('analyticsView').classList.toggle('active',tab==='analytics');
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
+  // Goals tab owns its own full UI — hide the War Room header action buttons
+  document.getElementById('headerRight').style.display=tab==='goals'?'none':'';
+  // Also close the calendar sidebar when switching to Goals so it doesn't float over the iframe
+  if(tab==='goals'&&calOpen)toggleCalPanel();
   if(tab==='analytics')renderAnalytics();
   if(tab==='youtube')renderYT();
   if(tab==='goals'){
     const frame=document.getElementById('goalsFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('weekly-goals.html'))){
       frame.src='/weekly-goals.html?embed=1';
-    }
-  }
-  if(tab==='grocery'){
-    const frame=document.getElementById('groceryFrame');
-    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('grocery.html'))){
-      frame.src='/grocery.html?embed=1';
     }
   }
 }
@@ -3897,6 +3913,62 @@ init();
 
 .notepad-empty{padding:32px 18px;text-align:center;color:var(--text-dim);font-size:14px;line-height:1.6}
 
+/* Folder pills */
+.np-folders{
+  display:flex;gap:6px;padding:10px 16px 8px;border-bottom:1px solid var(--border);
+  overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:0;
+}
+.np-folders::-webkit-scrollbar{display:none}
+.np-folder-pill{
+  flex-shrink:0;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;
+  letter-spacing:.5px;text-transform:uppercase;padding:6px 12px;border-radius:14px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .12s;display:flex;align-items:center;gap:5px;
+  -webkit-appearance:none;
+}
+.np-folder-pill.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+.np-folder-pill:active{transform:scale(.96)}
+.np-folder-pill .cnt{font-size:10px;opacity:.6}
+.np-folder-pill.new{font-size:14px;font-weight:800;padding:6px 10px}
+
+/* Top add-row with input + Enter */
+.np-add-row{
+  display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.np-add-input{
+  flex:1;font-family:'Outfit',sans-serif;font-size:14px;font-weight:500;
+  padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;
+  background:var(--surface-2);color:var(--text);outline:none;transition:border-color .12s;
+}
+.np-add-input:focus{border-color:var(--text);background:var(--surface)}
+.np-add-input::placeholder{color:var(--text-dim)}
+.np-add-btn{
+  background:var(--text);color:var(--bg);border:none;cursor:pointer;
+  font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;
+  padding:0 16px;border-radius:10px;min-width:44px;
+  display:flex;align-items:center;justify-content:center;transition:transform .1s;
+}
+.np-add-btn:active{transform:scale(.94)}
+.np-add-btn svg{width:16px;height:16px}
+
+/* New folder modal (tiny inline prompt) */
+.np-new-folder{
+  position:absolute;top:42px;left:12px;right:12px;z-index:30;
+  background:var(--surface);border:1.5px solid var(--text);border-radius:10px;
+  padding:8px;display:flex;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);
+  animation:notepadIn .12s ease-out;
+}
+.np-new-folder input{
+  flex:1;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;
+  padding:8px 10px;border:1px solid var(--border);border-radius:6px;
+  background:var(--surface-2);color:var(--text);outline:none;
+}
+.np-new-folder button{
+  background:var(--text);color:var(--bg);border:none;cursor:pointer;
+  font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;
+  padding:0 12px;border-radius:6px;
+}
+
 .np-goal-modal-overlay{
   position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:950;
   display:flex;align-items:center;justify-content:center;
@@ -3960,18 +4032,26 @@ init();
 </button>
 
 <div class="notepad-panel" id="notepadPanel">
-  <div class="notepad-header">
-    <h3>Quick Notes</h3>
+  <div class="notepad-header" style="position:relative">
+    <h3 id="notepadFolderTitle">Quick Notes</h3>
     <div class="notepad-hdr-actions">
       <button class="notepad-hdr-btn" onclick="clearDoneNotes()" title="Clear done items"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
       <button class="notepad-hdr-btn" onclick="toggleNotepad()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
     </div>
+    <div class="np-new-folder" id="npNewFolder" style="display:none">
+      <input type="text" id="npNewFolderInput" placeholder="Folder name..." maxlength="20">
+      <button onclick="saveNewFolder()">Create</button>
+      <button onclick="cancelNewFolder()" style="background:none;color:var(--text-dim)">×</button>
+    </div>
   </div>
+  <div class="np-folders" id="npFolders"></div>
+  <form class="np-add-row" id="npAddForm" onsubmit="submitNewNote(event)">
+    <input type="text" class="np-add-input" id="npAddInput" placeholder="Add to this folder..." enterkeyhint="done" autocomplete="off">
+    <button type="submit" class="np-add-btn" aria-label="Add">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+    </button>
+  </form>
   <div class="notepad-body" id="notepadBody"></div>
-  <div class="notepad-add" onclick="addNotepadItem()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-    <span>Jot something down</span>
-  </div>
 </div>
 <div id="npGoalModalRoot"></div>
 
@@ -3980,9 +4060,23 @@ init();
   const NPK='quick-notepad';
   let npOpen=false;
 
+  const DEFAULT_FOLDERS=[
+    {id:'notes',name:'Notes'},
+    {id:'grocery',name:'Grocery'},
+    {id:'ideas',name:'Ideas'}
+  ];
+  let activeFolder='notes';
+
   function loadNotes(){
-    try{const d=JSON.parse(localStorage.getItem(NPK));if(Array.isArray(d))return{items:d};return d&&d.items?d:{items:[]}}
-    catch{return{items:[]}}
+    try{
+      let d=JSON.parse(localStorage.getItem(NPK));
+      if(Array.isArray(d))d={items:d};
+      if(!d||!d.items)d={items:[]};
+      if(!d.folders||!d.folders.length)d.folders=DEFAULT_FOLDERS.slice();
+      // Ensure all items have a folder field
+      d.items.forEach(i=>{if(!i.folder)i.folder='notes'});
+      return d;
+    }catch{return{items:[],folders:DEFAULT_FOLDERS.slice()}}
   }
   function saveNotes(d){const s=JSON.stringify(d);localStorage.setItem(NPK,s);backupKey(NPK,s)}
 
@@ -4156,21 +4250,42 @@ init();
     updateBadge();
   };
 
+  function renderFolderPills(d){
+    const container=document.getElementById('npFolders');
+    const counts={};
+    d.items.forEach(i=>{if(!i.done){counts[i.folder||'notes']=(counts[i.folder||'notes']||0)+1}});
+    let html='';
+    d.folders.forEach(f=>{
+      const c=counts[f.id]||0;
+      html+=`<button class="np-folder-pill${f.id===activeFolder?' active':''}" onclick="switchFolder('${f.id}')">${esc(f.name)}${c>0?` <span class="cnt">${c}</span>`:''}</button>`;
+    });
+    html+=`<button class="np-folder-pill new" onclick="showNewFolderPrompt()" title="New folder">+</button>`;
+    container.innerHTML=html;
+    // Update title
+    const active=d.folders.find(f=>f.id===activeFolder);
+    document.getElementById('notepadFolderTitle').textContent=active?active.name:'Notes';
+    // Update input placeholder
+    document.getElementById('npAddInput').placeholder=`Add to ${active?active.name:'Notes'}...`;
+  }
+
   function renderNotepad(){
     const d=loadNotes();
-    const active=d.items.filter(i=>!i.done);
-    const done=d.items.filter(i=>i.done);
+    renderFolderPills(d);
+    // Make sure activeFolder exists
+    if(!d.folders.find(f=>f.id===activeFolder))activeFolder=d.folders[0].id;
+
+    const folderItems=d.items.filter(i=>(i.folder||'notes')===activeFolder);
+    const active=folderItems.filter(i=>!i.done);
+    const done=folderItems.filter(i=>i.done);
     const body=document.getElementById('notepadBody');
 
-    if(!d.items.length){
-      body.innerHTML='<div class="notepad-empty">Nothing here yet.<br>Tap + to jot down an idea or to-do.</div>';
+    if(!folderItems.length){
+      body.innerHTML='<div class="notepad-empty">Nothing in this folder yet.<br>Type above and hit Enter to add.</div>';
       return;
     }
 
     let html='';
-    if(active.length){
-      html+=renderItemList(active,false);
-    }
+    if(active.length){html+=renderItemList(active,false)}
     if(done.length){
       html+='<div class="notepad-section-label">Done</div>';
       html+=renderItemList(done,true);
@@ -4178,6 +4293,49 @@ init();
     body.innerHTML=html;
     body.querySelectorAll('.notepad-item-text').forEach(el=>{el.style.height='auto';el.style.height=el.scrollHeight+'px'});
   }
+
+  window.switchFolder=function(id){
+    activeFolder=id;
+    renderNotepad();
+    setTimeout(()=>document.getElementById('npAddInput').focus(),50);
+  };
+
+  window.showNewFolderPrompt=function(){
+    document.getElementById('npNewFolder').style.display='flex';
+    setTimeout(()=>document.getElementById('npNewFolderInput').focus(),30);
+  };
+  window.cancelNewFolder=function(){
+    document.getElementById('npNewFolder').style.display='none';
+    document.getElementById('npNewFolderInput').value='';
+  };
+  window.saveNewFolder=function(){
+    const name=document.getElementById('npNewFolderInput').value.trim();
+    if(!name)return cancelNewFolder();
+    const d=loadNotes();
+    const id=name.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,20)||('f'+Date.now().toString(36));
+    if(d.folders.find(f=>f.id===id))return cancelNewFolder();
+    d.folders.push({id,name});
+    saveNotes(d);
+    activeFolder=id;
+    cancelNewFolder();
+    renderNotepad();
+  };
+
+  window.submitNewNote=function(ev){
+    if(ev)ev.preventDefault();
+    const input=document.getElementById('npAddInput');
+    const text=input.value.trim();
+    if(!text)return;
+    const d=loadNotes();
+    const item={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),text,folder:activeFolder,done:false,createdAt:new Date().toISOString()};
+    d.items.unshift(item);
+    saveNotes(d);
+    input.value='';
+    renderNotepad();
+    updateBadge();
+  };
+
+  function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 
   function renderItemList(items,isDone){
     return '<ul class="notepad-items">'+items.map(i=>`
