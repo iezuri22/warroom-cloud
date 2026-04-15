@@ -1177,16 +1177,43 @@ function toggleHeaderMore(){
   hr.querySelectorAll('.header-secondary').forEach(el=>el.classList.toggle('show'));
 }
 
-function syncCalendarNow(){
+async function syncCalendarNow(){
   const btn=event&&event.currentTarget;
-  if(btn)btn.style.animation='spin .6s ease';
-  // Clear calendar cache so latest HTML seed is used
-  localStorage.removeItem('cal-events-cache');
-  localStorage.removeItem('cal-last-synced');
-  // Hard reload to re-fetch the HTML (which has the latest seed from scheduled sync)
-  caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).finally(()=>{
-    window.location.reload();
-  });
+  if(btn){btn.style.animation='spin 1s linear infinite';btn.disabled=true}
+  try {
+    const res=await fetch('/api/calendar',{credentials:'same-origin'});
+    if(res.status===412){
+      // Not connected to Google yet
+      const data=await res.json();
+      if(confirm('Google Calendar is not connected yet. Click OK to connect now.')){
+        window.location.href='/api/google-auth';
+      }
+      return;
+    }
+    if(!res.ok){
+      const err=await res.json().catch(()=>({error:'HTTP '+res.status}));
+      alert('Sync failed: '+err.error);
+      return;
+    }
+    const {by_date,synced_at,event_count}=await res.json();
+    // Replace calendar cache with fresh data
+    localStorage.setItem('cal-events-cache',JSON.stringify(by_date));
+    localStorage.setItem('cal-last-synced',new Date(synced_at).getTime().toString());
+    // Re-render without reload
+    renderCalEvents();renderCalMonth();updateSyncedLabel();updateCalBadge();setupMeetingAlerts();
+    // Brief visual confirmation
+    const indicator=document.getElementById('wr-sync-indicator');
+    if(indicator){
+      indicator.textContent='✓ '+event_count+' events';
+      indicator.style.background='rgba(22,163,74,.85)';
+      indicator.style.opacity='1';
+      setTimeout(()=>{indicator.style.opacity='0'},2000);
+    }
+  } catch(e) {
+    alert('Sync failed: '+e.message);
+  } finally {
+    if(btn){btn.style.animation='';btn.disabled=false}
+  }
 }
 
 function refreshApp(){
