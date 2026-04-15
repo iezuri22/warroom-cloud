@@ -11,6 +11,17 @@
 <meta name="apple-mobile-web-app-title" content="War Room">
 <meta name="theme-color" content="#1a1a1a">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script>
+// Kill any lingering service workers from earlier builds (aggressive cache buster)
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(rs=>{
+    rs.forEach(r=>r.unregister());
+    if(rs.length>0){
+      caches&&caches.keys().then(ks=>ks.forEach(k=>caches.delete(k)));
+    }
+  }).catch(()=>{});
+}
+</script>
 <script src="/sync-client.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -782,7 +793,9 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
   </div>
 </div>
 
+<!-- BUILD: 2026-04-15-v3-goals-tab -->
 <div class="tabs">
+  <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab active" data-tab="plan" onclick="switchTab('plan')">Today's Plan</div>
   <div class="tab" data-tab="coach" onclick="switchTab('coach')">Brain Dump</div>
   <div class="tab" data-tab="youtube" onclick="switchTab('youtube')">Watch Queue</div>
@@ -790,6 +803,11 @@ body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-
 </div>
 
 <div class="main">
+  <!-- GOALS VIEW -->
+  <div class="goals-view" id="goalsView" style="display:none">
+    <iframe id="goalsFrame" src="about:blank" style="width:100%;border:none;background:var(--surface);border-radius:12px;min-height:calc(100vh - 200px)" loading="lazy"></iframe>
+  </div>
+
   <!-- PLAN VIEW -->
   <div class="plan-layout" id="planView">
   <div class="timeline">
@@ -1836,12 +1854,20 @@ function switchTab(tab){
   currentTab=tab;
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.getElementById('planView').style.display=tab==='plan'?'':'none';
+  document.getElementById('goalsView').style.display=tab==='goals'?'':'none';
   document.getElementById('coachView').classList.toggle('active',tab==='coach');
   document.getElementById('youtubeView').classList.toggle('active',tab==='youtube');
   document.getElementById('analyticsView').classList.toggle('active',tab==='analytics');
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
   if(tab==='analytics')renderAnalytics();
   if(tab==='youtube')renderYT();
+  if(tab==='goals'){
+    // Lazy-load the Goals iframe only when first opened
+    const frame=document.getElementById('goalsFrame');
+    if(frame&&frame.src==='about:blank'||!frame.src.includes('weekly-goals.html')){
+      frame.src='/weekly-goals.html';
+    }
+  }
 }
 function setPeriod(p){
   analyticsPeriod=p;
