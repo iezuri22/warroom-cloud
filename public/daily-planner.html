@@ -4008,10 +4008,26 @@ init();
 
 .notepad-items{list-style:none}
 .notepad-items li{
-  display:flex;align-items:flex-start;gap:8px;padding:8px 18px;
-  position:relative;transition:background .1s;
+  position:relative;overflow:hidden;background:var(--surface);
+  transition:background .1s;
 }
-.notepad-items li:hover{background:var(--surface-2)}
+.notepad-items li::before{
+  content:'Delete';
+  position:absolute;top:0;right:0;bottom:0;width:100px;
+  background:#dc2626;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
+  pointer-events:none;z-index:0;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+.np-swipe-content{
+  display:flex;align-items:flex-start;gap:8px;padding:8px 18px;
+  background:var(--surface);position:relative;z-index:1;
+  transition:transform .22s ease;touch-action:pan-y;
+  will-change:transform;
+}
+.notepad-items li.swiping .np-swipe-content{transition:none}
+.notepad-items li:hover .np-swipe-content{background:var(--surface-2)}
 .notepad-items li.np-done{opacity:.5}
 .notepad-items li.np-done .notepad-item-text{text-decoration:line-through}
 
@@ -4483,27 +4499,82 @@ init();
   function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 
   function renderItemList(items,isDone){
-    return '<ul class="notepad-items">'+items.map(i=>`
-      <li class="${i.done?'np-done':''}${i.flagged?' np-flagged':''}">
-        <button class="np-check${i.done?' checked':''}" onclick="toggleNoteDone('${i.id}')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <textarea class="notepad-item-text" id="np-${i.id}" rows="1"
-          oninput="notepadInput('${i.id}',this.value);this.style.height='auto';this.style.height=this.scrollHeight+'px'"
-          placeholder="Type something..."${i.done?' disabled':''}>${i.text||''}</textarea>
-        <div class="np-item-actions">
-          ${!i.done?`<button class="np-action-btn np-flag-btn${i.flagged?' flagged':''}" onclick="toggleNoteFlag('${i.id}')" title="${i.flagged?'Remove follow-up':'Flag for follow-up'}">
-            <svg viewBox="0 0 24 24" fill="${i.flagged?'currentColor':'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+    const html='<ul class="notepad-items">'+items.map(i=>`
+      <li class="${i.done?'np-done':''}${i.flagged?' np-flagged':''}" data-id="${i.id}">
+        <div class="np-swipe-content">
+          <button class="np-check${i.done?' checked':''}" onclick="toggleNoteDone('${i.id}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
           </button>
-          <button class="np-action-btn np-goal-btn" onclick="makeNoteGoal('${i.id}')" title="Make into goal">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          </button>`:''}
-          <button class="np-action-btn" onclick="deleteNotepadItem('${i.id}')" title="Remove">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
+          <textarea class="notepad-item-text" id="np-${i.id}" rows="1"
+            oninput="notepadInput('${i.id}',this.value);this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+            placeholder="Type something..."${i.done?' disabled':''}>${i.text||''}</textarea>
+          <div class="np-item-actions">
+            ${!i.done?`<button class="np-action-btn np-flag-btn${i.flagged?' flagged':''}" onclick="toggleNoteFlag('${i.id}')" title="${i.flagged?'Remove follow-up':'Flag for follow-up'}">
+              <svg viewBox="0 0 24 24" fill="${i.flagged?'currentColor':'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+            </button>
+            <button class="np-action-btn np-goal-btn" onclick="makeNoteGoal('${i.id}')" title="Make into goal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </button>`:''}
+            <button class="np-action-btn" onclick="deleteNotepadItem('${i.id}')" title="Remove">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
         </div>
       </li>
     `).join('')+'</ul>';
+    // Defer swipe handler attachment until DOM is in place (renderNotepad reassigns innerHTML)
+    setTimeout(attachSwipeHandlers,0);
+    return html;
+  }
+
+  function attachSwipeHandlers(){
+    document.querySelectorAll('.notepad-items li').forEach(li=>{
+      if(li.dataset.swipeBound)return;
+      li.dataset.swipeBound='1';
+      const content=li.querySelector('.np-swipe-content');
+      if(!content)return;
+      let startX=0,startY=0,deltaX=0,dragging=false,locked=false;
+      const THRESHOLD=80;
+
+      content.addEventListener('touchstart',e=>{
+        // Don't swipe if target is interactive (button, textarea)
+        const tag=(e.target.tagName||'').toLowerCase();
+        if(tag==='textarea'||tag==='button'||tag==='svg'||tag==='path'||e.target.closest('button'))return;
+        startX=e.touches[0].clientX;
+        startY=e.touches[0].clientY;
+        deltaX=0;dragging=true;locked=false;
+        li.classList.add('swiping');
+      },{passive:true});
+
+      content.addEventListener('touchmove',e=>{
+        if(!dragging)return;
+        const dx=e.touches[0].clientX-startX;
+        const dy=e.touches[0].clientY-startY;
+        if(!locked){
+          // Determine gesture direction on first meaningful move
+          if(Math.abs(dx)<6&&Math.abs(dy)<6)return;
+          if(Math.abs(dy)>Math.abs(dx)){dragging=false;li.classList.remove('swiping');content.style.transform='';return}
+          locked=true;
+        }
+        if(dx>0){content.style.transform='translateX(0)';deltaX=0;return}
+        deltaX=Math.max(dx,-140);
+        content.style.transform=`translateX(${deltaX}px)`;
+      },{passive:true});
+
+      content.addEventListener('touchend',()=>{
+        if(!dragging)return;
+        dragging=false;
+        li.classList.remove('swiping');
+        if(deltaX<=-THRESHOLD){
+          // Animate out, then delete
+          content.style.transform='translateX(-100%)';
+          const id=li.dataset.id;
+          setTimeout(()=>window.deleteNotepadItem&&window.deleteNotepadItem(id),180);
+        } else {
+          content.style.transform='translateX(0)';
+        }
+      });
+    });
   }
 
   window.toggleNoteFlag=function(id){
