@@ -547,10 +547,32 @@ body.embed .notepad-panel{display:none !important}
 body.embed .shell{display:block}
 body.embed .main{padding-left:0;padding-right:0;max-width:100%;margin-left:0}
 body.embed .add-bar{left:0;right:0}
-body.embed .page-header{padding-top:0;margin-bottom:8px}
-body.embed .page-header h2{font-size:22px;margin-bottom:0}
-body.embed .week-nav{margin-bottom:10px;padding:8px 0}
-body.embed .week-nav-label{font-size:13px}
+body.embed .page-header{padding-top:0;margin-bottom:6px}
+body.embed .page-header h2{font-size:20px;margin-bottom:0}
+body.embed .page-header > div:last-child{display:none !important} /* hide Brain Dump/Cal/Settings — redundant with War Room header */
+body.embed .week-nav{margin-bottom:10px;padding:6px 0}
+body.embed .week-nav-label{font-size:12px}
+body.embed .week-nav-btn{padding:5px}
+
+/* Embed-mode domain pills */
+.embed-page-pills{display:none}
+body.embed .embed-page-pills{
+  display:flex;gap:6px;padding:6px 0 12px;overflow-x:auto;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;
+}
+body.embed .embed-page-pills::-webkit-scrollbar{display:none}
+body.embed .embed-page-pill{
+  flex-shrink:0;font-family:'Inter',system-ui,-apple-system,sans-serif;
+  font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  padding:8px 14px;border-radius:14px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .12s;-webkit-appearance:none;
+  display:flex;align-items:center;gap:6px;
+}
+body.embed .embed-page-pill .dot{width:7px;height:7px;border-radius:50%}
+body.embed .embed-page-pill.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+body.embed .embed-page-pill .cnt{font-size:10px;opacity:.65;font-weight:600}
+body.embed .embed-page-pill:active{transform:scale(.96)}
 
 /* Mobile + embed: restructure goal cards — buttons on top row, text full-width below */
 @media(max-width:768px){
@@ -601,6 +623,7 @@ if(new URLSearchParams(location.search).has('embed'))document.body.classList.add
       </button>
       <div class="mobile-title" id="mobileTitle">All Goals</div>
     </div>
+    <div class="embed-page-pills" id="embedPagePills"></div>
     <div id="pageContent"></div>
   </div>
 </div>
@@ -782,6 +805,26 @@ function renderNav(){
     div.innerHTML=`<div class="dot" style="background:${v.color}"></div> ${v.name} <span class="count" id="nav-count-${k}">0</span>`;
     container.appendChild(div);
   });
+  // Also render embed pills (same data, different layout)
+  renderEmbedPills();
+}
+
+function renderEmbedPills(){
+  const container=document.getElementById('embedPagePills');
+  if(!container)return;
+  const order=loadViewOrder();
+  const viewMap={};ALL_VIEWS.forEach(v=>viewMap[v.key]=v);
+  // Put 'all' first regardless of stored order
+  const pillOrder=['all',...order.filter(k=>k!=='all')];
+  container.innerHTML=pillOrder.map(k=>{
+    const v=viewMap[k];if(!v)return '';
+    const isActive=currentPage===k?' active':'';
+    return `<button class="embed-page-pill${isActive}" onclick="goPage('${k}')">
+      ${k!=='all'?`<span class="dot" style="background:${v.color}"></span>`:''}
+      ${v.name}
+      <span class="cnt" id="embed-count-${k}">0</span>
+    </button>`;
+  }).join('');
 }
 
 let voDragKey=null;
@@ -1070,6 +1113,19 @@ function render(){
   DOMAIN_ORDER.forEach(k=>{
     document.getElementById('nav-count-'+k).textContent=allActive.filter(g=>g.domain===k).length;
   });
+  // Also update embed pill counts + active state
+  const embedAll=document.getElementById('embed-count-all');
+  if(embedAll){
+    embedAll.textContent=allActive.length;
+    DOMAIN_ORDER.forEach(k=>{
+      const el=document.getElementById('embed-count-'+k);
+      if(el)el.textContent=allActive.filter(g=>g.domain===k).length;
+    });
+    // Update active pill
+    document.querySelectorAll('.embed-page-pill').forEach(p=>{
+      p.classList.toggle('active',p.getAttribute('onclick')&&p.getAttribute('onclick').includes(`'${currentPage}'`));
+    });
+  }
 
   const info=currentPage==='all'?{name:'All Goals',color:'var(--text)'}:D[currentPage];
   document.getElementById('mobileTitle').textContent=info.name;
