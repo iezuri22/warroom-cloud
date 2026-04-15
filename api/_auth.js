@@ -10,12 +10,12 @@ function sign(value, secret) {
 export function issueCookie(res, secret) {
   const token = Date.now().toString();
   const sig = sign(token, secret);
-  const cookie = `${COOKIE_NAME}=${token}.${sig}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=2592000`;
+  const cookie = `${COOKIE_NAME}=${token}.${sig}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`;
   res.setHeader('Set-Cookie', cookie);
 }
 
 export function clearCookie(res) {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
 }
 
 export function requireAuth(req, secret) {
