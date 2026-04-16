@@ -38,6 +38,7 @@ body.embed{padding:14px 12px 100px}
 .board-pill:active{transform:scale(.96)}
 .board-pill.new{font-size:14px;font-weight:800;padding:8px 12px;color:var(--text-dim)}
 .board-pill .meta{font-size:9px;opacity:.65;font-weight:600}
+.board-pill .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 
 .topbar-actions{display:flex;gap:6px;flex-shrink:0}
 .btn-secondary{
@@ -162,6 +163,8 @@ body.embed{padding:14px 12px 100px}
 .action-plan-tag{color:#2563eb;background:rgba(37,99,235,.1);padding:3px 7px;border-radius:4px;display:inline-flex;align-items:center;gap:4px}
 .action-plan-tag svg{width:10px;height:10px}
 .action-plan-tag.done{color:var(--done-green);background:rgba(22,163,74,.1)}
+.action-done-date{color:var(--done-green);background:rgba(22,163,74,.1);padding:3px 7px;border-radius:4px;display:inline-flex;align-items:center;gap:4px}
+.action-done-date svg{width:10px;height:10px}
 
 .action-side{display:flex;gap:4px;align-items:center;flex-shrink:0;margin-top:1px}
 .action-side button{
@@ -277,6 +280,17 @@ function defaultColumns(){return [
   {id:'c-ac-'+rid(), title:'Accomplished 🎉',   color:'#16a34a', order:3},
 ];}
 
+const DOMAIN_BOARDS = [
+  {id:'b-vt',       name:'VitalTouch', color:'#059669'},
+  {id:'b-ecm',      name:'ECM',        color:'#2563eb'},
+  {id:'b-personal', name:'Personal',   color:'#7c3aed'},
+  {id:'b-ezrk',     name:'EZRK Apps',  color:'#d97706'},
+];
+
+function makeEmptyBoard(meta){
+  return {id:meta.id,name:meta.name,color:meta.color,columns:defaultColumns(),goals:[]};
+}
+
 function vitaltouchSeed(){
   const cols = defaultColumns();
   const ip = cols[2].id;
@@ -285,6 +299,7 @@ function vitaltouchSeed(){
   return {
     id:'b-vt',
     name:'VitalTouch',
+    color:'#059669',
     columns: cols,
     goals:[
       {id:'g-leader-'+rid(),  columnId:fc, title:'Level up from operator to leader as the agency grows.', actionItems:[], createdAt:new Date().toISOString()},
@@ -315,31 +330,60 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function todayKey(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 
+function ensureDomainBoards(data){
+  // Ensure all 4 domain boards exist; add missing ones as empty
+  let mutated=false;
+  DOMAIN_BOARDS.forEach(meta=>{
+    const existing=data.boards.find(b=>b.id===meta.id||b.name.toLowerCase()===meta.name.toLowerCase());
+    if(existing){
+      // Backfill color/name if missing
+      if(!existing.color){existing.color=meta.color;mutated=true}
+      if(existing.id!==meta.id){existing.id=meta.id;mutated=true}
+    } else {
+      data.boards.push(makeEmptyBoard(meta));
+      mutated=true;
+    }
+  });
+  // Sort boards in DOMAIN_BOARDS order, then any extras at the end
+  const order=DOMAIN_BOARDS.map(m=>m.id);
+  data.boards.sort((a,b)=>{
+    const ai=order.indexOf(a.id), bi=order.indexOf(b.id);
+    if(ai===-1&&bi===-1)return 0;
+    if(ai===-1)return 1;
+    if(bi===-1)return -1;
+    return ai-bi;
+  });
+  return mutated;
+}
+
 function load(){
-  // v2 schema: { boards: [{id,name,columns,goals}], activeBoardId }
   try{
     const raw=localStorage.getItem(STORE);
     if(raw){
       const d=JSON.parse(raw);
       if(d&&d.boards&&d.boards.length){
+        const m=ensureDomainBoards(d);
         if(!d.activeBoardId||!d.boards.find(b=>b.id===d.activeBoardId))d.activeBoardId=d.boards[0].id;
+        if(m)save(d);
         return d;
       }
     }
-    // Migrate from v1 (single board) — wrap as VitalTouch board
+    // Migrate from v1 (single board) — wrap as VitalTouch + seed remaining domain boards
     const legacy=localStorage.getItem(LEGACY);
     if(legacy){
       const old=JSON.parse(legacy);
       if(old&&old.columns){
-        const board={id:'b-vt',name:'VitalTouch',columns:old.columns,goals:old.goals||[]};
-        const data={boards:[board],activeBoardId:board.id};
+        const vtBoard={id:'b-vt',name:'VitalTouch',color:'#059669',columns:old.columns,goals:old.goals||[]};
+        const data={boards:[vtBoard],activeBoardId:'b-vt'};
+        ensureDomainBoards(data);
         save(data);
         return data;
       }
     }
   }catch{}
-  // First time setup: VitalTouch board with seed
+  // First time: VitalTouch with seed + 3 empty domain boards
   const data={boards:[vitaltouchSeed()],activeBoardId:'b-vt'};
+  ensureDomainBoards(data);
   save(data);
   return data;
 }
@@ -363,8 +407,9 @@ function renderBoardSwitch(){
   const container=document.getElementById('boardSwitch');
   let html='';
   d.boards.forEach(b=>{
-    const totalGoals=b.goals.length;
-    html+=`<button class="board-pill${b.id===d.activeBoardId?' active':''}" onclick="switchBoard('${b.id}')" oncontextmenu="event.preventDefault();renameBoard('${b.id}')" ondblclick="renameBoard('${b.id}')">${esc(b.name)}<span class="meta">${totalGoals}</span></button>`;
+    const activeGoals=b.goals.filter(g=>!isGoalDone(g)).length;
+    const dot=b.color?`<span class="dot" style="background:${b.color}"></span>`:'';
+    html+=`<button class="board-pill${b.id===d.activeBoardId?' active':''}" onclick="switchBoard('${b.id}')" oncontextmenu="event.preventDefault();renameBoard('${b.id}')" ondblclick="renameBoard('${b.id}')">${dot}${esc(b.name)}<span class="meta">${activeGoals}</span></button>`;
   });
   html+=`<button class="board-pill new" onclick="addBoard()" title="New board">+</button>`;
   container.innerHTML=html;
@@ -451,7 +496,7 @@ function renderBoard(){
         </div>
       </div>`;
   });
-  html+=`<button class="add-col" onclick="addColumnPrompt()">+ Column</button>`;
+  // Note: + Column lives in the topbar, no placeholder needed in the grid (lets columns be wider)
   boardEl.innerHTML=html;
   updateMeta(board);
 }
@@ -531,16 +576,31 @@ function renderActions(){
   const board=activeBoard();
   const g=board.goals.find(x=>x.id===currentGoalId);
   if(!g)return;
-  const items=g.actionItems||[];
-  const done=items.filter(i=>i.done).length;
-  document.getElementById('detailProgress').textContent=`${done}/${items.length} completed`;
+  const rawItems=g.actionItems||[];
+  const done=rawItems.filter(i=>i.done).length;
+  document.getElementById('detailProgress').textContent=`${done}/${rawItems.length} completed`;
+
+  // Sort: incomplete first (preserve order), completed at bottom (by completedAt desc)
+  const items=[...rawItems].sort((a,b)=>{
+    const ad=a.done?1:0, bd=b.done?1:0;
+    if(ad!==bd)return ad-bd;
+    if(a.done&&b.done)return (b.completedAt||'').localeCompare(a.completedAt||'');
+    return 0;
+  });
+
   const list=document.getElementById('actionList');
   list.innerHTML=items.map(i=>{
-    let metaHTML='';
+    let metaParts=[];
     if(i.onPlan){
       const isDoneOnPlan=i.done;
-      metaHTML=`<div class="action-meta"><span class="action-plan-tag${isDoneOnPlan?' done':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> On today's plan${isDoneOnPlan?' · Done':''}</span></div>`;
+      metaParts.push(`<span class="action-plan-tag${isDoneOnPlan?' done':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> On today's plan${isDoneOnPlan?' · Done':''}</span>`);
     }
+    if(i.done&&i.completedAt){
+      const d=new Date(i.completedAt);
+      const dateLabel=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      metaParts.push(`<span class="action-done-date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Done ${dateLabel}</span>`);
+    }
+    const metaHTML=metaParts.length?`<div class="action-meta">${metaParts.join('')}</div>`:'';
     return `
     <div class="action-item${i.done?' done':''}" data-id="${i.id}">
       <button class="action-check" onclick="toggleAction('${i.id}')">
@@ -582,6 +642,8 @@ function toggleAction(actionId){
   const a=g.actionItems.find(i=>i.id===actionId);
   if(!a)return;
   a.done=!a.done;
+  if(a.done)a.completedAt=new Date().toISOString();
+  else delete a.completedAt;
   // If item is on today's plan, sync done state to the task
   if(a.onPlan&&a.planTaskId&&a.planDate){
     setPlanTaskDone(a.planDate,a.planTaskId,a.done);
@@ -783,7 +845,12 @@ function syncActionFromPlan(board){
         mutated=true;return;
       }
       // Sync done state: plan is the source of truth here
-      if(!!t.done!==!!a.done){a.done=!!t.done;mutated=true}
+      if(!!t.done!==!!a.done){
+        a.done=!!t.done;
+        if(a.done&&!a.completedAt)a.completedAt=t.completedAt||new Date().toISOString();
+        if(!a.done)delete a.completedAt;
+        mutated=true;
+      }
     });
     // Auto-set completedAt
     const allDone=isGoalDone(g);
