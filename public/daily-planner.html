@@ -3232,6 +3232,9 @@ function renderPlanTaskRow(it,showDate){
           <span>${slotLabel}${dateLabel}</span>
           <span class="dtag" style="background:${dInfo.bg};color:${dInfo.color}">${dInfo.name}</span>
           ${t.urgent?'<span class="urgent-tag">Urgent</span>':''}
+          <button class="tasks-row-redate" onclick="event.stopPropagation();openTaskRedate(this,'${it.dateKey}','${t.id}')" title="Change date">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </button>
         </div>
         <div class="tasks-row-text">${esc(t.text)}</div>
       </div>
@@ -3262,6 +3265,56 @@ function planTaskRowClick(dateKey,taskId){
     injectRecurringTasks();
     render();
   }
+}
+
+/* ---- Task redate (change due date from Tasks panel) ---- */
+let _redatePopup=null;
+function closeTaskRedate(){
+  if(_redatePopup){_redatePopup.remove();_redatePopup=null;}
+  document.removeEventListener('click',_redateOutside,true);
+}
+function _redateOutside(e){
+  if(_redatePopup&&!_redatePopup.contains(e.target))closeTaskRedate();
+}
+function openTaskRedate(btn,dateKey,taskId){
+  closeTaskRedate();
+  const rect=btn.getBoundingClientRect();
+  const popup=document.createElement('div');
+  popup.className='tasks-redate-popup';
+  popup.innerHTML=`
+    <label>Move to date</label>
+    <input type="date" id="redateInput" value="${dateKey}">
+    <div class="tasks-redate-actions">
+      <button onclick="closeTaskRedate()">Cancel</button>
+      <button class="primary" onclick="applyTaskRedate('${dateKey}','${taskId}')">Move</button>
+    </div>`;
+  document.body.appendChild(popup);
+  _redatePopup=popup;
+  // Position near button
+  const pw=popup.offsetWidth, ph=popup.offsetHeight;
+  let top=rect.bottom+4, left=rect.left;
+  if(left+pw>window.innerWidth)left=window.innerWidth-pw-8;
+  if(left<8)left=8;
+  if(top+ph>window.innerHeight)top=rect.top-ph-4;
+  popup.style.top=top+'px';popup.style.left=left+'px';
+  setTimeout(()=>document.addEventListener('click',_redateOutside,true),10);
+}
+function applyTaskRedate(oldDateKey,taskId){
+  const newDate=document.getElementById('redateInput').value;
+  if(!newDate||newDate===oldDateKey){closeTaskRedate();return;}
+  const plan=loadPlan();
+  const oldList=plan[oldDateKey]||[];
+  const idx=oldList.findIndex(t=>t.id===taskId);
+  if(idx<0){closeTaskRedate();return;}
+  const task=oldList.splice(idx,1)[0];
+  if(!oldList.length)delete plan[oldDateKey];
+  else plan[oldDateKey]=oldList;
+  if(!plan[newDate])plan[newDate]=[];
+  plan[newDate].push(task);
+  savePlan(plan);
+  closeTaskRedate();
+  if(oldDateKey===viewKey()||newDate===viewKey())render();
+  renderPlanTasks();
 }
 
 function buildCalItem(kind,src,startISO,data){return{kind,src,startISO,data}}
@@ -4472,6 +4525,32 @@ init();
 .tasks-row-meta .dtag{padding:1px 6px;border-radius:3px}
 .tasks-row-meta .urgent-tag{color:var(--overdue);background:rgba(220,38,38,.1);padding:1px 6px;border-radius:3px}
 .tasks-row-text{font-size:14px;font-weight:600;line-height:1.4;color:var(--text);word-break:break-word}
+.tasks-row-redate{
+  background:none;border:none;cursor:pointer;padding:2px 4px;color:var(--text-dim);
+  border-radius:4px;transition:all .12s;margin-left:auto;display:inline-flex;align-items:center;
+}
+.tasks-row-redate:hover{color:var(--text);background:var(--surface-2)}
+.tasks-redate-popup{
+  position:fixed;z-index:1200;background:var(--bg);border:1px solid var(--border);
+  border-radius:10px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.4);
+  display:flex;flex-direction:column;gap:8px;min-width:200px;
+}
+.tasks-redate-popup label{font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px}
+.tasks-redate-popup input[type="date"]{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;font-weight:500;
+  padding:8px 10px;border:1px solid var(--border);border-radius:6px;
+  background:var(--surface);color:var(--text);outline:none;width:100%;
+  color-scheme:dark;
+}
+.tasks-redate-popup input[type="date"]:focus{border-color:var(--text)}
+.tasks-redate-actions{display:flex;gap:6px;justify-content:flex-end}
+.tasks-redate-actions button{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;
+  padding:6px 14px;border-radius:6px;cursor:pointer;border:1px solid var(--border);
+  background:none;color:var(--text-mid);transition:all .12s;
+}
+.tasks-redate-actions button.primary{background:var(--text);color:var(--bg);border-color:transparent}
+.tasks-redate-actions button:hover{opacity:.85}
 .tasks-empty{padding:40px 24px;text-align:center;color:var(--text-dim);font-size:13px}
 /* Iframe tabs (Goals, Board) — let iframe use full width */
 body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
