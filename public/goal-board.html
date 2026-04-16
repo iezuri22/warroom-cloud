@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1a">
+<title>Goal Board — War Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="/sync-client.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#f4f3f0; --surface:#fff; --surface-2:#eae8e4; --border:#d8d5cf;
+  --text:#1a1a1a; --text-mid:#555; --text-dim:#908e88;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,-apple-system,sans-serif;overscroll-behavior-y:none}
+body{padding:20px 16px 100px;min-height:100vh}
+body.embed{padding:14px 12px 100px}
+
+/* HEADER */
+.board-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px;flex-wrap:wrap;gap:10px;
+}
+.board-title{font-size:22px;font-weight:800;letter-spacing:-.3px}
+.board-meta{font-size:11px;color:var(--text-dim);font-weight:600;letter-spacing:.3px}
+.board-add-btn{
+  background:var(--text);color:var(--bg);border:none;cursor:pointer;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  padding:10px 16px;border-radius:8px;display:flex;align-items:center;gap:6px;
+  transition:transform .1s;
+}
+.board-add-btn:active{transform:scale(.96)}
+.board-add-btn svg{width:14px;height:14px}
+
+/* BOARD GRID */
+.board{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:14px;align-items:start;
+}
+@media(max-width:900px){
+  .board{display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+    padding-bottom:8px;gap:12px;scroll-snap-type:x mandatory;}
+  .board::-webkit-scrollbar{display:none}
+  .col{min-width:82vw;max-width:82vw;flex-shrink:0;scroll-snap-align:start}
+}
+
+.col{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  overflow:hidden;display:flex;flex-direction:column;
+}
+.col-header{
+  padding:12px 14px;color:#fff;font-weight:800;font-size:14px;
+  display:flex;align-items:center;justify-content:space-between;letter-spacing:.2px;
+  position:relative;
+}
+.col-header .col-title{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.col-header .col-title-text{
+  background:none;border:none;color:#fff;font-family:inherit;font-size:14px;font-weight:800;
+  padding:2px 4px;border-radius:4px;outline:none;flex:1;min-width:0;
+}
+.col-header .col-title-text:focus{background:rgba(255,255,255,.18)}
+.col-header .col-count{font-size:12px;font-weight:700;opacity:.85;white-space:nowrap}
+.col-header .col-menu-btn{
+  background:none;border:none;color:#fff;cursor:pointer;padding:4px;border-radius:4px;
+  display:flex;align-items:center;justify-content:center;opacity:.8;
+  margin-left:6px;transition:opacity .12s,background .12s;
+}
+.col-header .col-menu-btn:hover,.col-header .col-menu-btn:active{opacity:1;background:rgba(255,255,255,.15)}
+.col-menu{
+  position:absolute;top:42px;right:8px;background:var(--surface);
+  border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);
+  min-width:140px;z-index:50;display:none;overflow:hidden;
+}
+.col-menu.open{display:block}
+.col-menu button{
+  display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:600;padding:9px 12px;color:var(--text);
+}
+.col-menu button:hover,.col-menu button:active{background:var(--surface-2)}
+.col-menu button.danger{color:#dc2626}
+.col-menu .swatches{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border)}
+.col-menu .swatches button{
+  width:24px;height:24px;border-radius:50%;padding:0;border:2px solid transparent;
+  cursor:pointer;display:block;
+}
+.col-menu .swatches button.active{border-color:var(--text)}
+
+.col-body{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:50px}
+
+/* GOAL CARD */
+.goal-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px;cursor:pointer;transition:all .12s;
+  display:flex;flex-direction:column;gap:10px;
+}
+.goal-card:hover{border-color:#bbb;transform:translateY(-1px)}
+.goal-card:active{transform:scale(.99)}
+.goal-card-title{font-size:15px;font-weight:700;line-height:1.35;color:var(--text)}
+
+.goal-action-preview{display:flex;flex-direction:column;gap:5px}
+.goal-action-line{
+  display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text-mid);line-height:1.4;
+}
+.goal-action-line .pcheck{
+  width:14px;height:14px;border-radius:50%;border:1.5px solid var(--border);
+  flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center;
+}
+.goal-action-line.done .pcheck{background:var(--col-color,#888);border-color:var(--col-color,#888)}
+.goal-action-line.done .pcheck::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff}
+.goal-action-line.done span{text-decoration:line-through;color:var(--text-dim)}
+.goal-more{font-size:12px;color:var(--text-dim);font-weight:600;margin-top:2px}
+
+.goal-progress{display:flex;flex-direction:column;gap:5px}
+.goal-progress-bar{
+  height:3px;background:var(--surface-2);border-radius:2px;overflow:hidden;position:relative;
+}
+.goal-progress-fill{
+  height:100%;background:var(--col-color,#888);border-radius:2px;transition:width .25s ease;
+}
+.goal-progress-text{
+  font-size:11px;font-weight:700;color:var(--col-color,var(--text-dim));letter-spacing:.3px;
+}
+.goal-empty-action{
+  font-size:12px;color:#dc2626;font-weight:600;
+}
+
+/* ADD COLUMN */
+.add-col{
+  background:none;border:2px dashed var(--border);border-radius:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-family:inherit;font-size:13px;font-weight:700;color:var(--text-dim);
+  letter-spacing:.5px;text-transform:uppercase;min-height:80px;transition:all .15s;
+}
+.add-col:hover{border-color:var(--text);color:var(--text)}
+
+/* ADD CARD */
+.add-card{
+  background:none;border:1.5px dashed var(--border);border-radius:8px;cursor:pointer;
+  padding:10px;font-family:inherit;font-size:12px;font-weight:600;color:var(--text-dim);
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  transition:all .12s;
+}
+.add-card:hover{border-color:var(--text);color:var(--text);background:var(--surface-2)}
+
+/* DETAIL OVERLAY */
+.detail-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:200;
+  display:none;align-items:flex-start;justify-content:center;
+  padding:60px 16px 16px;
+  -webkit-overflow-scrolling:touch;overflow-y:auto;
+}
+.detail-overlay.open{display:flex}
+@media(max-width:640px){
+  .detail-overlay{padding:0;align-items:stretch}
+}
+.detail-panel{
+  background:var(--surface);border-radius:18px;width:100%;max-width:560px;
+  box-shadow:0 24px 64px rgba(0,0,0,.18);overflow:hidden;
+  display:flex;flex-direction:column;
+  animation:detailIn .2s ease-out;
+}
+@media(max-width:640px){
+  .detail-panel{max-width:none;border-radius:0;min-height:100vh}
+}
+@keyframes detailIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+.detail-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 22px 14px;border-bottom:1px solid var(--border);
+}
+.detail-status-pill{
+  font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.4px;
+  padding:6px 14px;border-radius:18px;color:#fff;cursor:pointer;
+  display:flex;align-items:center;gap:6px;border:none;
+}
+.detail-status-pill svg{width:11px;height:11px;opacity:.7}
+.detail-close{
+  background:none;border:none;cursor:pointer;color:var(--text-mid);padding:6px;
+  border-radius:8px;transition:background .12s;
+  display:flex;align-items:center;justify-content:center;
+}
+.detail-close:hover,.detail-close:active{background:var(--surface-2)}
+.detail-close svg{width:18px;height:18px}
+
+.detail-body{padding:20px 22px;display:flex;flex-direction:column;gap:18px;flex:1;overflow-y:auto}
+
+.detail-title-row{display:flex;flex-direction:column;gap:6px}
+.detail-title{
+  font-size:24px;font-weight:800;letter-spacing:-.3px;line-height:1.2;
+  background:none;border:none;outline:none;font-family:inherit;color:var(--text);
+  width:100%;resize:none;padding:0;
+}
+
+.detail-section-label{
+  font-size:14px;font-weight:800;color:var(--text);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.detail-section-label .progress-text{font-size:13px;font-weight:700;color:var(--col-color,var(--text-dim))}
+
+.action-list{display:flex;flex-direction:column;gap:8px}
+.action-item{
+  display:flex;align-items:flex-start;gap:10px;padding:8px 4px;
+  border-bottom:1px solid var(--surface-2);
+}
+.action-item:last-child{border-bottom:none}
+.action-check{
+  width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);
+  cursor:pointer;flex-shrink:0;margin-top:1px;
+  display:flex;align-items:center;justify-content:center;background:none;
+  transition:all .12s;
+}
+.action-check:hover{border-color:var(--text-mid)}
+.action-item.done .action-check{background:var(--col-color,#888);border-color:var(--col-color,#888)}
+.action-check svg{width:11px;height:11px;color:#fff;opacity:0;transition:opacity .12s}
+.action-item.done .action-check svg{opacity:1}
+
+.action-text{
+  flex:1;font-family:inherit;font-size:14px;font-weight:500;line-height:1.5;color:var(--text);
+  background:none;border:none;outline:none;padding:0;resize:none;width:100%;min-height:24px;
+}
+.action-item.done .action-text{text-decoration:line-through;color:var(--text-dim)}
+.action-del{
+  background:none;border:none;cursor:pointer;color:var(--text-dim);padding:6px;border-radius:6px;
+  opacity:.5;transition:all .12s;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+}
+.action-del:hover,.action-del:active{opacity:1;color:#dc2626;background:var(--surface-2)}
+.action-del svg{width:14px;height:14px}
+
+.add-action{
+  display:flex;gap:8px;align-items:center;padding:8px 4px;margin-top:4px;
+  border-top:1px dashed var(--border);
+}
+.add-action input{
+  flex:1;font-family:inherit;font-size:14px;font-weight:500;
+  padding:8px 0;border:none;background:none;outline:none;color:var(--text);
+}
+.add-action input::placeholder{color:var(--text-dim)}
+.add-action button{
+  background:var(--text);color:var(--bg);border:none;cursor:pointer;
+  font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  padding:8px 14px;border-radius:6px;
+}
+
+.detail-actions{
+  border-top:1px solid var(--border);padding:12px 22px;
+  display:flex;gap:8px;justify-content:space-between;align-items:center;
+}
+.detail-action-btn{
+  background:none;border:1px solid var(--border);cursor:pointer;
+  font-family:inherit;font-size:12px;font-weight:700;color:var(--text-mid);
+  padding:8px 14px;border-radius:8px;letter-spacing:.3px;
+  display:flex;align-items:center;gap:6px;
+}
+.detail-action-btn:hover,.detail-action-btn:active{background:var(--surface-2);color:var(--text)}
+.detail-action-btn.danger:hover{color:#dc2626;border-color:rgba(220,38,38,.3)}
+.detail-action-btn svg{width:13px;height:13px}
+
+.col-picker{
+  position:absolute;top:42px;left:22px;background:var(--surface);
+  border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);
+  padding:6px;min-width:180px;z-index:60;display:none;
+}
+.col-picker.open{display:block}
+.col-picker button{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:none;border:none;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:600;color:var(--text);
+  padding:8px 10px;border-radius:6px;
+}
+.col-picker button:hover{background:var(--surface-2)}
+.col-picker button .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* EMPTY STATE */
+.empty-board{
+  text-align:center;padding:60px 20px;color:var(--text-dim);
+}
+.empty-board h2{font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text)}
+.empty-board p{font-size:14px;line-height:1.5;margin-bottom:18px}
+</style>
+</head>
+<body>
+
+<div class="board-header">
+  <div>
+    <div class="board-title" id="boardTitle">Goals Board</div>
+    <div class="board-meta" id="boardMeta">Tap a card to open</div>
+  </div>
+  <button class="board-add-btn" onclick="addColumnPrompt()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+    Column
+  </button>
+</div>
+
+<div class="board" id="board"></div>
+
+<!-- DETAIL OVERLAY -->
+<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-header" style="position:relative">
+      <button class="detail-status-pill" id="statusPill" onclick="event.stopPropagation();toggleColPicker()">
+        <span id="statusPillText">Status</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="col-picker" id="colPicker"></div>
+      <button class="detail-close" onclick="closeDetail()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="detail-body">
+      <div class="detail-title-row">
+        <textarea class="detail-title" id="detailTitle" placeholder="Goal title..." rows="1" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';onTitleChange()"></textarea>
+      </div>
+      <div>
+        <div class="detail-section-label">
+          Action Items <span class="progress-text" id="detailProgress">0/0 completed</span>
+        </div>
+        <div class="action-list" id="actionList"></div>
+        <form class="add-action" onsubmit="addActionItem(event)">
+          <input type="text" id="newActionInput" placeholder="Add an action item..." autocomplete="off">
+          <button type="submit">Add</button>
+        </form>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <button class="detail-action-btn danger" onclick="deleteCurrentGoal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Delete
+      </button>
+      <button class="detail-action-btn" onclick="closeDetail()">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORE = 'goal-board-v1';
+const COLORS = [
+  {name:'red',    hex:'#dc2626'},
+  {name:'orange', hex:'#ea580c'},
+  {name:'amber',  hex:'#d97706'},
+  {name:'green',  hex:'#16a34a'},
+  {name:'teal',   hex:'#0d9488'},
+  {name:'blue',   hex:'#2563eb'},
+  {name:'purple', hex:'#7c3aed'},
+  {name:'pink',   hex:'#db2777'},
+  {name:'gray',   hex:'#6b7280'},
+];
+const DEFAULT_BOARD = {
+  columns: [
+    {id:'c-fc', title:'Future - Career',   color:'#dc2626', order:0},
+    {id:'c-fp', title:'Future - Personal', color:'#0d9488', order:1},
+    {id:'c-ip', title:'In Progress',       color:'#ea580c', order:2},
+    {id:'c-ac', title:'Accomplished 🎉',   color:'#16a34a', order:3},
+  ],
+  goals: []
+};
+
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function load(){try{const d=JSON.parse(localStorage.getItem(STORE));if(d&&d.columns)return d}catch{}return JSON.parse(JSON.stringify(DEFAULT_BOARD))}
+function save(d){localStorage.setItem(STORE,JSON.stringify(d))}
+function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+
+let currentGoalId = null;
+let currentColMenuId = null;
+
+function renderBoard(){
+  const data = load();
+  const board = document.getElementById('board');
+  data.columns.sort((a,b)=>(a.order||0)-(b.order||0));
+
+  if(!data.columns.length){
+    board.innerHTML = `<div class="empty-board" style="grid-column:1/-1">
+      <h2>No columns yet</h2>
+      <p>Tap "+ Column" up top to start your board.</p>
+    </div>`;
+    updateMeta(data);
+    return;
+  }
+
+  let html = '';
+  data.columns.forEach(col=>{
+    const colGoals = data.goals.filter(g=>g.columnId===col.id);
+    html += `
+      <div class="col" data-col="${col.id}" style="--col-color:${col.color}">
+        <div class="col-header" style="background:${col.color}">
+          <div class="col-title">
+            <input class="col-title-text" value="${esc(col.title)}" onchange="renameColumn('${col.id}',this.value)" onclick="event.stopPropagation()">
+          </div>
+          <span class="col-count">${colGoals.length} goal${colGoals.length===1?'':'s'}</span>
+          <button class="col-menu-btn" onclick="event.stopPropagation();toggleColMenu('${col.id}')" aria-label="Column menu">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </button>
+          <div class="col-menu" id="colMenu-${col.id}">
+            <div class="swatches">
+              ${COLORS.map(c=>`<button style="background:${c.hex}" onclick="event.stopPropagation();setColColor('${col.id}','${c.hex}')" aria-label="${c.name}"></button>`).join('')}
+            </div>
+            <button onclick="event.stopPropagation();moveCol('${col.id}',-1)">← Move left</button>
+            <button onclick="event.stopPropagation();moveCol('${col.id}',1)">Move right →</button>
+            <button class="danger" onclick="event.stopPropagation();deleteColumn('${col.id}')">Delete column</button>
+          </div>
+        </div>
+        <div class="col-body" id="colBody-${col.id}">
+          ${colGoals.map(g=>renderGoalCard(g,col)).join('')}
+          <button class="add-card" onclick="addGoal('${col.id}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            Add Goal
+          </button>
+        </div>
+      </div>`;
+  });
+  html += `<button class="add-col" onclick="addColumnPrompt()">+ Column</button>`;
+  board.innerHTML = html;
+  updateMeta(data);
+}
+
+function renderGoalCard(g,col){
+  const items = g.actionItems||[];
+  const done = items.filter(i=>i.done).length;
+  const total = items.length;
+  const pct = total ? Math.round(done/total*100) : 0;
+  const preview = items.slice(0,3);
+  const more = items.length-preview.length;
+
+  return `
+    <div class="goal-card" style="--col-color:${col.color}" onclick="openDetail('${g.id}')">
+      <div class="goal-card-title">${esc(g.title||'(untitled)')}</div>
+      ${total===0
+        ? '<div class="goal-empty-action">No action items added</div>'
+        : `<div class="goal-action-preview">
+            ${preview.map(i=>`<div class="goal-action-line${i.done?' done':''}"><span class="pcheck"></span><span>${esc(i.text)}</span></div>`).join('')}
+            ${more>0?`<div class="goal-more">+ ${more} more</div>`:''}
+          </div>
+          <div class="goal-progress">
+            <div class="goal-progress-bar"><div class="goal-progress-fill" style="width:${pct}%"></div></div>
+            <div class="goal-progress-text">${done} / ${total} completed</div>
+          </div>`
+      }
+    </div>`;
+}
+
+function updateMeta(data){
+  const totalGoals = data.goals.length;
+  const totalDone = data.goals.filter(g=>{const it=g.actionItems||[];return it.length&&it.every(i=>i.done)}).length;
+  document.getElementById('boardMeta').textContent = totalGoals
+    ? `${totalGoals} goal${totalGoals===1?'':'s'} · ${totalDone} fully done`
+    : 'Tap "+ Column" or "Add Goal" to start';
+}
+
+function addGoal(colId){
+  const data=load();
+  const goal = {id:uid(),title:'New goal',columnId:colId,actionItems:[],createdAt:new Date().toISOString()};
+  data.goals.push(goal);
+  save(data);renderBoard();openDetail(goal.id);
+  setTimeout(()=>{const el=document.getElementById('detailTitle');if(el){el.focus();el.select()}},80);
+}
+
+function openDetail(goalId){
+  currentGoalId=goalId;
+  const data=load();
+  const g=data.goals.find(x=>x.id===goalId);
+  if(!g){closeDetail();return}
+  const col=data.columns.find(c=>c.id===g.columnId);
+  if(col){
+    document.getElementById('statusPill').style.background=col.color;
+    document.getElementById('statusPillText').textContent=col.title;
+    document.getElementById('detailPanel').style.setProperty('--col-color',col.color);
+  }
+  const titleEl=document.getElementById('detailTitle');
+  titleEl.value=g.title||'';
+  setTimeout(()=>{titleEl.style.height='auto';titleEl.style.height=titleEl.scrollHeight+'px'},0);
+  renderActions();
+  document.getElementById('detailOverlay').classList.add('open');
+}
+
+function renderActions(){
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  const items=g.actionItems||[];
+  const done=items.filter(i=>i.done).length;
+  document.getElementById('detailProgress').textContent=`${done}/${items.length} completed`;
+  const list=document.getElementById('actionList');
+  list.innerHTML=items.map(i=>`
+    <div class="action-item${i.done?' done':''}" data-id="${i.id}">
+      <button class="action-check" onclick="toggleAction('${i.id}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </button>
+      <textarea class="action-text" rows="1" oninput="updateActionText('${i.id}',this.value);this.style.height='auto';this.style.height=this.scrollHeight+'px'">${esc(i.text)}</textarea>
+      <button class="action-del" onclick="deleteAction('${i.id}')" aria-label="Delete">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`).join('');
+  list.querySelectorAll('textarea').forEach(t=>{t.style.height='auto';t.style.height=t.scrollHeight+'px'});
+}
+
+function addActionItem(ev){
+  if(ev)ev.preventDefault();
+  const input=document.getElementById('newActionInput');
+  const text=input.value.trim();
+  if(!text)return;
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  if(!g.actionItems)g.actionItems=[];
+  g.actionItems.push({id:uid(),text,done:false});
+  save(data);input.value='';renderActions();renderBoard();
+}
+
+function toggleAction(actionId){
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  const a=g.actionItems.find(i=>i.id===actionId);
+  if(a){a.done=!a.done;save(data);renderActions();renderBoard()}
+}
+
+function updateActionText(actionId,val){
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  const a=g.actionItems.find(i=>i.id===actionId);
+  if(a){a.text=val;save(data);renderBoard()}
+}
+
+function deleteAction(actionId){
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  g.actionItems=g.actionItems.filter(i=>i.id!==actionId);
+  save(data);renderActions();renderBoard();
+}
+
+function onTitleChange(){
+  const val=document.getElementById('detailTitle').value;
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(g){g.title=val;save(data);renderBoard()}
+}
+
+function deleteCurrentGoal(){
+  if(!confirm('Delete this goal?'))return;
+  const data=load();
+  data.goals=data.goals.filter(g=>g.id!==currentGoalId);
+  save(data);closeDetail();renderBoard();
+}
+
+function closeDetail(){
+  currentGoalId=null;
+  document.getElementById('detailOverlay').classList.remove('open');
+  document.getElementById('colPicker').classList.remove('open');
+}
+
+function toggleColPicker(){
+  const picker=document.getElementById('colPicker');
+  const data=load();
+  picker.innerHTML=data.columns.map(c=>`
+    <button onclick="moveGoalToCol('${c.id}')"><span class="dot" style="background:${c.color}"></span>${esc(c.title)}</button>
+  `).join('');
+  picker.classList.toggle('open');
+}
+
+function moveGoalToCol(colId){
+  const data=load();
+  const g=data.goals.find(x=>x.id===currentGoalId);
+  if(g){g.columnId=colId;save(data);renderBoard();openDetail(currentGoalId)}
+  document.getElementById('colPicker').classList.remove('open');
+}
+
+function addColumnPrompt(){
+  const title=prompt('Column name:','New Column');
+  if(!title||!title.trim())return;
+  const data=load();
+  const maxOrder=Math.max(0,...data.columns.map(c=>c.order||0));
+  data.columns.push({id:'c-'+uid(),title:title.trim(),color:COLORS[data.columns.length%COLORS.length].hex,order:maxOrder+1});
+  save(data);renderBoard();
+}
+
+function renameColumn(colId,newTitle){
+  const data=load();
+  const c=data.columns.find(x=>x.id===colId);
+  if(c){c.title=newTitle.trim()||c.title;save(data);renderBoard()}
+}
+
+function setColColor(colId,hex){
+  const data=load();
+  const c=data.columns.find(x=>x.id===colId);
+  if(c){c.color=hex;save(data);renderBoard();closeAllColMenus()}
+}
+
+function moveCol(colId,dir){
+  const data=load();
+  data.columns.sort((a,b)=>(a.order||0)-(b.order||0));
+  const idx=data.columns.findIndex(c=>c.id===colId);
+  if(idx<0)return;
+  const swapIdx=idx+dir;
+  if(swapIdx<0||swapIdx>=data.columns.length)return;
+  const a=data.columns[idx],b=data.columns[swapIdx];
+  const ao=a.order,bo=b.order;a.order=bo;b.order=ao;
+  save(data);renderBoard();closeAllColMenus();
+}
+
+function deleteColumn(colId){
+  const data=load();
+  const goalsInCol=data.goals.filter(g=>g.columnId===colId).length;
+  if(goalsInCol){
+    if(!confirm(`Delete this column and its ${goalsInCol} goal${goalsInCol===1?'':'s'}?`))return;
+  }
+  data.columns=data.columns.filter(c=>c.id!==colId);
+  data.goals=data.goals.filter(g=>g.columnId!==colId);
+  save(data);renderBoard();closeAllColMenus();
+}
+
+function toggleColMenu(colId){
+  closeAllColMenus(colId);
+  const m=document.getElementById('colMenu-'+colId);
+  if(m)m.classList.toggle('open');
+  currentColMenuId=m&&m.classList.contains('open')?colId:null;
+}
+function closeAllColMenus(except){
+  document.querySelectorAll('.col-menu.open').forEach(m=>{
+    if(!except||m.id!=='colMenu-'+except)m.classList.remove('open');
+  });
+}
+
+document.addEventListener('click',e=>{
+  if(currentColMenuId&&!e.target.closest('.col-menu')&&!e.target.closest('.col-menu-btn')){
+    closeAllColMenus();
+  }
+  if(!e.target.closest('#colPicker')&&!e.target.closest('#statusPill')){
+    document.getElementById('colPicker').classList.remove('open');
+  }
+});
+
+// Cross-tab sync
+window.addEventListener('storage',e=>{if(e.key===STORE)renderBoard()});
+
+// Embed mode
+if(new URLSearchParams(location.search).has('embed'))document.body.classList.add('embed');
+
+renderBoard();
+</script>
+</body>
+</html>
