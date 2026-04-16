@@ -835,10 +835,14 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
     </div>
   </div>
   <div class="header-right" id="headerRight">
-    <button class="header-btn" onclick="openTasksPanel()" id="calToggleBtn">
+    <button class="header-btn" onclick="toggleCalPanel()" id="calToggleBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Cal
+      <span class="cal-badge" id="calBadge" style="display:none">0</span>
+    </button>
+    <button class="header-btn" onclick="openPlanTasksPanel()" id="planTasksBtn" style="display:none">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       Tasks
-      <span class="cal-badge" id="calBadge" style="display:none">0</span>
     </button>
     <button class="header-btn header-secondary" onclick="openRecurringManager()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 0 1 4-4h12.8"/><path d="M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 0 1-4 4H4.2"/></svg>
@@ -926,7 +930,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
   <!-- CALENDAR SIDEBAR (moved outside plan-layout so it works from any tab) -->
   <div class="cal-sidebar" id="calSidebar">
     <div class="cal-sidebar-header">
-      <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Tasks</h3>
+      <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Calendar</h3>
       <div style="display:flex;gap:4px">
         <button class="cal-refresh" onclick="syncCalendarNow()" title="Sync fresh events from Google"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7l3 2.7"/><path d="M21 3v6h-6"/></svg></button>
         <button class="cal-refresh" onclick="toggleCalPanel()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -1337,6 +1341,9 @@ function init(){
   // Restore running timer from active-task (survives page reload/navigation)
   restoreActiveTimer();
   render();
+  // Show Tasks button (default tab is Today's Plan)
+  const ptBtn=document.getElementById('planTasksBtn');
+  if(ptBtn)ptBtn.style.display='';
   // Load calendar - open by default on desktop, closed on mobile (Cal tab opens it)
   const isMobile=window.matchMedia('(max-width:768px)').matches;
   if(!isMobile){
@@ -2004,6 +2011,9 @@ function switchTab(tab){
   document.getElementById('youtubeView').classList.toggle('active',tab==='youtube');
   document.getElementById('analyticsView').classList.toggle('active',tab==='analytics');
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
+  // Tasks Overview button only shown on Today's Plan tab
+  const ptBtn=document.getElementById('planTasksBtn');
+  if(ptBtn)ptBtn.style.display=tab==='plan'?'':'none';
   // Mark body so we can target full-iframe tabs in CSS (hide FAB, allow full width)
   document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board');
   if(tab==='analytics')renderAnalytics();
@@ -2967,28 +2977,12 @@ function renderCalMonth(){
   const notes=loadCalNotes();
   function hasFlaggedOnDay(dk){
     const evs=cache[dk]||[];
-    const ts=(plan[dk]||[]).filter(t=>!t.skipped);
-    return evs.some(ev=>!!notes[ev.id+'_flag'])||ts.some(t=>!!t.urgent);
-  }
-  function dayHasDot(dk){
-    const hasEvents=(cache[dk]&&cache[dk].length>0);
-    const hasTasks=(plan[dk]&&plan[dk].filter(t=>!t.skipped).length>0);
-    if(calFilter==='tasks')return hasTasks;
-    if(calFilter==='events')return hasEvents;
-    if(calFilter==='flagged')return hasFlaggedOnDay(dk);
-    return hasEvents||hasTasks;
+    return evs.some(ev=>!!notes[ev.id+'_flag']);
   }
   function dotClass(dk){
     const hasEvents=(cache[dk]&&cache[dk].length>0);
-    const hasTasks=(plan[dk]&&plan[dk].filter(t=>!t.skipped).length>0);
     if(calFilter==='flagged'&&hasFlaggedOnDay(dk))return 'has-events dot-flagged';
-    if(calFilter==='tasks'&&hasTasks)return 'has-events dot-task';
-    if(calFilter==='events'&&hasEvents)return 'has-events dot-event';
-    if(calFilter==='all'){
-      if(hasTasks&&hasEvents)return 'has-events dot-both';
-      if(hasTasks)return 'has-events dot-task';
-      if(hasEvents)return 'has-events dot-event';
-    }
+    if(hasEvents)return 'has-events dot-event';
     return '';
   }
 
@@ -3045,32 +3039,164 @@ function calDayClick(dk){
   render();renderCalEvents();renderCalMonth();
 }
 
-let calFilter='tasks'; // 'tasks' | 'flagged' (All/Events removed per request)
+let calFilter='all'; // 'all' | 'events' | 'flagged' (Tasks moved to its own panel on Today's Plan)
 let calGroupBy='day'; // 'day' | 'project'
 
 function setCalFilter(f){calFilter=f;renderCalEvents();renderCalMonth()}
 function setCalGroupBy(g){calGroupBy=g;renderCalEvents()}
 
-function openTasksPanel(){
-  // Force Tasks filter, then toggle the calendar panel
-  if(calFilter!=='tasks'&&calFilter!=='flagged')calFilter='tasks';
-  toggleCalPanel();
-}
-
 function isItemFlagged(it,notes){
   if(it.kind==='event'){
     return !!notes[it.data.id+'_flag'];
   }
-  // Task: count urgent tasks as flagged
   return !!it.data.urgent;
+}
+
+// ===== TASKS OVERVIEW PANEL (Today's Plan only) =====
+let planTasksGroupBy='day'; // 'day' | 'project'
+
+function openPlanTasksPanel(){
+  document.getElementById('tasksOverlay').classList.add('open');
+  renderPlanTasks();
+}
+function closePlanTasksPanel(){
+  document.getElementById('tasksOverlay').classList.remove('open');
+}
+function setPlanTasksGroupBy(g){
+  planTasksGroupBy=g;
+  document.getElementById('ptDayBtn').classList.toggle('active',g==='day');
+  document.getElementById('ptProjBtn').classList.toggle('active',g==='project');
+  renderPlanTasks();
+}
+
+function collectAllPlanTasks(){
+  // Gather all tasks across all dates — today and forward only
+  const plan=loadPlan();
+  const today=todayKey();
+  const items=[];
+  Object.keys(plan).forEach(dk=>{
+    if(dk<today)return;
+    (plan[dk]||[]).filter(t=>!t.skipped).forEach(t=>{
+      items.push({dateKey:dk,task:t});
+    });
+  });
+  // Sort by date, then by slot order
+  const slotOrder={morning:0,afternoon:1,night:2};
+  items.sort((a,b)=>{
+    if(a.dateKey!==b.dateKey)return a.dateKey<b.dateKey?-1:1;
+    return (slotOrder[a.task.slot]||0)-(slotOrder[b.task.slot]||0);
+  });
+  return items;
+}
+
+function renderPlanTasks(){
+  const items=collectAllPlanTasks();
+  const body=document.getElementById('tasksBody');
+  if(!items.length){
+    body.innerHTML=`<div class="tasks-empty">No tasks scheduled from today onward.<br>Add tasks to your daily plan.</div>`;
+    return;
+  }
+  let html='';
+  if(planTasksGroupBy==='day'){
+    const groups={};
+    items.forEach(it=>{
+      if(!groups[it.dateKey])groups[it.dateKey]=[];
+      groups[it.dateKey].push(it);
+    });
+    const today=todayKey();
+    Object.keys(groups).sort().forEach(dk=>{
+      const d=new Date(dk+'T12:00:00');
+      const dayName=d.toLocaleDateString('en-US',{weekday:'short'});
+      const dayDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      const isToday=dk===today;
+      const cnt=groups[dk].length;
+      html+=`<div class="tasks-grp-header${isToday?' is-today':''}">
+        <span class="day-num">${d.getDate()}</span>
+        <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':''}</span>
+        <span class="grp-cnt">${cnt}</span>
+      </div>`;
+      groups[dk].forEach(it=>{html+=renderPlanTaskRow(it)});
+    });
+  } else {
+    // Group by project (domain)
+    const groups={};
+    items.forEach(it=>{
+      const dom=it.task.domain||'personal';
+      if(!groups[dom])groups[dom]=[];
+      groups[dom].push(it);
+    });
+    const order=['work','ezrk','vt','personal'];
+    const keys=Object.keys(groups).sort((a,b)=>{
+      const ai=order.indexOf(a), bi=order.indexOf(b);
+      return (ai===-1?99:ai)-(bi===-1?99:bi);
+    });
+    keys.forEach(k=>{
+      const dInfo=D[k]||D.personal;
+      const cnt=groups[k].length;
+      html+=`<div class="tasks-grp-header"><span class="dot" style="background:${dInfo.color}"></span>${esc(dInfo.name)} <span class="grp-cnt">${cnt}</span></div>`;
+      groups[k].forEach(it=>{html+=renderPlanTaskRow(it,true)});
+    });
+  }
+  body.innerHTML=html;
+}
+
+function renderPlanTaskRow(it,showDate){
+  const t=it.task;
+  const dInfo=D[t.domain]||D.personal;
+  const slot=t.slot||'morning';
+  const slotLabel=slot.charAt(0).toUpperCase()+slot.slice(1);
+  let dateLabel='';
+  if(showDate){
+    const d=new Date(it.dateKey+'T12:00:00');
+    dateLabel=' · '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  }
+  return `
+    <div class="tasks-row${t.urgent?' urgent':''}${t.done?' done':''}" onclick="planTaskRowClick('${it.dateKey}','${t.id}')">
+      <button class="tasks-row-check${t.done?' checked':''}" onclick="event.stopPropagation();togglePlanTaskFromPanel('${it.dateKey}','${t.id}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </button>
+      <div class="tasks-row-main">
+        <div class="tasks-row-meta">
+          <span>${slotLabel}${dateLabel}</span>
+          <span class="dtag" style="background:${dInfo.bg};color:${dInfo.color}">${dInfo.name}</span>
+          ${t.urgent?'<span class="urgent-tag">Urgent</span>':''}
+        </div>
+        <div class="tasks-row-text">${esc(t.text)}</div>
+      </div>
+    </div>`;
+}
+
+function togglePlanTaskFromPanel(dateKey,taskId){
+  const plan=loadPlan();
+  const items=plan[dateKey];
+  if(!items)return;
+  const t=items.find(x=>x.id===taskId);
+  if(!t)return;
+  t.done=!t.done;
+  if(t.done)t.completedAt=new Date().toISOString();
+  else delete t.completedAt;
+  savePlan(plan);
+  // If currently viewing this date in the planner, re-render
+  if(dateKey===viewKey())render();
+  renderPlanTasks();
+}
+
+function planTaskRowClick(dateKey,taskId){
+  // Navigate to that date and close panel
+  closePlanTasksPanel();
+  if(dateKey!==viewKey()){
+    viewDate=new Date(dateKey+'T12:00:00');
+    updateDateUI();
+    injectRecurringTasks();
+    render();
+  }
 }
 
 function buildCalItem(kind,src,startISO,data){return{kind,src,startISO,data}}
 
 function collectMonthItems(){
-  // Collect items for the visible month (calMonthYear) — both events and tasks
+  // Calendar is events-only. Tasks live on Today's Plan via its own Tasks button.
   const cache=loadCalCache();
-  const plan=loadPlan();
   const {month,year}=calMonthYear;
   const daysInMonth=new Date(year,month+1,0).getDate();
   const items=[];
@@ -3079,12 +3205,6 @@ function collectMonthItems(){
     (cache[dk]||[]).forEach(ev=>{
       const src=(ev.cal||'').toLowerCase();
       items.push(buildCalItem('event',src||'personal',ev.startISO,ev));
-    });
-    (plan[dk]||[]).filter(t=>!t.skipped).forEach(t=>{
-      const slot=t.slot||'morning';
-      const hour=slot==='afternoon'?13:slot==='night'?18:9;
-      const pseudoISO=`${dk}T${String(hour).padStart(2,'0')}:00:00-05:00`;
-      items.push(buildCalItem('task',t.domain||'personal',t.startISO||pseudoISO,t));
     });
   }
   items.sort((a,b)=>(a.startISO||'').localeCompare(b.startISO||''));
@@ -3096,13 +3216,14 @@ function renderCalEvents(){
   const notes=loadCalNotes();
   const allItems=collectMonthItems();
 
-  const taskCount=allItems.filter(i=>i.kind==='task').length;
+  const eventCount=allItems.length;
   const flaggedCount=allItems.filter(i=>isItemFlagged(i,notes)).length;
 
-  // Filter pills (Tasks + Flagged only)
+  // Filter pills: All / Events / Flagged (Tasks lives on Today's Plan)
   let html=`<div class="cal-filter">
-    <button class="cal-filter-pill${calFilter==='tasks'?' active':''}" onclick="setCalFilter('tasks')">Tasks <span class="cnt">${taskCount}</span></button>
-    <button class="cal-filter-pill${calFilter==='flagged'?' active':''}" onclick="setCalFilter('flagged')" title="Flagged events + urgent tasks">
+    <button class="cal-filter-pill${calFilter==='all'?' active':''}" onclick="setCalFilter('all')">All <span class="cnt">${eventCount}</span></button>
+    <button class="cal-filter-pill${calFilter==='events'?' active':''}" onclick="setCalFilter('events')">Events <span class="cnt">${eventCount}</span></button>
+    <button class="cal-filter-pill${calFilter==='flagged'?' active':''}" onclick="setCalFilter('flagged')" title="Flagged events">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
       Flagged <span class="cnt">${flaggedCount}</span>
     </button>
@@ -3117,14 +3238,13 @@ function renderCalEvents(){
 
   // Apply filter
   const filtered=allItems.filter(i=>{
-    if(calFilter==='tasks')return i.kind==='task';
+    if(calFilter==='all'||calFilter==='events')return true;
     if(calFilter==='flagged')return isItemFlagged(i,notes);
     return true;
   });
 
   if(!filtered.length){
-    const what={tasks:'in your plan',flagged:'flagged'}[calFilter]||'';
-    html+=`<div class="cal-empty">Nothing ${what} for ${monthLabel(calMonthYear)}.</div>`;
+    html+=`<div class="cal-empty">Nothing ${calFilter==='flagged'?'flagged ':''}on your calendar for ${monthLabel(calMonthYear)}.</div>`;
     container.innerHTML=html;
     return;
   }
@@ -3935,6 +4055,27 @@ init();
 })();
 </script>
 
+<!-- TASKS OVERVIEW PANEL (Today's Plan only) -->
+<div class="tasks-overlay" id="tasksOverlay" onclick="if(event.target===this)closePlanTasksPanel()">
+  <div class="tasks-panel">
+    <div class="tasks-header">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Tasks Overview
+      </h3>
+      <button class="close" onclick="closePlanTasksPanel()" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="tasks-toggle">
+      <span class="lbl">Group by</span>
+      <button class="active" id="ptDayBtn" onclick="setPlanTasksGroupBy('day')">Day</button>
+      <button id="ptProjBtn" onclick="setPlanTasksGroupBy('project')">Project</button>
+    </div>
+    <div class="tasks-body" id="tasksBody"></div>
+  </div>
+</div>
+
 <!-- MEETING ALERT TOAST -->
 <div class="meeting-alert" id="meetingAlert">
   <div class="meeting-alert-title" id="alertTitle"></div>
@@ -4131,6 +4272,74 @@ init();
 <style>
 /* Notepad FAB completely retired — Notes button now lives in the header */
 .notepad-fab{display:none !important}
+
+/* ===== TASKS OVERVIEW PANEL (Today's Plan only) ===== */
+.tasks-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:760;align-items:flex-start;justify-content:center;padding:60px 16px 16px;overflow-y:auto}
+.tasks-overlay.open{display:flex}
+@media(max-width:640px){.tasks-overlay{padding:0;align-items:stretch}}
+.tasks-panel{
+  background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  width:100%;max-width:520px;display:flex;flex-direction:column;
+  box-shadow:0 24px 64px rgba(0,0,0,.18);overflow:hidden;
+  animation:tasksIn .18s ease-out;max-height:calc(100vh - 80px);
+}
+@media(max-width:640px){.tasks-panel{max-width:none;border-radius:0;max-height:none;min-height:100vh}}
+@keyframes tasksIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.tasks-header{
+  padding:14px 18px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+}
+.tasks-header h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px}
+.tasks-header h3 svg{width:16px;height:16px;color:var(--c-work)}
+.tasks-header .close{background:none;border:none;cursor:pointer;color:var(--text-mid);padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+.tasks-header .close:hover{background:var(--surface-2);color:var(--text)}
+.tasks-toggle{
+  display:flex;gap:4px;padding:10px 16px;border-bottom:1px solid var(--surface-2);
+  align-items:center;flex-shrink:0;
+}
+.tasks-toggle .lbl{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-dim);margin-right:4px}
+.tasks-toggle button{
+  background:var(--surface-2);border:none;cursor:pointer;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text-dim);padding:6px 12px;border-radius:6px;transition:all .12s;
+}
+.tasks-toggle button.active{background:var(--text);color:var(--bg)}
+.tasks-toggle button:active{transform:scale(.96)}
+.tasks-body{flex:1;overflow-y:auto;padding:0}
+.tasks-grp-header{
+  font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);
+  padding:14px 18px 6px;display:flex;align-items:center;gap:8px;
+  border-top:1px solid var(--surface-2);
+}
+.tasks-grp-header:first-child{border-top:none}
+.tasks-grp-header .dot{width:7px;height:7px;border-radius:50%}
+.tasks-grp-header .day-num{font-size:14px;font-weight:800;color:var(--text);letter-spacing:0;text-transform:none;margin-right:6px}
+.tasks-grp-header .day-rel{color:var(--text-mid);font-weight:700}
+.tasks-grp-header.is-today .day-num{color:var(--c-work)}
+.tasks-grp-header .grp-cnt{margin-left:auto;font-weight:700;color:var(--text-dim);text-transform:none;letter-spacing:0}
+.tasks-row{
+  padding:10px 18px;display:flex;gap:10px;align-items:flex-start;
+  border-bottom:1px solid var(--surface-2);transition:background .1s;cursor:pointer;
+  border-left:3px solid transparent;
+}
+.tasks-row:hover{background:var(--surface-2)}
+.tasks-row.urgent{border-left-color:var(--overdue)}
+.tasks-row.done{opacity:.5}
+.tasks-row.done .tasks-row-text{text-decoration:line-through}
+.tasks-row-check{
+  width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border);flex-shrink:0;margin-top:2px;
+  display:flex;align-items:center;justify-content:center;background:none;cursor:pointer;
+  transition:all .12s;
+}
+.tasks-row-check.checked{background:var(--done);border-color:var(--done)}
+.tasks-row-check svg{width:10px;height:10px;color:#fff;opacity:0}
+.tasks-row-check.checked svg{opacity:1}
+.tasks-row-main{flex:1;min-width:0}
+.tasks-row-meta{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--text-dim);text-transform:uppercase}
+.tasks-row-meta .dtag{padding:1px 6px;border-radius:3px}
+.tasks-row-meta .urgent-tag{color:var(--overdue);background:rgba(220,38,38,.1);padding:1px 6px;border-radius:3px}
+.tasks-row-text{font-size:14px;font-weight:600;line-height:1.4;color:var(--text);word-break:break-word}
+.tasks-empty{padding:40px 24px;text-align:center;color:var(--text-dim);font-size:13px}
 /* Iframe tabs (Goals, Board) — let iframe use full width */
 body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
 .notepad-fab:hover{transform:translateY(-50%) scale(1.06);box-shadow:0 6px 28px rgba(0,0,0,.28)}
@@ -4349,9 +4558,9 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="12" cy="16" r="2" fill="currentColor"/></svg>
     <span>Day</span>
   </button>
-  <button onclick="mobileNavTo('cal')" id="mnCal" aria-label="Tasks">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-    <span>Tasks</span>
+  <button onclick="mobileNavTo('cal')" id="mnCal" aria-label="Calendar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    <span>Cal</span>
     <span class="mobile-nav-badge" id="mnCalBadge" style="display:none">0</span>
   </button>
   <button onclick="mobileNavTo('notes')" id="mnNotes" aria-label="Notes">
