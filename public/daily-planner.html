@@ -3269,39 +3269,78 @@ function planTaskRowClick(dateKey,taskId){
 
 /* ---- Task redate (change due date from Tasks panel) ---- */
 let _redatePopup=null;
+let _redateCtx=null; // {oldDateKey, taskId, viewYear, viewMonth}
 function closeTaskRedate(){
   if(_redatePopup){_redatePopup.remove();_redatePopup=null;}
+  _redateCtx=null;
   document.removeEventListener('click',_redateOutside,true);
 }
 function _redateOutside(e){
   if(_redatePopup&&!_redatePopup.contains(e.target))closeTaskRedate();
 }
-function openTaskRedate(btn,dateKey,taskId){
-  closeTaskRedate();
-  const rect=btn.getBoundingClientRect();
-  const popup=document.createElement('div');
-  popup.className='tasks-redate-popup';
-  popup.innerHTML=`
-    <label>Move to date</label>
-    <input type="date" id="redateInput" value="${dateKey}">
-    <div class="tasks-redate-actions">
-      <button onclick="closeTaskRedate()">Cancel</button>
-      <button class="primary" onclick="applyTaskRedate('${dateKey}','${taskId}')">Move</button>
-    </div>`;
-  document.body.appendChild(popup);
-  _redatePopup=popup;
-  // Position near button
-  const pw=popup.offsetWidth, ph=popup.offsetHeight;
-  let top=rect.bottom+4, left=rect.left;
-  if(left+pw>window.innerWidth)left=window.innerWidth-pw-8;
-  if(left<8)left=8;
-  if(top+ph>window.innerHeight)top=rect.top-ph-4;
-  popup.style.top=top+'px';popup.style.left=left+'px';
-  setTimeout(()=>document.addEventListener('click',_redateOutside,true),10);
+function _redateKey(y,m,d){return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+function _renderRedateCal(){
+  if(!_redatePopup||!_redateCtx)return;
+  const {viewYear:vy,viewMonth:vm,oldDateKey}=_redateCtx;
+  const todayStr=todayKey();
+  const first=new Date(vy,vm,1);
+  const startDay=first.getDay(); // 0=Sun
+  const daysInMonth=new Date(vy,vm+1,0).getDate();
+  const prevDays=new Date(vy,vm,0).getDate();
+  const monthLabel=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+
+  let html=`<div class="redate-header">
+    <button onclick="event.stopPropagation();_redateNav(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="redate-title">${monthLabel}</span>
+    <button onclick="event.stopPropagation();_redateNav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+  </div>`;
+  html+=`<div class="redate-dow">`;
+  ['S','M','T','W','T','F','S'].forEach(d=>html+=`<span>${d}</span>`);
+  html+=`</div><div class="redate-grid">`;
+
+  // Prev month trailing days
+  for(let i=startDay-1;i>=0;i--){
+    const d=prevDays-i;
+    const pm=vm===0?11:vm-1, py=vm===0?vy-1:vy;
+    const dk=_redateKey(py,pm,d);
+    const isPast=dk<todayStr;
+    html+=`<button class="redate-day other-month${isPast?' past':''}" ${isPast?'disabled':'onclick="event.stopPropagation();_redatePick(\''+dk+'\')"'}>${d}</button>`;
+  }
+  // Current month
+  for(let d=1;d<=daysInMonth;d++){
+    const dk=_redateKey(vy,vm,d);
+    const isToday=dk===todayStr;
+    const isSel=dk===oldDateKey;
+    const isPast=dk<todayStr;
+    let cls='redate-day';
+    if(isToday)cls+=' today';
+    if(isSel)cls+=' selected';
+    if(isPast)cls+=' past';
+    html+=`<button class="${cls}" ${isPast?'disabled':'onclick="event.stopPropagation();_redatePick(\''+dk+'\')"'}>${d}</button>`;
+  }
+  // Next month leading days
+  const totalCells=startDay+daysInMonth;
+  const remaining=totalCells%7===0?0:7-(totalCells%7);
+  for(let d=1;d<=remaining;d++){
+    const nm=vm===11?0:vm+1, ny=vm===11?vy+1:vy;
+    const dk=_redateKey(ny,nm,d);
+    html+=`<button class="redate-day other-month" onclick="event.stopPropagation();_redatePick('${dk}')">${d}</button>`;
+  }
+  html+=`</div>`;
+  html+=`<button class="redate-cancel" onclick="event.stopPropagation();closeTaskRedate()">Cancel</button>`;
+  _redatePopup.innerHTML=html;
 }
-function applyTaskRedate(oldDateKey,taskId){
-  const newDate=document.getElementById('redateInput').value;
-  if(!newDate||newDate===oldDateKey){closeTaskRedate();return;}
+function _redateNav(dir){
+  if(!_redateCtx)return;
+  _redateCtx.viewMonth+=dir;
+  if(_redateCtx.viewMonth>11){_redateCtx.viewMonth=0;_redateCtx.viewYear++;}
+  if(_redateCtx.viewMonth<0){_redateCtx.viewMonth=11;_redateCtx.viewYear--;}
+  _renderRedateCal();
+}
+function _redatePick(newDateKey){
+  if(!_redateCtx)return;
+  const {oldDateKey,taskId}=_redateCtx;
+  if(newDateKey===oldDateKey){closeTaskRedate();return;}
   const plan=loadPlan();
   const oldList=plan[oldDateKey]||[];
   const idx=oldList.findIndex(t=>t.id===taskId);
@@ -3309,12 +3348,31 @@ function applyTaskRedate(oldDateKey,taskId){
   const task=oldList.splice(idx,1)[0];
   if(!oldList.length)delete plan[oldDateKey];
   else plan[oldDateKey]=oldList;
-  if(!plan[newDate])plan[newDate]=[];
-  plan[newDate].push(task);
+  if(!plan[newDateKey])plan[newDateKey]=[];
+  plan[newDateKey].push(task);
   savePlan(plan);
   closeTaskRedate();
-  if(oldDateKey===viewKey()||newDate===viewKey())render();
+  if(oldDateKey===viewKey()||newDateKey===viewKey())render();
   renderPlanTasks();
+}
+function openTaskRedate(btn,dateKey,taskId){
+  closeTaskRedate();
+  const selDate=new Date(dateKey+'T12:00:00');
+  _redateCtx={oldDateKey:dateKey,taskId,viewYear:selDate.getFullYear(),viewMonth:selDate.getMonth()};
+  const popup=document.createElement('div');
+  popup.className='tasks-redate-popup';
+  document.body.appendChild(popup);
+  _redatePopup=popup;
+  _renderRedateCal();
+  // Position near button
+  const rect=btn.getBoundingClientRect();
+  const pw=popup.offsetWidth, ph=popup.offsetHeight;
+  let top=rect.bottom+4, left=rect.right-pw;
+  if(left<8)left=8;
+  if(left+pw>window.innerWidth)left=window.innerWidth-pw-8;
+  if(top+ph>window.innerHeight)top=rect.top-ph-4;
+  popup.style.top=top+'px';popup.style.left=left+'px';
+  setTimeout(()=>document.addEventListener('click',_redateOutside,true),10);
 }
 
 function buildCalItem(kind,src,startISO,data){return{kind,src,startISO,data}}
@@ -4532,25 +4590,34 @@ init();
 .tasks-row-redate:hover{color:var(--text);background:var(--surface-2)}
 .tasks-redate-popup{
   position:fixed;z-index:1200;background:var(--bg);border:1px solid var(--border);
-  border-radius:10px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.4);
-  display:flex;flex-direction:column;gap:8px;min-width:200px;
+  border-radius:12px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.45);
+  min-width:260px;max-width:290px;
 }
-.tasks-redate-popup label{font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px}
-.tasks-redate-popup input[type="date"]{
-  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;font-weight:500;
-  padding:8px 10px;border:1px solid var(--border);border-radius:6px;
-  background:var(--surface);color:var(--text);outline:none;width:100%;
-  color-scheme:dark;
+.redate-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.redate-header .redate-title{font-size:13px;font-weight:700;color:var(--text)}
+.redate-header button{background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px;border-radius:4px;display:flex;align-items:center}
+.redate-header button:hover{color:var(--text);background:var(--surface-2)}
+.redate-dow{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;margin-bottom:4px}
+.redate-dow span{font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;padding:4px 0}
+.redate-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.redate-day{
+  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:600;color:var(--text);border-radius:8px;
+  cursor:pointer;transition:all .1s;border:none;background:none;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
 }
-.tasks-redate-popup input[type="date"]:focus{border-color:var(--text)}
-.tasks-redate-actions{display:flex;gap:6px;justify-content:flex-end}
-.tasks-redate-actions button{
+.redate-day:hover{background:var(--surface-2)}
+.redate-day.other-month{color:var(--text-dim);opacity:.35}
+.redate-day.today{color:var(--text);background:var(--surface-2);font-weight:800}
+.redate-day.selected{background:var(--text);color:var(--bg);font-weight:800}
+.redate-day.past{opacity:.4;cursor:default}
+.redate-cancel{
+  display:block;width:100%;margin-top:8px;padding:6px;text-align:center;
   font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;
-  padding:6px 14px;border-radius:6px;cursor:pointer;border:1px solid var(--border);
-  background:none;color:var(--text-mid);transition:all .12s;
+  color:var(--text-dim);background:none;border:1px solid var(--border);border-radius:6px;
+  cursor:pointer;transition:all .12s;
 }
-.tasks-redate-actions button.primary{background:var(--text);color:var(--bg);border-color:transparent}
-.tasks-redate-actions button:hover{opacity:.85}
+.redate-cancel:hover{color:var(--text);background:var(--surface-2)}
 .tasks-empty{padding:40px 24px;text-align:center;color:var(--text-dim);font-size:13px}
 /* Iframe tabs (Goals, Board) — let iframe use full width */
 body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
