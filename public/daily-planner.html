@@ -3269,6 +3269,115 @@ function planTaskRowClick(dateKey,taskId){
   }
 }
 
+/* ---- Add task from Tasks panel ---- */
+let _tacState={slot:'afternoon',domain:'personal',date:todayKey(),viewYear:new Date().getFullYear(),viewMonth:new Date().getMonth()};
+function toggleTasksAddForm(){
+  const form=document.getElementById('tasksAddForm');
+  const isOpen=form.style.display!=='none';
+  form.style.display=isOpen?'none':'block';
+  if(!isOpen){
+    _tacState={slot:'afternoon',domain:'personal',date:todayKey(),viewYear:new Date().getFullYear(),viewMonth:new Date().getMonth()};
+    document.getElementById('tasksAddText').value='';
+    renderTasksAddForm();
+    setTimeout(()=>document.getElementById('tasksAddText').focus(),50);
+  }
+}
+function _tacDateKey(y,m,d){return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+function renderTasksAddForm(){
+  // Slots
+  const slotsEl=document.getElementById('tasksAddSlots');
+  slotsEl.innerHTML=['morning','afternoon','night'].map(s=>{
+    const label=s.charAt(0).toUpperCase()+s.slice(1);
+    return `<button class="tasks-add-slot${_tacState.slot===s?' active':''}" onclick="_tacSetSlot('${s}')">${label}</button>`;
+  }).join('');
+  // Projects
+  const projsEl=document.getElementById('tasksAddProjs');
+  const domOrder=['work','ezrk','vt','personal'];
+  projsEl.innerHTML=domOrder.map(k=>{
+    const d=D[k];
+    const isActive=_tacState.domain===k;
+    return `<button class="tasks-add-proj${isActive?' active':''}" style="${isActive?'--pill-bg:'+d.hex:''}" onclick="_tacSetDomain('${k}')"><span class="dot" style="background:${d.hex}"></span>${d.name}</button>`;
+  }).join('');
+  // Calendar
+  renderTasksAddCal();
+}
+function renderTasksAddCal(){
+  const el=document.getElementById('tasksAddCal');
+  const {viewYear:vy,viewMonth:vm,date:selDate}=_tacState;
+  const todayStr=todayKey();
+  const first=new Date(vy,vm,1);
+  const startDay=first.getDay();
+  const daysInMonth=new Date(vy,vm+1,0).getDate();
+  const prevDays=new Date(vy,vm,0).getDate();
+  const monthLabel=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+
+  let html=`<div class="tac-header">
+    <button onclick="_tacNav(-1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="tac-title">${monthLabel}</span>
+    <button onclick="_tacNav(1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+  </div>`;
+  html+=`<div class="tac-dow">`;
+  ['S','M','T','W','T','F','S'].forEach(d=>html+=`<span>${d}</span>`);
+  html+=`</div><div class="tac-grid">`;
+
+  for(let i=startDay-1;i>=0;i--){
+    const d=prevDays-i;
+    const pm=vm===0?11:vm-1,py=vm===0?vy-1:vy;
+    const dk=_tacDateKey(py,pm,d);
+    const isPast=dk<todayStr;
+    html+=`<button class="tac-day other-month${isPast?' past':''}" ${isPast?'disabled':'onclick="_tacPickDate(\''+dk+'\')"'}>${d}</button>`;
+  }
+  for(let d=1;d<=daysInMonth;d++){
+    const dk=_tacDateKey(vy,vm,d);
+    const isToday=dk===todayStr;
+    const isSel=dk===selDate;
+    const isPast=dk<todayStr;
+    let cls='tac-day';
+    if(isToday)cls+=' today';
+    if(isSel)cls+=' selected';
+    if(isPast)cls+=' past';
+    html+=`<button class="${cls}" ${isPast?'disabled':'onclick="_tacPickDate(\''+dk+'\')"'}>${d}</button>`;
+  }
+  const totalCells=startDay+daysInMonth;
+  const remaining=totalCells%7===0?0:7-(totalCells%7);
+  for(let d=1;d<=remaining;d++){
+    const nm=vm===11?0:vm+1,ny=vm===11?vy+1:vy;
+    const dk=_tacDateKey(ny,nm,d);
+    html+=`<button class="tac-day other-month" onclick="_tacPickDate('${dk}')">${d}</button>`;
+  }
+  html+=`</div>`;
+  el.innerHTML=html;
+}
+function _tacNav(dir){
+  _tacState.viewMonth+=dir;
+  if(_tacState.viewMonth>11){_tacState.viewMonth=0;_tacState.viewYear++;}
+  if(_tacState.viewMonth<0){_tacState.viewMonth=11;_tacState.viewYear--;}
+  renderTasksAddCal();
+}
+function _tacPickDate(dk){_tacState.date=dk;renderTasksAddCal();}
+function _tacSetSlot(s){_tacState.slot=s;renderTasksAddForm();}
+function _tacSetDomain(d){_tacState.domain=d;renderTasksAddForm();}
+
+function submitNewPanelTask(){
+  const text=document.getElementById('tasksAddText').value.trim();
+  if(!text)return;
+  const {slot,domain,date}=_tacState;
+  const plan=loadPlan();
+  if(!plan[date])plan[date]=[];
+  const id=uid();
+  plan[date].push({id,text,domain,slot,originalSlot:slot,done:false,shifted:false,skipped:false,urgent:false,due:'',timeSpent:0,createdAt:new Date().toISOString()});
+  savePlan(plan);
+  syncToGoals({id,text,domain,due:date});
+  // Reset form
+  document.getElementById('tasksAddText').value='';
+  _tacState.date=todayKey();_tacState.slot='afternoon';
+  renderTasksAddForm();
+  // If viewing that date, re-render planner
+  if(date===viewKey())render();
+  renderPlanTasks();
+  document.getElementById('tasksAddText').focus();
+}
+
 /* ---- Task redate (change due date from Tasks panel) ---- */
 let _redatePopup=null;
 let _redateCtx=null; // {oldDateKey, taskId, viewYear, viewMonth}
@@ -4270,9 +4379,26 @@ init();
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Tasks Overview
       </h3>
-      <button class="close" onclick="closePlanTasksPanel()" aria-label="Close">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="tasks-add-btn" onclick="toggleTasksAddForm()" aria-label="Add task" title="Add task">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="close" onclick="closePlanTasksPanel()" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="tasks-add-form" id="tasksAddForm" style="display:none">
+      <input type="text" id="tasksAddText" placeholder="What needs to get done?" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();submitNewPanelTask()}">
+      <div class="tasks-add-row">
+        <div class="tasks-add-slots" id="tasksAddSlots"></div>
+        <div class="tasks-add-projs" id="tasksAddProjs"></div>
+      </div>
+      <div class="tasks-add-cal" id="tasksAddCal"></div>
+      <div class="tasks-add-actions">
+        <button onclick="toggleTasksAddForm()">Cancel</button>
+        <button class="primary" onclick="submitNewPanelTask()">Add</button>
+      </div>
     </div>
     <div class="tasks-toggle">
       <span class="lbl">Show</span>
@@ -4518,6 +4644,63 @@ init();
 .tasks-header h3 svg{width:16px;height:16px;color:var(--c-work)}
 .tasks-header .close{background:none;border:none;cursor:pointer;color:var(--text-mid);padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center}
 .tasks-header .close:hover{background:var(--surface-2);color:var(--text)}
+.tasks-add-btn{background:none;border:none;cursor:pointer;color:var(--text-mid);padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+.tasks-add-btn:hover{background:var(--surface-2);color:var(--text)}
+.tasks-add-form{
+  padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface-2);
+}
+.tasks-add-form input[type="text"]{
+  width:100%;font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;font-weight:600;
+  padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;
+  background:var(--surface);color:var(--text);outline:none;margin-bottom:10px;
+}
+.tasks-add-form input[type="text"]:focus{border-color:var(--text)}
+.tasks-add-form input[type="text"]::placeholder{color:var(--text-dim);font-weight:500}
+.tasks-add-row{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.tasks-add-slots{display:flex;gap:4px}
+.tasks-add-slot{
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  padding:6px 10px;border-radius:6px;background:var(--surface);border:1.5px solid var(--border);
+  color:var(--text-dim);cursor:pointer;transition:all .12s;
+}
+.tasks-add-slot.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+.tasks-add-projs{display:flex;gap:4px}
+.tasks-add-proj{
+  display:inline-flex;align-items:center;gap:4px;
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  padding:6px 10px;border-radius:6px;background:var(--surface);border:1.5px solid var(--border);
+  color:var(--text-dim);cursor:pointer;transition:all .12s;
+}
+.tasks-add-proj .dot{width:6px;height:6px;border-radius:50%}
+.tasks-add-proj.active{color:#fff;border-color:transparent;background:var(--pill-bg,var(--text))}
+.tasks-add-proj.active .dot{background:#fff !important}
+.tasks-add-cal{margin-bottom:10px}
+.tasks-add-cal .tac-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.tasks-add-cal .tac-title{font-size:12px;font-weight:700;color:var(--text)}
+.tasks-add-cal .tac-header button{background:none;border:none;cursor:pointer;color:var(--text-dim);padding:2px 4px;border-radius:4px;display:flex;align-items:center}
+.tasks-add-cal .tac-header button:hover{color:var(--text);background:var(--surface)}
+.tasks-add-cal .tac-dow{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;margin-bottom:2px}
+.tasks-add-cal .tac-dow span{font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;padding:3px 0}
+.tasks-add-cal .tac-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.tasks-add-cal .tac-day{
+  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:600;color:var(--text);border-radius:6px;
+  cursor:pointer;transition:all .1s;border:none;background:none;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+.tasks-add-cal .tac-day:hover{background:var(--surface)}
+.tasks-add-cal .tac-day.other-month{color:var(--text-dim);opacity:.35}
+.tasks-add-cal .tac-day.today{color:var(--text);background:var(--surface);font-weight:800}
+.tasks-add-cal .tac-day.selected{background:var(--text);color:var(--bg);font-weight:800}
+.tasks-add-cal .tac-day.past{opacity:.3;cursor:default}
+.tasks-add-actions{display:flex;gap:6px;justify-content:flex-end}
+.tasks-add-actions button{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:12px;font-weight:700;
+  padding:8px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--border);
+  background:none;color:var(--text-mid);transition:all .12s;
+}
+.tasks-add-actions button.primary{background:var(--text);color:var(--bg);border-color:transparent}
+.tasks-add-actions button:hover{opacity:.85}
 .tasks-toggle{
   display:flex;gap:4px;padding:10px 16px;border-bottom:1px solid var(--surface-2);
   align-items:center;flex-shrink:0;
