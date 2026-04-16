@@ -75,7 +75,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 .plan-layout{display:flex;gap:20px;align-items:flex-start}
 .plan-layout .timeline{flex:1;min-width:0}
 .cal-sidebar{
-  width:320px;background:var(--surface);border:1px solid var(--border);
+  width:440px;background:var(--surface);border:1px solid var(--border);
   border-radius:12px;overflow:auto;max-height:calc(100vh - 40px);
   position:fixed;right:20px;top:20px;z-index:700;
   display:none;box-shadow:0 12px 48px rgba(0,0,0,.15);
@@ -107,6 +107,35 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 .cal-filter-pill.active{background:var(--text);color:var(--bg)}
 .cal-filter-pill:active{transform:scale(.96)}
 .cal-filter-pill .cnt{font-size:9px;opacity:.7}
+
+/* Group-by toggle (Day / Project) */
+.cal-group-toggle{
+  display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--surface-2);
+  align-items:center;
+}
+.cal-group-toggle .lbl{
+  font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-dim);margin-right:4px;
+}
+.cal-group-toggle button{
+  background:var(--surface-2);border:none;cursor:pointer;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text-dim);padding:6px 12px;border-radius:6px;transition:all .12s;
+  -webkit-appearance:none;
+}
+.cal-group-toggle button.active{background:var(--text);color:var(--bg)}
+.cal-group-toggle button:active{transform:scale(.96)}
+
+/* Date / project group headers */
+.cal-grp-header{
+  font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);
+  padding:14px 16px 6px;display:flex;align-items:center;gap:8px;
+  border-top:1px solid var(--surface-2);
+}
+.cal-grp-header:first-child{border-top:none}
+.cal-grp-header .dot{width:7px;height:7px;border-radius:50%}
+.cal-grp-header .day-num{font-size:14px;font-weight:800;color:var(--text);letter-spacing:0;text-transform:none;margin-right:6px}
+.cal-grp-header .day-rel{color:var(--text-mid);font-weight:700;letter-spacing:.6px}
+.cal-grp-header.is-today .day-num{color:var(--c-work)}
 
 /* Calendar event items — cleaner, color-coded left border */
 .cal-event{
@@ -3007,118 +3036,78 @@ function calDayClick(dk){
 }
 
 let calFilter='all'; // 'all' | 'tasks' | 'events'
+let calGroupBy='day'; // 'day' | 'project'
 
 function setCalFilter(f){calFilter=f;renderCalEvents();renderCalMonth()}
+function setCalGroupBy(g){calGroupBy=g;renderCalEvents()}
+
+function buildCalItem(kind,src,startISO,data){return{kind,src,startISO,data}}
+
+function collectMonthItems(){
+  // Collect items for the visible month (calMonthYear) — both events and tasks
+  const cache=loadCalCache();
+  const plan=loadPlan();
+  const {month,year}=calMonthYear;
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const items=[];
+  for(let d=1;d<=daysInMonth;d++){
+    const dk=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    (cache[dk]||[]).forEach(ev=>{
+      const src=(ev.cal||'').toLowerCase();
+      items.push(buildCalItem('event',src||'personal',ev.startISO,ev));
+    });
+    (plan[dk]||[]).filter(t=>!t.skipped).forEach(t=>{
+      const slot=t.slot||'morning';
+      const hour=slot==='afternoon'?13:slot==='night'?18:9;
+      const pseudoISO=`${dk}T${String(hour).padStart(2,'0')}:00:00-05:00`;
+      items.push(buildCalItem('task',t.domain||'personal',t.startISO||pseudoISO,t));
+    });
+  }
+  items.sort((a,b)=>(a.startISO||'').localeCompare(b.startISO||''));
+  return items;
+}
 
 function renderCalEvents(){
-  const cache=loadCalCache();
-  const events=cache[viewKey()]||[];
   const container=document.getElementById('calEvents');
   const notes=loadCalNotes();
+  const allItems=collectMonthItems();
 
-  // Get plan tasks for this date
-  const plan=loadPlan();
-  const tasks=(plan[viewKey()]||[]).filter(t=>!t.skipped);
+  const taskCount=allItems.filter(i=>i.kind==='task').length;
+  const eventCount=allItems.filter(i=>i.kind==='event').length;
 
-  // Build unified items list with type marker
-  const items=[];
-  events.forEach(ev=>{
-    const src=(ev.cal||'').toLowerCase(); // 'personal','tweg','partiful'
-    items.push({kind:'event',src:src||'personal',startISO:ev.startISO,data:ev});
-  });
-  tasks.forEach(t=>{
-    // Pseudo-start time: morning=9, afternoon=13, night=18
-    const slot=t.slot||'morning';
-    const hour=slot==='afternoon'?13:slot==='night'?18:9;
-    const [y,mo,da]=viewKey().split('-');
-    const pseudoISO=`${y}-${mo}-${da}T${String(hour).padStart(2,'0')}:00:00-05:00`;
-    items.push({kind:'task',src:'task',startISO:t.startISO||pseudoISO,data:t});
-  });
+  // Filter pills
+  let html=`<div class="cal-filter">
+    <button class="cal-filter-pill${calFilter==='all'?' active':''}" onclick="setCalFilter('all')">All <span class="cnt">${allItems.length}</span></button>
+    <button class="cal-filter-pill${calFilter==='events'?' active':''}" onclick="setCalFilter('events')">Events <span class="cnt">${eventCount}</span></button>
+    <button class="cal-filter-pill${calFilter==='tasks'?' active':''}" onclick="setCalFilter('tasks')">Tasks <span class="cnt">${taskCount}</span></button>
+  </div>`;
+
+  // Group toggle
+  html+=`<div class="cal-group-toggle">
+    <span class="lbl">Group by</span>
+    <button class="${calGroupBy==='day'?'active':''}" onclick="setCalGroupBy('day')">Day</button>
+    <button class="${calGroupBy==='project'?'active':''}" onclick="setCalGroupBy('project')">${calFilter==='events'?'Calendar':'Project'}</button>
+  </div>`;
 
   // Apply filter
-  const filtered=items.filter(i=>{
+  const filtered=allItems.filter(i=>{
     if(calFilter==='all')return true;
     if(calFilter==='tasks')return i.kind==='task';
     if(calFilter==='events')return i.kind==='event';
     return true;
   });
 
-  // Sort by startISO
-  filtered.sort((a,b)=>(a.startISO||'').localeCompare(b.startISO||''));
-
-  const taskCount=items.filter(i=>i.kind==='task').length;
-  const eventCount=items.filter(i=>i.kind==='event').length;
-
-  // Filter pills
-  let html=`<div class="cal-filter">
-    <button class="cal-filter-pill${calFilter==='all'?' active':''}" onclick="setCalFilter('all')">All <span class="cnt">${items.length}</span></button>
-    <button class="cal-filter-pill${calFilter==='events'?' active':''}" onclick="setCalFilter('events')">Events <span class="cnt">${eventCount}</span></button>
-    <button class="cal-filter-pill${calFilter==='tasks'?' active':''}" onclick="setCalFilter('tasks')">Tasks <span class="cnt">${taskCount}</span></button>
-  </div>`;
-
   if(!filtered.length){
-    html+=`<div class="cal-empty">Nothing ${calFilter==='all'?'scheduled':calFilter==='tasks'?'in your plan':'on your calendar'} for this day.</div>`;
+    html+=`<div class="cal-empty">Nothing ${calFilter==='tasks'?'in your plan':calFilter==='events'?'on your calendar':''} for ${monthLabel(calMonthYear)}.</div>`;
     container.innerHTML=html;
     return;
   }
 
-  filtered.forEach(it=>{
-    if(it.kind==='event'){
-      const ev=it.data;
-      const flagged=!!notes[ev.id+'_flag'];
-      const done=!!notes[ev.id+'_done'];
-      const noteText=notes[ev.id]||'';
-
-      // Countdown
-      let countdownHTML='';
-      if(viewKey()===todayKey()&&ev.startISO){
-        const diff=new Date(ev.startISO).getTime()-Date.now();
-        if(diff>0&&diff<3600000){
-          const mins=Math.ceil(diff/60000);
-          countdownHTML=`<span class="cal-countdown">${mins}m</span>`;
-        } else if(diff>0&&diff<7200000){
-          const mins=Math.ceil(diff/60000);
-          countdownHTML=`<span class="cal-countdown dim">${mins}m</span>`;
-        }
-      }
-
-      const srcClass='src-'+(it.src||'personal');
-      html+=`
-        <div class="cal-event ${srcClass}${flagged?' cal-flagged':''}${done?' cal-done-ev':''}">
-          <div class="cal-event-row1">
-            <div class="cal-event-time">${ev.time}${countdownHTML}</div>
-            ${ev.cal?`<span class="cal-event-src">${esc(ev.cal)}</span>`:''}
-          </div>
-          <div class="cal-event-title">${esc(ev.summary)}</div>
-          ${ev.location?`<div class="cal-event-loc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>${esc(ev.location)}</div>`:''}
-          <div class="cal-event-actions">
-            <button class="cal-note-btn${flagged?' active':''}" onclick="toggleCalFlag('${ev.id}','${esc(ev.summary)}')">
-              <svg viewBox="0 0 24 24" fill="${flagged?'currentColor':'none'}" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-              ${flagged?'Flagged':'Notes'}
-            </button>
-            ${flagged?`<label class="cal-done-label${done?' done':''}"><input type="checkbox" ${done?'checked':''} onchange="toggleCalNoteDone('${ev.id}',this.checked)"> Done</label>`:''}
-          </div>
-          ${flagged?`<div class="cal-notes-area open">
-            <textarea class="cal-notes-textarea" placeholder="Meeting notes, action items, follow-ups..."
-              oninput="saveCalNote('${ev.id}',this.value)">${noteText}</textarea>
-          </div>`:''}
-        </div>`;
-    } else {
-      // Task
-      const t=it.data;
-      const d=(D[t.domain]||D.personal).name;
-      const slot=t.slot||'morning';
-      const slotLabel=slot.charAt(0).toUpperCase()+slot.slice(1);
-      html+=`
-        <div class="cal-event src-task${t.urgent?' is-urgent':''}${t.done?' done-task':''}">
-          <div class="cal-event-row1">
-            <div class="cal-event-time">${slotLabel}</div>
-            <span class="cal-event-src">${t.urgent?'Urgent':'Task'} · ${esc(d)}</span>
-          </div>
-          <div class="cal-event-title">${esc(t.text)}</div>
-        </div>`;
-    }
-  });
+  if(calGroupBy==='day'){
+    html+=renderGroupedByDay(filtered,notes);
+  } else {
+    html+=renderGroupedByProject(filtered,notes);
+  }
 
   // Settings row
   html+=`<div class="cal-settings-row">
@@ -3128,6 +3117,151 @@ function renderCalEvents(){
   </div>`;
 
   container.innerHTML=html;
+}
+
+function monthLabel(my){
+  const m=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return m[my.month]+' '+my.year;
+}
+
+function dateKeyOfItem(it){
+  if(!it.startISO)return '';
+  return it.startISO.slice(0,10);
+}
+
+function renderGroupedByDay(items,notes){
+  // Group items by date key
+  const groups={};
+  items.forEach(i=>{
+    const dk=dateKeyOfItem(i);
+    if(!dk)return;
+    if(!groups[dk])groups[dk]=[];
+    groups[dk].push(i);
+  });
+  const today=todayKey();
+  let html='';
+  Object.keys(groups).sort().forEach(dk=>{
+    const d=new Date(dk+'T12:00:00');
+    const dayName=d.toLocaleDateString('en-US',{weekday:'short'});
+    const dayDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const isToday=dk===today;
+    const rel=isToday?'Today':(dk<today?'':' · '+dayName);
+    html+=`<div class="cal-grp-header${isToday?' is-today':''}">
+      <span class="day-num">${d.getDate()}</span>
+      <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':''}</span>
+    </div>`;
+    groups[dk].forEach(it=>{html+=renderCalItem(it,notes)});
+  });
+  return html;
+}
+
+function renderGroupedByProject(items,notes){
+  // For tasks: group by domain. For events: group by calendar source.
+  const groups={};
+  items.forEach(i=>{
+    let key;
+    if(i.kind==='task'){
+      const dom=i.data.domain||'personal';
+      const dn=(D[dom]||D.personal).name;
+      key=dn;
+    } else {
+      key=i.data.cal||'Personal';
+    }
+    if(!groups[key])groups[key]=[];
+    groups[key].push(i);
+  });
+  let html='';
+  // Order: certain known names first
+  const projOrder=['ECM','EZRK Apps','VitalTouch','Personal','TWEG','Partiful'];
+  const keys=Object.keys(groups).sort((a,b)=>{
+    const ai=projOrder.indexOf(a), bi=projOrder.indexOf(b);
+    if(ai!==-1&&bi!==-1)return ai-bi;
+    if(ai!==-1)return -1;
+    if(bi!==-1)return 1;
+    return a.localeCompare(b);
+  });
+  keys.forEach(k=>{
+    const sample=groups[k][0];
+    const srcClass='src-'+((sample.kind==='task'?(sample.data.domain||'personal'):(sample.src||'personal'))).toLowerCase();
+    let dotColor='#888';
+    if(sample.kind==='task'){
+      const c=D[sample.data.domain||'personal']||D.personal;
+      dotColor=c.color||'#888';
+    } else {
+      // Map source to color
+      const m={tweg:'#2563eb',partiful:'#ec4899',personal:'#7c3aed'};
+      dotColor=m[sample.src]||'#7c3aed';
+    }
+    html+=`<div class="cal-grp-header"><span class="dot" style="background:${dotColor}"></span>${esc(k)} <span style="margin-left:auto;font-weight:700;color:var(--text-dim);text-transform:none;letter-spacing:0">${groups[k].length}</span></div>`;
+    groups[k].forEach(it=>{html+=renderCalItem(it,notes,true)});
+  });
+  return html;
+}
+
+function renderCalItem(it,notes,showDate){
+  if(it.kind==='event'){
+    const ev=it.data;
+    const flagged=!!notes[ev.id+'_flag'];
+    const done=!!notes[ev.id+'_done'];
+    const noteText=notes[ev.id]||'';
+    const dk=dateKeyOfItem(it);
+    let countdownHTML='';
+    if(dk===todayKey()&&ev.startISO){
+      const diff=new Date(ev.startISO).getTime()-Date.now();
+      if(diff>0&&diff<3600000){
+        const mins=Math.ceil(diff/60000);
+        countdownHTML=`<span class="cal-countdown">${mins}m</span>`;
+      } else if(diff>0&&diff<7200000){
+        const mins=Math.ceil(diff/60000);
+        countdownHTML=`<span class="cal-countdown dim">${mins}m</span>`;
+      }
+    }
+    const srcClass='src-'+(it.src||'personal');
+    let dateLabel='';
+    if(showDate&&dk){
+      const d=new Date(dk+'T12:00:00');
+      dateLabel=' · '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    }
+    return `
+      <div class="cal-event ${srcClass}${flagged?' cal-flagged':''}${done?' cal-done-ev':''}">
+        <div class="cal-event-row1">
+          <div class="cal-event-time">${ev.time||''}${countdownHTML}${dateLabel}</div>
+          ${ev.cal?`<span class="cal-event-src">${esc(ev.cal)}</span>`:''}
+        </div>
+        <div class="cal-event-title">${esc(ev.summary)}</div>
+        ${ev.location?`<div class="cal-event-loc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>${esc(ev.location)}</div>`:''}
+        <div class="cal-event-actions">
+          <button class="cal-note-btn${flagged?' active':''}" onclick="toggleCalFlag('${ev.id}','${esc(ev.summary)}')">
+            <svg viewBox="0 0 24 24" fill="${flagged?'currentColor':'none'}" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+            ${flagged?'Flagged':'Notes'}
+          </button>
+          ${flagged?`<label class="cal-done-label${done?' done':''}"><input type="checkbox" ${done?'checked':''} onchange="toggleCalNoteDone('${ev.id}',this.checked)"> Done</label>`:''}
+        </div>
+        ${flagged?`<div class="cal-notes-area open">
+          <textarea class="cal-notes-textarea" placeholder="Meeting notes, action items, follow-ups..."
+            oninput="saveCalNote('${ev.id}',this.value)">${noteText}</textarea>
+        </div>`:''}
+      </div>`;
+  } else {
+    const t=it.data;
+    const dom=(D[t.domain]||D.personal).name;
+    const slot=t.slot||'morning';
+    const slotLabel=slot.charAt(0).toUpperCase()+slot.slice(1);
+    const dk=dateKeyOfItem(it);
+    let dateLabel='';
+    if(showDate&&dk){
+      const d=new Date(dk+'T12:00:00');
+      dateLabel=' · '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    }
+    return `
+      <div class="cal-event src-task${t.urgent?' is-urgent':''}${t.done?' done-task':''}">
+        <div class="cal-event-row1">
+          <div class="cal-event-time">${slotLabel}${dateLabel}</div>
+          <span class="cal-event-src">${t.urgent?'Urgent':'Task'} · ${esc(dom)}</span>
+        </div>
+        <div class="cal-event-title">${esc(t.text)}</div>
+      </div>`;
+  }
 }
 
 function toggleCalFlag(evId,summary){

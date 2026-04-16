@@ -84,10 +84,12 @@ body.embed{padding:14px 12px 100px}
 .col-body{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:50px}
 
 /* GOAL CARD */
-.goal-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:all .12s;display:flex;flex-direction:column;gap:10px}
+.goal-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:grab;transition:all .12s;display:flex;flex-direction:column;gap:10px;user-select:none;-webkit-user-select:none}
 .goal-card:hover{border-color:#bbb;transform:translateY(-1px)}
-.goal-card:active{transform:scale(.99)}
+.goal-card:active{transform:scale(.99);cursor:grabbing}
+.goal-card.dragging{opacity:.4;cursor:grabbing}
 .goal-card.completed{opacity:.6;background:rgba(22,163,74,.04);border-color:rgba(22,163,74,.25)}
+.col-body.drag-over{background:rgba(37,99,235,.06);outline:2px dashed rgba(37,99,235,.4);outline-offset:-6px;border-radius:10px}
 .goal-card-title{font-size:15px;font-weight:700;line-height:1.35;color:var(--text);word-break:break-word;overflow-wrap:break-word}
 .goal-card.completed .goal-card-title{text-decoration:line-through;color:var(--text-mid)}
 .goal-completed-date{font-size:10px;font-weight:700;color:var(--done-green);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:4px}
@@ -487,7 +489,7 @@ function renderBoard(){
             <button class="danger" onclick="event.stopPropagation();deleteColumn('${col.id}')">Delete column</button>
           </div>
         </div>
-        <div class="col-body">
+        <div class="col-body" data-col-id="${col.id}" ondragover="colDragOver(event,this)" ondragleave="colDragLeave(event,this)" ondrop="colDrop(event,'${col.id}')">
           ${colGoals.map(g=>renderGoalCard(g,col)).join('')}
           <button class="add-card" onclick="addGoal('${col.id}')">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -522,7 +524,7 @@ function renderGoalCard(g,col){
   }
 
   return `
-    <div class="goal-card${goalDone?' completed':''}" style="--col-color:${col.color}" onclick="openDetail('${g.id}')">
+    <div class="goal-card${goalDone?' completed':''}" style="--col-color:${col.color}" draggable="true" data-goal-id="${g.id}" onclick="goalCardClick(event,'${g.id}')" ondragstart="goalDragStart(event,'${g.id}')" ondragend="goalDragEnd(event)">
       <div class="goal-card-title">${esc(g.title||'(untitled)')}</div>
       ${total===0
         ? (goalDone?'':'<div class="goal-empty-action">No action items added</div>')
@@ -544,6 +546,51 @@ function updateMeta(board){
   const totalDone=board.goals.filter(g=>isGoalDone(g)).length;
   const el=document.getElementById('boardMeta');
   el.textContent=totalGoals?`${totalGoals} goal${totalGoals===1?'':'s'} · ${totalDone} fully done`:'Tap "+ Column" or "Add Goal" to start';
+}
+
+// ===== DRAG-AND-DROP =====
+let dragGoalId=null;
+let dragMoved=false;
+
+function goalDragStart(e,goalId){
+  dragGoalId=goalId;
+  dragMoved=false;
+  e.dataTransfer.effectAllowed='move';
+  try{e.dataTransfer.setData('text/plain',goalId)}catch(err){}
+  e.currentTarget.classList.add('dragging');
+}
+function goalDragEnd(e){
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.col-body.drag-over').forEach(el=>el.classList.remove('drag-over'));
+  setTimeout(()=>{dragGoalId=null;dragMoved=false},100);
+}
+function colDragOver(e,el){
+  if(!dragGoalId)return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  el.classList.add('drag-over');
+}
+function colDragLeave(e,el){
+  // Only remove if leaving the col-body, not entering a child
+  if(el.contains(e.relatedTarget))return;
+  el.classList.remove('drag-over');
+}
+function colDrop(e,colId){
+  e.preventDefault();
+  document.querySelectorAll('.col-body.drag-over').forEach(el=>el.classList.remove('drag-over'));
+  if(!dragGoalId)return;
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===dragGoalId);
+  if(!g||g.columnId===colId){dragGoalId=null;return}
+  g.columnId=colId;
+  dragMoved=true;
+  saveBoard(board);renderBoard();
+}
+
+function goalCardClick(e,goalId){
+  // Suppress click after drag to prevent opening detail
+  if(dragMoved){dragMoved=false;return}
+  openDetail(goalId);
 }
 
 function addGoal(colId){
