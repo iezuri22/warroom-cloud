@@ -137,10 +137,26 @@ body.embed{padding:14px 12px 100px}
 /* ACTION ITEMS — wrap text properly, no horizontal scroll */
 .action-list{display:flex;flex-direction:column;gap:0}
 .action-item{
-  display:flex;align-items:flex-start;gap:10px;padding:12px 4px;
-  border-bottom:1px solid var(--surface-2);
+  display:flex;align-items:flex-start;gap:8px;padding:12px 4px;
+  border-bottom:1px solid var(--surface-2);position:relative;
+  transition:background .12s;
 }
 .action-item:last-child{border-bottom:none}
+.action-item.dragging{opacity:.4;background:var(--surface-2)}
+.action-item.drop-above{border-top:2px solid var(--col-color,#888);margin-top:-2px}
+.action-item.drop-below{border-bottom:2px solid var(--col-color,#888);margin-bottom:-2px}
+.action-handle{
+  display:flex;align-items:center;justify-content:center;
+  width:18px;height:24px;flex-shrink:0;cursor:grab;
+  color:var(--text-dim);opacity:0;transition:opacity .12s;
+  margin-top:1px;-webkit-user-select:none;user-select:none;
+}
+.action-item:hover .action-handle{opacity:.6}
+.action-handle:hover{opacity:1 !important}
+.action-handle:active{cursor:grabbing}
+.action-handle svg{width:14px;height:14px;pointer-events:none}
+.action-item.done .action-handle{display:none}
+@media(hover:none){.action-handle{opacity:.5}}
 .action-check{
   width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);
   cursor:pointer;flex-shrink:0;margin-top:1px;
@@ -649,7 +665,10 @@ function renderActions(){
     }
     const metaHTML=metaParts.length?`<div class="action-meta">${metaParts.join('')}</div>`:'';
     return `
-    <div class="action-item${i.done?' done':''}" data-id="${i.id}">
+    <div class="action-item${i.done?' done':''}" data-id="${i.id}" data-done="${i.done?'1':'0'}" ondragover="actionDragOver(event,this)" ondragleave="actionDragLeave(event,this)" ondrop="actionDrop(event,this)">
+      <span class="action-handle" draggable="${i.done?'false':'true'}" ondragstart="actionDragStart(event,'${i.id}',this)" ondragend="actionDragEnd(event)" title="Drag to reorder">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+      </span>
       <button class="action-check" onclick="toggleAction('${i.id}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </button>
@@ -667,6 +686,62 @@ function renderActions(){
       </div>
     </div>`;
   }).join('');
+}
+
+// ===== ACTION ITEM REORDERING =====
+let dragActionId=null;
+
+function actionDragStart(e,actionId,handle){
+  dragActionId=actionId;
+  const li=handle.closest('.action-item');
+  if(li)li.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move';
+  try{e.dataTransfer.setData('text/plain',actionId)}catch{}
+}
+function actionDragEnd(e){
+  document.querySelectorAll('.action-item.dragging,.action-item.drop-above,.action-item.drop-below').forEach(el=>{
+    el.classList.remove('dragging','drop-above','drop-below');
+  });
+  setTimeout(()=>{dragActionId=null},80);
+}
+function actionDragOver(e,el){
+  if(!dragActionId)return;
+  if(el.dataset.id===dragActionId)return;
+  if(el.dataset.done==='1')return; // can't drop into done section
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  // Decide if drop will be above or below based on cursor position
+  const rect=el.getBoundingClientRect();
+  const above=(e.clientY-rect.top)<rect.height/2;
+  el.classList.toggle('drop-above',above);
+  el.classList.toggle('drop-below',!above);
+}
+function actionDragLeave(e,el){
+  if(el.contains(e.relatedTarget))return;
+  el.classList.remove('drop-above','drop-below');
+}
+function actionDrop(e,el){
+  if(!dragActionId)return;
+  if(el.dataset.id===dragActionId){actionDragEnd(e);return}
+  if(el.dataset.done==='1'){actionDragEnd(e);return}
+  e.preventDefault();
+  const rect=el.getBoundingClientRect();
+  const above=(e.clientY-rect.top)<rect.height/2;
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===currentGoalId);
+  if(!g||!g.actionItems){actionDragEnd(e);return}
+  const fromIdx=g.actionItems.findIndex(i=>i.id===dragActionId);
+  const targetIdx=g.actionItems.findIndex(i=>i.id===el.dataset.id);
+  if(fromIdx<0||targetIdx<0){actionDragEnd(e);return}
+  const [moved]=g.actionItems.splice(fromIdx,1);
+  // Recalculate target after splice
+  let newIdx=g.actionItems.findIndex(i=>i.id===el.dataset.id);
+  if(newIdx<0)newIdx=g.actionItems.length;
+  g.actionItems.splice(above?newIdx:newIdx+1,0,moved);
+  saveBoard(board);
+  actionDragEnd(e);
+  renderActions();
+  renderBoard();
 }
 
 function addActionItem(ev){
