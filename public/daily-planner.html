@@ -136,6 +136,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 .cal-grp-header .day-num{font-size:14px;font-weight:800;color:var(--text);letter-spacing:0;text-transform:none;margin-right:6px}
 .cal-grp-header .day-rel{color:var(--text-mid);font-weight:700;letter-spacing:.6px}
 .cal-grp-header.is-today .day-num{color:var(--c-work)}
+.cal-grp-header.is-selected .day-num{color:var(--text)}
 
 /* Calendar event items — cleaner, color-coded left border */
 .cal-event{
@@ -3154,18 +3155,21 @@ function dateKeyOfItem(it){
 }
 
 function renderGroupedByDay(items,notes){
-  // Group items by date key — only today and future
+  // Group items by date key — show selected date and forward
   const today=todayKey();
+  const startKey=viewKey(); // selected date in the grid (defaults to today)
   const groups={};
   items.forEach(i=>{
     const dk=dateKeyOfItem(i);
-    if(!dk||dk<today)return; // skip past dates
+    if(!dk||dk<startKey)return; // skip dates before selected
     if(!groups[dk])groups[dk]=[];
     groups[dk].push(i);
   });
   const sortedKeys=Object.keys(groups).sort();
   if(!sortedKeys.length){
-    return `<div class="cal-empty">Nothing scheduled from today onward.</div>`;
+    const startD=new Date(startKey+'T12:00:00');
+    const label=startKey===today?'today onward':`${startD.toLocaleDateString('en-US',{month:'short',day:'numeric'})} onward`;
+    return `<div class="cal-empty">Nothing scheduled from ${label}.</div>`;
   }
   let html='';
   sortedKeys.forEach(dk=>{
@@ -3173,9 +3177,10 @@ function renderGroupedByDay(items,notes){
     const dayName=d.toLocaleDateString('en-US',{weekday:'short'});
     const dayDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
     const isToday=dk===today;
-    html+=`<div class="cal-grp-header${isToday?' is-today':''}">
+    const isSelected=dk===startKey&&!isToday;
+    html+=`<div class="cal-grp-header${isToday?' is-today':''}${isSelected?' is-selected':''}">
       <span class="day-num">${d.getDate()}</span>
-      <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':''}</span>
+      <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':isSelected?' · Selected':''}</span>
     </div>`;
     groups[dk].forEach(it=>{html+=renderCalItem(it,notes)});
   });
