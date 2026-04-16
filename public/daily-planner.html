@@ -108,6 +108,28 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 .cal-filter-pill:active{transform:scale(.96)}
 .cal-filter-pill .cnt{font-size:9px;opacity:.7}
 
+/* Calendar source filter pills */
+.cal-sources{
+  display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid var(--surface-2);
+  flex-wrap:wrap;align-items:center;
+}
+.cal-sources .lbl{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-dim);margin-right:2px;width:100%;margin-bottom:2px}
+.cal-src-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--surface-2);border:1.5px solid var(--border);cursor:pointer;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--text-dim);padding:6px 11px;border-radius:14px;transition:all .12s;
+  -webkit-appearance:none;
+}
+.cal-src-pill .dot{width:7px;height:7px;border-radius:50%}
+.cal-src-pill.active{color:var(--text);border-color:currentColor;background:var(--surface)}
+.cal-src-pill:active{transform:scale(.96)}
+.cal-sources .all-toggle{
+  margin-left:auto;background:none;border:none;cursor:pointer;
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--text-dim);padding:4px 6px;text-decoration:underline;
+}
+
 /* Group-by toggle (Day / Project) */
 .cal-group-toggle{
   display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--surface-2);
@@ -2976,12 +2998,17 @@ function renderCalMonth(){
   const selected=viewKey();
 
   const notes=loadCalNotes();
+  function filteredEventsOnDay(dk){
+    return (cache[dk]||[]).filter(ev=>{
+      const src=(ev.cal||'Personal').toLowerCase();
+      return calSourceFilter.has(src);
+    });
+  }
   function hasFlaggedOnDay(dk){
-    const evs=cache[dk]||[];
-    return evs.some(ev=>!!notes[ev.id+'_flag']);
+    return filteredEventsOnDay(dk).some(ev=>!!notes[ev.id+'_flag']);
   }
   function dotClass(dk){
-    const hasEvents=(cache[dk]&&cache[dk].length>0);
+    const hasEvents=filteredEventsOnDay(dk).length>0;
     if(calFilter==='flagged'&&hasFlaggedOnDay(dk))return 'has-events dot-flagged';
     if(hasEvents)return 'has-events dot-event';
     return '';
@@ -3040,11 +3067,21 @@ function calDayClick(dk){
   render();renderCalEvents();renderCalMonth();
 }
 
-let calFilter='all'; // 'all' | 'events' | 'flagged' (Tasks moved to its own panel on Today's Plan)
+let calFilter='all'; // 'all' | 'events' | 'flagged'
 let calGroupBy='day'; // 'day' | 'project'
+let calSourceFilter=new Set(['personal','tweg','partiful']); // multi-select calendar sources
 
 function setCalFilter(f){calFilter=f;renderCalEvents();renderCalMonth()}
 function setCalGroupBy(g){calGroupBy=g;renderCalEvents()}
+function toggleCalSource(src){
+  if(calSourceFilter.has(src))calSourceFilter.delete(src);
+  else calSourceFilter.add(src);
+  renderCalEvents();renderCalMonth();
+}
+function setCalSourcesAll(){
+  calSourceFilter=new Set(['personal','tweg','partiful']);
+  renderCalEvents();renderCalMonth();
+}
 
 function isItemFlagged(it,notes){
   if(it.kind==='event'){
@@ -3242,13 +3279,33 @@ function renderCalEvents(){
   const notes=loadCalNotes();
   const allItems=collectMonthItems();
 
-  const eventCount=allItems.length;
-  const flaggedCount=allItems.filter(i=>isItemFlagged(i,notes)).length;
+  // Apply source filter first
+  const sourceFiltered=allItems.filter(i=>{
+    const src=(i.src||'personal').toLowerCase();
+    return calSourceFilter.has(src);
+  });
 
-  // Filter pills: All / Events / Flagged (Tasks lives on Today's Plan)
-  let html=`<div class="cal-filter">
+  const eventCount=sourceFiltered.length;
+  const flaggedCount=sourceFiltered.filter(i=>isItemFlagged(i,notes)).length;
+
+  // Source colors
+  const srcMeta={personal:{name:'Personal',color:'#7c3aed'},tweg:{name:'TWEG',color:'#2563eb'},partiful:{name:'Partiful',color:'#ec4899'}};
+  const existingSources=new Set(allItems.map(i=>(i.src||'personal').toLowerCase()));
+
+  // Calendar source pills
+  let html=`<div class="cal-sources"><span class="lbl">Calendars</span>`;
+  ['personal','tweg','partiful'].forEach(s=>{
+    if(!existingSources.has(s))return;
+    const m=srcMeta[s];
+    const isActive=calSourceFilter.has(s);
+    html+=`<button class="cal-src-pill${isActive?' active':''}" onclick="toggleCalSource('${s}')"><span class="dot" style="background:${m.color}"></span>${esc(m.name)}</button>`;
+  });
+  if(calSourceFilter.size<3)html+=`<button class="all-toggle" onclick="setCalSourcesAll()">Show all</button>`;
+  html+=`</div>`;
+
+  // Filter pills: All / Flagged
+  html+=`<div class="cal-filter">
     <button class="cal-filter-pill${calFilter==='all'?' active':''}" onclick="setCalFilter('all')">All <span class="cnt">${eventCount}</span></button>
-    <button class="cal-filter-pill${calFilter==='events'?' active':''}" onclick="setCalFilter('events')">Events <span class="cnt">${eventCount}</span></button>
     <button class="cal-filter-pill${calFilter==='flagged'?' active':''}" onclick="setCalFilter('flagged')" title="Flagged events">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
       Flagged <span class="cnt">${flaggedCount}</span>
@@ -3262,8 +3319,8 @@ function renderCalEvents(){
     <button class="${calGroupBy==='project'?'active':''}" onclick="setCalGroupBy('project')">${calFilter==='events'?'Calendar':'Project'}</button>
   </div>`;
 
-  // Apply filter
-  const filtered=allItems.filter(i=>{
+  // Apply type filter on top of source filter
+  const filtered=sourceFiltered.filter(i=>{
     if(calFilter==='all'||calFilter==='events')return true;
     if(calFilter==='flagged')return isItemFlagged(i,notes);
     return true;
