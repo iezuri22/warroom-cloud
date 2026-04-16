@@ -250,6 +250,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 }
 .cal-day-cell.dot-task::after{background:#16a34a}
 .cal-day-cell.dot-event::after{background:#7c3aed}
+.cal-day-cell.dot-flagged::after{background:#dc2626}
 .cal-day-cell.dot-both::after{
   background:linear-gradient(90deg,#16a34a 0%,#16a34a 50%,#7c3aed 50%,#7c3aed 100%);
   width:8px;border-radius:2px;
@@ -2962,16 +2963,24 @@ function renderCalMonth(){
   const today=todayKey();
   const selected=viewKey();
 
+  const notes=loadCalNotes();
+  function hasFlaggedOnDay(dk){
+    const evs=cache[dk]||[];
+    const ts=(plan[dk]||[]).filter(t=>!t.skipped);
+    return evs.some(ev=>!!notes[ev.id+'_flag'])||ts.some(t=>!!t.urgent);
+  }
   function dayHasDot(dk){
     const hasEvents=(cache[dk]&&cache[dk].length>0);
     const hasTasks=(plan[dk]&&plan[dk].filter(t=>!t.skipped).length>0);
     if(calFilter==='tasks')return hasTasks;
     if(calFilter==='events')return hasEvents;
+    if(calFilter==='flagged')return hasFlaggedOnDay(dk);
     return hasEvents||hasTasks;
   }
   function dotClass(dk){
     const hasEvents=(cache[dk]&&cache[dk].length>0);
     const hasTasks=(plan[dk]&&plan[dk].filter(t=>!t.skipped).length>0);
+    if(calFilter==='flagged'&&hasFlaggedOnDay(dk))return 'has-events dot-flagged';
     if(calFilter==='tasks'&&hasTasks)return 'has-events dot-task';
     if(calFilter==='events'&&hasEvents)return 'has-events dot-event';
     if(calFilter==='all'){
@@ -3035,11 +3044,19 @@ function calDayClick(dk){
   render();renderCalEvents();renderCalMonth();
 }
 
-let calFilter='all'; // 'all' | 'tasks' | 'events'
+let calFilter='all'; // 'all' | 'tasks' | 'events' | 'flagged'
 let calGroupBy='day'; // 'day' | 'project'
 
 function setCalFilter(f){calFilter=f;renderCalEvents();renderCalMonth()}
 function setCalGroupBy(g){calGroupBy=g;renderCalEvents()}
+
+function isItemFlagged(it,notes){
+  if(it.kind==='event'){
+    return !!notes[it.data.id+'_flag'];
+  }
+  // Task: count urgent tasks as flagged
+  return !!it.data.urgent;
+}
 
 function buildCalItem(kind,src,startISO,data){return{kind,src,startISO,data}}
 
@@ -3074,12 +3091,17 @@ function renderCalEvents(){
 
   const taskCount=allItems.filter(i=>i.kind==='task').length;
   const eventCount=allItems.filter(i=>i.kind==='event').length;
+  const flaggedCount=allItems.filter(i=>isItemFlagged(i,notes)).length;
 
   // Filter pills
   let html=`<div class="cal-filter">
     <button class="cal-filter-pill${calFilter==='all'?' active':''}" onclick="setCalFilter('all')">All <span class="cnt">${allItems.length}</span></button>
     <button class="cal-filter-pill${calFilter==='events'?' active':''}" onclick="setCalFilter('events')">Events <span class="cnt">${eventCount}</span></button>
     <button class="cal-filter-pill${calFilter==='tasks'?' active':''}" onclick="setCalFilter('tasks')">Tasks <span class="cnt">${taskCount}</span></button>
+    <button class="cal-filter-pill${calFilter==='flagged'?' active':''}" onclick="setCalFilter('flagged')" title="Flagged events + urgent tasks">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+      Flagged <span class="cnt">${flaggedCount}</span>
+    </button>
   </div>`;
 
   // Group toggle
@@ -3094,11 +3116,13 @@ function renderCalEvents(){
     if(calFilter==='all')return true;
     if(calFilter==='tasks')return i.kind==='task';
     if(calFilter==='events')return i.kind==='event';
+    if(calFilter==='flagged')return isItemFlagged(i,notes);
     return true;
   });
 
   if(!filtered.length){
-    html+=`<div class="cal-empty">Nothing ${calFilter==='tasks'?'in your plan':calFilter==='events'?'on your calendar':''} for ${monthLabel(calMonthYear)}.</div>`;
+    const what={tasks:'in your plan',events:'on your calendar',flagged:'flagged'}[calFilter]||'';
+    html+=`<div class="cal-empty">Nothing ${what} for ${monthLabel(calMonthYear)}.</div>`;
     container.innerHTML=html;
     return;
   }
