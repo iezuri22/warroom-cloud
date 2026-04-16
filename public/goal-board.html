@@ -192,6 +192,48 @@ body.embed{padding:14px 12px 100px}
 .action-side button:hover,.action-side button:active{opacity:1;background:var(--surface-2)}
 .action-side button.send-plan-btn:hover{color:#2563eb}
 .action-side button.send-plan-btn.sent{color:#2563eb;opacity:1}
+
+/* Send-to-plan popup */
+.stp-popup{
+  position:fixed;z-index:1200;background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.15);
+  min-width:260px;max-width:290px;
+}
+.stp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.stp-header .stp-title{font-size:13px;font-weight:700;color:var(--text)}
+.stp-header button{background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px;border-radius:4px;display:flex;align-items:center}
+.stp-header button:hover{color:var(--text);background:var(--surface-2)}
+.stp-dow{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;margin-bottom:4px}
+.stp-dow span{font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;padding:4px 0}
+.stp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.stp-day{
+  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:600;color:var(--text);border-radius:8px;
+  cursor:pointer;transition:all .1s;border:none;background:none;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+}
+.stp-day:hover{background:var(--surface-2)}
+.stp-day.other-month{color:var(--text-dim);opacity:.35}
+.stp-day.today{color:var(--text);background:var(--surface-2);font-weight:800}
+.stp-day.selected{background:var(--text);color:var(--surface);font-weight:800}
+.stp-day.past{opacity:.3;cursor:default}
+.stp-slots{display:flex;gap:6px;margin-top:10px}
+.stp-slot{
+  flex:1;text-align:center;font-family:inherit;font-size:11px;font-weight:700;
+  letter-spacing:.4px;text-transform:uppercase;padding:8px 6px;border-radius:8px;
+  background:var(--surface-2);border:1.5px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .12s;
+}
+.stp-slot.active{background:var(--text);color:var(--surface);border-color:var(--text)}
+.stp-actions{display:flex;gap:6px;margin-top:10px}
+.stp-actions button{
+  flex:1;font-family:inherit;font-size:12px;font-weight:700;padding:8px;border-radius:8px;
+  cursor:pointer;border:1px solid var(--border);background:none;color:var(--text-mid);transition:all .12s;
+}
+.stp-actions button.primary{background:var(--text);color:var(--surface);border-color:transparent}
+.stp-actions button:hover{opacity:.85}
+.stp-actions button.remove{color:#dc2626;border-color:#fca5a5}
+.stp-actions button.remove:hover{background:#dc2626;color:#fff;border-color:#dc2626}
 .action-side button.del:hover{color:#dc2626}
 .action-side button svg{width:14px;height:14px}
 
@@ -656,7 +698,9 @@ function renderActions(){
     let metaParts=[];
     if(i.onPlan){
       const isDoneOnPlan=i.done;
-      metaParts.push(`<span class="action-plan-tag${isDoneOnPlan?' done':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> On today's plan${isDoneOnPlan?' · Done':''}</span>`);
+      let planLabel='On plan';
+      if(i.planDate){const pd=new Date(i.planDate+'T12:00:00');planLabel=pd.toLocaleDateString('en-US',{month:'short',day:'numeric'});}
+      metaParts.push(`<span class="action-plan-tag${isDoneOnPlan?' done':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> ${planLabel}${isDoneOnPlan?' · Done':''}</span>`);
     }
     if(i.done&&i.completedAt){
       const d=new Date(i.completedAt);
@@ -677,7 +721,7 @@ function renderActions(){
         ${metaHTML}
       </div>
       <div class="action-side">
-        <button class="send-plan-btn${i.onPlan?' sent':''}" onclick="sendActionToPlan('${i.id}')" title="${i.onPlan?"On today's plan":"Send to today's plan"}">
+        <button class="send-plan-btn${i.onPlan?' sent':''}" onclick="openSendToPlan(this,'${i.id}')" title="${i.onPlan?"On plan — click to manage":"Send to today's plan"}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </button>
         <button class="del" onclick="deleteAction('${i.id}')" title="Delete">
@@ -901,44 +945,187 @@ function setPlanTaskDone(dateKey,taskId,done){
   savePlan(p);
 }
 
-function sendActionToPlan(actionId){
+/* ---- Send-to-plan popup with calendar + slot picker ---- */
+let _stpPopup=null, _stpCtx=null;
+function closeStp(){
+  if(_stpPopup){_stpPopup.remove();_stpPopup=null;}_stpCtx=null;
+  document.removeEventListener('click',_stpOutside,true);
+}
+function _stpOutside(e){if(_stpPopup&&!_stpPopup.contains(e.target))closeStp();}
+function _stpDateKey(y,m,d){return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`}
+
+function openSendToPlan(btn,actionId){
+  closeStp();
   const board=activeBoard();
   const g=board.goals.find(x=>x.id===currentGoalId);
   if(!g)return;
   const a=g.actionItems.find(i=>i.id===actionId);
   if(!a)return;
-  if(a.onPlan){toast("Already on today's plan");return}
+  const now=new Date();
+  _stpCtx={actionId,isOnPlan:!!a.onPlan,viewYear:now.getFullYear(),viewMonth:now.getMonth(),
+    selectedDate:todayKey(),selectedSlot:'afternoon'};
+  const popup=document.createElement('div');
+  popup.className='stp-popup';
+  document.body.appendChild(popup);
+  _stpPopup=popup;
+  _renderStpCal();
+  // Position near button
+  const rect=btn.getBoundingClientRect();
+  const pw=popup.offsetWidth,ph=popup.offsetHeight;
+  let top=rect.bottom+4,left=rect.right-pw;
+  if(left<8)left=8;
+  if(left+pw>window.innerWidth)left=window.innerWidth-pw-8;
+  if(top+ph>window.innerHeight)top=rect.top-ph-4;
+  popup.style.top=top+'px';popup.style.left=left+'px';
+  setTimeout(()=>document.addEventListener('click',_stpOutside,true),10);
+}
 
-  const tk=todayKey();
+function _renderStpCal(){
+  if(!_stpPopup||!_stpCtx)return;
+  const {viewYear:vy,viewMonth:vm,selectedDate,selectedSlot,isOnPlan}=_stpCtx;
+  const todayStr=todayKey();
+  const first=new Date(vy,vm,1);
+  const startDay=first.getDay();
+  const daysInMonth=new Date(vy,vm+1,0).getDate();
+  const prevDays=new Date(vy,vm,0).getDate();
+  const monthLabel=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+
+  let html=`<div class="stp-header">
+    <button onclick="event.stopPropagation();_stpNav(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="stp-title">${monthLabel}</span>
+    <button onclick="event.stopPropagation();_stpNav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+  </div>`;
+  html+=`<div class="stp-dow">`;
+  ['S','M','T','W','T','F','S'].forEach(d=>html+=`<span>${d}</span>`);
+  html+=`</div><div class="stp-grid">`;
+
+  for(let i=startDay-1;i>=0;i--){
+    const d=prevDays-i;
+    const pm=vm===0?11:vm-1,py=vm===0?vy-1:vy;
+    const dk=_stpDateKey(py,pm,d);
+    const isPast=dk<todayStr;
+    html+=`<button class="stp-day other-month${isPast?' past':''}" ${isPast?'disabled':'onclick="event.stopPropagation();_stpPickDate(\''+dk+'\')"'}>${d}</button>`;
+  }
+  for(let d=1;d<=daysInMonth;d++){
+    const dk=_stpDateKey(vy,vm,d);
+    const isToday=dk===todayStr;
+    const isSel=dk===selectedDate;
+    const isPast=dk<todayStr;
+    let cls='stp-day';
+    if(isToday)cls+=' today';
+    if(isSel)cls+=' selected';
+    if(isPast)cls+=' past';
+    html+=`<button class="${cls}" ${isPast?'disabled':'onclick="event.stopPropagation();_stpPickDate(\''+dk+'\')"'}>${d}</button>`;
+  }
+  const totalCells=startDay+daysInMonth;
+  const remaining=totalCells%7===0?0:7-(totalCells%7);
+  for(let d=1;d<=remaining;d++){
+    const nm=vm===11?0:vm+1,ny=vm===11?vy+1:vy;
+    const dk=_stpDateKey(ny,nm,d);
+    html+=`<button class="stp-day other-month" onclick="event.stopPropagation();_stpPickDate('${dk}')">${d}</button>`;
+  }
+  html+=`</div>`;
+
+  // Slot picker
+  html+=`<div class="stp-slots">`;
+  ['morning','afternoon','night'].forEach(s=>{
+    const label=s.charAt(0).toUpperCase()+s.slice(1);
+    html+=`<button class="stp-slot${selectedSlot===s?' active':''}" onclick="event.stopPropagation();_stpPickSlot('${s}')">${label}</button>`;
+  });
+  html+=`</div>`;
+
+  // Actions
+  html+=`<div class="stp-actions">`;
+  if(isOnPlan){
+    html+=`<button class="remove" onclick="event.stopPropagation();removeFromPlan('${_stpCtx.actionId}')">Remove from plan</button>`;
+  }
+  html+=`<button class="primary" onclick="event.stopPropagation();confirmSendToPlan()">Add to plan</button>`;
+  html+=`</div>`;
+
+  _stpPopup.innerHTML=html;
+}
+
+function _stpNav(dir){
+  if(!_stpCtx)return;
+  _stpCtx.viewMonth+=dir;
+  if(_stpCtx.viewMonth>11){_stpCtx.viewMonth=0;_stpCtx.viewYear++;}
+  if(_stpCtx.viewMonth<0){_stpCtx.viewMonth=11;_stpCtx.viewYear--;}
+  _renderStpCal();
+}
+function _stpPickDate(dk){
+  if(!_stpCtx)return;
+  _stpCtx.selectedDate=dk;
+  _renderStpCal();
+}
+function _stpPickSlot(s){
+  if(!_stpCtx)return;
+  _stpCtx.selectedSlot=s;
+  _renderStpCal();
+}
+
+function confirmSendToPlan(){
+  if(!_stpCtx)return;
+  const {actionId,selectedDate,selectedSlot}=_stpCtx;
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===currentGoalId);
+  if(!g){closeStp();return;}
+  const a=g.actionItems.find(i=>i.id===actionId);
+  if(!a){closeStp();return;}
+
+  // If already on plan, remove old entry first
+  if(a.onPlan&&a.planTaskId&&a.planDate){
+    const p=loadPlan();
+    const old=p[a.planDate];
+    if(old){
+      const idx=old.findIndex(x=>x.id===a.planTaskId);
+      if(idx>=0)old.splice(idx,1);
+      if(!old.length)delete p[a.planDate];
+      savePlan(p);
+    }
+  }
+
   const p=loadPlan();
-  if(!p[tk])p[tk]=[];
+  if(!p[selectedDate])p[selectedDate]=[];
   const taskId=uid();
-  // Determine slot from current hour
-  const h=new Date().getHours();
-  let slot='morning';if(h>=17)slot='night';else if(h>=12)slot='afternoon';
-  // Map board name to domain (best guess)
   const domain=guessDomain(board.name);
-  p[tk].push({
-    id:taskId,
-    text:a.text,
-    domain,
-    slot,
-    originalSlot:slot,
-    done:false,
-    shifted:false,
-    skipped:false,
-    urgent:false,
-    due:'',
-    timeSpent:0,
+  p[selectedDate].push({
+    id:taskId,text:a.text,domain,slot:selectedSlot,originalSlot:selectedSlot,
+    done:false,shifted:false,skipped:false,urgent:false,due:'',timeSpent:0,
     fromBoard:{boardId:board.id,goalId:g.id,actionId:a.id},
     createdAt:new Date().toISOString()
   });
   savePlan(p);
-  // Tag the action
-  a.onPlan=true;a.planTaskId=taskId;a.planDate=tk;
+  a.onPlan=true;a.planTaskId=taskId;a.planDate=selectedDate;
   saveBoard(board);
+  closeStp();
   renderActions();renderBoard();
-  toast("Sent to today's plan");
+  const d=new Date(selectedDate+'T12:00:00');
+  const label=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  toast(`Added to plan · ${label} · ${selectedSlot.charAt(0).toUpperCase()+selectedSlot.slice(1)}`);
+}
+
+function removeFromPlan(actionId){
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===currentGoalId);
+  if(!g){closeStp();return;}
+  const a=g.actionItems.find(i=>i.id===actionId);
+  if(!a||!a.onPlan){closeStp();return;}
+  // Remove from plan
+  if(a.planTaskId&&a.planDate){
+    const p=loadPlan();
+    const dayItems=p[a.planDate];
+    if(dayItems){
+      const idx=dayItems.findIndex(x=>x.id===a.planTaskId);
+      if(idx>=0)dayItems.splice(idx,1);
+      if(!dayItems.length)delete p[a.planDate];
+      savePlan(p);
+    }
+  }
+  a.onPlan=false;delete a.planTaskId;delete a.planDate;
+  saveBoard(board);
+  closeStp();
+  renderActions();renderBoard();
+  toast("Removed from plan");
 }
 
 function guessDomain(boardName){
