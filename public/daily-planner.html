@@ -840,7 +840,7 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
       Cal
       <span class="cal-badge" id="calBadge" style="display:none">0</span>
     </button>
-    <button class="header-btn" onclick="openPlanTasksPanel()" id="planTasksBtn" style="display:none">
+    <button class="header-btn" onclick="openPlanTasksPanel()" id="planTasksBtn">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       Tasks
     </button>
@@ -889,6 +889,13 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
   <!-- PLAN VIEW -->
   <div class="plan-layout" id="planView">
   <div class="timeline">
+    <!-- INLINE TASKS OVERVIEW BUTTON -->
+    <button class="plan-tasks-inline" onclick="openPlanTasksPanel()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span>All Tasks</span>
+      <span class="plan-tasks-inline-meta" id="inlineTasksMeta"></span>
+      <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
     <!-- CARRY FORWARD SECTION (injected by JS) -->
     <div id="carryForward"></div>
     <div class="time-col" data-slot="morning" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropItem(event,'morning')">
@@ -1341,9 +1348,6 @@ function init(){
   // Restore running timer from active-task (survives page reload/navigation)
   restoreActiveTimer();
   render();
-  // Show Tasks button (default tab is Today's Plan)
-  const ptBtn=document.getElementById('planTasksBtn');
-  if(ptBtn)ptBtn.style.display='';
   // Load calendar - open by default on desktop, closed on mobile (Cal tab opens it)
   const isMobile=window.matchMedia('(max-width:768px)').matches;
   if(!isMobile){
@@ -2011,9 +2015,6 @@ function switchTab(tab){
   document.getElementById('youtubeView').classList.toggle('active',tab==='youtube');
   document.getElementById('analyticsView').classList.toggle('active',tab==='analytics');
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
-  // Tasks Overview button only shown on Today's Plan tab
-  const ptBtn=document.getElementById('planTasksBtn');
-  if(ptBtn)ptBtn.style.display=tab==='plan'?'':'none';
   // Mark body so we can target full-iframe tabs in CSS (hide FAB, allow full width)
   document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board');
   if(tab==='analytics')renderAnalytics();
@@ -3052,8 +3053,9 @@ function isItemFlagged(it,notes){
   return !!it.data.urgent;
 }
 
-// ===== TASKS OVERVIEW PANEL (Today's Plan only) =====
-let planTasksGroupBy='day'; // 'day' | 'project'
+// ===== TASKS OVERVIEW PANEL =====
+let planTasksUrgentOnly=false;
+let planTasksProjFilter=new Set(['work','ezrk','vt','personal']); // all by default
 
 function openPlanTasksPanel(){
   document.getElementById('tasksOverlay').classList.add('open');
@@ -3062,10 +3064,19 @@ function openPlanTasksPanel(){
 function closePlanTasksPanel(){
   document.getElementById('tasksOverlay').classList.remove('open');
 }
-function setPlanTasksGroupBy(g){
-  planTasksGroupBy=g;
-  document.getElementById('ptDayBtn').classList.toggle('active',g==='day');
-  document.getElementById('ptProjBtn').classList.toggle('active',g==='project');
+function setPlanTasksUrgent(urg){
+  planTasksUrgentOnly=urg;
+  document.getElementById('ptAllBtn').classList.toggle('active',!urg);
+  document.getElementById('ptUrgBtn').classList.toggle('active',urg);
+  renderPlanTasks();
+}
+function togglePlanTasksProj(domain){
+  if(planTasksProjFilter.has(domain))planTasksProjFilter.delete(domain);
+  else planTasksProjFilter.add(domain);
+  renderPlanTasks();
+}
+function setPlanTasksProjsAll(){
+  planTasksProjFilter=new Set(['work','ezrk','vt','personal']);
   renderPlanTasks();
 }
 
@@ -3090,53 +3101,68 @@ function collectAllPlanTasks(){
 }
 
 function renderPlanTasks(){
-  const items=collectAllPlanTasks();
+  let items=collectAllPlanTasks();
   const body=document.getElementById('tasksBody');
+
+  // Render project filter pills
+  const projContainer=document.getElementById('tasksProjFilters');
+  const domOrder=['work','ezrk','vt','personal'];
+  const existingDoms=new Set(items.map(it=>it.task.domain||'personal'));
+  let projHTML='<span class="lbl">Projects</span>';
+  domOrder.forEach(k=>{
+    if(!existingDoms.has(k))return;
+    const dInfo=D[k]||D.personal;
+    const isActive=planTasksProjFilter.has(k);
+    projHTML+=`<button class="tasks-proj-pill${isActive?' active':''}" onclick="togglePlanTasksProj('${k}')"><span class="dot" style="background:${dInfo.color}"></span>${esc(dInfo.name)}</button>`;
+  });
+  if(planTasksProjFilter.size<domOrder.length){
+    projHTML+=`<button class="all-toggle" onclick="setPlanTasksProjsAll()">Show all</button>`;
+  }
+  projContainer.innerHTML=projHTML;
+
+  // Apply filters
+  items=items.filter(it=>{
+    const dom=it.task.domain||'personal';
+    if(!planTasksProjFilter.has(dom))return false;
+    if(planTasksUrgentOnly&&!it.task.urgent)return false;
+    return true;
+  });
+
+  // Update inline button meta (total tasks from today forward)
+  const meta=document.getElementById('inlineTasksMeta');
+  if(meta){
+    const allItems=collectAllPlanTasks();
+    const pending=allItems.filter(it=>!it.task.done).length;
+    meta.textContent=pending?pending+' pending':'';
+  }
+
   if(!items.length){
-    body.innerHTML=`<div class="tasks-empty">No tasks scheduled from today onward.<br>Add tasks to your daily plan.</div>`;
+    const why=planTasksUrgentOnly?'No urgent tasks':'No tasks matching your filters';
+    body.innerHTML=`<div class="tasks-empty">${why} from today onward.</div>`;
     return;
   }
+
+  // Always group by day
+  const groups={};
+  items.forEach(it=>{
+    if(!groups[it.dateKey])groups[it.dateKey]=[];
+    groups[it.dateKey].push(it);
+  });
+  const today=todayKey();
   let html='';
-  if(planTasksGroupBy==='day'){
-    const groups={};
-    items.forEach(it=>{
-      if(!groups[it.dateKey])groups[it.dateKey]=[];
-      groups[it.dateKey].push(it);
-    });
-    const today=todayKey();
-    Object.keys(groups).sort().forEach(dk=>{
-      const d=new Date(dk+'T12:00:00');
-      const dayName=d.toLocaleDateString('en-US',{weekday:'short'});
-      const dayDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-      const isToday=dk===today;
-      const cnt=groups[dk].length;
-      html+=`<div class="tasks-grp-header${isToday?' is-today':''}">
-        <span class="day-num">${d.getDate()}</span>
-        <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':''}</span>
-        <span class="grp-cnt">${cnt}</span>
-      </div>`;
-      groups[dk].forEach(it=>{html+=renderPlanTaskRow(it)});
-    });
-  } else {
-    // Group by project (domain)
-    const groups={};
-    items.forEach(it=>{
-      const dom=it.task.domain||'personal';
-      if(!groups[dom])groups[dom]=[];
-      groups[dom].push(it);
-    });
-    const order=['work','ezrk','vt','personal'];
-    const keys=Object.keys(groups).sort((a,b)=>{
-      const ai=order.indexOf(a), bi=order.indexOf(b);
-      return (ai===-1?99:ai)-(bi===-1?99:bi);
-    });
-    keys.forEach(k=>{
-      const dInfo=D[k]||D.personal;
-      const cnt=groups[k].length;
-      html+=`<div class="tasks-grp-header"><span class="dot" style="background:${dInfo.color}"></span>${esc(dInfo.name)} <span class="grp-cnt">${cnt}</span></div>`;
-      groups[k].forEach(it=>{html+=renderPlanTaskRow(it,true)});
-    });
-  }
+  Object.keys(groups).sort().forEach(dk=>{
+    const d=new Date(dk+'T12:00:00');
+    const dayName=d.toLocaleDateString('en-US',{weekday:'short'});
+    const dayDate=d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const isToday=dk===today;
+    const cnt=groups[dk].length;
+    html+=`<div class="tasks-grp-header${isToday?' is-today':''}">
+      <span class="day-num">${d.getDate()}</span>
+      <span class="day-rel">${dayName} ${dayDate}${isToday?' · Today':''}</span>
+      <span class="grp-cnt">${cnt}</span>
+    </div>`;
+    groups[dk].forEach(it=>{html+=renderPlanTaskRow(it)});
+  });
   body.innerHTML=html;
 }
 
@@ -4068,10 +4094,14 @@ init();
       </button>
     </div>
     <div class="tasks-toggle">
-      <span class="lbl">Group by</span>
-      <button class="active" id="ptDayBtn" onclick="setPlanTasksGroupBy('day')">Day</button>
-      <button id="ptProjBtn" onclick="setPlanTasksGroupBy('project')">Project</button>
+      <span class="lbl">Show</span>
+      <button class="active" id="ptAllBtn" onclick="setPlanTasksUrgent(false)">All</button>
+      <button id="ptUrgBtn" onclick="setPlanTasksUrgent(true)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px;vertical-align:-1px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Urgent
+      </button>
     </div>
+    <div class="tasks-projs" id="tasksProjFilters"></div>
     <div class="tasks-body" id="tasksBody"></div>
   </div>
 </div>
@@ -4273,6 +4303,20 @@ init();
 /* Notepad FAB completely retired — Notes button now lives in the header */
 .notepad-fab{display:none !important}
 
+/* Inline All Tasks button at top of Today's Plan timeline */
+.plan-tasks-inline{
+  display:flex;align-items:center;gap:10px;width:100%;
+  background:var(--surface);border:1.5px solid var(--border);border-radius:12px;
+  padding:14px 16px;cursor:pointer;font-family:'Inter',system-ui,-apple-system,sans-serif;
+  font-size:14px;font-weight:700;color:var(--text);
+  margin-bottom:14px;transition:all .12s;-webkit-appearance:none;text-align:left;
+}
+.plan-tasks-inline:hover{border-color:#bbb;transform:translateY(-1px)}
+.plan-tasks-inline:active{transform:scale(.99)}
+.plan-tasks-inline svg{flex-shrink:0;color:var(--c-work)}
+.plan-tasks-inline .plan-tasks-inline-meta{margin-left:auto;font-size:11px;font-weight:700;color:var(--text-dim);letter-spacing:.3px;text-transform:uppercase}
+.plan-tasks-inline .chev{color:var(--text-dim)}
+
 /* ===== TASKS OVERVIEW PANEL (Today's Plan only) ===== */
 .tasks-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:760;align-items:flex-start;justify-content:center;padding:60px 16px 16px;overflow-y:auto}
 .tasks-overlay.open{display:flex}
@@ -4305,6 +4349,26 @@ init();
 }
 .tasks-toggle button.active{background:var(--text);color:var(--bg)}
 .tasks-toggle button:active{transform:scale(.96)}
+.tasks-projs{
+  display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--surface-2);
+  flex-wrap:wrap;align-items:center;
+}
+.tasks-projs .lbl{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-dim);margin-right:2px;width:100%;margin-bottom:2px}
+.tasks-proj-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  background:var(--surface-2);border:1.5px solid var(--border);cursor:pointer;
+  font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--text-dim);padding:6px 11px;border-radius:14px;transition:all .12s;
+  -webkit-appearance:none;
+}
+.tasks-proj-pill .dot{width:7px;height:7px;border-radius:50%}
+.tasks-proj-pill.active{color:var(--text);border-color:currentColor;background:var(--surface)}
+.tasks-proj-pill:active{transform:scale(.96)}
+.tasks-projs .all-toggle{
+  margin-left:auto;background:none;border:none;cursor:pointer;
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--text-dim);padding:4px 6px;text-decoration:underline;
+}
 .tasks-body{flex:1;overflow-y:auto;padding:0}
 .tasks-grp-header{
   font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);
