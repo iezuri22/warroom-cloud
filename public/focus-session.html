@@ -185,6 +185,37 @@ h1{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin-bottom:4px}
   color:var(--text-dim);
 }
 
+.scope-tabs{
+  display:flex;gap:4px;
+  background:var(--fill-2);padding:4px;border-radius:10px;
+  margin-bottom:12px;
+}
+.scope-tab{
+  flex:1;padding:7px 10px;border-radius:8px;
+  font-family:inherit;font-size:13px;font-weight:500;
+  letter-spacing:-0.2px;color:var(--text);
+  background:transparent;border:none;cursor:pointer;
+  transition:background .15s,box-shadow .15s,font-weight .15s;
+}
+.scope-tab.active{
+  background:var(--surface);font-weight:600;
+  box-shadow:0 1px 2px rgba(60,50,30,0.1),0 0 0 0.5px rgba(60,60,67,0.08);
+}
+.scope-tab:active{opacity:.7}
+
+.date-group{margin-bottom:14px}
+.date-label{
+  font-size:11px;font-weight:600;color:var(--text-dim);
+  letter-spacing:0.5px;text-transform:uppercase;
+  padding:6px 14px 6px;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.date-label .overdue-badge{
+  font-size:10px;font-weight:700;color:var(--overdue);
+  background:rgba(201,48,48,0.10);padding:2px 7px;border-radius:5px;
+  letter-spacing:0.2px;
+}
+
 .slot-group{margin-bottom:14px}
 .slot-label{
   font-size:11px;font-weight:600;color:var(--text-dim);
@@ -396,11 +427,17 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
   Starts your <code>Deep Work</code> iOS Shortcut.
 </div>
 
-<!-- TASKS FROM TODAY'S PLAN -->
+<!-- TASKS FROM PLAN -->
 <div class="tasks-section">
   <div class="section-header">
-    <span>Today's plan</span>
+    <span>Tasks</span>
     <span class="meta" id="tasksMeta"></span>
+  </div>
+  <div class="scope-tabs" id="scopeTabs">
+    <button class="scope-tab active" data-scope="today">Today</button>
+    <button class="scope-tab" data-scope="overdue">Overdue</button>
+    <button class="scope-tab" data-scope="upcoming">Upcoming</button>
+    <button class="scope-tab" data-scope="all">All</button>
   </div>
   <div id="tasksContainer"></div>
 
@@ -481,8 +518,10 @@ const SLOT_LABEL = {morning:'Morning', afternoon:'Afternoon', night:'Night'};
 // ============ STATE ============
 let selectedMin = 25;
 let selectedTaskId = null; // plan item id when task is selected, else null
+let selectedTaskDate = null; // date key where selected task lives
 let tickInterval = null;
 let customMode = false;
+let scope = 'today'; // 'today' | 'overdue' | 'upcoming' | 'all'
 
 // ============ UTIL ============
 function fmt(secs){
@@ -517,15 +556,44 @@ function savePlan(p){ localStorage.setItem(PLAN_KEY, JSON.stringify(p)); }
 function todayItems(){
   const p=loadPlan(); return (p[todayKey()]||[]).slice();
 }
-function updateTaskOnPlan(id, patch){
+// Return array of {...item, dateKey} across ALL dates, filtered to open (not done/skipped/dropped)
+function allOpenItemsWithDate(){
   const p = loadPlan();
-  const key = todayKey();
-  const items = p[key] || [];
-  const idx = items.findIndex(i => i.id===id);
-  if(idx < 0) return;
-  items[idx] = { ...items[idx], ...patch };
-  p[key] = items;
-  savePlan(p);
+  const result = [];
+  for(const [dateKey, items] of Object.entries(p)){
+    if(!Array.isArray(items)) continue;
+    items.forEach(it => {
+      if(it.done || it.skipped || it.droppedFromCarry) return;
+      if(it.recurringId) return; // routines auto-populate, skip
+      result.push({...it, dateKey});
+    });
+  }
+  return result;
+}
+function findTaskAcrossDates(id){
+  const p = loadPlan();
+  for(const [dateKey, items] of Object.entries(p)){
+    if(!Array.isArray(items)) continue;
+    const t = items.find(i => i.id === id);
+    if(t) return {task: t, dateKey};
+  }
+  return null;
+}
+function updateTaskOnPlan(id, patch, dateKey){
+  const p = loadPlan();
+  // If dateKey is given, try there first; else scan all dates
+  const dates = dateKey ? [dateKey] : Object.keys(p);
+  for(const k of dates){
+    const items = p[k];
+    if(!Array.isArray(items)) continue;
+    const idx = items.findIndex(i => i.id===id);
+    if(idx >= 0){
+      items[idx] = { ...items[idx], ...patch };
+      p[k] = items;
+      savePlan(p);
+      return;
+    }
+  }
 }
 function addTaskToPlan(task){
   const p = loadPlan();
@@ -559,37 +627,99 @@ function renderPresets(){
 }
 
 function renderTasks(){
-  const items = todayItems();
-  const open = items.filter(i => !i.done && !i.skipped);
-  const meta = open.length + ' open' + (open.length > 0 ? ' · ' + items.filter(i => i.done).length + ' done' : '');
-  document.getElementById('tasksMeta').textContent = items.length ? meta : '';
+  const today = todayKey();
+  const all = allOpenItemsWithDate();
+
+  // Filter by scope
+  let filtered;
+  if(scope === 'today')    filtered = all.filter(i => i.dateKey === today);
+  else if(scope === 'overdue')  filtered = all.filter(i => i.dateKey < today);
+  else if(scope === 'upcoming') filtered = all.filter(i => i.dateKey > today);
+  else                     filtered = all.slice();
+
+  // Update tab counts
+  document.querySelectorAll('.scope-tab').forEach(t => {
+    const s = t.dataset.scope;
+    let n;
+    if(s === 'today')    n = all.filter(i => i.dateKey === today).length;
+    else if(s === 'overdue')  n = all.filter(i => i.dateKey < today).length;
+    else if(s === 'upcoming') n = all.filter(i => i.dateKey > today).length;
+    else                 n = all.length;
+    // Restore label with count
+    const label = s.charAt(0).toUpperCase() + s.slice(1);
+    t.textContent = n > 0 ? `${label} ${n}` : label;
+    t.classList.toggle('active', s === scope);
+  });
+
+  const meta = filtered.length + (filtered.length === 1 ? ' task' : ' tasks');
+  document.getElementById('tasksMeta').textContent = filtered.length ? meta : '';
 
   const container = document.getElementById('tasksContainer');
-  if(open.length === 0){
-    container.innerHTML = `<div class="task-list"><div class="task-empty">No tasks planned for today. Add one below.</div></div>`;
+  if(filtered.length === 0){
+    const emptyMsg = {
+      today:    'No tasks for today. Add one below.',
+      overdue:  'Nothing overdue. Clean slate.',
+      upcoming: 'No upcoming tasks scheduled.',
+      all:      'No open tasks anywhere.'
+    }[scope];
+    container.innerHTML = `<div class="task-list"><div class="task-empty">${emptyMsg}</div></div>`;
     return;
   }
 
-  // Group by slot
-  const bySlot = {morning:[], afternoon:[], night:[]};
-  open.forEach(i => (bySlot[i.slot] || bySlot.morning).push(i));
-
-  let html = '';
-  ['morning','afternoon','night'].forEach(slot => {
-    const group = bySlot[slot];
-    if(group.length === 0) return;
-    html += `<div class="slot-group">
-      <div class="slot-label">${SLOT_LABEL[slot]} · ${group.length}</div>
-      <div class="task-list">
-        ${group.map(renderTaskRow).join('')}
-      </div>
-    </div>`;
-  });
-  container.innerHTML = html;
+  // TODAY scope: group by slot (morning/afternoon/night)
+  if(scope === 'today'){
+    const bySlot = {morning:[], afternoon:[], night:[]};
+    filtered.forEach(i => (bySlot[i.slot] || bySlot.morning).push(i));
+    let html = '';
+    ['morning','afternoon','night'].forEach(slot => {
+      const group = bySlot[slot];
+      if(group.length === 0) return;
+      html += `<div class="slot-group">
+        <div class="slot-label">${SLOT_LABEL[slot]} · ${group.length}</div>
+        <div class="task-list">${group.map(renderTaskRow).join('')}</div>
+      </div>`;
+    });
+    container.innerHTML = html;
+  }
+  // OTHER scopes: group by dateKey (descending for overdue, ascending for others)
+  else {
+    const byDate = {};
+    filtered.forEach(i => { (byDate[i.dateKey] = byDate[i.dateKey] || []).push(i); });
+    const dates = Object.keys(byDate).sort();
+    if(scope === 'overdue') dates.reverse(); // most recent overdue first
+    let html = '';
+    dates.forEach(dk => {
+      const group = byDate[dk];
+      const labelParts = dateLabelFor(dk, today);
+      html += `<div class="date-group">
+        <div class="date-label">
+          <span>${labelParts.label} · ${group.length}</span>
+          ${labelParts.overdueDays ? `<span class="overdue-badge">${labelParts.overdueDays}d overdue</span>` : ''}
+        </div>
+        <div class="task-list">${group.map(renderTaskRow).join('')}</div>
+      </div>`;
+    });
+    container.innerHTML = html;
+  }
 
   container.querySelectorAll('.task-item').forEach(el => {
-    el.addEventListener('click', () => selectTask(el.dataset.id));
+    el.addEventListener('click', () => selectTask(el.dataset.id, el.dataset.date));
   });
+}
+
+function dateLabelFor(dk, today){
+  // Returns {label, overdueDays}
+  const d = new Date(dk + 'T12:00:00');
+  const t = new Date(today + 'T12:00:00');
+  const diffDays = Math.round((t - d) / 86400000);
+  let label;
+  if(diffDays === 0) label = 'Today';
+  else if(diffDays === 1) label = 'Yesterday';
+  else if(diffDays === -1) label = 'Tomorrow';
+  else {
+    label = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  }
+  return { label, overdueDays: diffDays > 1 ? diffDays : 0 };
 }
 
 function renderTaskRow(task){
@@ -597,7 +727,7 @@ function renderTaskRow(task){
   const urgent = task.urgent ? ' urgent' : '';
   const dom = task.domain || 'personal';
   const estBadge = task.estMin ? `<div class="task-est">${task.estMin}m</div>` : '';
-  return `<div class="task-item${sel}${urgent}" data-id="${task.id}">
+  return `<div class="task-item${sel}${urgent}" data-id="${task.id}" data-date="${task.dateKey || ''}">
     <div class="task-domain-dot ${dom}"></div>
     <div class="task-text">${escapeHtml(task.text)}</div>
     ${estBadge}
@@ -650,11 +780,12 @@ function computeStreak(sessions){
 }
 
 // ============ SELECTION ============
-function selectTask(id){
-  const items = todayItems();
-  const task = items.find(i => i.id === id);
-  if(!task) return;
+function selectTask(id, dateKey){
+  const found = findTaskAcrossDates(id);
+  if(!found) return;
+  const task = found.task;
   selectedTaskId = id;
+  selectedTaskDate = dateKey || found.dateKey;
   // Fill intention
   document.getElementById('intentionInput').value = task.text;
   // Set preset to task.estMin if present
@@ -680,6 +811,7 @@ function selectTask(id){
 
 function clearSelection(){
   selectedTaskId = null;
+  selectedTaskDate = null;
   document.getElementById('intentionInput').value = '';
   document.getElementById('selectedTaskMeta').classList.remove('show');
   document.getElementById('clearTaskBtn').classList.remove('show');
@@ -754,6 +886,7 @@ function enterRunning(active){
   document.getElementById('intentionInput').value = active.intent || '';
   selectedMin = active.durationMin;
   selectedTaskId = active.taskId || null;
+  selectedTaskDate = active.taskDate || null;
   customMode = ![25,50,90].includes(active.durationMin);
   if(customMode) document.getElementById('customMinInput').value = active.durationMin;
   renderPresets();
@@ -785,7 +918,8 @@ function startFocus(){
     startedAt: Date.now(),
     durationMin: duration,
     intent,
-    taskId: selectedTaskId || null
+    taskId: selectedTaskId || null,
+    taskDate: selectedTaskDate || null
   };
   setActive(active);
   // Fire iOS Shortcut
@@ -822,14 +956,13 @@ function finishSession(broken, markTaskDone){
   };
   const all = loadSessions(); all.push(record); saveSessions(all);
 
-  // Update plan task if linked
+  // Update plan task if linked (across any date)
   if(active.taskId){
-    const items = todayItems();
-    const t = items.find(i => i.id === active.taskId);
-    if(t){
-      const patch = { timeSpent: (t.timeSpent||0) + actualMin*60 };
+    const found = findTaskAcrossDates(active.taskId);
+    if(found){
+      const patch = { timeSpent: (found.task.timeSpent||0) + actualMin*60 };
       if(markTaskDone) patch.done = true;
-      updateTaskOnPlan(active.taskId, patch);
+      updateTaskOnPlan(active.taskId, patch, active.taskDate || found.dateKey);
     }
   }
 
@@ -873,6 +1006,14 @@ document.querySelectorAll('.preset').forEach(b => {
 document.getElementById('customMinInput').addEventListener('input', (e) => {
   const raw = parseInt(e.target.value,10);
   if(raw>0 && raw<=240){ selectedMin = raw; if(!getActive()) renderPresets(); }
+});
+
+// Scope tab clicks
+document.querySelectorAll('.scope-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    scope = t.dataset.scope;
+    renderTasks();
+  });
 });
 
 document.getElementById('startBtn').addEventListener('click', startFocus);
