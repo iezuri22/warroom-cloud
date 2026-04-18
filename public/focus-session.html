@@ -230,6 +230,71 @@ h1{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin-bottom:4px}
 }
 .scope-tab:active{opacity:.7}
 
+.board-group{margin-bottom:14px}
+.board-header{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 14px 6px;
+}
+.board-header .board-color{width:10px;height:10px;border-radius:3px}
+.board-header .board-name{
+  font-size:11px;font-weight:700;color:var(--text-dim);
+  letter-spacing:0.5px;text-transform:uppercase;
+}
+.board-header .board-count{
+  font-size:11px;font-weight:500;color:var(--text-dim);
+  letter-spacing:-0.1px;text-transform:none;
+}
+.goal-card{
+  background:var(--surface);border-radius:14px;
+  box-shadow:0 0 0 0.5px var(--border);
+  margin-bottom:10px;overflow:hidden;
+}
+.goal-card-header{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:13px 14px 10px;
+  cursor:pointer;
+  border-bottom:0.5px solid var(--border);
+  transition:background .12s;
+}
+.goal-card-header:active{background:var(--fill-2)}
+.goal-card-header.selected{background:rgba(0,122,255,0.08)}
+.goal-card-header.selected .goal-title{color:var(--accent);font-weight:600}
+.goal-card-header .goal-col-stripe{
+  width:3px;align-self:stretch;border-radius:2px;flex-shrink:0;
+}
+.goal-title{
+  flex:1;font-size:15px;font-weight:500;color:var(--text);
+  letter-spacing:-0.2px;line-height:1.35;
+  word-break:break-word;
+}
+.goal-progress{
+  font-size:11px;font-weight:600;color:var(--text-mid);
+  letter-spacing:-0.05px;flex-shrink:0;padding-top:2px;
+  font-variant-numeric:tabular-nums;
+}
+.goal-col-label{
+  font-size:10px;font-weight:600;
+  letter-spacing:0.3px;text-transform:uppercase;
+  padding:3px 7px;border-radius:5px;flex-shrink:0;
+}
+.action-list{padding:4px 0}
+.action-item{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 14px 10px 30px;cursor:pointer;
+  transition:background .12s;
+  font-size:14px;color:var(--text);letter-spacing:-0.2px;line-height:1.4;
+}
+.action-item:active{background:var(--fill-2)}
+.action-item.selected{background:rgba(0,122,255,0.08);color:var(--accent);font-weight:500}
+.action-item .action-dot{
+  width:14px;height:14px;border-radius:50%;
+  border:1.5px solid var(--text-dim);flex-shrink:0;margin-top:1px;
+  background:var(--surface);
+}
+.action-item.done .action-dot{background:var(--done);border-color:var(--done)}
+.action-item.done .action-text{text-decoration:line-through;color:var(--text-dim)}
+.action-text{flex:1;word-break:break-word}
+
 .date-group{margin-bottom:14px}
 .date-label{
   font-size:11px;font-weight:600;color:var(--text-dim);
@@ -467,6 +532,7 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
     <button class="scope-tab" data-scope="overdue">Overdue</button>
     <button class="scope-tab" data-scope="upcoming">Upcoming</button>
     <button class="scope-tab" data-scope="all">All</button>
+    <button class="scope-tab" data-scope="board">Board</button>
   </div>
   <div class="domain-filters" id="domainFilters">
     <button class="dom-chip active" data-dom="all">All <span class="count" id="cnt-all">0</span></button>
@@ -545,11 +611,16 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
 <script>
 // ============ CONFIG ============
 const PLAN_KEY  = 'daily-plan';     // shared with daily-planner
+const BOARD_KEY = 'goal-board-v2';  // shared with goal-board
 const STORE_KEY = 'focus-sessions-v1';
 const ACTIVE_KEY = 'focus-active';
 const SHORTCUT_NAME = 'Deep Work';
 const DOMAIN_LABEL = {work:'Work', ezrk:'EZRK', vt:'VitalTouch', personal:'Personal'};
 const SLOT_LABEL = {morning:'Morning', afternoon:'Afternoon', night:'Night'};
+// Map board id → planner domain (for color/filter consistency)
+const BOARD_DOMAIN = {
+  'b-vt':'vt', 'b-ecm':'work', 'b-personal':'personal', 'b-ezrk':'ezrk'
+};
 
 // ============ STATE ============
 let selectedMin = 25;
@@ -557,8 +628,11 @@ let selectedTaskId = null; // plan item id when task is selected, else null
 let selectedTaskDate = null; // date key where selected task lives
 let tickInterval = null;
 let customMode = false;
-let scope = 'today'; // 'today' | 'overdue' | 'upcoming' | 'all'
+let scope = 'today'; // 'today' | 'overdue' | 'upcoming' | 'all' | 'board'
 let domainFilter = 'all'; // 'all' | 'work' | 'ezrk' | 'vt' | 'personal'
+let selectedBoardGoalId = null;
+let selectedBoardActionId = null;
+let selectedBoardId = null;
 
 // ============ UTIL ============
 function fmt(secs){
@@ -640,6 +714,67 @@ function addTaskToPlan(task){
   savePlan(p);
 }
 
+// ============ BOARD DATA ============
+function loadBoard(){ try{return JSON.parse(localStorage.getItem(BOARD_KEY)||'null')}catch{return null} }
+function saveBoard(d){ localStorage.setItem(BOARD_KEY, JSON.stringify(d)); }
+function boardIsGoalDone(g){
+  const items = g.actionItems || [];
+  if(!items.length) return !!g.completedAt;
+  return items.every(i => i.done);
+}
+function boardGoalProgress(g){
+  const items = g.actionItems || [];
+  if(!items.length) return null;
+  return { done: items.filter(i=>i.done).length, total: items.length };
+}
+// Find column title + color for a goal
+function boardColumnFor(board, goal){
+  return (board.columns || []).find(c => c.id === goal.columnId) || {title:'', color:'#888'};
+}
+// Decide if a column means "completed" — we'll exclude goals whose column title starts with "Accomplished"
+function columnIsDone(col){
+  return /accomplished|done|complete/i.test(col.title || '');
+}
+// Get all open goals across all boards (not in done column, not fully complete)
+function allOpenBoardGoals(){
+  const d = loadBoard();
+  if(!d || !Array.isArray(d.boards)) return [];
+  const out = [];
+  d.boards.forEach(board => {
+    (board.goals || []).forEach(goal => {
+      const col = boardColumnFor(board, goal);
+      if(columnIsDone(col)) return;
+      if(boardIsGoalDone(goal)) return;
+      out.push({ board, goal, column: col });
+    });
+  });
+  return out;
+}
+// Mark an action item done inside the board
+function updateBoardActionItem(boardId, goalId, actionId, patch){
+  const d = loadBoard();
+  if(!d) return;
+  const b = d.boards.find(x => x.id === boardId);
+  if(!b) return;
+  const g = (b.goals || []).find(x => x.id === goalId);
+  if(!g) return;
+  const a = (g.actionItems || []).find(x => x.id === actionId);
+  if(!a) return;
+  Object.assign(a, patch);
+  saveBoard(d);
+}
+function findBoardActionItem(actionId){
+  const d = loadBoard();
+  if(!d) return null;
+  for(const b of d.boards){
+    for(const g of (b.goals||[])){
+      const a = (g.actionItems||[]).find(x => x.id === actionId);
+      if(a) return { board:b, goal:g, action:a };
+    }
+  }
+  return null;
+}
+
 function loadSessions(){ try{return JSON.parse(localStorage.getItem(STORE_KEY)||'[]')}catch{return[]} }
 function saveSessions(l){ localStorage.setItem(STORE_KEY, JSON.stringify(l)); }
 function getActive(){ try{return JSON.parse(localStorage.getItem(ACTIVE_KEY)||'null')}catch{return null} }
@@ -663,7 +798,149 @@ function renderPresets(){
   }
 }
 
+function updateScopeTabCounts(allPlanItems){
+  const today = todayKey();
+  const boardItems = allOpenBoardGoals();
+  document.querySelectorAll('.scope-tab').forEach(t => {
+    const s = t.dataset.scope;
+    let n = 0;
+    if(s === 'today')    n = allPlanItems.filter(i => i.dateKey === today).length;
+    else if(s === 'overdue')  n = allPlanItems.filter(i => i.dateKey < today).length;
+    else if(s === 'upcoming') n = allPlanItems.filter(i => i.dateKey > today).length;
+    else if(s === 'all')      n = allPlanItems.length;
+    else if(s === 'board'){
+      // Count open action items + goals without action items
+      let cnt = 0;
+      boardItems.forEach(({goal}) => {
+        const items = (goal.actionItems||[]).filter(a => !a.done);
+        cnt += items.length || 1; // the goal itself counts if no items
+      });
+      n = cnt;
+    }
+    if(s !== 'board' && domainFilter !== 'all'){
+      // Apply domain filter to plan-side counts
+      if(s === 'today')    n = allPlanItems.filter(i => i.dateKey === today && (i.domain||'personal')===domainFilter).length;
+      else if(s === 'overdue')  n = allPlanItems.filter(i => i.dateKey < today && (i.domain||'personal')===domainFilter).length;
+      else if(s === 'upcoming') n = allPlanItems.filter(i => i.dateKey > today && (i.domain||'personal')===domainFilter).length;
+      else if(s === 'all')      n = allPlanItems.filter(i => (i.domain||'personal')===domainFilter).length;
+    }
+    if(s === 'board' && domainFilter !== 'all'){
+      let cnt = 0;
+      boardItems.forEach(({board, goal}) => {
+        const dom = BOARD_DOMAIN[board.id] || 'personal';
+        if(dom !== domainFilter) return;
+        const items = (goal.actionItems||[]).filter(a => !a.done);
+        cnt += items.length || 1;
+      });
+      n = cnt;
+    }
+    const label = s.charAt(0).toUpperCase() + s.slice(1);
+    t.textContent = n > 0 ? `${label} ${n}` : label;
+    t.classList.toggle('active', s === scope);
+  });
+}
+
+function renderBoardTasks(){
+  const all = allOpenBoardGoals();
+  // Apply domain filter via board→domain mapping
+  const filtered = (domainFilter === 'all')
+    ? all
+    : all.filter(({board}) => (BOARD_DOMAIN[board.id] || 'personal') === domainFilter);
+
+  updateScopeTabCounts(allOpenItemsWithDate());
+
+  // Domain chip counts for the board scope
+  const domCounts = {all:0, work:0, ezrk:0, vt:0, personal:0};
+  all.forEach(({board, goal}) => {
+    const items = (goal.actionItems||[]).filter(a => !a.done);
+    const cnt = items.length || 1;
+    domCounts.all += cnt;
+    const dom = BOARD_DOMAIN[board.id] || 'personal';
+    domCounts[dom] = (domCounts[dom] || 0) + cnt;
+  });
+  ['all','work','ezrk','vt','personal'].forEach(d => {
+    const el = document.getElementById('cnt-'+d);
+    if(el) el.textContent = domCounts[d];
+  });
+  document.querySelectorAll('.dom-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.dom === domainFilter);
+  });
+
+  const totalOpen = domCounts[domainFilter === 'all' ? 'all' : domainFilter];
+  document.getElementById('tasksMeta').textContent = totalOpen ? (totalOpen + ' open') : '';
+
+  const container = document.getElementById('tasksContainer');
+  if(filtered.length === 0){
+    const empty = domainFilter === 'all'
+      ? 'No open board goals. Check your goal-board.'
+      : `No open ${DOMAIN_LABEL[domainFilter]} board goals.`;
+    container.innerHTML = `<div class="task-list"><div class="task-empty">${empty}</div></div>`;
+    return;
+  }
+
+  // Group by board
+  const byBoard = {};
+  filtered.forEach(row => {
+    const bid = row.board.id;
+    if(!byBoard[bid]) byBoard[bid] = { board: row.board, goals: [] };
+    byBoard[bid].goals.push(row);
+  });
+
+  let html = '';
+  Object.values(byBoard).forEach(({board, goals}) => {
+    const openCount = goals.reduce((a,r) => a + ((r.goal.actionItems||[]).filter(x=>!x.done).length || 1), 0);
+    html += `<div class="board-group">
+      <div class="board-header">
+        <span class="board-color" style="background:${board.color||'#888'}"></span>
+        <span class="board-name">${escapeHtml(board.name)}</span>
+        <span class="board-count">${openCount} open</span>
+      </div>
+      ${goals.map(r => renderBoardGoal(r)).join('')}
+    </div>`;
+  });
+  container.innerHTML = html;
+
+  // Wire click handlers
+  container.querySelectorAll('.goal-card-header').forEach(el => {
+    el.addEventListener('click', () => selectBoardGoal(el.dataset.boardId, el.dataset.goalId));
+  });
+  container.querySelectorAll('.action-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectBoardAction(el.dataset.boardId, el.dataset.goalId, el.dataset.actionId);
+    });
+  });
+}
+
+function renderBoardGoal(row){
+  const {board, goal, column} = row;
+  const openItems = (goal.actionItems || []).filter(a => !a.done);
+  const prog = boardGoalProgress(goal);
+  const selHeader = (selectedBoardGoalId === goal.id && !selectedBoardActionId) ? ' selected' : '';
+  const colBg = column.color ? `rgba(0,0,0,0.04)` : `transparent`;
+  const colLabel = column.title ? `<span class="goal-col-label" style="background:${column.color}22;color:${column.color}">${escapeHtml(column.title)}</span>` : '';
+  const progTxt = prog ? `${prog.done}/${prog.total}` : '';
+  return `<div class="goal-card">
+    <div class="goal-card-header${selHeader}" data-board-id="${board.id}" data-goal-id="${goal.id}">
+      <div class="goal-col-stripe" style="background:${column.color || board.color || '#888'}"></div>
+      <div class="goal-title">${escapeHtml(goal.title)}</div>
+      ${colLabel}
+      ${progTxt ? `<div class="goal-progress">${progTxt}</div>` : ''}
+    </div>
+    ${openItems.length ? `<div class="action-list">
+      ${openItems.map(a => {
+        const sel = (selectedBoardActionId === a.id) ? ' selected' : '';
+        return `<div class="action-item${sel}" data-board-id="${board.id}" data-goal-id="${goal.id}" data-action-id="${a.id}">
+          <div class="action-dot"></div>
+          <div class="action-text">${escapeHtml(a.text)}</div>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
 function renderTasks(){
+  if(scope === 'board'){ renderBoardTasks(); return; }
   const today = todayKey();
   const all = allOpenItemsWithDate();
 
@@ -679,18 +956,7 @@ function renderTasks(){
   const filtered = (domainFilter === 'all') ? inScope : inScope.filter(i => (i.domain||'personal') === domainFilter);
 
   // Update scope tab counts (based on pre-domain filter)
-  document.querySelectorAll('.scope-tab').forEach(t => {
-    const s = t.dataset.scope;
-    let bucket;
-    if(s === 'today')    bucket = all.filter(i => i.dateKey === today);
-    else if(s === 'overdue')  bucket = all.filter(i => i.dateKey < today);
-    else if(s === 'upcoming') bucket = all.filter(i => i.dateKey > today);
-    else                 bucket = all;
-    const n = (domainFilter === 'all') ? bucket.length : bucket.filter(i => (i.domain||'personal') === domainFilter).length;
-    const label = s.charAt(0).toUpperCase() + s.slice(1);
-    t.textContent = n > 0 ? `${label} ${n}` : label;
-    t.classList.toggle('active', s === scope);
-  });
+  updateScopeTabCounts(all);
 
   // Update domain chip counts (based on current scope, before domain filter)
   const domCounts = {all:inScope.length, work:0, ezrk:0, vt:0, personal:0};
@@ -844,6 +1110,8 @@ function selectTask(id, dateKey){
   const task = found.task;
   selectedTaskId = id;
   selectedTaskDate = dateKey || found.dateKey;
+  // Clear any board selection
+  selectedBoardGoalId = null; selectedBoardActionId = null; selectedBoardId = null;
   // Fill intention
   document.getElementById('intentionInput').value = task.text;
   // Set preset to task.estMin if present
@@ -870,9 +1138,62 @@ function selectTask(id, dateKey){
 function clearSelection(){
   selectedTaskId = null;
   selectedTaskDate = null;
+  selectedBoardGoalId = null;
+  selectedBoardActionId = null;
+  selectedBoardId = null;
   document.getElementById('intentionInput').value = '';
   document.getElementById('selectedTaskMeta').classList.remove('show');
   document.getElementById('clearTaskBtn').classList.remove('show');
+  renderTasks();
+}
+
+function selectBoardGoal(boardId, goalId){
+  const d = loadBoard();
+  if(!d) return;
+  const board = d.boards.find(b => b.id === boardId);
+  if(!board) return;
+  const goal = (board.goals||[]).find(g => g.id === goalId);
+  if(!goal) return;
+  // Clear plan selection
+  selectedTaskId = null; selectedTaskDate = null;
+  selectedBoardId = boardId;
+  selectedBoardGoalId = goalId;
+  selectedBoardActionId = null;
+  document.getElementById('intentionInput').value = goal.title;
+  // Show meta
+  const meta = document.getElementById('selectedTaskMeta');
+  meta.classList.add('show');
+  const dom = BOARD_DOMAIN[boardId] || 'personal';
+  meta.querySelector('.dot').style.background = `var(--c-${dom})`;
+  document.getElementById('selectedTaskDomain').textContent = board.name;
+  document.getElementById('selectedTaskSlot').textContent = 'Goal';
+  document.getElementById('clearTaskBtn').classList.add('show');
+  renderTasks();
+}
+
+function selectBoardAction(boardId, goalId, actionId){
+  const d = loadBoard();
+  if(!d) return;
+  const board = d.boards.find(b => b.id === boardId);
+  if(!board) return;
+  const goal = (board.goals||[]).find(g => g.id === goalId);
+  if(!goal) return;
+  const action = (goal.actionItems||[]).find(a => a.id === actionId);
+  if(!action) return;
+  // Clear plan selection
+  selectedTaskId = null; selectedTaskDate = null;
+  selectedBoardId = boardId;
+  selectedBoardGoalId = goalId;
+  selectedBoardActionId = actionId;
+  // Intention = "Goal title — action"
+  document.getElementById('intentionInput').value = action.text;
+  const meta = document.getElementById('selectedTaskMeta');
+  meta.classList.add('show');
+  const dom = BOARD_DOMAIN[boardId] || 'personal';
+  meta.querySelector('.dot').style.background = `var(--c-${dom})`;
+  document.getElementById('selectedTaskDomain').textContent = board.name;
+  document.getElementById('selectedTaskSlot').textContent = goal.title.length > 40 ? goal.title.slice(0,40)+'…' : goal.title;
+  document.getElementById('clearTaskBtn').classList.add('show');
   renderTasks();
 }
 
@@ -940,11 +1261,19 @@ function updateRunningDisplay(){
 function enterRunning(active){
   document.body.classList.add('is-running');
   document.getElementById('endBtn').style.display = 'block';
-  document.getElementById('completeBtn').style.display = active.taskId ? 'block' : 'none';
+  const hasLink = active.taskId || active.boardActionId || active.boardGoalId;
+  const completeBtn = document.getElementById('completeBtn');
+  completeBtn.style.display = hasLink ? 'block' : 'none';
+  if(active.boardActionId) completeBtn.textContent = 'Mark Action Item Done & Finish';
+  else if(active.boardGoalId) completeBtn.textContent = 'Mark Goal Done & Finish';
+  else completeBtn.textContent = 'Mark Task Done & Finish';
   document.getElementById('intentionInput').value = active.intent || '';
   selectedMin = active.durationMin;
   selectedTaskId = active.taskId || null;
   selectedTaskDate = active.taskDate || null;
+  selectedBoardId = active.boardId || null;
+  selectedBoardGoalId = active.boardGoalId || null;
+  selectedBoardActionId = active.boardActionId || null;
   customMode = ![25,50,90].includes(active.durationMin);
   if(customMode) document.getElementById('customMinInput').value = active.durationMin;
   renderPresets();
@@ -977,7 +1306,10 @@ function startFocus(){
     durationMin: duration,
     intent,
     taskId: selectedTaskId || null,
-    taskDate: selectedTaskDate || null
+    taskDate: selectedTaskDate || null,
+    boardId: selectedBoardId || null,
+    boardGoalId: selectedBoardGoalId || null,
+    boardActionId: selectedBoardActionId || null
   };
   setActive(active);
   // Fire iOS Shortcut
@@ -1021,6 +1353,22 @@ function finishSession(broken, markTaskDone){
       const patch = { timeSpent: (found.task.timeSpent||0) + actualMin*60 };
       if(markTaskDone) patch.done = true;
       updateTaskOnPlan(active.taskId, patch, active.taskDate || found.dateKey);
+    }
+  }
+  // Update board action item / goal if linked
+  if(active.boardActionId && active.boardGoalId && active.boardId){
+    if(markTaskDone){
+      updateBoardActionItem(active.boardId, active.boardGoalId, active.boardActionId, {done:true});
+    }
+  } else if(active.boardGoalId && active.boardId && markTaskDone){
+    // Mark whole goal completed (set completedAt)
+    const d = loadBoard();
+    if(d){
+      const b = d.boards.find(x => x.id === active.boardId);
+      if(b){
+        const g = (b.goals||[]).find(x => x.id === active.boardGoalId);
+        if(g){ g.completedAt = new Date().toISOString(); saveBoard(d); }
+      }
     }
   }
 
