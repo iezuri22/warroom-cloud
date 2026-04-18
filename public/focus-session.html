@@ -595,16 +595,23 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
 <!-- SETUP -->
 <div class="setup-tip">
   <div class="tip-title">One-time setup</div>
-  Create an iOS Shortcut named <code>Deep Work</code> on your iPhone + Mac, with iCloud sync on, so this button flips Focus everywhere.
+  You need two Shortcuts: <code>Deep Work</code> (turn on) and <code>Deep Work Off</code> (turn off, optional). Start passes the selected minutes as input.
   <details>
     <summary>Show setup steps</summary>
     <ol>
-      <li>iPhone: <b>Settings → Focus → +</b> → create "Deep Work"; pick allowed apps.</li>
-      <li>iPhone: <b>Settings → Focus → Share Across Devices</b> → on.</li>
-      <li>Mac: <b>System Settings → Focus → Share across devices</b> → on.</li>
-      <li>iPhone: <b>Shortcuts app → +</b> → action "Set Focus → Deep Work → Turn On → For [duration]". Name it exactly <code>Deep Work</code>.</li>
-      <li>Shortcuts app → Settings → <b>iCloud Sync</b> → on.</li>
+      <li><b>iPhone — Settings → Focus → +</b>: create "Deep Work". Pick which apps/people are allowed to notify you.</li>
+      <li><b>iPhone — Settings → Focus → Share Across Devices</b>: on. Same toggle on <b>Mac → System Settings → Focus</b>.</li>
+      <li><b>iPhone — Shortcuts app → +</b>: rename it <code>Deep Work</code>.<br>
+        Action 1: <b>Receive Shortcut Input</b> → accept Text. Provide default "60" if nothing passed.<br>
+        Action 2: <b>Set Focus → Deep Work → Turn On → For X minutes</b> — set X to <em>Shortcut Input</em> (the variable).<br>
+        Save.</li>
+      <li>Optional: create a second shortcut <code>Deep Work Off</code> with one action: <b>Set Focus → Deep Work → Turn Off</b>. Used when you tap End Early / Mark Done.</li>
+      <li><b>Shortcuts app → Settings → iCloud Sync</b>: on. Both shortcuts now sync to your Mac + iPad automatically.</li>
+      <li><b>Mac</b>: set Deep Work's app rules for Mac (System Settings → Focus → Deep Work → Allowed Apps/People).</li>
     </ol>
+    <div style="margin-top:10px;color:var(--text-mid);font-size:12px">
+      Test it: tap <b>Start Focus</b> above → Safari prompts "Open in Shortcuts?" → tap Open. All your devices enter Deep Work.
+    </div>
   </details>
 </div>
 
@@ -1312,18 +1319,26 @@ function startFocus(){
     boardActionId: selectedBoardActionId || null
   };
   setActive(active);
-  // Fire iOS Shortcut
-  try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_NAME); } catch {}
+  // Fire iOS/macOS Shortcut, passing the duration as text input.
+  // Shortcut should accept "Shortcut Input" as Text and use it as the Focus duration (minutes).
+  try {
+    const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_NAME) +
+                '&input=text&text=' + encodeURIComponent(String(duration));
+    window.location.href = url;
+  } catch {}
   enterRunning(active);
 }
 
 function endEarly(){
   if(!confirm('End this focus session early?')) return;
+  // Fire the "Deep Work Off" Shortcut if present — safe to call even if the Shortcut doesn't exist
+  try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work Off'); } catch {}
   finishSession(true, false);
 }
 
 function completeTask(){
-  // Mark the task done AND end the session
+  // Mark the task done AND end the session; flip Focus off (if shortcut exists)
+  try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work Off'); } catch {}
   finishSession(false, true);
 }
 
