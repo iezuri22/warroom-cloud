@@ -36,6 +36,12 @@ body{
   letter-spacing:-0.01em;
   padding:20px 16px 100px;
 }
+/* EMBED MODE: when loaded inside War Room tab iframe, hide chrome that duplicates the parent */
+body.embed{padding:16px 14px 60px}
+body.embed .nav{display:none}
+body.embed h1{display:none}
+body.embed .sub{display:none}
+body.embed .running-indicator{margin-top:0}
 
 /* ============ HEADER ============ */
 .nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
@@ -616,6 +622,24 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
 </div>
 
 <script>
+// ============ EMBED DETECTION ============
+// When loaded inside the War Room tab iframe (/focus-session.html?embed=1 or inside any iframe),
+// hide the standalone header/back button — the parent is already chrome.
+(function detectEmbed(){
+  try{
+    const inIframe = window.self !== window.top;
+    const qsEmbed = new URLSearchParams(window.location.search).get('embed') === '1';
+    if(inIframe || qsEmbed){
+      document.documentElement.classList.add('embed');
+      (document.body || document.documentElement).classList.add('embed');
+      // Ensure class lands on <body> once it exists
+      document.addEventListener('DOMContentLoaded', () => {
+        document.body.classList.add('embed');
+      });
+    }
+  } catch {}
+})();
+
 // ============ CONFIG ============
 const PLAN_KEY  = 'daily-plan';     // shared with daily-planner
 const BOARD_KEY = 'goal-board-v2';  // shared with goal-board
@@ -1320,25 +1344,34 @@ function startFocus(){
   };
   setActive(active);
   // Fire iOS/macOS Shortcut, passing the duration as text input.
-  // Shortcut should accept "Shortcut Input" as Text and use it as the Focus duration (minutes).
-  try {
-    const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_NAME) +
-                '&input=text&text=' + encodeURIComponent(String(duration));
-    window.location.href = url;
-  } catch {}
+  // Navigate the TOP window so URL schemes resolve when we're embedded in the War Room iframe.
+  fireShortcut(SHORTCUT_NAME, String(duration));
   enterRunning(active);
+}
+
+function fireShortcut(name, input){
+  try {
+    let url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(name);
+    if(input !== undefined && input !== null && input !== '') {
+      url += '&input=text&text=' + encodeURIComponent(String(input));
+    }
+    // Target the top-level window so iOS actually follows the shortcuts:// scheme
+    const target = (window.top && window.top !== window.self) ? window.top : window;
+    target.location.href = url;
+  } catch {
+    try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(name); } catch {}
+  }
 }
 
 function endEarly(){
   if(!confirm('End this focus session early?')) return;
-  // Fire the "Deep Work Off" Shortcut if present — safe to call even if the Shortcut doesn't exist
-  try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work Off'); } catch {}
+  fireShortcut('Deep Work Off');
   finishSession(true, false);
 }
 
 function completeTask(){
   // Mark the task done AND end the session; flip Focus off (if shortcut exists)
-  try { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work Off'); } catch {}
+  fireShortcut('Deep Work Off');
   finishSession(false, true);
 }
 
