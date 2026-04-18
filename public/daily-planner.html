@@ -2082,9 +2082,26 @@ function toggleTimer(id){
       item.timeSpent=t.seconds;
       const{all,key}=currentPlan();all[key]=currentPlan().items;savePlan(all);
     }
+    // End focus session (clean pause — not marked as broken)
+    try{
+      const active = window.focusIsActive && window.focusIsActive();
+      if(active && active.taskId === id) window.focusEndQuiet(false, false);
+    } catch {}
   } else {
     // Stop all other timers
     Object.keys(timers).forEach(k=>{if(k!==id&&timers[k].running)stopTimer(k)});
+    // Start a focus session on this task (fires Deep Work shortcut, activates bar, tracks in analytics)
+    try{
+      const active = window.focusIsActive && window.focusIsActive();
+      if(active && active.taskId && active.taskId !== id){
+        // A focus is running on a different task — close it cleanly as broken before starting new
+        window.focusEndQuiet(true, false);
+      }
+      if(!active || (active && active.taskId !== id)){
+        const estMin = (item && item.estMin) || 50;
+        window.focusStartQuiet(id, estMin);
+      }
+    } catch {}
     t.running=true;
     // Broadcast active task
     broadcastActiveTask(id,t.seconds);
@@ -5923,12 +5940,18 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       alert('A focus session is already running. End it first.');
       return;
     }
+    window.focusStartQuiet(taskId, estMin);
+  };
+
+  // Quiet helpers — used by the play/pause timer integration. No dialogs.
+  window.focusIsActive = function(){ return getActive(); };
+  window.focusStartQuiet = function(taskId, estMin){
     const duration = Math.min(240, Math.max(5, parseInt(estMin,10) || 50));
     const active = {
       startedAt: Date.now(),
       durationMin: duration,
       intent: '',
-      taskId,
+      taskId: taskId || null,
       taskDate: null
     };
     setActive(active);
@@ -5939,6 +5962,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     } catch {}
     render();
     startTicking();
+  };
+  window.focusEndQuiet = function(broken, markTaskDone){
+    if(!getActive()) return;
+    try{ window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF); } catch {}
+    finish(!!broken, !!markTaskDone);
   };
 
   // Respond to cross-device sync
