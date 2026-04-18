@@ -188,8 +188,35 @@ h1{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin-bottom:4px}
 .scope-tabs{
   display:flex;gap:4px;
   background:var(--fill-2);padding:4px;border-radius:10px;
-  margin-bottom:12px;
+  margin-bottom:8px;
 }
+.domain-filters{
+  display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;
+}
+.dom-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:980px;
+  font-family:inherit;font-size:13px;font-weight:500;
+  letter-spacing:-0.1px;
+  background:var(--fill-2);border:none;color:var(--text);
+  cursor:pointer;transition:background .12s,color .12s;
+}
+.dom-chip .dot{width:7px;height:7px;border-radius:50%}
+.dom-chip:active{opacity:.7}
+.dom-chip.active{
+  background:var(--surface);font-weight:600;
+  box-shadow:0 1px 2px rgba(60,50,30,0.1),0 0 0 0.5px rgba(60,60,67,0.12);
+}
+.dom-chip.active[data-dom="work"]{color:var(--c-work)}
+.dom-chip.active[data-dom="ezrk"]{color:var(--c-ezrk)}
+.dom-chip.active[data-dom="vt"]{color:var(--c-vt)}
+.dom-chip.active[data-dom="personal"]{color:var(--c-personal)}
+.dom-chip .count{
+  font-size:11px;font-weight:500;color:var(--text-mid);
+  background:var(--fill-2);border-radius:5px;padding:1px 5px;
+  font-variant-numeric:tabular-nums;
+}
+.dom-chip.active .count{background:var(--fill)}
 .scope-tab{
   flex:1;padding:7px 10px;border-radius:8px;
   font-family:inherit;font-size:13px;font-weight:500;
@@ -228,11 +255,13 @@ h1{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin-bottom:4px}
   overflow:hidden;
 }
 .task-item{
-  display:flex;align-items:center;gap:12px;
+  display:flex;align-items:flex-start;gap:12px;
   padding:12px 14px;cursor:pointer;
   border-bottom:0.5px solid var(--border);
   transition:background .12s;
 }
+.task-item .task-domain-dot{margin-top:6px}
+.task-item .task-est{margin-top:2px}
 .task-item:last-child{border-bottom:none}
 .task-item:active{background:var(--fill-2)}
 .task-item.selected{background:rgba(0,122,255,0.08)}
@@ -244,8 +273,8 @@ h1{font-size:34px;font-weight:700;letter-spacing:-0.6px;margin-bottom:4px}
 .task-domain-dot.personal{background:var(--c-personal)}
 .task-text{
   flex:1;min-width:0;font-size:15px;color:var(--text);
-  letter-spacing:-0.2px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  letter-spacing:-0.2px;line-height:1.4;
+  word-break:break-word;
 }
 .task-est{
   font-size:12px;font-weight:500;color:var(--text-mid);
@@ -439,6 +468,13 @@ body.is-running .tasks-section{opacity:.6;pointer-events:none}
     <button class="scope-tab" data-scope="upcoming">Upcoming</button>
     <button class="scope-tab" data-scope="all">All</button>
   </div>
+  <div class="domain-filters" id="domainFilters">
+    <button class="dom-chip active" data-dom="all">All <span class="count" id="cnt-all">0</span></button>
+    <button class="dom-chip" data-dom="work"><span class="dot" style="background:var(--c-work)"></span>Work <span class="count" id="cnt-work">0</span></button>
+    <button class="dom-chip" data-dom="ezrk"><span class="dot" style="background:var(--c-ezrk)"></span>EZRK <span class="count" id="cnt-ezrk">0</span></button>
+    <button class="dom-chip" data-dom="vt"><span class="dot" style="background:var(--c-vt)"></span>VitalTouch <span class="count" id="cnt-vt">0</span></button>
+    <button class="dom-chip" data-dom="personal"><span class="dot" style="background:var(--c-personal)"></span>Personal <span class="count" id="cnt-personal">0</span></button>
+  </div>
   <div id="tasksContainer"></div>
 
   <!-- Add task -->
@@ -522,6 +558,7 @@ let selectedTaskDate = null; // date key where selected task lives
 let tickInterval = null;
 let customMode = false;
 let scope = 'today'; // 'today' | 'overdue' | 'upcoming' | 'all'
+let domainFilter = 'all'; // 'all' | 'work' | 'ezrk' | 'vt' | 'personal'
 
 // ============ UTIL ============
 function fmt(secs){
@@ -631,24 +668,39 @@ function renderTasks(){
   const all = allOpenItemsWithDate();
 
   // Filter by scope
-  let filtered;
-  if(scope === 'today')    filtered = all.filter(i => i.dateKey === today);
-  else if(scope === 'overdue')  filtered = all.filter(i => i.dateKey < today);
-  else if(scope === 'upcoming') filtered = all.filter(i => i.dateKey > today);
-  else                     filtered = all.slice();
+  const scopeFilter = (arr) => {
+    if(scope === 'today')    return arr.filter(i => i.dateKey === today);
+    if(scope === 'overdue')  return arr.filter(i => i.dateKey < today);
+    if(scope === 'upcoming') return arr.filter(i => i.dateKey > today);
+    return arr.slice();
+  };
+  const inScope = scopeFilter(all);
+  // Then filter by domain
+  const filtered = (domainFilter === 'all') ? inScope : inScope.filter(i => (i.domain||'personal') === domainFilter);
 
-  // Update tab counts
+  // Update scope tab counts (based on pre-domain filter)
   document.querySelectorAll('.scope-tab').forEach(t => {
     const s = t.dataset.scope;
-    let n;
-    if(s === 'today')    n = all.filter(i => i.dateKey === today).length;
-    else if(s === 'overdue')  n = all.filter(i => i.dateKey < today).length;
-    else if(s === 'upcoming') n = all.filter(i => i.dateKey > today).length;
-    else                 n = all.length;
-    // Restore label with count
+    let bucket;
+    if(s === 'today')    bucket = all.filter(i => i.dateKey === today);
+    else if(s === 'overdue')  bucket = all.filter(i => i.dateKey < today);
+    else if(s === 'upcoming') bucket = all.filter(i => i.dateKey > today);
+    else                 bucket = all;
+    const n = (domainFilter === 'all') ? bucket.length : bucket.filter(i => (i.domain||'personal') === domainFilter).length;
     const label = s.charAt(0).toUpperCase() + s.slice(1);
     t.textContent = n > 0 ? `${label} ${n}` : label;
     t.classList.toggle('active', s === scope);
+  });
+
+  // Update domain chip counts (based on current scope, before domain filter)
+  const domCounts = {all:inScope.length, work:0, ezrk:0, vt:0, personal:0};
+  inScope.forEach(i => { const d = i.domain||'personal'; if(domCounts[d] != null) domCounts[d]++; });
+  ['all','work','ezrk','vt','personal'].forEach(d => {
+    const el = document.getElementById('cnt-'+d);
+    if(el) el.textContent = domCounts[d];
+  });
+  document.querySelectorAll('.dom-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.dom === domainFilter);
   });
 
   const meta = filtered.length + (filtered.length === 1 ? ' task' : ' tasks');
@@ -656,12 +708,18 @@ function renderTasks(){
 
   const container = document.getElementById('tasksContainer');
   if(filtered.length === 0){
-    const emptyMsg = {
-      today:    'No tasks for today. Add one below.',
-      overdue:  'Nothing overdue. Clean slate.',
-      upcoming: 'No upcoming tasks scheduled.',
-      all:      'No open tasks anywhere.'
-    }[scope];
+    let emptyMsg;
+    if(domainFilter !== 'all'){
+      const domName = ({work:'Work',ezrk:'EZRK',vt:'VitalTouch',personal:'Personal'})[domainFilter];
+      emptyMsg = `No ${domName} tasks in this view.`;
+    } else {
+      emptyMsg = {
+        today:    'No tasks for today. Add one below.',
+        overdue:  'Nothing overdue. Clean slate.',
+        upcoming: 'No upcoming tasks scheduled.',
+        all:      'No open tasks anywhere.'
+      }[scope];
+    }
     container.innerHTML = `<div class="task-list"><div class="task-empty">${emptyMsg}</div></div>`;
     return;
   }
@@ -1012,6 +1070,14 @@ document.getElementById('customMinInput').addEventListener('input', (e) => {
 document.querySelectorAll('.scope-tab').forEach(t => {
   t.addEventListener('click', () => {
     scope = t.dataset.scope;
+    renderTasks();
+  });
+});
+
+// Domain chip clicks
+document.querySelectorAll('.dom-chip').forEach(c => {
+  c.addEventListener('click', () => {
+    domainFilter = c.dataset.dom;
     renderTasks();
   });
 });
