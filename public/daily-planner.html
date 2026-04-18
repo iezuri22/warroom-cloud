@@ -696,6 +696,34 @@ body{font-family:var(--ios-font);background:var(--bg);color:var(--text);min-heig
 .domain-bar-fill{height:100%;border-radius:6px;transition:width .5s ease;display:flex;align-items:center;padding-left:8px}
 .domain-bar-fill span{font-size:11px;font-weight:700;color:#fff;white-space:nowrap}
 
+/* TIME BY TASK */
+.tbt-row{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  margin-bottom:6px;
+}
+.tbt-tag{
+  font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;
+  text-transform:uppercase;letter-spacing:.3px;flex-shrink:0;
+}
+.tbt-text{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tbt-dur{
+  font-family:-apple-system,"SF Mono",ui-monospace,monospace;
+  font-size:12px;font-weight:700;color:var(--text);flex-shrink:0;
+  font-variant-numeric:tabular-nums;
+}
+.tbt-row.done .tbt-text{color:var(--text-mid);text-decoration:line-through}
+.tbt-row.focus-only{background:linear-gradient(90deg,rgba(255,59,48,.05),var(--surface) 50%)}
+.tbt-bar{
+  height:3px;background:var(--surface-2);border-radius:2px;margin-top:5px;overflow:hidden;
+}
+.tbt-bar-fill{height:100%;border-radius:2px;transition:width .4s ease}
+.tbt-empty{
+  text-align:center;padding:20px;color:var(--text-dim);font-size:13px;
+  border:1px dashed var(--border);border-radius:8px;
+}
+
 .period-toggle{display:flex;gap:0;margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;width:fit-content}
 .period-btn{
   padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;color:var(--text-mid);
@@ -1289,6 +1317,15 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="stat-grid" id="statGrid"></div>
     <h3 style="font-size:15px;font-weight:700;margin-bottom:12px">Time by Domain</h3>
     <div class="domain-bars" id="domainBars"></div>
+
+    <!-- TIME BY TASK -->
+    <div style="margin-top:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px">
+        <h3 style="font-size:15px;font-weight:700" id="timeByTaskTitle">Time by Task</h3>
+        <span id="timeByTaskMeta" style="font-size:11px;font-weight:600;color:var(--text-mid)"></span>
+      </div>
+      <div id="timeByTaskList"></div>
+    </div>
 
     <!-- FOCUS SESSIONS -->
     <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
@@ -2365,28 +2402,54 @@ function setPeriod(p){
 function renderAnalytics(){
   const log=loadTimeLog();
   const now=new Date();const today=todayKey();
-  // Also include today's in-progress timers
-  const{items:todayItems}=currentPlan();
 
-  let filtered=[];
+  // ---- Period bounds ----
+  let periodStartKey=null, periodEndKey=today;
   if(analyticsPeriod==='today'){
-    filtered=log.filter(e=>e.date===today);
+    periodStartKey=today;
   } else if(analyticsPeriod==='week'){
     const sun=new Date(now);sun.setDate(sun.getDate()-sun.getDay());sun.setHours(0,0,0,0);
-    const sunKey=sun.toISOString().split('T')[0];
-    filtered=log.filter(e=>e.date>=sunKey);
+    periodStartKey=dateKey(sun);
   } else {
-    const monthStart=now.toISOString().slice(0,7);
-    filtered=log.filter(e=>e.date.startsWith(monthStart));
+    // Month: first of this month
+    const mStart=new Date(now.getFullYear(),now.getMonth(),1);
+    periodStartKey=dateKey(mStart);
   }
+  const inPeriod = (dk) => dk >= periodStartKey && dk <= periodEndKey;
 
-  // Add in-progress today items
-  todayItems.forEach(item=>{
-    if(item.done)return;
-    const t=timers[item.id];
-    const secs=(t?t.seconds:0)||item.timeSpent||0;
-    if(secs>0)filtered.push({date:today,domain:item.domain,seconds:secs,shifted:false});
+  // ---- 1. Completed tasks from time-log ----
+  let filtered = log.filter(e => inPeriod(e.date));
+
+  // ---- 2. Incomplete tasks across the plan within period (includes focus-accumulated timeSpent) ----
+  const plan = loadPlan();
+  Object.keys(plan).forEach(dk => {
+    if(!inPeriod(dk)) return;
+    (plan[dk]||[]).forEach(item => {
+      if(item.done) return; // completed items are already in time-log
+      const t = timers[item.id];
+      const liveSecs = (t && t.running) ? t.seconds : 0;
+      const secs = Math.max(liveSecs, item.timeSpent || 0);
+      if(secs > 0){
+        filtered.push({date:dk, domain:item.domain, text:item.text, taskId:item.id, seconds:secs, shifted:false});
+      }
+    });
   });
+
+  // ---- 3. Orphan focus sessions: taskId no longer in plan (e.g., task removed). Include as "Deep work" ----
+  // Avoid double-counting: completed tasks in period are already in log; incomplete in-period tasks already
+  // added above (focus time rolled into item.timeSpent). Only pick sessions whose taskId isn't found.
+  try{
+    const focusAll = loadFocusSessionsAll();
+    const knownIds = new Set();
+    Object.keys(plan).forEach(dk => (plan[dk]||[]).forEach(it => knownIds.add(it.id)));
+    focusAll.forEach(s => {
+      const dk = dateKey(new Date(s.endedAt));
+      if(!inPeriod(dk)) return;
+      if(s.taskId && knownIds.has(s.taskId)) return; // already counted
+      const secs = (s.actualMin||0)*60;
+      if(secs > 0) filtered.push({date:dk, domain:'personal', text:s.intent||'Deep work', taskId:s.taskId||null, seconds:secs, shifted:false, focusOnly:true});
+    });
+  } catch {}
 
   const totalSecs=filtered.reduce((a,e)=>a+e.seconds,0);
   const totalTasks=filtered.length;
@@ -2432,10 +2495,88 @@ function renderAnalytics(){
     bars.appendChild(row);
   });
   if(!Object.keys(domainSecs).length){
-    bars.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:13px">No time tracked yet. Start a timer on any task.</div>';
+    bars.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:13px">No time tracked yet. Start a focus session on any task.</div>';
   }
+  renderTimeByTask(filtered);
   renderFocusAnalytics();
   renderWeeklyGoals();
+}
+
+// ============ TIME BY TASK ============
+function renderTimeByTask(filtered){
+  const list = document.getElementById('timeByTaskList');
+  const meta = document.getElementById('timeByTaskMeta');
+  const title = document.getElementById('timeByTaskTitle');
+  if(!list) return;
+  if(title) title.textContent =
+    analyticsPeriod==='today' ? 'Time by Task (Today)' :
+    analyticsPeriod==='week' ? 'Time by Task (This Week)' :
+    'Time by Task (This Month)';
+
+  // Group by task: prefer taskId; fall back to "domain|text" so old log entries still bucket
+  const byTask = new Map();
+  filtered.forEach(e => {
+    const key = e.taskId ? ('id:'+e.taskId) : ((e.domain||'?')+'|'+(e.text||'(untitled)'));
+    const cur = byTask.get(key) || {
+      taskId: e.taskId || null,
+      text: e.text || '(untitled)',
+      domain: e.domain || 'personal',
+      seconds: 0,
+      dates: new Set(),
+      done: false,
+      focusOnly: !!e.focusOnly
+    };
+    cur.seconds += e.seconds || 0;
+    if(e.date) cur.dates.add(e.date);
+    if(e.text && !cur.text) cur.text = e.text;
+    if(e.focusOnly === false) cur.focusOnly = false;
+    byTask.set(key, cur);
+  });
+
+  // Mark done tasks by looking them up in plan (completed items were pulled from time-log where done isn't carried)
+  try{
+    const plan = loadPlan();
+    const idToDone = new Map();
+    Object.keys(plan).forEach(dk => (plan[dk]||[]).forEach(it => {
+      if(it.id && it.done) idToDone.set(it.id, true);
+    }));
+    byTask.forEach((v) => { if(v.taskId && idToDone.get(v.taskId)) v.done = true; });
+  } catch {}
+
+  const rows = Array.from(byTask.values()).sort((a,b)=>b.seconds-a.seconds);
+
+  if(rows.length === 0){
+    list.innerHTML = '<div class="tbt-empty">No task time tracked in this period yet.</div>';
+    if(meta) meta.textContent = '';
+    return;
+  }
+
+  const maxSecs = rows[0].seconds || 1;
+  const totalSecs = rows.reduce((a,r)=>a+r.seconds,0);
+  if(meta){
+    const h = Math.floor(totalSecs/3600);
+    const m = Math.round((totalSecs%3600)/60);
+    meta.textContent = `${rows.length} task${rows.length===1?'':'s'} · ${h>0?h+'h ':''}${m}m total`;
+  }
+
+  list.innerHTML = rows.map(r => {
+    const d = D[r.domain] || D.personal;
+    const pct = Math.round((r.seconds/maxSecs)*100);
+    const dayCount = r.dates.size;
+    const dayLabel = dayCount > 1 ? ` · ${dayCount} days` : '';
+    return `
+      <div class="tbt-row${r.done?' done':''}${r.focusOnly?' focus-only':''}">
+        <span class="tbt-tag" style="background:${d.bg};color:${d.hex}">${d.name}</span>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="tbt-text" title="${esc(r.text)}">${esc(r.text)}</div>
+            <div class="tbt-dur">${fmtHM(r.seconds)}</div>
+          </div>
+          <div class="tbt-bar"><div class="tbt-bar-fill" style="width:${pct}%;background:${d.hex}"></div></div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:3px">${r.focusOnly?'focus only':r.done?'completed':'in progress'}${dayLabel}</div>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 // ============ FOCUS SESSION ANALYTICS ============
