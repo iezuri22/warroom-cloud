@@ -1334,7 +1334,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
         <span id="focusMeta" style="font-size:11px;font-weight:600;color:var(--text-mid)"></span>
       </div>
       <div class="stat-grid" id="focusStatGrid"></div>
-      <div id="focusRecent" style="margin-top:16px"></div>
     </div>
 
     <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
@@ -2669,32 +2668,9 @@ function renderFocusAnalytics(){
       <div class="stat-card-sub">${streak===0?'start today':streak===1?'keep it going':'consecutive days'}</div>
     </div>`;
 
+  // Recent sessions block removed — Time by Task now shows per-task breakdown.
   const recentWrap = document.getElementById('focusRecent');
-  const recent = filtered.slice().sort((a,b)=>b.endedAt-a.endedAt).slice(0,6);
-  if(recent.length === 0){
-    recentWrap.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:13px">No focus sessions yet. Start one from the Focus tab.</div>';
-    return;
-  }
-  recentWrap.innerHTML = `
-    <div style="font-size:11px;font-weight:700;color:var(--text-dim);letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px">Recent sessions</div>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      ${recent.map(s => {
-        const label = focusTaskLabel(s);
-        const when = new Date(s.endedAt);
-        const dateStr = when.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'America/Chicago'});
-        const timeStr = when.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/Chicago'});
-        const dot = s.broken ? '#C93030' : '#34C759';
-        return `
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
-            <div style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0"></div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtmlFocus(label)}</div>
-              <div style="font-size:11px;color:var(--text-mid);margin-top:1px">${dateStr} · ${timeStr}${s.broken?' · ended early':''}</div>
-            </div>
-            <div style="font-size:13px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;flex-shrink:0">${s.actualMin||0}m</div>
-          </div>`;
-      }).join('')}
-    </div>`;
+  if(recentWrap) recentWrap.innerHTML = '';
 }
 function escapeHtmlFocus(s){
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -2707,19 +2683,43 @@ function saveWeeklyGoals(g){const s=JSON.stringify(g);localStorage.setItem(WGK,s
 function renderWeeklyGoals(){
   const goals=loadWeeklyGoals();
   const log=loadTimeLog();
-  // Get this week's data
+  // Week bounds (Sun..today, Chicago-local via dateKey)
   const now=new Date();
   const sun=new Date(now);sun.setDate(sun.getDate()-sun.getDay());sun.setHours(0,0,0,0);
-  const sunKey=sun.toISOString().split('T')[0];
-  const weekLog=log.filter(e=>e.date>=sunKey);
-  // Add in-progress today
-  const{items:todayItems}=currentPlan();
-  todayItems.forEach(item=>{
-    if(item.done)return;
-    const t=timers[item.id];
-    const secs=(t?t.seconds:0)||item.timeSpent||0;
-    if(secs>0)weekLog.push({domain:item.domain,seconds:secs});
+  const sunKey=dateKey(sun);
+  const todayK=todayKey();
+  const inWeek = (dk) => dk >= sunKey && dk <= todayK;
+
+  // 1. Completed tasks from time-log
+  const weekLog=log.filter(e=>inWeek(e.date));
+
+  // 2. Incomplete tasks in the plan across the week (includes focus-accumulated timeSpent)
+  const plan=loadPlan();
+  Object.keys(plan).forEach(dk=>{
+    if(!inWeek(dk))return;
+    (plan[dk]||[]).forEach(item=>{
+      if(item.done)return; // already in log
+      const t=timers[item.id];
+      const liveSecs=(t&&t.running)?t.seconds:0;
+      const secs=Math.max(liveSecs, item.timeSpent||0);
+      if(secs>0)weekLog.push({domain:item.domain,seconds:secs});
+    });
   });
+
+  // 3. Orphan focus sessions (task no longer in plan) — bucket as personal
+  try{
+    const focusAll=loadFocusSessionsAll();
+    const knownIds=new Set();
+    Object.keys(plan).forEach(dk=>(plan[dk]||[]).forEach(it=>knownIds.add(it.id)));
+    focusAll.forEach(s=>{
+      const dk=dateKey(new Date(s.endedAt));
+      if(!inWeek(dk))return;
+      if(s.taskId && knownIds.has(s.taskId))return;
+      const secs=(s.actualMin||0)*60;
+      if(secs>0)weekLog.push({domain:'personal',seconds:secs});
+    });
+  }catch{}
+
   const domainSecs={};
   weekLog.forEach(e=>{domainSecs[e.domain]=(domainSecs[e.domain]||0)+e.seconds});
 
