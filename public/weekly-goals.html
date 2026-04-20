@@ -104,7 +104,6 @@ body{padding:16px 14px 120px}
 .list{display:grid;grid-template-columns:1fr;gap:10px;align-items:start}
 @media(min-width:620px){.list{grid-template-columns:repeat(2,1fr)}}
 @media(min-width:1080px){.list{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:1440px){.list{grid-template-columns:repeat(4,1fr)}}
 
 .card{
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
@@ -208,21 +207,9 @@ body{padding:16px 14px 120px}
 .viewing-other-q .hero{border-color:rgba(255,138,61,.3)}
 
 /* Board-work cards share the quarterly goal card look so they feel like peers, not second-class rows */
-.bwg-list{display:grid;grid-template-columns:1fr;gap:10px;align-items:start}
-@media(min-width:620px){.bwg-list{grid-template-columns:repeat(2,1fr)}}
-@media(min-width:1080px){.bwg-list{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:1440px){.bwg-list{grid-template-columns:repeat(4,1fr)}}
-.bwg-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:14px 14px 12px;display:flex;flex-direction:column;gap:10px;
-  transition:border-color .12s;position:relative;
-}
-.bwg-card:hover{border-color:var(--border-2)}
-.bwg-card.dn{background:linear-gradient(180deg,var(--surface) 0%,rgba(90,200,250,.04) 100%);border-color:rgba(90,200,250,.18)}
-.bwg-card.is-hidden{opacity:.55;border-style:dashed}
-.bwg-card .title{cursor:pointer;transition:color .12s}
-.bwg-card .title:hover{color:var(--accent)}
-.bwg-card.dn .title{color:var(--text-mid);text-decoration:line-through;text-decoration-thickness:1.5px}
+.card.is-hidden{opacity:.55;border-style:dashed}
+.card .title.clickable{cursor:pointer;transition:color .12s}
+.card .title.clickable:hover{color:var(--accent)}
 
 .bwg-board-pill{
   display:inline-flex;align-items:center;gap:6px;
@@ -277,6 +264,36 @@ body{padding:16px 14px 120px}
 }
 .bwg-add-task input:focus{border-color:var(--accent)}
 .bwg-add-task input::placeholder{color:var(--text-fade)}
+
+/* "+ Today" button on every task row — sends task to daily planner */
+.bwg-task-plan{
+  font-family:inherit;font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  padding:3px 7px;border-radius:4px;background:transparent;color:var(--text-fade);
+  border:1px solid var(--border);cursor:pointer;flex-shrink:0;transition:all .1s;
+  white-space:nowrap;
+}
+.bwg-task-plan:hover{color:var(--accent);border-color:rgba(255,138,61,.4);background:var(--accent-bg)}
+.bwg-task-plan:active{transform:scale(.95)}
+.bwg-task-plan.queued{color:var(--ok);border-color:rgba(48,209,88,.35);background:var(--ok-bg)}
+
+/* Toolbar-level show-hidden toggle */
+.toolbar-hidden-toggle{
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  padding:8px 10px;border-radius:10px;background:transparent;color:var(--text-dim);
+  border:1px solid var(--border);cursor:pointer;transition:all .1s;flex-shrink:0;
+}
+.toolbar-hidden-toggle:hover{color:var(--text);border-color:var(--border-2)}
+.toolbar-hidden-toggle.on{background:var(--surface-2);color:var(--text);border-color:var(--border-2)}
+
+/* Toast */
+.toast{
+  position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;
+  background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;
+  padding:10px 16px;font-size:12.5px;font-weight:700;letter-spacing:.2px;color:var(--text);
+  box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:200;pointer-events:none;
+  transition:opacity .18s,transform .18s;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* Two progress bars with labels */
 .prog-row .prog-label{
@@ -405,18 +422,13 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
 
 <div class="toolbar">
   <div class="chips" id="chips"></div>
+  <button class="toolbar-hidden-toggle" id="hiddenToggle" onclick="toggleShowHidden()" style="display:none">Show hidden</button>
   <button class="add-btn" onclick="openAddModal()">+ Goal</button>
 </div>
 
 <div class="list" id="list"></div>
 
-<section class="work-section" id="workSection">
-  <div class="work-section-head">
-    <div class="work-section-title">Board Work <span class="tally" id="workTally"></span></div>
-    <button class="work-hidden-toggle" id="workHiddenToggle" onclick="toggleShowHidden()">Show hidden</button>
-  </div>
-  <div id="workBoards"></div>
-</section>
+<div class="toast" id="toast"></div>
 
 <!-- FAB -->
 <button class="fab" onclick="openAddModal()" aria-label="Add goal">+</button>
@@ -525,7 +537,7 @@ function toggleHideBoardCard(boardId,goalId){
   const g=(b.goals||[]).find(x=>x.id===goalId); if(!g)return;
   g.hideFromGoals=!g.hideFromGoals;
   saveBoardData(bd);
-  renderBoardWork();
+  renderAll();
 }
 function findBoardGoal(bd,boardId,goalId){
   const b=(bd.boards||[]).find(x=>x.id===boardId); if(!b)return null;
@@ -539,7 +551,7 @@ function cycleBoardStatus(boardId,goalId){
   if(r.g.status==='dn' && !r.g.completedAt) r.g.completedAt=new Date().toISOString();
   if(r.g.status!=='dn') r.g.completedAt=null;
   r.g.updatedAt=new Date().toISOString();
-  saveBoardData(bd); renderBoardWork();
+  saveBoardData(bd); renderAll();
 }
 function nudgeBoardStatusProgress(boardId,goalId,delta){
   const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
@@ -547,20 +559,20 @@ function nudgeBoardStatusProgress(boardId,goalId,delta){
   if(r.g.statusProgress===100 && r.g.status!=='dn'){r.g.status='dn'; r.g.completedAt=r.g.completedAt||new Date().toISOString();}
   if(r.g.statusProgress<100 && r.g.status==='dn'){r.g.status='on'; r.g.completedAt=null;}
   r.g.updatedAt=new Date().toISOString();
-  saveBoardData(bd); renderBoardWork();
+  saveBoardData(bd); renderAll();
 }
 function shipBoardCard(boardId,goalId){
   const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
   r.g.status='dn'; r.g.statusProgress=100;
   r.g.completedAt=new Date().toISOString(); r.g.updatedAt=new Date().toISOString();
-  saveBoardData(bd); renderBoardWork();
+  saveBoardData(bd); renderAll();
 }
 function toggleBoardTask(boardId,goalId,taskId){
   const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
   const it=(r.g.actionItems||[]).find(x=>x.id===taskId); if(!it)return;
   it.done=!it.done;
   r.g.updatedAt=new Date().toISOString();
-  saveBoardData(bd); renderBoardWork();
+  saveBoardData(bd); renderAll();
 }
 function addBoardTask(evt,boardId,goalId){
   evt.preventDefault();
@@ -573,7 +585,7 @@ function addBoardTask(evt,boardId,goalId){
   r.g.updatedAt=new Date().toISOString();
   saveBoardData(bd);
   input.value='';
-  renderBoardWork();
+  renderAll();
   setTimeout(()=>{
     const el=document.querySelector(`[data-goal-id="${goalId}"] .bwg-add-task input`);
     if(el) el.focus();
@@ -583,14 +595,14 @@ function addBoardTask(evt,boardId,goalId){
 function toggleBoardTasksHidden(boardId,goalId){
   const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
   r.g.hideTasks=!r.g.hideTasks;
-  saveBoardData(bd); renderBoardWork();
+  saveBoardData(bd); renderAll();
 }
 function setBoardQuarter(boardId,goalId,qk){
   const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
   r.g.quarter=qk||null;
   r.g.updatedAt=new Date().toISOString();
   saveBoardData(bd);
-  renderBoardWork();
+  renderAll();
 }
 function bwgQuarterOptions(selected){
   // Window of quarters around now: 4 back, 8 forward
@@ -607,10 +619,7 @@ function bwgQuarterOptions(selected){
 }
 function toggleShowHidden(){
   showHidden=!showHidden;
-  const btn=document.getElementById('workHiddenToggle');
-  btn.classList.toggle('on',showHidden);
-  btn.textContent=showHidden?'Hide hidden':'Show hidden';
-  renderBoardWork();
+  renderAll();
 }
 
 // ---- Data ----
@@ -626,6 +635,59 @@ function save(){
   }catch(e){}
 }
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+
+// ---- Cross-page glue: infer pillar from board, map to daily-plan domain, push tasks ----
+function boardPillar(b){
+  if(!b) return 'personal';
+  if(b.pillar && PILLARS.some(p=>p.id===b.pillar)) return b.pillar;
+  const n=((b.name||'')+' '+(b.description||'')).toLowerCase();
+  if(/\b(ezrk|ez reader|ez chef|sidequest|ez voter|ez money|ez learning|ez blueprint)\b/.test(n)) return 'ezrk';
+  if(/\b(vitaltouch|vital touch|home care|caregiver|medicaid|client|idph)\b/.test(n)) return 'vt';
+  if(/\b(bha|butterfly|cna|academy)\b/.test(n)) return 'bha';
+  if(/\b(crm|city of chicago|govtech|day job|consulting|work|client work)\b/.test(n)) return 'work';
+  return 'personal';
+}
+function pillarToDomain(p){
+  // daily-planner domains: vt, work, personal, ezrk — fold bha into vt (health org cluster)
+  if(p==='ezrk') return 'ezrk';
+  if(p==='vt' || p==='bha') return 'vt';
+  if(p==='work') return 'work';
+  return 'personal';
+}
+function addTaskToTodaysPlan(text,domain){
+  const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Chicago'});
+  let plan={};
+  try{const raw=localStorage.getItem('daily-plan'); if(raw) plan=JSON.parse(raw)||{};}catch{plan={}}
+  if(!Array.isArray(plan[today])) plan[today]=[];
+  // Bail if this exact text+domain is already queued today (avoid double-adds on mash)
+  if(plan[today].some(it=>(it.text||'').trim()===text.trim() && (it.domain||'personal')===domain)){
+    showToast('Already on today');
+    return false;
+  }
+  const h=new Date().toLocaleString('en-US',{hour:'numeric',hour12:false,timeZone:'America/Chicago'});
+  const hour=parseInt(h,10)||0;
+  const slot=hour>=17?'night':(hour>=12?'afternoon':'morning');
+  plan[today].push({
+    id:uid(),text:text,domain:domain||'personal',slot,originalSlot:slot,
+    done:false,shifted:false,skipped:false,urgent:false,due:'',timeSpent:0,
+    createdAt:new Date().toISOString()
+  });
+  try{
+    const s=JSON.stringify(plan);
+    localStorage.setItem('daily-plan',s);
+    if(window.syncClient && typeof window.syncClient.push==='function'){ try{window.syncClient.push('daily-plan',s)}catch{} }
+  }catch(e){}
+  showToast('Added to today');
+  return true;
+}
+let _toastTimer=null;
+function showToast(msg){
+  const el=document.getElementById('toast'); if(!el) return;
+  el.textContent=msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),1800);
+}
 
 // ---- Quarter calc ----
 function currentQuarterKey(d){d=d||new Date();return d.getFullYear()+'-Q'+(Math.floor(d.getMonth()/3)+1)}
@@ -738,9 +800,26 @@ function renderHealth(){
 
 // ---- Chips ----
 function renderChips(){
-  const all=goalsForView();
-  const counts={all:all.length};
-  PILLARS.forEach(p=>{counts[p.id]=all.filter(g=>g.pillar===p.id).length;});
+  const goals=goalsForView();
+  const counts={all:0};
+  PILLARS.forEach(p=>{counts[p.id]=0;});
+  goals.forEach(g=>{
+    counts.all++;
+    const p=g.pillar||'personal';
+    if(counts[p]!=null) counts[p]++;
+  });
+  // Board cards in viewQuarter (not hidden) — count toward both all + pillar
+  const bd=loadBoard(); const curQ=currentQuarterKey();
+  (bd.boards||[]).forEach(b=>{
+    (b.goals||[]).forEach(g=>{
+      const cardQ=g.quarter||curQ;
+      if(cardQ!==viewQuarter) return;
+      if(!showHidden && g.hideFromGoals) return;
+      counts.all++;
+      const p=boardPillar(b);
+      if(counts[p]!=null) counts[p]++;
+    });
+  });
   let html=`<button class="chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All<span class="num">${counts.all}</span></button>`;
   PILLARS.forEach(p=>{
     if(!counts[p.id])return;
@@ -754,23 +833,86 @@ function setFilter(f){activeFilter=f;renderChips();renderList();}
 function statusMeta(id){return STATUSES.find(s=>s.id===id)||STATUSES[0]}
 function pillarMeta(id){return PILLARS.find(p=>p.id===id)||PILLARS[0]}
 
+// Build a unified, sortable item list from both quarterly goals and board cards
+function buildUnifiedItems(){
+  const rank={on:1,at:0,bl:-1,dn:99};
+  const out=[];
+
+  // Quarterly goals (manual) for this quarter
+  goalsForView().forEach(g=>{
+    const pillar=g.pillar||'personal';
+    if(activeFilter!=='all' && pillar!==activeFilter) return;
+    out.push({
+      kind:'goal',
+      id:g.id,
+      pillar,
+      status:g.status||'on',
+      progress:g.progress||0,
+      raw:g,
+      rank:(rank[g.status]??1)
+    });
+  });
+
+  // Board cards scoped to viewQuarter
+  const bd=loadBoard(); const curQ=currentQuarterKey();
+  (bd.boards||[]).forEach(b=>{
+    (b.goals||[]).forEach(g=>{
+      const cardQ=g.quarter||curQ;
+      if(cardQ!==viewQuarter) return;
+      if(!showHidden && g.hideFromGoals) return;
+      const pillar=boardPillar(b);
+      if(activeFilter!=='all' && pillar!==activeFilter) return;
+      const col=(b.columns||[]).find(c=>c.id===g.columnId)||{title:'Board',color:'#888'};
+      const effectiveStatus=isBoardGoalDone(g)?'dn':(g.status||'on');
+      out.push({
+        kind:'board',
+        id:g.id,
+        pillar,
+        status:effectiveStatus,
+        progress:g.statusProgress||0,
+        raw:{b,g,col},
+        rank:(rank[effectiveStatus]??1)
+      });
+    });
+  });
+
+  return out.sort((a,b)=>{
+    if(a.rank!==b.rank) return a.rank-b.rank;
+    return (a.progress||0)-(b.progress||0);
+  });
+}
+
 function renderList(){
   const el=document.getElementById('list');
-  let goals=goalsForView();
-  if(activeFilter!=='all')goals=goals.filter(g=>g.pillar===activeFilter);
-  const rank={on:1,at:0,bl:-1,dn:99};
-  goals=goals.slice().sort((a,b)=>{
-    if((rank[a.status]??1)!==(rank[b.status]??1))return(rank[a.status]??1)-(rank[b.status]??1);
-    return(a.progress||0)-(b.progress||0);
+  const items=buildUnifiedItems();
+
+  // Count board hidden for toggle
+  let totalHidden=0;
+  const bd=loadBoard(); const curQ=currentQuarterKey();
+  (bd.boards||[]).forEach(b=>{
+    (b.goals||[]).forEach(g=>{
+      const cardQ=g.quarter||curQ;
+      if(cardQ!==viewQuarter) return;
+      if(g.hideFromGoals) totalHidden++;
+    });
   });
-  if(!goals.length){
+  const btn=document.getElementById('hiddenToggle');
+  if(btn){
+    btn.style.display=(totalHidden||showHidden)?'':'none';
+    btn.classList.toggle('on',showHidden);
+    btn.textContent = showHidden
+      ? 'Hide hidden'
+      : (totalHidden?('Show hidden ('+totalHidden+')'):'Show hidden');
+  }
+
+  if(!items.length){
     const isCurrent=viewQuarter===currentQuarterKey();
     const qLbl=qkLabel(viewQuarter);
     const head=activeFilter==='all'
-      ? (isCurrent?'No quarterly goals yet.':'No goals in '+qLbl+'.')
+      ? (isCurrent?'No goals or cards yet.':'Nothing in '+qLbl+'.')
       : 'Nothing here in this pillar.';
     const body=isCurrent
-      ? 'Quarterly goals are the 3–5 strategic bets for the next 90 days. Not todos. Big moves.'
+      ? 'Quarterly goals are the 3–5 strategic bets for the next 90 days. Board cards land here too. Big moves only.'
       : 'Plan ahead — set the 3–5 big moves for '+qLbl+' before it arrives.';
     el.innerHTML=`<div class="empty">
       <h3>${head}</h3>
@@ -779,7 +921,50 @@ function renderList(){
     </div>`;
     return;
   }
-  el.innerHTML=goals.map(renderCard).join('');
+  el.innerHTML=items.map(it=>it.kind==='goal'?renderCard(it.raw):renderBoardCard(it.raw)).join('');
+}
+
+// Inline task list for quarterly goals — same shape as board tasks, each row has "+ Today"
+function renderGoalTasksHTML(g){
+  const items=g.tasks||[];
+  const hidden=!!g.hideTasks;
+  if(hidden){
+    return `<div class="bwg-tasks collapsed">
+      <button class="bwg-tasks-toggle" onclick="toggleGoalTasksHidden('${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
+    </div>`;
+  }
+  return `<div class="bwg-tasks">
+    <button class="bwg-tasks-toggle" onclick="toggleGoalTasksHidden('${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
+    ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
+      <input type="checkbox" ${it.done?'checked':''} onchange="toggleGoalTask('${g.id}','${it.id}')">
+      <span class="bwg-task-txt">${escapeHtml(it.text||'')}</span>
+      <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addGoalTaskToToday('${g.id}','${it.id}')" title="Add to today's plan">+ Today</button>
+    </label>`).join('')}
+    <form class="bwg-add-task" onsubmit="return addGoalTask(event,'${g.id}')" onclick="event.stopPropagation()">
+      <input type="text" placeholder="+ Add a task" maxlength="200" />
+    </form>
+  </div>`;
+}
+
+function renderBoardTasksHTML(b,g){
+  const items=g.actionItems||[];
+  const hidden=!!g.hideTasks;
+  if(hidden){
+    return `<div class="bwg-tasks collapsed">
+      <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
+    </div>`;
+  }
+  return `<div class="bwg-tasks">
+    <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
+    ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
+      <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
+      <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+      <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addBoardTaskToToday('${b.id}','${g.id}','${it.id}')" title="Add to today's plan">+ Today</button>
+    </label>`).join('')}
+    <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
+      <input type="text" placeholder="+ Add a task" maxlength="200" />
+    </form>
+  </div>`;
 }
 
 function renderCard(g){
@@ -797,6 +982,19 @@ function renderCard(g){
     ? `<div class="notes" onclick="openEditModal('${g.id}')">${escapeHtml(g.notes)}</div>`
     : '';
 
+  const items=g.tasks||[];
+  const doneCt=items.filter(i=>i.done).length;
+  const taskPct=items.length?Math.round((doneCt/items.length)*100):0;
+  const tasksHTML=renderGoalTasksHTML(g);
+
+  const taskProgRow = items.length
+    ? `<div class="prog-row">
+        <span class="prog-label">Tasks</span>
+        <div class="prog-bar"><div class="prog-fill ${sm.cls}" style="width:${taskPct}%"></div></div>
+        <div class="prog-num">${doneCt}/${items.length}</div>
+      </div>`
+    : '';
+
   return `<article class="${cardCls}" data-id="${g.id}">
     <div class="card-top">
       <div class="card-top-l">
@@ -807,10 +1005,13 @@ function renderCard(g){
     </div>
     <div class="title">${escapeHtml(g.title||'Untitled')}</div>
     ${notesHTML}
+    ${tasksHTML}
     <div class="prog-row">
+      <span class="prog-label">Status</span>
       <div class="prog-bar"><div class="prog-fill ${sm.cls}" style="width:${progress}%"></div></div>
       <div class="prog-num">${progress}%</div>
     </div>
+    ${taskProgRow}
     <div class="actions">
       <button class="ab" onclick="cycleStatus('${g.id}')" title="Cycle status">Status</button>
       <button class="ab" onclick="nudgeProgress('${g.id}',-10)">–10%</button>
@@ -822,10 +1023,57 @@ function renderCard(g){
   </article>`;
 }
 
-// ---- Board Work (all cards from all boards, user hides what they don't want) ----
+function renderBoardCard({b,g,col}){
+  const pm=pillarMeta(boardPillar(b));
+  const items=g.actionItems||[];
+  const doneCt=items.filter(i=>i.done).length;
+  const cardDone=isBoardGoalDone(g);
+  const taskPct=items.length?Math.round((doneCt/items.length)*100):(cardDone?100:0);
+  const sp=Math.max(0,Math.min(100,g.statusProgress||0));
+  const sm=statusMeta(g.status||'on');
+  const cardCls='card'+(cardDone?' dn':'')+(g.status==='bl'?' bl':'')+(g.hideFromGoals?' is-hidden':'');
+  const curQ=currentQuarterKey();
+
+  const tasksHTML=renderBoardTasksHTML(b,g);
+  const qSelectHTML=`<select class="bwg-q-select" onchange="setBoardQuarter('${b.id}','${g.id}',this.value)" onclick="event.stopPropagation()" title="Move to quarter">
+    ${bwgQuarterOptions(g.quarter||curQ)}
+  </select>`;
+
+  return `<article class="${cardCls}" data-id="${g.id}" data-goal-id="${g.id}">
+    <div class="card-top">
+      <div class="card-top-l">
+        <span class="pillar"><span class="d" style="background:${pm.color}"></span>${pm.label}</span>
+        <span class="bwg-board-pill"><span class="d" style="background:${b.color||col.color||'#888'}"></span>${escapeHtml(b.name||'Board')}</span>
+        <span class="status ${sm.cls}">${sm.label}</span>
+        ${qSelectHTML}
+      </div>
+    </div>
+    <div class="title clickable" onclick="openBoardCard('${b.id}','${g.id}')">${escapeHtml(g.title||'(untitled)')}</div>
+    ${tasksHTML}
+    <div class="prog-row">
+      <span class="prog-label">Status</span>
+      <div class="prog-bar"><div class="prog-fill ${sm.cls}" style="width:${sp}%"></div></div>
+      <div class="prog-num">${sp}%</div>
+    </div>
+    <div class="prog-row">
+      <span class="prog-label">Tasks</span>
+      <div class="prog-bar"><div class="prog-fill" style="width:${taskPct}%;background:${col.color||pm.color}"></div></div>
+      <div class="prog-num">${items.length?doneCt+'/'+items.length:'—'}</div>
+    </div>
+    <div class="actions">
+      <button class="ab" onclick="cycleBoardStatus('${b.id}','${g.id}')" title="Cycle status">Status</button>
+      <button class="ab" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',-10)">–10%</button>
+      <button class="ab primary" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',10)">+10%</button>
+      ${cardDone?'':`<button class="ab ship" onclick="shipBoardCard('${b.id}','${g.id}')">Ship</button>`}
+      <button class="ab" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
+      <button class="ab del" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide'}</button>
+    </div>
+  </article>`;
+}
+
+// ---- Opens a board card in goal-board.html (top-level nav in case we're in an iframe) ----
 function openBoardCard(boardId,goalId){
   const url='/goal-board.html?board='+encodeURIComponent(boardId)+'&goal='+encodeURIComponent(goalId);
-  // Break out of any iframe so navigation happens at the top level
   try{
     if(window.top && window.top!==window.self){
       window.top.location.href=url;
@@ -833,120 +1081,6 @@ function openBoardCard(boardId,goalId){
     }
   }catch(e){}
   window.location.href=url;
-}
-
-function renderBoardWork(){
-  const bd=loadBoard();
-  const boards=(bd.boards||[]);
-  const container=document.getElementById('workBoards');
-  const tallyEl=document.getElementById('workTally');
-  const hiddenBtn=document.getElementById('workHiddenToggle');
-
-  // Flatten: board work cards render as peers of quarterly goals, filtered by viewQuarter
-  const curQ=currentQuarterKey();
-  const all=[];
-  boards.forEach(b=>{
-    (b.goals||[]).forEach(g=>{
-      const cardQ=g.quarter||curQ; // unassigned cards live in the current quarter
-      if(cardQ!==viewQuarter) return;
-      const col=(b.columns||[]).find(c=>c.id===g.columnId)||{title:'Board',color:'#888'};
-      all.push({b,g,col});
-    });
-  });
-
-  if(!all.length){
-    const qLbl=qkLabel(viewQuarter);
-    container.innerHTML=`<div class="wg-empty">No board cards tagged to ${qLbl}. Use the quarter picker on any card to move it here.</div>`;
-    tallyEl.textContent='';
-    hiddenBtn.style.display='none';
-    return;
-  }
-
-  let totalVisible=0,totalHidden=0,totalDone=0;
-  all.forEach(({g})=>{
-    if(g.hideFromGoals) totalHidden++;
-    else {
-      totalVisible++;
-      if(isBoardGoalDone(g)) totalDone++;
-    }
-  });
-
-  const visibleList=all.filter(x=>showHidden?true:!x.g.hideFromGoals);
-  if(!visibleList.length){
-    container.innerHTML=`<div class="wg-empty">Every card is hidden. Tap "Show hidden" above to bring them back.</div>`;
-  } else {
-    let html='<div class="bwg-list">';
-    visibleList.forEach(({b,g,col})=>{
-      const items=g.actionItems||[];
-      const doneCt=items.filter(i=>i.done).length;
-      const cardDone=isBoardGoalDone(g);
-      const taskPct=items.length?Math.round((doneCt/items.length)*100):(cardDone?100:0);
-      const sp=Math.max(0,Math.min(100,g.statusProgress||0));
-      const sm=statusMeta(g.status||'on');
-      const cardCls='bwg-card'+(cardDone?' dn':'')+(g.hideFromGoals?' is-hidden':'');
-
-      const tasksHidden=!!g.hideTasks;
-      const tasksHTML=tasksHidden
-        ? `<div class="bwg-tasks collapsed">
-            <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
-          </div>`
-        : `<div class="bwg-tasks">
-            <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
-            ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
-              <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
-              <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
-            </label>`).join('')}
-            <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
-              <input type="text" placeholder="+ Add a task" maxlength="200" />
-            </form>
-          </div>`;
-
-      const qSelectHTML=`<select class="bwg-q-select" onchange="setBoardQuarter('${b.id}','${g.id}',this.value)" onclick="event.stopPropagation()" title="Move to quarter">
-        ${bwgQuarterOptions(g.quarter||curQ)}
-      </select>`;
-
-      html+=`<article class="${cardCls}" data-goal-id="${g.id}">
-        <div class="card-top">
-          <div class="card-top-l">
-            <span class="pillar"><span class="d" style="background:${col.color}"></span>${escapeHtml(col.title||'Board')}</span>
-            <span class="bwg-board-pill"><span class="d" style="background:${b.color||'#888'}"></span>${escapeHtml(b.name||'Board')}</span>
-            <span class="status ${sm.cls}">${sm.label}</span>
-            ${qSelectHTML}
-          </div>
-        </div>
-        <div class="title" onclick="openBoardCard('${b.id}','${g.id}')">${escapeHtml(g.title||'(untitled)')}</div>
-        ${tasksHTML}
-        <div class="prog-row">
-          <span class="prog-label">Status</span>
-          <div class="prog-bar"><div class="prog-fill ${sm.cls}" style="width:${sp}%"></div></div>
-          <div class="prog-num">${sp}%</div>
-        </div>
-        <div class="prog-row">
-          <span class="prog-label">Tasks</span>
-          <div class="prog-bar"><div class="prog-fill" style="width:${taskPct}%;background:${col.color}"></div></div>
-          <div class="prog-num">${items.length?doneCt+'/'+items.length:'—'}</div>
-        </div>
-        <div class="actions">
-          <button class="ab" onclick="cycleBoardStatus('${b.id}','${g.id}')" title="Cycle status">Status</button>
-          <button class="ab" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',-10)">–10%</button>
-          <button class="ab primary" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',10)">+10%</button>
-          ${cardDone?'':`<button class="ab ship" onclick="shipBoardCard('${b.id}','${g.id}')">Ship</button>`}
-          <button class="ab" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
-          <button class="ab del" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide'}</button>
-        </div>
-      </article>`;
-    });
-    html+='</div>';
-    container.innerHTML=html;
-  }
-
-  tallyEl.textContent=totalVisible?`${totalDone}/${totalVisible}`:'';
-  hiddenBtn.style.display=totalHidden||showHidden?'':'none';
-  if(totalHidden){
-    hiddenBtn.textContent=showHidden?'Hide hidden':'Show hidden ('+totalHidden+')';
-  } else if(showHidden){
-    hiddenBtn.textContent='Hide hidden';
-  }
 }
 
 function cycleStatus(gid){
@@ -973,6 +1107,50 @@ function deleteGoal(gid){
   if(!confirm('Delete this goal?'))return;
   data.goals=data.goals.filter(x=>x.id!==gid);
   save();renderAll();
+}
+
+// ---- Quarterly goal tasks ----
+function toggleGoalTasksHidden(gid){
+  const g=data.goals.find(x=>x.id===gid); if(!g) return;
+  g.hideTasks=!g.hideTasks;
+  save(); renderList();
+}
+function toggleGoalTask(gid,taskId){
+  const g=data.goals.find(x=>x.id===gid); if(!g) return;
+  const it=(g.tasks||[]).find(t=>t.id===taskId); if(!it) return;
+  it.done=!it.done;
+  g.updatedAt=new Date().toISOString();
+  save(); renderList();
+}
+function addGoalTask(evt,gid){
+  evt.preventDefault();
+  const input=evt.target.querySelector('input');
+  const text=(input.value||'').trim();
+  if(!text) return false;
+  const g=data.goals.find(x=>x.id===gid); if(!g) return false;
+  if(!Array.isArray(g.tasks)) g.tasks=[];
+  g.tasks.push({id:uid(),text,done:false});
+  g.updatedAt=new Date().toISOString();
+  save();
+  input.value='';
+  renderList();
+  setTimeout(()=>{
+    const el=document.querySelector(`[data-id="${gid}"] .bwg-add-task input`);
+    if(el) el.focus();
+  },40);
+  return false;
+}
+function addGoalTaskToToday(gid,taskId){
+  const g=data.goals.find(x=>x.id===gid); if(!g) return;
+  const it=(g.tasks||[]).find(t=>t.id===taskId); if(!it) return;
+  const domain=pillarToDomain(g.pillar||'personal');
+  addTaskToTodaysPlan(it.text,domain);
+}
+function addBoardTaskToToday(boardId,goalId,taskId){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r) return;
+  const it=(r.g.actionItems||[]).find(x=>x.id===taskId); if(!it) return;
+  const domain=pillarToDomain(boardPillar(r.b));
+  addTaskToTodaysPlan(it.text||it.title||'',domain);
 }
 
 // ---- Modal ----
@@ -1075,7 +1253,7 @@ function escapeHtml(s){const d=document.createElement('div');d.textContent=s==nu
 function fmtDate(dk){const d=new Date(dk+'T12:00:00');return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
 function daysUntil(dk){const d=new Date(dk+'T12:00:00');return Math.max(0,Math.ceil((d.getTime()-Date.now())/86400000))}
 
-function renderAll(){renderHeader();renderHealth();renderChips();renderList();renderBoardWork();}
+function renderAll(){renderHeader();renderHealth();renderChips();renderList();}
 
 // Close modal on backdrop/Esc
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
@@ -1084,7 +1262,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();}});
 // Cross-tab sync (our data + board data both trigger a re-render)
 window.addEventListener('storage',e=>{
   if(e.key===SK){data=load();renderAll();}
-  if(e.key===BOARD_SK){renderBoardWork();}
+  if(e.key===BOARD_SK){renderAll();}
 });
 
 renderAll();
