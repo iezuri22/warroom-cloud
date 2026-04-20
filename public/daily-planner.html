@@ -197,10 +197,17 @@ body.focus-active .focus-bar{display:none !important}
   color:#fff; margin:4px 0 8px;
 }
 .focus-big-sub{
-  font-size:12px; font-weight:500; color:rgba(255,255,255,.55);
-  letter-spacing:.1px; margin-bottom:6px;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  margin-top:6px; margin-bottom:10px;
 }
-.focus-big-sub strong{color:rgba(255,255,255,.85);font-weight:700}
+.focus-big-sub .focus-big-sub-label{
+  font-size:10px; font-weight:700; color:rgba(255,255,255,.45);
+  letter-spacing:1.5px; text-transform:uppercase;
+}
+.focus-big-sub strong{
+  font-size:22px; font-weight:800; color:#fff;
+  letter-spacing:-.5px; font-variant-numeric:tabular-nums;
+}
 .focus-big-progress{
   width:100%; height:3px; background:rgba(255,255,255,.08); border-radius:999px;
   overflow:hidden; margin:16px 0 16px;
@@ -218,6 +225,23 @@ body.focus-active .focus-bar{display:none !important}
 .focus-big-btn.primary:hover{background:#16a34a}
 .focus-big-btn.danger{background:rgba(255,59,48,.15); border-color:rgba(255,59,48,.35); color:#ff6b63}
 .focus-big-btn.danger:hover{background:rgba(255,59,48,.25)}
+/* iOS Focus on/off row — smaller pills above the main actions */
+.focus-big-ios-row{
+  display:flex; gap:6px; justify-content:center; width:100%;
+  margin-bottom:10px; flex-wrap:wrap;
+}
+.focus-big-ios-btn{
+  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.10);
+  color:rgba(255,255,255,.72); padding:6px 11px; border-radius:8px;
+  font-weight:600; font-size:11px; letter-spacing:.2px;
+  cursor:pointer; font-family:var(--ios-font);
+  display:inline-flex; align-items:center; gap:5px; transition:all .12s;
+}
+.focus-big-ios-btn:hover{background:rgba(255,255,255,.09); color:#fff}
+.focus-big-ios-btn.on{border-color:rgba(255,138,61,.35); color:#FF8A3D}
+.focus-big-ios-btn.on:hover{background:rgba(255,138,61,.12); border-color:rgba(255,138,61,.55)}
+.focus-big-ios-btn.off{border-color:rgba(255,255,255,.12); color:rgba(255,255,255,.55)}
+body.focus-big-min .focus-big-ios-row{display:none}
 /* Minimized state — collapse to a compact pill */
 body.focus-big-min .focus-big{
   width:auto; max-height:none; top:auto; bottom:18px; right:18px;
@@ -1467,13 +1491,22 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">Focus</span></div>
     <div class="focus-big-task" id="focusBigTask">Deep work</div>
     <div class="focus-big-time" id="focusBigTime">00:00</div>
-    <div class="focus-big-sub">Total on this task today: <strong id="focusBigTotal">0m</strong></div>
+    <div class="focus-big-sub">
+      <span class="focus-big-sub-label">Total on this task</span>
+      <strong id="focusBigTotal">0m</strong>
+    </div>
     <div class="focus-big-progress" id="focusBigProgressWrap" style="display:none"><div class="focus-big-progress-fill" id="focusBigProgress"></div></div>
-    <div class="focus-big-actions">
-      <button class="focus-big-btn" onclick="event.stopPropagation();focusFireIOSFocus()" title="Fire Deep Work iOS Shortcut">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
-        iOS Focus
+    <div class="focus-big-ios-row">
+      <button class="focus-big-ios-btn on" onclick="event.stopPropagation();focusFireIOSFocus()" title="Turn on Deep Work Focus on iOS">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+        iOS Focus On
       </button>
+      <button class="focus-big-ios-btn off" onclick="event.stopPropagation();focusFireIOSFocusOff()" title="Turn off Deep Work Focus on iOS">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        iOS Focus Off
+      </button>
+    </div>
+    <div class="focus-big-actions">
       <button class="focus-big-btn danger" onclick="event.stopPropagation();focusBarEndEarly()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         End early
@@ -7342,6 +7375,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
                 '&input=text&text=' + encodeURIComponent(minutes);
     try{ window.location.href = url; } catch {}
   };
+  // Manual trigger — turns OFF iOS Focus. Fires the Deep Work Off shortcut
+  // on user tap. Works whether or not a focus session is active (user can
+  // disable iOS Focus independently).
+  window.focusFireIOSFocusOff = function(){
+    try{ window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF); } catch {}
+  };
 
   window.focusEndQuiet = function(broken, markTaskDone){
     if(!getActive()) return;
@@ -7380,6 +7419,83 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     render();
     if(getActive()) startTicking();
   }
+})();
+
+/* ============ INDEPENDENT TOP-LEVEL FOCUS TICKER ============
+   Backup ticker that runs outside the focusBarModule closure. If the
+   module's setInterval gets starved or something interrupts its tick
+   (e.g. iOS Safari suspending it), this one will still update the DOM
+   every 500ms by reading localStorage fresh and rewriting the time
+   element directly. Belt-and-suspenders for the countdown. */
+(function independentFocusTicker(){
+  const ACTIVE_KEY = 'focus-active';
+  function fmt(totalSec){
+    const h = Math.floor(totalSec/3600);
+    const m = Math.floor((totalSec%3600)/60);
+    const s = totalSec%60;
+    if(h>0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  function tick(){
+    let active = null;
+    try{ active = JSON.parse(localStorage.getItem(ACTIVE_KEY) || 'null'); } catch {}
+    if(!active) return;
+    const isStopwatch = active.mode === 'stopwatch';
+    const elapsedMs = Date.now() - (active.startedAt || Date.now());
+    const elapsedSec = Math.max(0, Math.floor(elapsedMs/1000));
+    let displaySec, pct;
+    if(isStopwatch){
+      displaySec = elapsedSec; pct = 0;
+    } else {
+      const total = (active.durationMin || 25) * 60 * 1000;
+      const remainingMs = total - elapsedMs;
+      if(remainingMs <= 0){
+        // Let the module finish the session
+        if(typeof window.focusBarForceRender === 'function') window.focusBarForceRender();
+        return;
+      }
+      displaySec = Math.floor(remainingMs/1000);
+      pct = Math.min(100, Math.max(0, (elapsedMs/total)*100));
+    }
+    const bigTime = document.getElementById('focusBigTime');
+    if(bigTime && bigTime.textContent !== fmt(displaySec)) bigTime.textContent = fmt(displaySec);
+    const barTime = document.getElementById('focusBarTime');
+    if(barTime && barTime.textContent !== fmt(displaySec)) barTime.textContent = fmt(displaySec);
+    const bigProg = document.getElementById('focusBigProgress');
+    if(bigProg && !isStopwatch) bigProg.style.width = pct + '%';
+    const barProg = document.getElementById('focusBarProgress');
+    if(barProg && !isStopwatch) barProg.style.width = pct + '%';
+    // Also update the per-task row if possible
+    if(active.taskId){
+      const td = document.getElementById('td-' + active.taskId);
+      if(td){
+        try{
+          const plan = JSON.parse(localStorage.getItem('daily-plan') || '{}');
+          let base = 0;
+          outer: for(const dk of Object.keys(plan)){
+            const day = plan[dk] || {};
+            for(const sl of Object.keys(day)){
+              const items = day[sl] || [];
+              const t = items.find(x => x && x.id === active.taskId);
+              if(t){ base = t.timeSpent || 0; break outer; }
+            }
+          }
+          const fmtT = window.fmtTime || (n => n + 's');
+          td.textContent = fmtT(base + elapsedSec);
+          td.classList.remove('idle');
+          // Also update the big-panel total
+          const bigTotal = document.getElementById('focusBigTotal');
+          if(bigTotal) bigTotal.textContent = fmtT(base + elapsedSec);
+        } catch {}
+      }
+    }
+  }
+  // 500ms cadence — twice per second so the seconds digit always feels live
+  setInterval(tick, 500);
+  // Also tick immediately on visibility change
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible') tick();
+  });
 })();
 </script>
 
