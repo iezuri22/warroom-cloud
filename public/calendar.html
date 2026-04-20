@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Calendar</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Calendar">
+<meta name="theme-color" content="#050507">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="/sync-client.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#050507; --surface:#101014; --surface-2:#1C1C22; --surface-3:#24242C;
+  --border:rgba(255,255,255,0.09); --border-2:rgba(255,255,255,0.14);
+  --text:#FFFFFF; --text-mid:rgba(255,255,255,0.75); --text-dim:rgba(255,255,255,0.55); --text-fade:rgba(255,255,255,0.35);
+  --accent:#FF8A3D;
+  --accent-bg:rgba(255,138,61,0.14);
+  --accent-soft:rgba(255,138,61,0.08);
+  --ok:#30D158; --ok-bg:rgba(48,209,88,0.12);
+  --warn:#FFD60A; --warn-bg:rgba(255,214,10,0.12);
+  --block:#FF453A; --block-bg:rgba(255,69,58,0.12);
+  --done:#5AC8FA; --done-bg:rgba(90,200,250,0.12);
+
+  --c-party:#FF8A3D;
+  --c-date:#FF453A;
+  --c-event:#BF5AF2;
+  --c-appt:#5AC8FA;
+  --c-work:#6E7074;
+  --c-other:#FFD60A;
+
+  --font:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;
+  --radius:12px;
+  --radius-sm:8px;
+}
+html,body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;letter-spacing:-0.01em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{padding:16px 14px 120px}
+@media(min-width:900px){body{padding:24px 32px 140px}}
+
+/* ============ HEADER ============ */
+.hero{
+  background:linear-gradient(135deg,var(--surface) 0%,var(--surface-2) 100%);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:18px 18px 16px;margin:0 auto 14px;position:relative;overflow:hidden;
+  max-width:1180px;
+}
+.hero::after{
+  content:'';position:absolute;top:-40px;right:-40px;width:140px;height:140px;border-radius:50%;
+  background:radial-gradient(circle,var(--accent-bg) 0%,transparent 70%);pointer-events:none;
+}
+.hero-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);position:relative;z-index:1}
+.hero-row{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;position:relative;z-index:1}
+.hero-title{font-size:clamp(28px,7vw,40px);font-weight:900;letter-spacing:-.03em;line-height:1}
+.hero-title .wk{color:var(--accent)}
+.hero-sub{font-size:12px;font-weight:600;color:var(--text-mid);margin-top:6px;letter-spacing:.2px}
+.hero-vibe{text-align:right;flex-shrink:0}
+.hero-vibe .n{font-size:clamp(22px,5vw,32px);font-weight:900;line-height:1;letter-spacing:-.02em;color:var(--text)}
+.hero-vibe .l{font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-top:4px}
+.hero-vibe.calm .n{color:var(--ok)}
+.hero-vibe.busy .n{color:var(--warn)}
+.hero-vibe.packed .n{color:var(--block)}
+
+/* ============ WEEK NAV ============ */
+.wknav{display:flex;align-items:center;gap:8px;margin:0 auto 14px;max-width:1180px}
+.wknav-btn{
+  font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.4px;
+  padding:9px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .1s;flex:1;text-align:center;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wknav-btn:hover{color:var(--text);border-color:var(--border-2);background:var(--surface-2)}
+.wknav-btn:active{transform:scale(.98)}
+.wknav-now{
+  font-family:inherit;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
+  padding:9px 12px;border-radius:8px;background:var(--accent);color:#000;border:none;cursor:pointer;
+  transition:all .1s;flex-shrink:0;
+}
+.wknav-now:active{transform:scale(.97)}
+.wknav-now.hidden{display:none}
+
+/* ============ STATS STRIP ============ */
+.stats{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 auto 16px;
+  max-width:1180px;
+}
+.sc{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:10px 8px;text-align:center;
+}
+.sc .v{font-size:22px;font-weight:900;line-height:1;letter-spacing:-.02em}
+.sc .l{font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);margin-top:5px}
+.sc.pri .v{color:var(--accent)}
+.sc.tot .v{color:var(--text)}
+.sc.free .v{color:var(--ok)}
+.sc.wkd .v{color:var(--done)}
+
+/* ============ TAB BAR ============ */
+.tabs{display:flex;align-items:center;gap:6px;margin:0 auto 14px;max-width:1180px;flex-wrap:wrap}
+.tab-btn{
+  flex-shrink:0;font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  padding:8px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .12s;
+}
+.tab-btn:active{transform:scale(.96)}
+.tab-btn.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+.tab-spacer{flex:1}
+.add-btn{
+  font-family:inherit;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
+  padding:9px 14px;border-radius:10px;background:var(--accent);color:#000;border:none;cursor:pointer;
+  flex-shrink:0;transition:transform .1s,filter .1s;
+}
+.add-btn:active{transform:scale(.97);filter:brightness(.95)}
+
+/* ============ VIEW CONTAINER ============ */
+.view{max-width:1180px;margin:0 auto}
+
+/* ============ WEEK VIEW ============ */
+.wk-grid{display:grid;grid-template-columns:1fr;gap:8px}
+@media(min-width:620px){.wk-grid{grid-template-columns:repeat(2,1fr);gap:10px}}
+@media(min-width:900px){.wk-grid{grid-template-columns:repeat(7,1fr);gap:8px}}
+
+.day{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 12px 10px;display:flex;flex-direction:column;gap:8px;
+  transition:border-color .12s;cursor:pointer;min-height:120px;
+  position:relative;
+}
+.day:hover{border-color:var(--border-2)}
+.day.today{border-color:var(--accent);background:linear-gradient(180deg,var(--surface) 0%,rgba(255,138,61,0.04) 100%)}
+.day.today::before{
+  content:'TODAY';position:absolute;top:8px;right:10px;
+  font-size:8px;font-weight:800;letter-spacing:1px;color:var(--accent);
+  background:var(--accent-bg);padding:2px 6px;border-radius:4px;
+}
+.day.weekend{background:linear-gradient(180deg,var(--surface) 0%,rgba(90,200,250,0.03) 100%)}
+.day.past{opacity:.55}
+.day.has-priority{border-color:rgba(255,138,61,.28)}
+
+.day-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
+.day-name{font-size:11px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim)}
+.day-date{font-size:22px;font-weight:900;letter-spacing:-.02em;color:var(--text);line-height:1}
+.day.today .day-name{color:var(--accent)}
+.day-vibe{
+  font-size:8.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;
+  padding:2px 6px;border-radius:4px;align-self:flex-start;
+}
+.day-vibe.calm{color:var(--ok);background:var(--ok-bg)}
+.day-vibe.busy{color:var(--warn);background:var(--warn-bg)}
+.day-vibe.packed{color:var(--block);background:var(--block-bg)}
+.day-vibe.empty{color:var(--text-fade);background:var(--surface-2)}
+
+.day-events{display:flex;flex-direction:column;gap:4px}
+.ev{
+  display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;
+  background:var(--surface-2);border:1px solid var(--border);
+  font-size:12px;font-weight:600;color:var(--text-mid);cursor:pointer;
+  transition:background .1s,border-color .1s;line-height:1.3;word-break:break-word;
+}
+.ev:hover{background:var(--surface-3);border-color:var(--border-2);color:var(--text)}
+.ev .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ev .t{font-size:10px;font-weight:800;color:var(--text-fade);letter-spacing:.3px;flex-shrink:0}
+.ev .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev.priority{border-color:rgba(255,138,61,.35);background:var(--accent-bg);color:var(--text)}
+.ev.priority .t{color:var(--accent)}
+.ev.priority:hover{background:rgba(255,138,61,0.22)}
+.ev.work{opacity:.6}
+.ev-empty{font-size:11px;color:var(--text-fade);font-style:italic;padding:4px 4px 0}
+
+/* ============ WEEKEND VIEW ============ */
+.weekend-grid{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:900px){.weekend-grid{grid-template-columns:repeat(3,1fr);gap:14px}}
+.weekend-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 16px 14px;display:flex;flex-direction:column;gap:10px;
+  min-height:180px;position:relative;cursor:pointer;transition:border-color .12s;
+}
+.weekend-card:hover{border-color:var(--border-2)}
+.weekend-card.today{border-color:var(--accent)}
+.weekend-card.past{opacity:.5}
+.weekend-card-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.weekend-title{font-size:20px;font-weight:900;letter-spacing:-.02em}
+.weekend-sub{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text-dim)}
+.weekend-vibe{
+  font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
+  padding:3px 8px;border-radius:5px;
+}
+.weekend-vibe.calm{color:var(--ok);background:var(--ok-bg)}
+.weekend-vibe.busy{color:var(--warn);background:var(--warn-bg)}
+.weekend-vibe.packed{color:var(--block);background:var(--block-bg)}
+.weekend-vibe.empty{color:var(--text-fade);background:var(--surface-2)}
+.weekend-events{display:flex;flex-direction:column;gap:6px}
+.weekend-events .ev{font-size:13px;padding:8px 10px}
+.weekend-events .ev .t{font-size:11px}
+.weekend-empty{
+  padding:14px 12px;text-align:center;border:1.5px dashed var(--border);border-radius:8px;
+  color:var(--text-fade);font-size:12px;font-style:italic;
+}
+
+/* ============ PRIORITY LIST ============ */
+.pri-list{display:flex;flex-direction:column;gap:8px;max-width:720px;margin:0 auto}
+.pri-item{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px;display:flex;align-items:center;gap:14px;cursor:pointer;
+  transition:border-color .12s,transform .12s;
+}
+.pri-item:hover{border-color:var(--border-2)}
+.pri-item.past{opacity:.5}
+.pri-item .cat-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.pri-item-body{flex:1;min-width:0}
+.pri-item-title{font-size:15px;font-weight:800;letter-spacing:-.01em;margin-bottom:3px;word-break:break-word}
+.pri-item-meta{font-size:11px;font-weight:600;color:var(--text-dim);letter-spacing:.3px}
+.pri-item-cd{
+  font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  padding:5px 10px;border-radius:6px;background:var(--surface-2);color:var(--text-mid);
+  text-align:center;min-width:68px;flex-shrink:0;
+}
+.pri-item-cd.soon{background:var(--accent-bg);color:var(--accent)}
+.pri-item-cd.today{background:var(--accent);color:#000}
+.pri-item-cd.past{background:var(--surface-2);color:var(--text-fade)}
+
+/* ============ EMPTY ============ */
+.empty{
+  padding:48px 22px;text-align:center;border:2px dashed var(--border);border-radius:var(--radius);
+  background:var(--surface);max-width:500px;margin:0 auto;
+}
+.empty h3{font-size:20px;font-weight:800;letter-spacing:-.02em;margin-bottom:8px}
+.empty p{font-size:13px;line-height:1.55;color:var(--text-mid);max-width:340px;margin:0 auto 16px}
+
+/* ============ MODAL ============ */
+.modal{
+  position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  z-index:100;display:none;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto;
+}
+.modal.open{display:flex}
+.modal-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  max-width:480px;width:100%;padding:18px 18px 14px;position:relative;
+  animation:popIn .2s ease-out;
+}
+@keyframes popIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.modal-head{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:16px;font-weight:800;letter-spacing:-.01em;
+  padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:14px;
+}
+.modal-close{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:20px;padding:4px 8px;line-height:1}
+.modal-close:hover{color:var(--text)}
+
+.f{margin-bottom:12px}
+.f-l{font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;display:block}
+.f-i{
+  width:100%;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  font-family:inherit;font-size:15px;color:var(--text);outline:none;transition:border-color .1s;
+}
+.f-i:focus{border-color:var(--accent)}
+.f-i::placeholder{color:var(--text-fade)}
+textarea.f-i{min-height:60px;resize:vertical;line-height:1.5;font-size:14px}
+
+.picker{display:flex;flex-wrap:wrap;gap:5px}
+.pk{
+  font-family:inherit;font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  padding:7px 11px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .1s;display:flex;align-items:center;gap:6px;
+}
+.pk.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+.pk .d{width:7px;height:7px;border-radius:50%}
+
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:420px){.row{grid-template-columns:1fr}}
+
+.pri-toggle{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);
+  cursor:pointer;transition:all .12s;
+}
+.pri-toggle:hover{border-color:var(--border-2)}
+.pri-toggle.on{background:var(--accent-bg);border-color:rgba(255,138,61,.35)}
+.pri-toggle .pri-label{font-size:13px;font-weight:700;color:var(--text)}
+.pri-toggle .pri-hint{font-size:11px;font-weight:500;color:var(--text-dim);margin-top:2px}
+.pri-switch{
+  width:42px;height:24px;border-radius:13px;background:var(--surface-3);position:relative;flex-shrink:0;transition:background .15s;
+}
+.pri-switch::after{
+  content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+  background:var(--text-mid);transition:transform .15s,background .15s;
+}
+.pri-toggle.on .pri-switch{background:var(--accent)}
+.pri-toggle.on .pri-switch::after{transform:translateX(18px);background:#fff}
+
+.modal-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)}
+.modal-actions .left{margin-right:auto}
+.btn{
+  font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.3px;
+  padding:10px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--border);background:var(--surface-2);color:var(--text-mid);
+  transition:all .1s;
+}
+.btn:hover{color:var(--text);border-color:var(--border-2)}
+.btn.primary{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.del{color:var(--block);border-color:rgba(255,69,58,.22)}
+.btn:active{transform:scale(.97)}
+
+/* FAB */
+.fab{
+  position:fixed;right:18px;bottom:22px;z-index:60;
+  width:54px;height:54px;border-radius:50%;background:var(--accent);color:#000;
+  border:none;cursor:pointer;font-size:26px;font-weight:800;line-height:1;
+  box-shadow:0 6px 18px rgba(255,138,61,.35),0 2px 4px rgba(0,0,0,.25);
+  transition:transform .1s,filter .1s;
+}
+.fab:active{transform:scale(.95)}
+.fab:hover{filter:brightness(1.05)}
+
+/* Toast */
+.toast{
+  position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;
+  background:var(--surface-2);border:1px solid var(--border-2);border-radius:10px;
+  padding:10px 16px;font-size:12.5px;font-weight:700;letter-spacing:.2px;color:var(--text);
+  box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:200;pointer-events:none;
+  transition:opacity .18s,transform .18s;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-top">
+    <span id="weekLbl">Week —</span>
+    <span id="countdownLbl"></span>
+  </div>
+  <div class="hero-row">
+    <div>
+      <div class="hero-title"><span class="wk" id="weekOf">This Week</span></div>
+      <div class="hero-sub" id="weekRange">—</div>
+    </div>
+    <div class="hero-vibe" id="heroVibe">
+      <div class="n" id="vibeN">—</div>
+      <div class="l" id="vibeL">Priority</div>
+    </div>
+  </div>
+</header>
+
+<div class="wknav">
+  <button class="wknav-btn" id="wkPrev" onclick="shiftWeek(-1)">‹ Prev</button>
+  <button class="wknav-now hidden" id="wkNow" onclick="jumpToThisWeek()">This Week</button>
+  <button class="wknav-btn" id="wkNext" onclick="shiftWeek(1)">Next ›</button>
+</div>
+
+<div class="stats">
+  <div class="sc pri"><div class="v" id="sPri">0</div><div class="l">Priority</div></div>
+  <div class="sc tot"><div class="v" id="sTot">0</div><div class="l">Events</div></div>
+  <div class="sc free"><div class="v" id="sFree">0</div><div class="l">Free Days</div></div>
+  <div class="sc wkd"><div class="v" id="sWkd">0</div><div class="l">Weekend</div></div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-view="week" onclick="setView('week')">Week</button>
+  <button class="tab-btn" data-view="weekend" onclick="setView('weekend')">Weekend</button>
+  <button class="tab-btn" data-view="priority" onclick="setView('priority')">Priority</button>
+  <div class="tab-spacer"></div>
+  <button class="add-btn" onclick="openAddModal()">+ Event</button>
+</div>
+
+<div class="view" id="viewRoot"></div>
+
+<!-- FAB -->
+<button class="fab" onclick="openAddModal()" aria-label="Add event">+</button>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- MODAL -->
+<div class="modal" id="modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="modalTitle">New Event</span>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+
+    <div class="f">
+      <label class="f-l">Title</label>
+      <input type="text" class="f-i" id="fTitle" placeholder="Sarah's birthday party" />
+    </div>
+
+    <div class="f">
+      <label class="f-l">Date</label>
+      <input type="date" class="f-i" id="fDate" />
+    </div>
+
+    <div class="row">
+      <div class="f">
+        <label class="f-l">Start (optional)</label>
+        <input type="time" class="f-i" id="fStart" />
+      </div>
+      <div class="f">
+        <label class="f-l">End (optional)</label>
+        <input type="time" class="f-i" id="fEnd" />
+      </div>
+    </div>
+
+    <div class="f">
+      <label class="f-l">Category</label>
+      <div class="picker" id="catPicker"></div>
+    </div>
+
+    <div class="f">
+      <label class="pri-toggle" id="priToggle" onclick="togglePri()">
+        <div>
+          <div class="pri-label">Priority</div>
+          <div class="pri-hint">Counts toward weekend vibe and "how booked" stat</div>
+        </div>
+        <div class="pri-switch"></div>
+      </label>
+    </div>
+
+    <div class="f">
+      <label class="f-l">Notes (optional)</label>
+      <textarea class="f-i" id="fNotes" placeholder="Address, RSVP info, who's going..."></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn del left" id="btnDelete" onclick="deleteEvent()" style="display:none">Delete</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="saveEvent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SK='calendar-events-v1';
+const CATEGORIES=[
+  {id:'party',label:'Party',color:'var(--c-party)'},
+  {id:'date',label:'Date',color:'var(--c-date)'},
+  {id:'event',label:'Event',color:'var(--c-event)'},
+  {id:'appt',label:'Appointment',color:'var(--c-appt)'},
+  {id:'work',label:'Work',color:'var(--c-work)'},
+  {id:'other',label:'Other',color:'var(--c-other)'}
+];
+const CAT_COLOR={
+  party:'#FF8A3D',date:'#FF453A',event:'#BF5AF2',appt:'#5AC8FA',work:'#6E7074',other:'#FFD60A'
+};
+
+let data=load();
+let view='week';
+let editingId=null;
+let modalCat='event';
+let modalPri=true;
+let weekAnchor=startOfWeek(new Date());  // Monday of the viewing week
+
+// ---- Data ----
+function load(){
+  try{const raw=localStorage.getItem(SK); if(raw){const d=JSON.parse(raw); if(d && Array.isArray(d.events)) return d;}}catch(e){}
+  return{events:[]};
+}
+function save(){
+  try{
+    const s=JSON.stringify(data);
+    localStorage.setItem(SK,s);
+    if(window.syncClient && typeof window.syncClient.push==='function'){ try{window.syncClient.push(SK,s)}catch{} }
+  }catch(e){}
+}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+
+// ---- Date helpers ----
+function startOfWeek(d){
+  // Monday anchor (ISO-style)
+  const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const day=x.getDay(); // 0=Sun..6=Sat
+  const delta=day===0?-6:(1-day);
+  x.setDate(x.getDate()+delta);
+  return x;
+}
+function dkey(d){
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+dd;
+}
+function todayKey(){return dkey(new Date())}
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
+function sameDay(a,b){return dkey(a)===dkey(b)}
+function parseDK(dk){
+  const m=(dk||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return new Date();
+  return new Date(+m[1],+m[2]-1,+m[3]);
+}
+function fmtMD(d){return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+function fmtDay(d){return d.toLocaleDateString('en-US',{weekday:'short'})}
+function fmtFullDay(d){return d.toLocaleDateString('en-US',{weekday:'long'})}
+function fmtRange(a,b){
+  if(a.getMonth()===b.getMonth()){
+    return a.toLocaleDateString('en-US',{month:'short',day:'numeric'})+'–'+b.getDate()+' · '+a.getFullYear();
+  }
+  return fmtMD(a)+' – '+fmtMD(b)+' · '+b.getFullYear();
+}
+function fmtTime(hm){
+  if(!hm) return '';
+  const [h,m]=hm.split(':').map(x=>parseInt(x,10));
+  if(isNaN(h)) return '';
+  const ap=h>=12?'p':'a';
+  const hh=((h+11)%12)+1;
+  return m?(hh+':'+String(m).padStart(2,'0')+ap):(hh+ap);
+}
+function evTimeLabel(e){
+  if(!e.start && !e.end) return 'All day';
+  if(e.start && e.end) return fmtTime(e.start)+'–'+fmtTime(e.end);
+  return fmtTime(e.start||e.end);
+}
+
+// ---- Week operations ----
+function shiftWeek(delta){weekAnchor=addDays(weekAnchor,delta*7);renderAll();}
+function jumpToThisWeek(){weekAnchor=startOfWeek(new Date());renderAll();}
+function weekDays(){const out=[];for(let i=0;i<7;i++)out.push(addDays(weekAnchor,i));return out;}
+
+// ---- Event queries ----
+function eventsOn(dk){
+  return (data.events||[])
+    .filter(e=>e.date===dk)
+    .sort((a,b)=>{
+      // priority first, then by start time (all-day last)
+      if(!!b.priority-!!a.priority) return (!!b.priority)-(!!a.priority);
+      const as=a.start||'99:99', bs=b.start||'99:99';
+      return as.localeCompare(bs);
+    });
+}
+function eventsInWeek(){
+  const s=dkey(weekAnchor), e=dkey(addDays(weekAnchor,6));
+  return (data.events||[]).filter(x=>x.date>=s && x.date<=e);
+}
+
+// ---- Vibe ----
+function dayVibe(events){
+  const pri=events.filter(e=>e.priority).length;
+  const tot=events.length;
+  if(!tot) return {cls:'empty',label:'Free'};
+  if(pri>=3 || tot>=5) return {cls:'packed',label:'Packed'};
+  if(pri>=1 || tot>=3) return {cls:'busy',label:'Busy'};
+  return {cls:'calm',label:'Calm'};
+}
+
+// ---- Countdown ----
+function daysTo(dk){
+  const target=parseDK(dk);
+  target.setHours(0,0,0,0);
+  const today=new Date();today.setHours(0,0,0,0);
+  return Math.round((target.getTime()-today.getTime())/86400000);
+}
+function countdownLabel(dk){
+  const n=daysTo(dk);
+  if(n<0) return {txt:Math.abs(n)+'d ago',cls:'past'};
+  if(n===0) return {txt:'Today',cls:'today'};
+  if(n===1) return {txt:'Tomorrow',cls:'soon'};
+  if(n<=7) return {txt:'In '+n+'d',cls:'soon'};
+  return {txt:'In '+n+'d',cls:''};
+}
+
+// ---- Render ----
+function renderHero(){
+  const sun=addDays(weekAnchor,6);
+  const isThis=sameDay(weekAnchor,startOfWeek(new Date()));
+  document.getElementById('weekOf').textContent= isThis ? 'This Week' : fmtRange(weekAnchor,sun).split(' · ')[0];
+  document.getElementById('weekRange').textContent=fmtRange(weekAnchor,sun);
+
+  // Week label (ISO week #)
+  const thursday=addDays(weekAnchor,3);
+  const y=thursday.getFullYear();
+  const jan4=new Date(y,0,4);
+  const diff=(thursday.getTime()-jan4.getTime())/86400000;
+  const wn=1+Math.round((diff - (jan4.getDay()||7)+1)/7);
+  document.getElementById('weekLbl').textContent='Week '+wn+' · '+y;
+
+  // Hero vibe: priority count this week
+  const weekEv=eventsInWeek();
+  const priCt=weekEv.filter(e=>e.priority).length;
+  const vibe=weekEv.length
+    ? (priCt>=4?'packed':priCt>=2?'busy':'calm')
+    : 'calm';
+  const heroVibe=document.getElementById('heroVibe');
+  heroVibe.classList.remove('calm','busy','packed');
+  heroVibe.classList.add(vibe);
+  document.getElementById('vibeN').textContent=String(priCt);
+  document.getElementById('vibeL').textContent=priCt===1?'Priority':'Priority';
+
+  // Countdown to weekend (or next priority if on weekend)
+  const now=new Date();now.setHours(0,0,0,0);
+  const dayIdx=now.getDay(); // 0 Sun..6 Sat
+  let msg='';
+  if(dayIdx>=1 && dayIdx<=4){
+    const daysToFri=5-dayIdx;
+    msg=daysToFri===1?'Weekend tomorrow':('Weekend in '+daysToFri+'d');
+  } else if(dayIdx===5){
+    msg='Weekend tonight';
+  } else if(dayIdx===6){
+    msg='Saturday';
+  } else {
+    msg='Sunday';
+  }
+  document.getElementById('countdownLbl').textContent=msg;
+
+  // Nav buttons
+  const prev=addDays(weekAnchor,-7),next=addDays(weekAnchor,7);
+  document.getElementById('wkPrev').innerHTML='‹ '+fmtMD(prev);
+  document.getElementById('wkNext').innerHTML=fmtMD(next)+' ›';
+  document.getElementById('wkNow').classList.toggle('hidden',isThis);
+}
+
+function renderStats(){
+  const weekEv=eventsInWeek();
+  const priCt=weekEv.filter(e=>e.priority).length;
+  document.getElementById('sPri').textContent=priCt;
+  document.getElementById('sTot').textContent=weekEv.length;
+  const days=weekDays();
+  const free=days.filter(d=>eventsOn(dkey(d)).length===0).length;
+  document.getElementById('sFree').textContent=free;
+  const wkd=days.filter((d,i)=>i>=4).reduce((n,d)=>n+eventsOn(dkey(d)).length,0); // Fri/Sat/Sun
+  document.getElementById('sWkd').textContent=wkd;
+}
+
+function renderWeek(){
+  const root=document.getElementById('viewRoot');
+  const days=weekDays();
+  const today=todayKey();
+  let html='<div class="wk-grid">';
+  days.forEach((d,i)=>{
+    const dk=dkey(d);
+    const events=eventsOn(dk);
+    const vibe=dayVibe(events);
+    const isToday=dk===today;
+    const isPast=dk<today;
+    const isWeekend=i>=5 || i===4; // Fri counts as weekend-ish for visual weight
+    const hasPri=events.some(e=>e.priority);
+    const cls=['day'];
+    if(isToday) cls.push('today');
+    if(isPast && !isToday) cls.push('past');
+    if(isWeekend) cls.push('weekend');
+    if(hasPri) cls.push('has-priority');
+    const evHTML = events.length
+      ? events.slice(0,5).map(e=>renderEventPill(e)).join('') + (events.length>5?`<div class="ev-empty">+${events.length-5} more</div>`:'')
+      : '<div class="ev-empty">Nothing planned</div>';
+    html+=`<article class="${cls.join(' ')}" onclick="openAddModal('${dk}')">
+      <div class="day-head">
+        <div>
+          <div class="day-name">${fmtDay(d)}</div>
+          <div class="day-date">${d.getDate()}</div>
+        </div>
+        <div class="day-vibe ${vibe.cls}">${vibe.label}</div>
+      </div>
+      <div class="day-events">${evHTML}</div>
+    </article>`;
+  });
+  html+='</div>';
+  root.innerHTML=html;
+}
+
+function renderEventPill(e){
+  const color=CAT_COLOR[e.category||'event']||CAT_COLOR.event;
+  const cls=['ev'];
+  if(e.priority) cls.push('priority');
+  if((e.category||'')==='work' && !e.priority) cls.push('work');
+  const t=evTimeLabel(e);
+  return `<div class="${cls.join(' ')}" onclick="event.stopPropagation();openEditModal('${e.id}')">
+    <span class="dot" style="background:${color}"></span>
+    <span class="t">${t}</span>
+    <span class="txt">${escapeHtml(e.title||'(untitled)')}</span>
+  </div>`;
+}
+
+function renderWeekend(){
+  const root=document.getElementById('viewRoot');
+  // Friday, Saturday, Sunday
+  const fri=addDays(weekAnchor,4),sat=addDays(weekAnchor,5),sun=addDays(weekAnchor,6);
+  const today=todayKey();
+  const cards=[
+    {d:fri,label:'Friday Night',sub:fmtMD(fri)},
+    {d:sat,label:'Saturday',sub:fmtMD(sat)},
+    {d:sun,label:'Sunday',sub:fmtMD(sun)}
+  ];
+  let html='<div class="weekend-grid">';
+  cards.forEach(c=>{
+    const dk=dkey(c.d);
+    const events=eventsOn(dk);
+    const vibe=dayVibe(events);
+    const isToday=dk===today;
+    const isPast=dk<today && !isToday;
+    const cls=['weekend-card'];
+    if(isToday) cls.push('today');
+    if(isPast) cls.push('past');
+    const evHTML = events.length
+      ? `<div class="weekend-events">${events.map(renderEventPill).join('')}</div>`
+      : `<div class="weekend-empty">Open. Fill it with something good.</div>`;
+    html+=`<article class="${cls.join(' ')}" onclick="openAddModal('${dk}')">
+      <div class="weekend-card-head">
+        <div>
+          <div class="weekend-title">${c.label}</div>
+          <div class="weekend-sub">${c.sub}${isToday?' · TODAY':''}</div>
+        </div>
+        <span class="weekend-vibe ${vibe.cls}">${vibe.label}</span>
+      </div>
+      ${evHTML}
+    </article>`;
+  });
+  html+='</div>';
+  root.innerHTML=html;
+}
+
+function renderPriority(){
+  const root=document.getElementById('viewRoot');
+  const today=todayKey();
+  const items=(data.events||[])
+    .filter(e=>e.priority)
+    .sort((a,b)=>{
+      if(a.date!==b.date) return a.date.localeCompare(b.date);
+      const as=a.start||'99:99', bs=b.start||'99:99';
+      return as.localeCompare(bs);
+    });
+  const upcoming=items.filter(e=>e.date>=today);
+  const pastRecent=items.filter(e=>e.date<today).slice(-5).reverse();
+  const list=[...upcoming,...pastRecent];
+  if(!list.length){
+    root.innerHTML=`<div class="empty">
+      <h3>No priority events yet</h3>
+      <p>Flag the things that actually matter — parties, dates, birthdays, trips. They'll show up here with a countdown.</p>
+      <button class="add-btn" onclick="openAddModal()">+ Add one</button>
+    </div>`;
+    return;
+  }
+  let html='<div class="pri-list">';
+  list.forEach(e=>{
+    const color=CAT_COLOR[e.category||'event']||CAT_COLOR.event;
+    const cd=countdownLabel(e.date);
+    const cls=['pri-item'];
+    if(e.date<today) cls.push('past');
+    const cat=CATEGORIES.find(c=>c.id===(e.category||'event'));
+    const catLbl=cat?cat.label:'Event';
+    const dateLbl=parseDK(e.date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+    const timeLbl=evTimeLabel(e);
+    html+=`<article class="${cls.join(' ')}" onclick="openEditModal('${e.id}')">
+      <span class="cat-dot" style="background:${color}"></span>
+      <div class="pri-item-body">
+        <div class="pri-item-title">${escapeHtml(e.title||'(untitled)')}</div>
+        <div class="pri-item-meta">${catLbl} · ${dateLbl} · ${timeLbl}</div>
+      </div>
+      <div class="pri-item-cd ${cd.cls}">${cd.txt}</div>
+    </article>`;
+  });
+  html+='</div>';
+  root.innerHTML=html;
+}
+
+function setView(v){
+  view=v;
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    b.classList.toggle('active',b.dataset.view===v);
+  });
+  renderView();
+}
+function renderView(){
+  if(view==='week') renderWeek();
+  else if(view==='weekend') renderWeekend();
+  else renderPriority();
+}
+function renderAll(){renderHero();renderStats();renderView();}
+
+// ---- Modal ----
+function openAddModal(presetDate){
+  editingId=null;
+  document.getElementById('modalTitle').textContent='New Event';
+  document.getElementById('fTitle').value='';
+  document.getElementById('fNotes').value='';
+  document.getElementById('fDate').value=presetDate||todayKey();
+  document.getElementById('fStart').value='';
+  document.getElementById('fEnd').value='';
+  document.getElementById('btnDelete').style.display='none';
+  modalCat='event'; modalPri=true;
+  renderPickers();
+  document.getElementById('modal').classList.add('open');
+  setTimeout(()=>document.getElementById('fTitle').focus(),60);
+}
+function openEditModal(id){
+  const e=(data.events||[]).find(x=>x.id===id); if(!e) return;
+  editingId=id;
+  document.getElementById('modalTitle').textContent='Edit Event';
+  document.getElementById('fTitle').value=e.title||'';
+  document.getElementById('fNotes').value=e.notes||'';
+  document.getElementById('fDate').value=e.date||todayKey();
+  document.getElementById('fStart').value=e.start||'';
+  document.getElementById('fEnd').value=e.end||'';
+  document.getElementById('btnDelete').style.display='';
+  modalCat=e.category||'event';
+  modalPri=!!e.priority;
+  renderPickers();
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal(){document.getElementById('modal').classList.remove('open');editingId=null;}
+function togglePri(){
+  modalPri=!modalPri;
+  document.getElementById('priToggle').classList.toggle('on',modalPri);
+}
+function renderPickers(){
+  document.getElementById('catPicker').innerHTML=CATEGORIES.map(c=>
+    `<button type="button" class="pk ${modalCat===c.id?'active':''}" onclick="modalCat='${c.id}';renderPickers()"><span class="d" style="background:${c.color}"></span>${c.label}</button>`
+  ).join('');
+  document.getElementById('priToggle').classList.toggle('on',modalPri);
+}
+function saveEvent(){
+  const title=document.getElementById('fTitle').value.trim();
+  if(!title){alert('Give the event a title.');return;}
+  const date=document.getElementById('fDate').value||todayKey();
+  const start=document.getElementById('fStart').value||'';
+  const end=document.getElementById('fEnd').value||'';
+  const notes=document.getElementById('fNotes').value.trim();
+  const now=new Date().toISOString();
+  if(editingId){
+    const e=(data.events||[]).find(x=>x.id===editingId);
+    if(e) Object.assign(e,{title,date,start,end,notes,category:modalCat,priority:modalPri,updatedAt:now});
+  } else {
+    if(!Array.isArray(data.events)) data.events=[];
+    data.events.push({
+      id:uid(),title,date,start,end,notes,category:modalCat,priority:modalPri,
+      createdAt:now,updatedAt:now
+    });
+  }
+  // Snap view to week of saved event
+  weekAnchor=startOfWeek(parseDK(date));
+  save();closeModal();renderAll();
+  showToast(editingId?'Event updated':'Event added');
+}
+function deleteEvent(){
+  if(!editingId) return;
+  if(!confirm('Delete this event?')) return;
+  data.events=(data.events||[]).filter(x=>x.id!==editingId);
+  save();closeModal();renderAll();
+  showToast('Event deleted');
+}
+
+// ---- Toast ----
+let _toastTimer=null;
+function showToast(msg){
+  const el=document.getElementById('toast'); if(!el) return;
+  el.textContent=msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>el.classList.remove('show'),1800);
+}
+
+// ---- Utilities ----
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML}
+
+// Close modal on backdrop/Esc
+document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();}});
+
+// Cross-tab sync
+window.addEventListener('storage',e=>{
+  if(e.key===SK){data=load();renderAll();}
+});
+
+renderAll();
+
+try{window._calendar={data,save,load,render:renderAll};}catch{}
+</script>
+
+</body>
+</html>
