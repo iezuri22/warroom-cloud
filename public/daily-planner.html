@@ -725,6 +725,35 @@ body{font-family:var(--ios-font);background:var(--bg);color:var(--text);min-heig
   text-align:center;padding:20px;color:var(--text-dim);font-size:13px;
   border:1px dashed var(--border);border-radius:8px;
 }
+.tbt-viewall{
+  display:block;width:100%;margin-top:8px;padding:10px 14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  color:var(--text);font-weight:700;font-size:12px;letter-spacing:.2px;
+  cursor:pointer;font-family:var(--ios-font);transition:all .15s;
+}
+.tbt-viewall:hover{border-color:var(--ios-accent);color:var(--ios-accent)}
+.tbt-modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;
+  display:none;align-items:flex-start;justify-content:center;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  padding:5vh 16px;overflow-y:auto;
+}
+.tbt-modal-overlay.open{display:flex}
+.tbt-modal{
+  width:min(720px,100%);background:var(--surface);
+  border:1px solid var(--border);border-radius:16px;
+  padding:18px 18px 20px;box-shadow:0 24px 60px rgba(0,0,0,.5);
+}
+.tbt-modal-hdr{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;
+}
+.tbt-modal-hdr h3{margin:0;font-size:16px;font-weight:800;letter-spacing:-.2px}
+.tbt-modal-close{
+  background:none;border:none;color:var(--text-mid);cursor:pointer;
+  font-size:22px;padding:4px 8px;line-height:1;font-family:inherit;
+}
+.tbt-modal-close:hover{color:var(--text)}
+.tbt-modal-body{max-height:70vh;overflow-y:auto;padding-right:4px}
 
 .period-toggle{display:flex;gap:0;margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;width:fit-content}
 .period-btn{
@@ -1212,11 +1241,11 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 
 <!-- BUILD: 2026-04-15-v3-goals-tab -->
 <div class="tabs">
-  <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab active" data-tab="plan" onclick="switchTab('plan')">Today's Plan</div>
-  <div class="tab" data-tab="board" onclick="switchTab('board')">Board</div>
-  <div class="tab" data-tab="focus" onclick="switchTab('focus')">Focus</div>
   <div class="tab" data-tab="todos" onclick="switchTab('todos')">Personal</div>
+  <div class="tab" data-tab="focus" onclick="switchTab('focus')">Focus</div>
+  <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
+  <div class="tab" data-tab="board" onclick="switchTab('board')">Board</div>
   <div class="tab" data-tab="coach" onclick="switchTab('coach')">Brain Dump</div>
   <div class="tab" data-tab="youtube" onclick="switchTab('youtube')">Watch Queue</div>
   <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">Analytics</div>
@@ -2450,22 +2479,36 @@ function saveUiState(patch){
 }
 
 // --- Personal Todos → Analytics bridge ---
+const PERSONAL_DONE_KEY = 'personal-done-tasks';
+function loadPersonalDone(){
+  try { return JSON.parse(localStorage.getItem(PERSONAL_DONE_KEY)) || {}; } catch { return {}; }
+}
+function setPersonalDone(todoId, done){
+  const m = loadPersonalDone();
+  if (done) m[todoId] = true; else delete m[todoId];
+  try { localStorage.setItem(PERSONAL_DONE_KEY, JSON.stringify(m)); } catch {}
+}
 window.addEventListener('message', (ev) => {
   const d = ev && ev.data;
-  if (!d || d.type !== 'warroom:personal-time') return;
-  const secs = Number(d.seconds) || 0;
-  if (secs < 1) return;
-  try {
-    logTime({
-      date: todayKey(),
-      domain: 'personal',
-      text: (d.taskName || 'Personal task').slice(0, 120),
-      taskId: 'todo:' + (d.taskId || Math.random().toString(36).slice(2)),
-      seconds: secs,
-      shifted: false,
-      source: 'personal-todos'
-    });
-  } catch(e) {}
+  if (!d) return;
+  if (d.type === 'warroom:personal-time') {
+    const secs = Number(d.seconds) || 0;
+    if (secs < 1) return;
+    try {
+      logTime({
+        date: todayKey(),
+        domain: 'personal',
+        text: (d.taskName || 'Personal task').slice(0, 120),
+        taskId: 'todo:' + (d.taskId || Math.random().toString(36).slice(2)),
+        seconds: secs,
+        shifted: false,
+        source: 'personal-todos'
+      });
+    } catch(e) {}
+  } else if (d.type === 'warroom:personal-done') {
+    if (d.taskId) setPersonalDone('todo:' + d.taskId, !!d.done);
+    if (currentTab === 'analytics') try { renderAnalytics(); } catch {}
+  }
 });
 
 // --- Fullscreen (cast-friendly: hide top nav) ---
@@ -2539,33 +2582,26 @@ function setPeriod(p){
   renderAnalytics();
 }
 
-function renderAnalytics(){
+function computeFilteredForPeriod(period){
   const log=loadTimeLog();
   const now=new Date();const today=todayKey();
-
-  // ---- Period bounds ----
   let periodStartKey=null, periodEndKey=today;
-  if(analyticsPeriod==='today'){
+  if(period==='today'){
     periodStartKey=today;
-  } else if(analyticsPeriod==='week'){
+  } else if(period==='week'){
     const sun=new Date(now);sun.setDate(sun.getDate()-sun.getDay());sun.setHours(0,0,0,0);
     periodStartKey=dateKey(sun);
   } else {
-    // Month: first of this month
     const mStart=new Date(now.getFullYear(),now.getMonth(),1);
     periodStartKey=dateKey(mStart);
   }
   const inPeriod = (dk) => dk >= periodStartKey && dk <= periodEndKey;
-
-  // ---- 1. Completed tasks from time-log ----
   let filtered = log.filter(e => inPeriod(e.date));
-
-  // ---- 2. Incomplete tasks across the plan within period (includes focus-accumulated timeSpent) ----
   const plan = loadPlan();
   Object.keys(plan).forEach(dk => {
     if(!inPeriod(dk)) return;
     (plan[dk]||[]).forEach(item => {
-      if(item.done) return; // completed items are already in time-log
+      if(item.done) return;
       const t = timers[item.id];
       const liveSecs = (t && t.running) ? t.seconds : 0;
       const secs = Math.max(liveSecs, item.timeSpent || 0);
@@ -2574,10 +2610,6 @@ function renderAnalytics(){
       }
     });
   });
-
-  // ---- 3. Orphan focus sessions: taskId no longer in plan (e.g., task removed). Include as "Deep work" ----
-  // Avoid double-counting: completed tasks in period are already in log; incomplete in-period tasks already
-  // added above (focus time rolled into item.timeSpent). Only pick sessions whose taskId isn't found.
   try{
     const focusAll = loadFocusSessionsAll();
     const knownIds = new Set();
@@ -2585,11 +2617,16 @@ function renderAnalytics(){
     focusAll.forEach(s => {
       const dk = dateKey(new Date(s.endedAt));
       if(!inPeriod(dk)) return;
-      if(s.taskId && knownIds.has(s.taskId)) return; // already counted
+      if(s.taskId && knownIds.has(s.taskId)) return;
       const secs = (s.actualMin||0)*60;
       if(secs > 0) filtered.push({date:dk, domain:'personal', text:s.intent||'Deep work', taskId:s.taskId||null, seconds:secs, shifted:false, focusOnly:true});
     });
   } catch {}
+  return { filtered, periodStartKey, periodEndKey, inPeriod };
+}
+
+function renderAnalytics(){
+  const { filtered } = computeFilteredForPeriod(analyticsPeriod);
 
   const totalSecs=filtered.reduce((a,e)=>a+e.seconds,0);
   const totalTasks=filtered.length;
@@ -2643,17 +2680,7 @@ function renderAnalytics(){
 }
 
 // ============ TIME BY TASK ============
-function renderTimeByTask(filtered){
-  const list = document.getElementById('timeByTaskList');
-  const meta = document.getElementById('timeByTaskMeta');
-  const title = document.getElementById('timeByTaskTitle');
-  if(!list) return;
-  if(title) title.textContent =
-    analyticsPeriod==='today' ? 'Time by Task (Today)' :
-    analyticsPeriod==='week' ? 'Time by Task (This Week)' :
-    'Time by Task (This Month)';
-
-  // Group by task: prefer taskId; fall back to "domain|text" so old log entries still bucket
+function buildTbtRows(filtered){
   const byTask = new Map();
   filtered.forEach(e => {
     const key = e.taskId ? ('id:'+e.taskId) : ((e.domain||'?')+'|'+(e.text||'(untitled)'));
@@ -2672,8 +2699,6 @@ function renderTimeByTask(filtered){
     if(e.focusOnly === false) cur.focusOnly = false;
     byTask.set(key, cur);
   });
-
-  // Mark done tasks by looking them up in plan (completed items were pulled from time-log where done isn't carried)
   try{
     const plan = loadPlan();
     const idToDone = new Map();
@@ -2682,8 +2707,46 @@ function renderTimeByTask(filtered){
     }));
     byTask.forEach((v) => { if(v.taskId && idToDone.get(v.taskId)) v.done = true; });
   } catch {}
+  try{
+    const pDone = loadPersonalDone();
+    byTask.forEach((v) => {
+      if(v.taskId && v.taskId.startsWith('todo:') && pDone[v.taskId]) v.done = true;
+    });
+  } catch {}
+  return Array.from(byTask.values()).sort((a,b)=>b.seconds-a.seconds);
+}
+function tbtRowHTML(r, maxSecs){
+  const d = D[r.domain] || D.personal;
+  const pct = Math.round((r.seconds/(maxSecs||1))*100);
+  const dayCount = r.dates.size;
+  const dayLabel = dayCount > 1 ? ` · ${dayCount} days` : '';
+  return `
+    <div class="tbt-row${r.done?' done':''}${r.focusOnly?' focus-only':''}">
+      <span class="tbt-tag" style="background:${d.bg};color:${d.hex}">${d.name}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="tbt-text" title="${esc(r.text)}">${esc(r.text)}</div>
+          <div class="tbt-dur">${fmtHM(r.seconds)}</div>
+        </div>
+        <div class="tbt-bar"><div class="tbt-bar-fill" style="width:${pct}%;background:${d.hex}"></div></div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:3px">${r.focusOnly?'focus only':r.done?'completed':'in progress'}${dayLabel}</div>
+      </div>
+    </div>`;
+}
 
-  const rows = Array.from(byTask.values()).sort((a,b)=>b.seconds-a.seconds);
+const TBT_MAIN_LIMIT = 6;
+
+function renderTimeByTask(filtered){
+  const list = document.getElementById('timeByTaskList');
+  const meta = document.getElementById('timeByTaskMeta');
+  const title = document.getElementById('timeByTaskTitle');
+  if(!list) return;
+  if(title) title.textContent =
+    analyticsPeriod==='today' ? 'Time by Task (Today)' :
+    analyticsPeriod==='week' ? 'Time by Task (This Week)' :
+    'Time by Task (This Month)';
+
+  const rows = buildTbtRows(filtered);
 
   if(rows.length === 0){
     list.innerHTML = '<div class="tbt-empty">No task time tracked in this period yet.</div>';
@@ -2699,25 +2762,55 @@ function renderTimeByTask(filtered){
     meta.textContent = `${rows.length} task${rows.length===1?'':'s'} · ${h>0?h+'h ':''}${m}m total`;
   }
 
-  list.innerHTML = rows.map(r => {
-    const d = D[r.domain] || D.personal;
-    const pct = Math.round((r.seconds/maxSecs)*100);
-    const dayCount = r.dates.size;
-    const dayLabel = dayCount > 1 ? ` · ${dayCount} days` : '';
-    return `
-      <div class="tbt-row${r.done?' done':''}${r.focusOnly?' focus-only':''}">
-        <span class="tbt-tag" style="background:${d.bg};color:${d.hex}">${d.name}</span>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:10px">
-            <div class="tbt-text" title="${esc(r.text)}">${esc(r.text)}</div>
-            <div class="tbt-dur">${fmtHM(r.seconds)}</div>
-          </div>
-          <div class="tbt-bar"><div class="tbt-bar-fill" style="width:${pct}%;background:${d.hex}"></div></div>
-          <div style="font-size:10px;color:var(--text-dim);margin-top:3px">${r.focusOnly?'focus only':r.done?'completed':'in progress'}${dayLabel}</div>
-        </div>
-      </div>`;
-  }).join('');
+  const visible = rows.slice(0, TBT_MAIN_LIMIT);
+  let html = visible.map(r => tbtRowHTML(r, maxSecs)).join('');
+  if(rows.length > TBT_MAIN_LIMIT){
+    const more = rows.length - TBT_MAIN_LIMIT;
+    html += `<button class="tbt-viewall" onclick="openTbtModal()">View all ${rows.length} tasks (${more} more)</button>`;
+  }
+  list.innerHTML = html;
 }
+
+// ---- Full-list modal ----
+let tbtModalPeriod = null; // lazily synced to analyticsPeriod on open
+function openTbtModal(){
+  tbtModalPeriod = tbtModalPeriod || analyticsPeriod || 'week';
+  const overlay = document.getElementById('tbtModalOverlay');
+  if(!overlay) return;
+  overlay.classList.add('open');
+  renderTbtModal();
+}
+function closeTbtModal(){
+  const overlay = document.getElementById('tbtModalOverlay');
+  if(overlay) overlay.classList.remove('open');
+}
+function setTbtModalPeriod(p){
+  tbtModalPeriod = p;
+  document.querySelectorAll('#tbtModalPeriods .period-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mperiod === p));
+  renderTbtModal();
+}
+function renderTbtModal(){
+  const listEl = document.getElementById('tbtModalList');
+  if(!listEl) return;
+  // Sync active filter pill on open
+  document.querySelectorAll('#tbtModalPeriods .period-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mperiod === tbtModalPeriod));
+  const { filtered } = computeFilteredForPeriod(tbtModalPeriod);
+  const rows = buildTbtRows(filtered);
+  if(rows.length === 0){
+    listEl.innerHTML = '<div class="tbt-empty">No task time tracked in this period yet.</div>';
+    return;
+  }
+  const maxSecs = rows[0].seconds || 1;
+  listEl.innerHTML = rows.map(r => tbtRowHTML(r, maxSecs)).join('');
+}
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){
+    const overlay = document.getElementById('tbtModalOverlay');
+    if(overlay && overlay.classList.contains('open')) closeTbtModal();
+  }
+});
 
 // ============ FOCUS SESSION ANALYTICS ============
 function loadFocusSessionsAll(){
@@ -6453,5 +6546,22 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   }
 })();
 </script>
+
+<!-- Time by Task full list modal -->
+<div class="tbt-modal-overlay" id="tbtModalOverlay" onclick="if(event.target===this)closeTbtModal()">
+  <div class="tbt-modal">
+    <div class="tbt-modal-hdr">
+      <h3>Time by Task</h3>
+      <button class="tbt-modal-close" onclick="closeTbtModal()" aria-label="Close">&times;</button>
+    </div>
+    <div class="period-toggle" id="tbtModalPeriods" style="margin-bottom:12px">
+      <button class="period-btn" data-mperiod="today" onclick="setTbtModalPeriod('today')">Today</button>
+      <button class="period-btn active" data-mperiod="week" onclick="setTbtModalPeriod('week')">This Week</button>
+      <button class="period-btn" data-mperiod="month" onclick="setTbtModalPeriod('month')">This Month</button>
+    </div>
+    <div class="tbt-modal-body" id="tbtModalList"></div>
+  </div>
+</div>
+
 </body>
 </html>

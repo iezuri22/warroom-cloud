@@ -854,6 +854,17 @@ const VOICE = {
     if (!todo) return;
     todo.done = !todo.done; render();
     try { await updateDoc(doc(db, 'tv_todos', id), { done: todo.done }); } catch {}
+    // Bridge completion state to War Room analytics
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'warroom:personal-done',
+          taskId: id,
+          done: !!todo.done,
+          taskName: todo.text || ''
+        }, '*');
+      }
+    } catch {}
   }
   async function removeTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
@@ -863,6 +874,14 @@ const VOICE = {
   async function clearCompleted() {
     const done = todos.filter(t => t.done);
     todos = todos.filter(t => !t.done); render();
+    // Ensure their "done" bit is recorded in War Room analytics
+    try {
+      if (window.parent && window.parent !== window) {
+        done.forEach(t => window.parent.postMessage({
+          type: 'warroom:personal-done', taskId: t.id, done: true, taskName: t.text || ''
+        }, '*'));
+      }
+    } catch {}
     try {
       const batch = writeBatch(db);
       done.forEach(t => batch.delete(doc(db, 'tv_todos', t.id)));
