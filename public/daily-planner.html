@@ -1747,13 +1747,25 @@ function init(){
   // Restore running timer from active-task (survives page reload/navigation)
   restoreActiveTimer();
   render();
-  // Load calendar - open by default on desktop, closed on mobile (Cal tab opens it)
+  // Restore persisted UI state (tab, fullscreen, calendar panel)
+  const ui=loadUiState();
   const isMobile=window.matchMedia('(max-width:768px)').matches;
-  if(!isMobile){
+  // Calendar: respect saved state; first-time default is open on desktop, closed on mobile
+  const wantCalOpen=('calOpen' in ui) ? !!ui.calOpen : !isMobile;
+  if(wantCalOpen){
     document.getElementById('calSidebar').classList.add('open');
     calOpen=true;
   } else {
+    document.getElementById('calSidebar').classList.remove('open');
     calOpen=false;
+  }
+  // Restore tab
+  if(ui.tab && ui.tab!=='plan'){
+    try { switchTab(ui.tab); } catch(e){}
+  }
+  // Restore fullscreen body class (native fullscreen requires a user gesture so we just restyle)
+  if(ui.fullscreen){
+    document.body.classList.add('fullscreen');
   }
   renderCalMonth();
   fetchCalendar();
@@ -2426,6 +2438,17 @@ function addPicked(){
   all[key]=items;savePlan(all);closePicker();render();
 }
 
+// --- Persistent UI state (survives refresh) ---
+const UI_STATE_KEY = 'warroom-ui-state';
+function loadUiState(){
+  try { return JSON.parse(localStorage.getItem(UI_STATE_KEY)) || {}; } catch { return {}; }
+}
+function saveUiState(patch){
+  const s = loadUiState();
+  Object.assign(s, patch || {});
+  try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(s)); } catch {}
+}
+
 // --- Personal Todos → Analytics bridge ---
 window.addEventListener('message', (ev) => {
   const d = ev && ev.data;
@@ -2448,11 +2471,13 @@ window.addEventListener('message', (ev) => {
 // --- Fullscreen (cast-friendly: hide top nav) ---
 function enterFullscreen(){
   document.body.classList.add('fullscreen');
+  saveUiState({fullscreen:true});
   // Nudge native fullscreen if the user prefers it (fails silently on iOS Safari)
   try { (document.documentElement.requestFullscreen && document.documentElement.requestFullscreen()) || null; } catch(e){}
 }
 function exitFullscreen(){
   document.body.classList.remove('fullscreen');
+  saveUiState({fullscreen:false});
   try { if(document.fullscreenElement) document.exitFullscreen(); } catch(e){}
 }
 document.addEventListener('keydown', e => {
@@ -2466,6 +2491,7 @@ document.addEventListener('fullscreenchange', () => {
 // --- Analytics ---
 function switchTab(tab){
   currentTab=tab;
+  saveUiState({tab});
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.getElementById('planView').style.display=tab==='plan'?'':'none';
   document.getElementById('goalsView').style.display=tab==='goals'?'':'none';
@@ -3633,6 +3659,7 @@ let calMonthYear={month:new Date().getMonth(),year:new Date().getFullYear()};
 
 function toggleCalPanel(){
   calOpen=!calOpen;
+  saveUiState({calOpen});
   document.getElementById('calSidebar').classList.toggle('open',calOpen);
   if(calOpen){renderCalMonth();renderCalEvents();updateSyncedLabel()}
   updateCalBadge();
