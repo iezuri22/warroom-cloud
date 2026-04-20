@@ -754,20 +754,25 @@ const VOICE = {
   async function carryOverIncompleteTasks() {
     const tk = todayKey();
     try {
-      const q = query(todosCol, where('done', '==', false), where('date', '<', tk));
+      // Fetch all incomplete tasks, then filter by date < today client-side.
+      // Avoids needing a Firestore composite index for (done, date).
+      const q = query(todosCol, where('done', '==', false));
       const snap = await getDocs(q);
       if (snap.empty) return 0;
+      const stale = snap.docs.filter(d => {
+        const data = d.data();
+        return data.date && data.date < tk;
+      });
+      if (stale.length === 0) return 0;
       const batch = writeBatch(db);
       const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
-      let count = 0;
-      snap.docs.forEach((d, i) => {
+      stale.forEach((d, i) => {
         batch.update(doc(db, 'tv_todos', d.id), { date: tk, position: maxPos + i, timeSpent: 0, countdownSecs: 0 });
         const data = { id: d.id, ...d.data(), date: tk, position: maxPos + i, timeSpent: 0, countdownSecs: 0 };
         todos.push(data);
-        count++;
       });
       await batch.commit();
-      return count;
+      return stale.length;
     } catch (e) { console.error('Carry-over error:', e); return 0; }
   }
   // ---- Firebase CRUD ----
@@ -1151,6 +1156,30 @@ const VOICE = {
   // ---- Init ----
   updateClock(); updateHeader(); loadTodos();
   setInterval(updateClock, 60000);
+
+  // ---- Date rollover detector ----
+  // If the page stays open across midnight (or the iframe stays cached),
+  // jump currentDate forward to today, reload, and trigger carry-over.
+  let _lastKnownTodayKey = todayKey();
+  function maybeRolloverToToday() {
+    const tk = todayKey();
+    if (tk !== _lastKnownTodayKey) {
+      _lastKnownTodayKey = tk;
+      currentDate = new Date();
+      updateHeader();
+      loadTodos();
+    } else if (isToday()) {
+      // Same day, but re-run carry-over in case stale tasks were added from another device
+      carryOverIncompleteTasks().then(n => { if (n > 0) render(); });
+    }
+  }
+  // Check on tab focus / visibility change
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') maybeRolloverToToday();
+  });
+  window.addEventListener('focus', maybeRolloverToToday);
+  // Periodic safety net: check every 5 minutes
+  setInterval(maybeRolloverToToday, 5 * 60 * 1000);
   document.getElementById('addBtn').addEventListener('click', handleAdd);
   document.getElementById('todoInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAdd(); });
   document.getElementById('clearBtn').addEventListener('click', clearCompleted);
