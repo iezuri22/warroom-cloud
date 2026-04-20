@@ -353,6 +353,29 @@ body.embed{padding:14px 12px 100px}
 }
 .hidden-card-pill svg{width:10px;height:10px}
 
+/* ============ QUARTER PICKER ON DETAIL ============ */
+.quarter-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+}
+.quarter-row-label{font-size:13px;font-weight:500;letter-spacing:-.2px;color:var(--text)}
+.quarter-row-sub{font-size:11px;font-weight:500;color:var(--text-mid);margin-top:3px;letter-spacing:-.1px}
+.quarter-select{
+  font-family:inherit;font-size:13px;font-weight:600;letter-spacing:-.2px;
+  padding:8px 28px 8px 12px;border-radius:10px;background:var(--surface);color:var(--text);
+  border:1px solid var(--border);cursor:pointer;outline:none;flex-shrink:0;
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='rgba(255,255,255,0.55)' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center;
+}
+.quarter-select:hover{border-color:var(--border-2)}
+.quarter-pill{
+  display:inline-flex;align-items:center;gap:5px;align-self:flex-start;
+  font-size:10px;font-weight:700;letter-spacing:-.05px;
+  padding:3px 8px;border-radius:980px;
+  background:var(--ios-fill-2);color:var(--text-mid);
+}
+
 input,textarea{
   font-family:var(--ios-font);letter-spacing:-0.2px;
 }
@@ -399,6 +422,13 @@ input,textarea{
           <input type="checkbox" id="showOnGoalsToggle" onchange="toggleShowOnGoals(this.checked)">
           <span class="slider"></span>
         </label>
+      </div>
+      <div class="quarter-row">
+        <div>
+          <div class="hide-goals-label">Quarter</div>
+          <div class="hide-goals-sub">Which quarterly plan this card belongs to</div>
+        </div>
+        <select class="quarter-select" id="detailQuarterSelect" onchange="setCardQuarter(this.value)"></select>
       </div>
       <div>
         <div class="detail-section-label">
@@ -787,6 +817,7 @@ function openDetail(goalId){
   setTimeout(()=>{titleEl.style.height='auto';titleEl.style.height=titleEl.scrollHeight+'px'},0);
   renderActions();
   renderHideToggle();
+  renderQuarterPicker();
   document.getElementById('detailOverlay').classList.add('open');
 }
 
@@ -806,6 +837,49 @@ function toggleShowOnGoals(isChecked){
   else g.hideFromGoals=true;
   saveBoard(board);
   renderBoard();
+}
+
+// ====== QUARTER PICKER ======
+function currentQuarterKeyGB(d){d=d||new Date();return d.getFullYear()+'-Q'+(Math.floor(d.getMonth()/3)+1)}
+function parseQuarterKeyGB(key){
+  const m=(key||'').match(/^(\d{4})-Q(\d)$/);
+  if(m){return{q:parseInt(m[2],10),y:parseInt(m[1],10)};}
+  const d=new Date();
+  return{q:Math.floor(d.getMonth()/3)+1,y:d.getFullYear()};
+}
+function renderQuarterPicker(){
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  const sel=document.getElementById('detailQuarterSelect');
+  if(!sel)return;
+  const selected=g.quarter||currentQuarterKeyGB();
+  const base=parseQuarterKeyGB(currentQuarterKeyGB());
+  const keys=[];
+  for(let i=-4;i<=8;i++){
+    let nq=base.q+i, ny=base.y;
+    while(nq<1){nq+=4;ny--;}
+    while(nq>4){nq-=4;ny++;}
+    keys.push(ny+'-Q'+nq);
+  }
+  if(!keys.includes(selected)) keys.push(selected);
+  keys.sort();
+  const now=currentQuarterKeyGB();
+  sel.innerHTML=keys.map(k=>{
+    const l=parseQuarterKeyGB(k);
+    const mark=k===now?' · now':'';
+    return `<option value="${k}"${k===selected?' selected':''}>Q${l.q} ${l.y}${mark}</option>`;
+  }).join('');
+}
+function setCardQuarter(qk){
+  const board=activeBoard();
+  const g=board.goals.find(x=>x.id===currentGoalId);
+  if(!g)return;
+  if(!qk||qk===currentQuarterKeyGB()) delete g.quarter;
+  else g.quarter=qk;
+  saveBoard(board);
+  renderBoard();
+  toast('Moved to '+qk.replace('-Q',' · Q'));
 }
 
 function renderActions(){

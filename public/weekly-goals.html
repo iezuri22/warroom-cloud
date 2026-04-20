@@ -185,6 +185,25 @@ body{padding:16px 14px 120px}
 .work-hidden-toggle:hover{color:var(--text);border-color:var(--border-2)}
 .work-hidden-toggle.on{background:var(--surface-2);color:var(--text)}
 
+/* ============ QUARTER NAV ============ */
+.qnav{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.qnav-btn{
+  font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.4px;
+  padding:9px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--text-mid);
+  cursor:pointer;transition:all .1s;flex:1;text-align:center;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.qnav-btn:hover{color:var(--text);border-color:var(--border-2);background:var(--surface-2)}
+.qnav-btn:active{transform:scale(.98)}
+.qnav-now{
+  font-family:inherit;font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
+  padding:9px 12px;border-radius:8px;background:var(--accent);color:#000;border:none;cursor:pointer;
+  transition:all .1s;flex-shrink:0;
+}
+.qnav-now:active{transform:scale(.97)}
+.qnav-now.hidden{display:none}
+.viewing-other-q .hero{border-color:rgba(255,138,61,.3)}
+
 /* Board-work cards share the quarterly goal card look so they feel like peers, not second-class rows */
 .bwg-list{display:flex;flex-direction:column;gap:10px}
 .bwg-card{
@@ -206,8 +225,28 @@ body{padding:16px 14px 120px}
 }
 .bwg-board-pill .d{width:7px;height:7px;border-radius:50%}
 
+/* Compact quarter select on board-work card */
+.bwg-q-select{
+  font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-mid);
+  padding:3px 20px 3px 8px;border-radius:5px;background:var(--surface-2);
+  border:1px solid var(--border);cursor:pointer;outline:none;
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='rgba(255,255,255,0.5)' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 6px center;
+}
+.bwg-q-select:hover{border-color:var(--border-2);color:var(--text)}
+
+/* Tasks toggle */
+.bwg-tasks-toggle{
+  font-family:inherit;font-size:10.5px;font-weight:700;letter-spacing:.4px;
+  padding:6px 10px;border-radius:6px;background:transparent;color:var(--text-dim);
+  border:1px solid var(--border);cursor:pointer;transition:all .1s;align-self:flex-start;
+}
+.bwg-tasks-toggle:hover{color:var(--text);border-color:var(--border-2);background:var(--surface-2)}
+
 /* Inline task list */
 .bwg-tasks{display:flex;flex-direction:column;gap:2px;padding-top:10px;border-top:1px solid var(--border)}
+.bwg-tasks.collapsed{padding-top:8px}
 .bwg-task{
   display:flex;align-items:center;gap:9px;padding:5px 2px;font-size:13px;cursor:pointer;
   border-radius:5px;transition:background .1s;
@@ -340,10 +379,16 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
     </div>
     <div class="hero-days">
       <div class="n" id="daysLeft">—</div>
-      <div class="l">Days left</div>
+      <div class="l" id="daysLeftLbl">Days left</div>
     </div>
   </div>
 </header>
+
+<div class="qnav">
+  <button class="qnav-btn" id="qnavPrev" onclick="shiftQuarter(-1)">‹ Prev</button>
+  <button class="qnav-now hidden" id="qnavNow" onclick="jumpToCurrentQuarter()">Today</button>
+  <button class="qnav-btn" id="qnavNext" onclick="shiftQuarter(1)">Next ›</button>
+</div>
 
 <div class="health">
   <div class="hc on"><div class="v" id="cntOn">0</div><div class="l">On Track</div></div>
@@ -386,6 +431,11 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
     <div class="f">
       <label class="f-l">Pillar</label>
       <div class="picker" id="pillarPicker"></div>
+    </div>
+
+    <div class="f">
+      <label class="f-l">Quarter</label>
+      <div class="picker" id="quarterPicker"></div>
     </div>
 
     <div class="row">
@@ -441,6 +491,8 @@ let activeFilter='all';
 let editingId=null;
 let modalPillar='ezrk';
 let modalStatus='on';
+let modalQuarter=currentQuarterKey();
+let viewQuarter=currentQuarterKey();
 let showHidden=false;
 
 // ---- Board data access ----
@@ -522,6 +574,31 @@ function addBoardTask(evt,boardId,goalId){
   },40);
   return false;
 }
+function toggleBoardTasksHidden(boardId,goalId){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  r.g.hideTasks=!r.g.hideTasks;
+  saveBoardData(bd); renderBoardWork();
+}
+function setBoardQuarter(boardId,goalId,qk){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  r.g.quarter=qk||null;
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd);
+  renderBoardWork();
+}
+function bwgQuarterOptions(selected){
+  // Window of quarters around now: 4 back, 8 forward
+  const base=parseQuarterKey(currentQuarterKey());
+  let out='';
+  for(let i=-4;i<=8;i++){
+    let nq=base.q+i, ny=base.y;
+    while(nq<1){nq+=4;ny--;}
+    while(nq>4){nq-=4;ny++;}
+    const k=ny+'-Q'+nq;
+    out+=`<option value="${k}"${k===selected?' selected':''}>Q${nq} ${ny}</option>`;
+  }
+  return out;
+}
 function toggleShowHidden(){
   showHidden=!showHidden;
   const btn=document.getElementById('workHiddenToggle');
@@ -551,23 +628,67 @@ function currentQuarterRange(d){
   const q=Math.floor(d.getMonth()/3);
   return{start:new Date(d.getFullYear(),q*3,1),end:new Date(d.getFullYear(),q*3+3,0,23,59,59),q:q+1,y:d.getFullYear()};
 }
-function quarterEndKey(){const{end}=currentQuarterRange();return end.getFullYear()+'-'+String(end.getMonth()+1).padStart(2,'0')+'-'+String(end.getDate()).padStart(2,'0');}
-function daysLeft(){const{end}=currentQuarterRange();return Math.max(0,Math.ceil((end.getTime()-Date.now())/86400000));}
+function parseQuarterKey(key){
+  const m=(key||'').match(/^(\d{4})-Q(\d)$/);
+  if(!m) return currentQuarterRange();
+  const y=parseInt(m[1],10), q=parseInt(m[2],10);
+  return{start:new Date(y,(q-1)*3,1),end:new Date(y,(q-1)*3+3,0,23,59,59),q,y};
+}
+function quarterEndKeyFor(qk){
+  const{end}=parseQuarterKey(qk);
+  return end.getFullYear()+'-'+String(end.getMonth()+1).padStart(2,'0')+'-'+String(end.getDate()).padStart(2,'0');
+}
+function quarterEndKey(){return quarterEndKeyFor(viewQuarter||currentQuarterKey());}
+function daysLeft(){return daysLeftFor(viewQuarter||currentQuarterKey());}
+function daysLeftFor(qk){const{end}=parseQuarterKey(qk);return Math.max(0,Math.ceil((end.getTime()-Date.now())/86400000));}
+function daysUntilFor(qk){const{start}=parseQuarterKey(qk);return Math.ceil((start.getTime()-Date.now())/86400000);}
+function quarterStatus(qk){
+  const{start,end}=parseQuarterKey(qk);
+  const now=Date.now();
+  if(now<start.getTime()) return'future';
+  if(now>end.getTime()) return'past';
+  return'current';
+}
+function shiftQuarterKey(qk,delta){
+  const{q,y}=parseQuarterKey(qk);
+  let nq=q+delta, ny=y;
+  while(nq<1){nq+=4;ny--;}
+  while(nq>4){nq-=4;ny++;}
+  return ny+'-Q'+nq;
+}
+function qkLabel(qk){const{q,y}=parseQuarterKey(qk); return'Q'+q+' '+y;}
+function shiftQuarter(delta){viewQuarter=shiftQuarterKey(viewQuarter,delta); renderAll();}
+function jumpToCurrentQuarter(){viewQuarter=currentQuarterKey(); renderAll();}
 
-function monthRange(){
-  const{start,end}=currentQuarterRange();
+function monthRange(qk){
+  const{start,end}=parseQuarterKey(qk||viewQuarter);
   const fmt=d=>d.toLocaleDateString('en-US',{month:'long'});
   return fmt(start)+' – '+fmt(end);
 }
 
 // ---- Header ----
 function renderHeader(){
-  const{q,y}=currentQuarterRange();
+  const{q,y}=parseQuarterKey(viewQuarter);
   document.getElementById('quarterQ').textContent='Q'+q;
-  document.getElementById('quarterSub').textContent=monthRange()+' · '+y;
-  document.getElementById('daysLeft').textContent=daysLeft();
+  document.getElementById('quarterSub').textContent=monthRange(viewQuarter)+' · '+y;
+
+  const st=quarterStatus(viewQuarter);
+  const daysEl=document.getElementById('daysLeft');
+  const daysLbl=document.getElementById('daysLeftLbl');
+  if(st==='past'){daysEl.textContent='✓'; daysLbl.textContent='Closed';}
+  else if(st==='future'){daysEl.textContent=daysUntilFor(viewQuarter); daysLbl.textContent='Days to start';}
+  else{daysEl.textContent=daysLeftFor(viewQuarter); daysLbl.textContent='Days left';}
+
   const editionNum=((y-2020)*4+q);
   document.getElementById('editionLbl').textContent='Vol '+y+' · No '+editionNum;
+
+  document.getElementById('qnavPrev').innerHTML='‹ '+qkLabel(shiftQuarterKey(viewQuarter,-1));
+  document.getElementById('qnavNext').innerHTML=qkLabel(shiftQuarterKey(viewQuarter,1))+' ›';
+  const nowBtn=document.getElementById('qnavNow');
+  const onNow=viewQuarter===currentQuarterKey();
+  nowBtn.classList.toggle('hidden',onNow);
+  document.body.classList.toggle('viewing-other-q',!onNow);
+
   const g=data.goals||[];
   let latest=0;
   g.forEach(x=>{if(x.updatedAt){const t=new Date(x.updatedAt).getTime();if(t>latest)latest=t;}});
@@ -583,9 +704,13 @@ function relTime(t){
   return new Date(t).toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
+function goalsForView(){
+  return(data.goals||[]).filter(g=>(g.quarter||currentQuarterKey())===viewQuarter);
+}
+
 // ---- Health ----
 function renderHealth(){
-  const g=data.goals||[];
+  const g=goalsForView();
   const c={on:0,at:0,bl:0,dn:0};
   g.forEach(x=>{if(c[x.status]!=null)c[x.status]++;});
   document.getElementById('cntOn').textContent=c.on;
@@ -596,7 +721,7 @@ function renderHealth(){
 
 // ---- Chips ----
 function renderChips(){
-  const all=data.goals||[];
+  const all=goalsForView();
   const counts={all:all.length};
   PILLARS.forEach(p=>{counts[p.id]=all.filter(g=>g.pillar===p.id).length;});
   let html=`<button class="chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All<span class="num">${counts.all}</span></button>`;
@@ -614,7 +739,7 @@ function pillarMeta(id){return PILLARS.find(p=>p.id===id)||PILLARS[0]}
 
 function renderList(){
   const el=document.getElementById('list');
-  let goals=data.goals||[];
+  let goals=goalsForView();
   if(activeFilter!=='all')goals=goals.filter(g=>g.pillar===activeFilter);
   const rank={on:1,at:0,bl:-1,dn:99};
   goals=goals.slice().sort((a,b)=>{
@@ -622,10 +747,18 @@ function renderList(){
     return(a.progress||0)-(b.progress||0);
   });
   if(!goals.length){
+    const isCurrent=viewQuarter===currentQuarterKey();
+    const qLbl=qkLabel(viewQuarter);
+    const head=activeFilter==='all'
+      ? (isCurrent?'No quarterly goals yet.':'No goals in '+qLbl+'.')
+      : 'Nothing here in this pillar.';
+    const body=isCurrent
+      ? 'Quarterly goals are the 3–5 strategic bets for the next 90 days. Not todos. Big moves.'
+      : 'Plan ahead — set the 3–5 big moves for '+qLbl+' before it arrives.';
     el.innerHTML=`<div class="empty">
-      <h3>${activeFilter==='all'?'No quarterly goals yet.':'Nothing here in this pillar.'}</h3>
-      <p>Quarterly goals are the 3–5 strategic bets for the next 90 days. Not todos. Big moves.</p>
-      <button class="add-btn" onclick="openAddModal()">+ Set your first goal</button>
+      <h3>${head}</h3>
+      <p>${body}</p>
+      <button class="add-btn" onclick="openAddModal()">+ Set a goal for ${qLbl}</button>
     </div>`;
     return;
   }
@@ -692,17 +825,21 @@ function renderBoardWork(){
   const tallyEl=document.getElementById('workTally');
   const hiddenBtn=document.getElementById('workHiddenToggle');
 
-  // Flatten: board work cards render as peers of quarterly goals, not grouped rows
+  // Flatten: board work cards render as peers of quarterly goals, filtered by viewQuarter
+  const curQ=currentQuarterKey();
   const all=[];
   boards.forEach(b=>{
     (b.goals||[]).forEach(g=>{
+      const cardQ=g.quarter||curQ; // unassigned cards live in the current quarter
+      if(cardQ!==viewQuarter) return;
       const col=(b.columns||[]).find(c=>c.id===g.columnId)||{title:'Board',color:'#888'};
       all.push({b,g,col});
     });
   });
 
   if(!all.length){
-    container.innerHTML=`<div class="wg-empty">No boards yet. Cards from your Board page will appear here automatically.</div>`;
+    const qLbl=qkLabel(viewQuarter);
+    container.innerHTML=`<div class="wg-empty">No board cards tagged to ${qLbl}. Use the quarter picker on any card to move it here.</div>`;
     tallyEl.textContent='';
     hiddenBtn.style.display='none';
     return;
@@ -731,15 +868,25 @@ function renderBoardWork(){
       const sm=statusMeta(g.status||'on');
       const cardCls='bwg-card'+(cardDone?' dn':'')+(g.hideFromGoals?' is-hidden':'');
 
-      const tasksHTML=`<div class="bwg-tasks">
-        ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
-          <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
-          <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
-        </label>`).join('')}
-        <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
-          <input type="text" placeholder="+ Add a task" maxlength="200" />
-        </form>
-      </div>`;
+      const tasksHidden=!!g.hideTasks;
+      const tasksHTML=tasksHidden
+        ? `<div class="bwg-tasks collapsed">
+            <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
+          </div>`
+        : `<div class="bwg-tasks">
+            <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
+            ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
+              <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
+              <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+            </label>`).join('')}
+            <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
+              <input type="text" placeholder="+ Add a task" maxlength="200" />
+            </form>
+          </div>`;
+
+      const qSelectHTML=`<select class="bwg-q-select" onchange="setBoardQuarter('${b.id}','${g.id}',this.value)" onclick="event.stopPropagation()" title="Move to quarter">
+        ${bwgQuarterOptions(g.quarter||curQ)}
+      </select>`;
 
       html+=`<article class="${cardCls}" data-goal-id="${g.id}">
         <div class="card-top">
@@ -747,6 +894,7 @@ function renderBoardWork(){
             <span class="pillar"><span class="d" style="background:${col.color}"></span>${escapeHtml(col.title||'Board')}</span>
             <span class="bwg-board-pill"><span class="d" style="background:${b.color||'#888'}"></span>${escapeHtml(b.name||'Board')}</span>
             <span class="status ${sm.cls}">${sm.label}</span>
+            ${qSelectHTML}
           </div>
         </div>
         <div class="title" onclick="openBoardCard('${b.id}','${g.id}')">${escapeHtml(g.title||'(untitled)')}</div>
@@ -817,7 +965,8 @@ function openAddModal(){
   document.getElementById('fTitle').value='';
   document.getElementById('fNotes').value='';
   setSlider(0);
-  document.getElementById('fTarget').value=quarterEndKey();
+  modalQuarter=viewQuarter||currentQuarterKey();
+  document.getElementById('fTarget').value=quarterEndKeyFor(modalQuarter);
   modalPillar='ezrk';modalStatus='on';
   renderPickers();
   document.getElementById('modal').classList.add('open');
@@ -830,12 +979,24 @@ function openEditModal(gid){
   document.getElementById('fTitle').value=g.title||'';
   document.getElementById('fNotes').value=g.notes||'';
   setSlider(g.progress||0);
-  document.getElementById('fTarget').value=g.targetDate||quarterEndKey();
+  modalQuarter=g.quarter||currentQuarterKey();
+  document.getElementById('fTarget').value=g.targetDate||quarterEndKeyFor(modalQuarter);
   modalPillar=g.pillar||'ezrk';modalStatus=g.status||'on';
   renderPickers();
   document.getElementById('modal').classList.add('open');
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');editingId=null;}
+function setModalQuarter(qk){
+  modalQuarter=qk;
+  // If target date is outside the selected quarter, snap to that quarter's end
+  const cur=document.getElementById('fTarget').value;
+  const{start,end}=parseQuarterKey(qk);
+  const tgt=cur?new Date(cur+'T12:00:00'):null;
+  if(!tgt || tgt<start || tgt>end){
+    document.getElementById('fTarget').value=quarterEndKeyFor(qk);
+  }
+  renderPickers();
+}
 function renderPickers(){
   document.getElementById('pillarPicker').innerHTML=PILLARS.map(p=>
     `<button class="pk ${modalPillar===p.id?'active':''}" onclick="modalPillar='${p.id}';renderPickers()"><span class="d" style="background:${p.color}"></span>${p.label}</button>`
@@ -843,6 +1004,23 @@ function renderPickers(){
   document.getElementById('statusPicker').innerHTML=STATUSES.map(s=>
     `<button class="pk ${modalStatus===s.id?'active':''}" onclick="modalStatus='${s.id}';renderPickers()">${s.label}</button>`
   ).join('');
+  // Quarter picker — window of prev 2 to +6
+  const base=parseQuarterKey(currentQuarterKey());
+  const opts=[];
+  for(let i=-2;i<=6;i++){
+    let nq=base.q+i, ny=base.y;
+    while(nq<1){nq+=4;ny--;}
+    while(nq>4){nq-=4;ny++;}
+    opts.push(ny+'-Q'+nq);
+  }
+  // Ensure modalQuarter appears even if outside the default window
+  if(!opts.includes(modalQuarter)) opts.push(modalQuarter);
+  opts.sort();
+  document.getElementById('quarterPicker').innerHTML=opts.map(qk=>{
+    const l=parseQuarterKey(qk);
+    const isNow=qk===currentQuarterKey();
+    return `<button class="pk ${modalQuarter===qk?'active':''}" onclick="setModalQuarter('${qk}')">Q${l.q} ${l.y}${isNow?' · now':''}</button>`;
+  }).join('');
 }
 function setSlider(v){
   document.getElementById('fProgressSlider').value=String(v);
@@ -857,18 +1035,21 @@ function saveGoal(){
   if(!title){alert('Give the goal a title.');return;}
   const notes=document.getElementById('fNotes').value.trim();
   const progress=Math.max(0,Math.min(100,parseInt(document.getElementById('fProgressSlider').value||'0',10)));
-  const targetDate=document.getElementById('fTarget').value||quarterEndKey();
+  const targetDate=document.getElementById('fTarget').value||quarterEndKeyFor(modalQuarter);
+  const quarter=modalQuarter||currentQuarterKey();
   const now=new Date().toISOString();
   if(editingId){
     const g=data.goals.find(x=>x.id===editingId);
-    if(g)Object.assign(g,{title,notes,progress,targetDate,pillar:modalPillar,status:modalStatus,updatedAt:now});
+    if(g)Object.assign(g,{title,notes,progress,targetDate,pillar:modalPillar,status:modalStatus,quarter,updatedAt:now});
   } else {
     if(!Array.isArray(data.goals))data.goals=[];
     data.goals.unshift({
       id:uid(),title,notes,progress,targetDate,pillar:modalPillar,status:modalStatus,
-      createdAt:now,updatedAt:now,quarter:currentQuarterKey()
+      createdAt:now,updatedAt:now,quarter
     });
   }
+  // Snap to the quarter that was saved so the new/edited goal is visible
+  viewQuarter=quarter;
   save();closeModal();renderAll();
 }
 
