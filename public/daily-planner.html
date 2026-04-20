@@ -1397,11 +1397,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-modal-badge" id="focusModalBadge"><span class="dot"></span><span id="focusModalBadgeText">Deep Work</span></div>
     <div class="focus-modal-title" id="focusModalTitle">Start focus session?</div>
     <div class="focus-modal-task" id="focusModalTask">&mdash;</div>
-    <!-- Track mode: focus (iOS shortcut + focus mode) vs plain (just the clock) -->
-    <div class="focus-mode-toggle" role="tablist" aria-label="Track mode" style="grid-template-columns:1fr 1fr">
-      <button type="button" class="focus-mode-opt active" id="focusTrackFocus" onclick="setFocusModalTrack('focus')">Track with focus</button>
-      <button type="button" class="focus-mode-opt" id="focusTrackPlain" onclick="setFocusModalTrack('plain')">Just track time</button>
-    </div>
     <!-- Timer mode: countdown vs stopwatch -->
     <div class="focus-mode-toggle" role="tablist" aria-label="Timer mode">
       <button type="button" class="focus-mode-opt active" id="focusModeCountdown" onclick="setFocusModalMode('countdown')">Countdown</button>
@@ -1421,9 +1416,8 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     </div>
     <div class="focus-modal-meta">
       <span class="focus-modal-chip" id="focusModalDuration">50 min</span>
-      <span class="focus-modal-chip" id="focusModalShortcutChip">Fires Deep Work shortcut</span>
     </div>
-    <div class="focus-modal-hint" id="focusModalHint">iOS will flip your Focus mode on and start the countdown. End early anytime from the focus bar.</div>
+    <div class="focus-modal-hint" id="focusModalHint">Start the timer. Turn iOS Focus on from the panel anytime.</div>
     <div class="focus-modal-actions">
       <button class="focus-modal-btn" onclick="closeFocusStartModal()">Cancel</button>
       <button class="focus-modal-btn primary" id="focusModalStartBtn" onclick="confirmFocusStart()">Start Focus</button>
@@ -1488,7 +1482,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     </button>
   </div>
   <div class="focus-big-body">
-    <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">Focus</span></div>
+    <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">50 min</span></div>
     <div class="focus-big-task" id="focusBigTask">Deep work</div>
     <div class="focus-big-time" id="focusBigTime">00:00</div>
     <div class="focus-big-sub">
@@ -7015,7 +7009,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const bigProg = document.getElementById('focusBigProgress');
       if(bigTime) bigTime.textContent = fmtHMS(displaySec);
       if(bigTask) bigTask.textContent = label;
-      if(bigMode) bigMode.textContent = isStopwatch ? 'Stopwatch' : `Focus · ${active.durationMin||25}m`;
+      if(bigMode) bigMode.textContent = isStopwatch ? 'Stopwatch' : `${active.durationMin||25} min`;
       if(active.taskId){
         const found = findTaskAcrossDates(active.taskId);
         const base = (found && found.task && found.task.timeSpent) || 0;
@@ -7095,7 +7089,14 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const all = loadSessions(); all.push(record); saveSessions(all);
     if(active.taskId){
       const found = findTaskAcrossDates(active.taskId);
-      const patch = { timeSpent: ((found && found.task.timeSpent) || 0) + actualMin*60 };
+      // Use baseline + session seconds pattern to match the live ticker's writes.
+      // The independent ticker writes (baseline + elapsed) to task.timeSpent every 5s,
+      // so additive patterns would double-count. Compute the authoritative final value.
+      const sessionSecs = Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
+      const baseline = (typeof active.baselineTimeSpent === 'number')
+        ? active.baselineTimeSpent
+        : ((found && found.task && found.task.timeSpent) || 0);
+      const patch = { timeSpent: baseline + sessionSecs };
       if(markTaskDone) patch.done = true;
       patchTask(active.taskId, patch);
       // Stop any running task timer for this task (focus owns it now)
@@ -7130,11 +7131,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
 
   window.focusBarEndEarly = function(){
     if(!confirm('End this focus session early?')) return;
-    fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    // Only fire the OFF shortcut if iOS Focus was actually turned on this session.
+    // Otherwise Shortcuts throws "Invalid action. Current status: No timer running".
+    const a = getActive();
+    if(a && a.iosFocusEngaged){
+      fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    }
     finish(true, false);
   };
   window.focusBarMarkDone = function(){
-    fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    const a = getActive();
+    if(a && a.iosFocusEngaged){
+      fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    }
     finish(false, true);
   };
   window.focusBarTapped = function(ev){
@@ -7202,33 +7211,24 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   function refreshFocusModalChrome(){
     const m = document.getElementById('focusStartModal');
     if(!m) return;
+    // Track mode is always 'focus' now — the iOS Focus on/off buttons
+    // inside the panel let the user toggle the system Focus mode manually
+    // after the session starts.
+    m.dataset.track = 'focus';
     const isStopwatch = m.dataset.mode === 'stopwatch';
-    const isPlain = m.dataset.track === 'plain';
     const durChip = document.getElementById('focusModalDuration');
-    const shortcutChip = document.getElementById('focusModalShortcutChip');
     const hint = document.getElementById('focusModalHint');
-    const badgeText = document.getElementById('focusModalBadgeText');
     const startBtn = document.getElementById('focusModalStartBtn');
     const title = document.getElementById('focusModalTitle');
-    if(badgeText) badgeText.textContent = isPlain ? 'Time Tracker' : 'Deep Work';
-    if(startBtn) startBtn.textContent = isPlain ? 'Start Timer' : 'Start Focus';
-    if(title) title.textContent = isPlain ? 'Start timer?' : 'Start focus session?';
-    // Shortcut chip only shown in Track-with-focus + Countdown mode
-    if(shortcutChip){
-      if(isPlain || isStopwatch) shortcutChip.style.display = 'none';
-      else shortcutChip.style.display = '';
-    }
+    if(startBtn) startBtn.textContent = isStopwatch ? 'Start' : 'Start Focus';
+    if(title) title.textContent = 'Start focus session?';
     if(isStopwatch){
       if(durChip) durChip.textContent = 'No limit';
-      if(hint) hint.textContent = isPlain
-        ? 'Counts up from zero. No iOS Focus mode — just the clock.'
-        : 'Counts up from zero. Fires Focus mode and logs all time to Analytics.';
+      if(hint) hint.textContent = 'Counts up from zero. Turn iOS Focus on from the panel anytime.';
     } else {
       const dur = parseInt(m.dataset.durationMin,10) || 50;
       if(durChip) durChip.textContent = dur + ' min';
-      if(hint) hint.textContent = isPlain
-        ? 'Counts down. No iOS Focus mode — just the clock. Logs to Analytics.'
-        : 'iOS will flip your Focus mode on and start the countdown. End early anytime from the focus bar.';
+      if(hint) hint.textContent = 'Counts down. Turn iOS Focus on from the panel anytime.';
     }
   }
   window.setFocusModalMode = function(mode){
@@ -7316,6 +7316,16 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const m = (mode === 'stopwatch') ? 'stopwatch' : 'countdown';
     const tr = (track === 'plain') ? 'plain' : 'focus';
     const duration = Math.min(240, Math.max(1, parseInt(estMin,10) || 50));
+    // Snapshot the task's existing timeSpent so the ticker can live-update
+    // it as base + elapsed — this way time is persisted every tick, not
+    // just on finish(). If the tab closes mid-session, no data is lost.
+    let baselineTimeSpent = 0;
+    if(taskId){
+      try{
+        const found = findTaskAcrossDates(taskId);
+        baselineTimeSpent = (found && found.task && found.task.timeSpent) || 0;
+      } catch {}
+    }
     const active = {
       startedAt: Date.now(),
       durationMin: duration,
@@ -7323,7 +7333,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       track: tr,
       intent: '',
       taskId: taskId || null,
-      taskDate: null
+      taskDate: null,
+      baselineTimeSpent
     };
     setActive(active);
     // BELT-AND-SUSPENDERS panel reveal — directly force the floating panel
@@ -7373,18 +7384,31 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const minutes = String(active.durationMin || 50);
     const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work') +
                 '&input=text&text=' + encodeURIComponent(minutes);
+    // Mark iOS Focus as engaged so end/done know it's safe to fire the off shortcut
+    try{
+      const cur = getActive();
+      if(cur){ cur.iosFocusEngaged = true; setActive(cur); }
+    } catch {}
     try{ window.location.href = url; } catch {}
   };
   // Manual trigger — turns OFF iOS Focus. Fires the Deep Work Off shortcut
   // on user tap. Works whether or not a focus session is active (user can
   // disable iOS Focus independently).
   window.focusFireIOSFocusOff = function(){
+    // Clear the engaged flag so subsequent end/done don't fire it again
+    try{
+      const cur = getActive();
+      if(cur){ cur.iosFocusEngaged = false; setActive(cur); }
+    } catch {}
     try{ window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF); } catch {}
   };
 
   window.focusEndQuiet = function(broken, markTaskDone){
-    if(!getActive()) return;
-    fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    const a = getActive();
+    if(!a) return;
+    if(a.iosFocusEngaged){
+      fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+    }
     finish(!!broken, !!markTaskDone);
     // Nudge embedded focus page so it exits running state
     try{
@@ -7465,27 +7489,40 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     if(bigProg && !isStopwatch) bigProg.style.width = pct + '%';
     const barProg = document.getElementById('focusBarProgress');
     if(barProg && !isStopwatch) barProg.style.width = pct + '%';
-    // Also update the per-task row if possible
+    // Total on this task = baseline at session start + this session's elapsed.
+    // Updating the per-task row and the big-panel total.
+    const baseline = (typeof active.baselineTimeSpent === 'number')
+      ? active.baselineTimeSpent : 0;
+    const liveTotal = baseline + elapsedSec;
     if(active.taskId){
+      const fmtT = window.fmtTime || (n => n + 's');
       const td = document.getElementById('td-' + active.taskId);
       if(td){
+        td.textContent = fmtT(liveTotal);
+        td.classList.remove('idle');
+      }
+      const bigTotal = document.getElementById('focusBigTotal');
+      if(bigTotal) bigTotal.textContent = fmtT(liveTotal);
+      // Persist live total to the task every 5 seconds so timeSpent
+      // accumulates even if the user never formally ends the session.
+      if(elapsedSec > 0 && elapsedSec % 5 === 0){
         try{
           const plan = JSON.parse(localStorage.getItem('daily-plan') || '{}');
-          let base = 0;
-          outer: for(const dk of Object.keys(plan)){
+          let wrote = false;
+          for(const dk of Object.keys(plan)){
             const day = plan[dk] || {};
             for(const sl of Object.keys(day)){
               const items = day[sl] || [];
-              const t = items.find(x => x && x.id === active.taskId);
-              if(t){ base = t.timeSpent || 0; break outer; }
+              const idx = items.findIndex(x => x && x.id === active.taskId);
+              if(idx >= 0){
+                items[idx] = Object.assign({}, items[idx], { timeSpent: liveTotal });
+                wrote = true;
+                break;
+              }
             }
+            if(wrote) break;
           }
-          const fmtT = window.fmtTime || (n => n + 's');
-          td.textContent = fmtT(base + elapsedSec);
-          td.classList.remove('idle');
-          // Also update the big-panel total
-          const bigTotal = document.getElementById('focusBigTotal');
-          if(bigTotal) bigTotal.textContent = fmtT(base + elapsedSec);
+          if(wrote) localStorage.setItem('daily-plan', JSON.stringify(plan));
         } catch {}
       }
     }
