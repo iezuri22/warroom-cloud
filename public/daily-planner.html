@@ -107,6 +107,37 @@ body{font-family:var(--ios-font);background:var(--bg);color:var(--text);min-heig
 .focus-bar-btn:active{transform:scale(0.96)}
 .focus-bar-btn-done{background:rgba(52,199,89,.25);color:#A7F3D0}
 .focus-bar-btn-done:hover{background:rgba(52,199,89,.38)}
+.focus-bar-btn-expand{display:inline-flex;align-items:center;justify-content:center;padding:6px 9px}
+.focus-bar-btn-expand svg{display:block}
+
+/* FOCUS IMMERSION — full-screen takeover of the focus-session view */
+#focusView.focus-immersive-view{
+  position:fixed !important; inset:0; z-index:260;
+  background:var(--bg); display:block !important; padding:0; margin:0;
+  height:100vh; width:100vw;
+}
+#focusView.focus-immersive-view iframe{
+  width:100%; height:100%; min-height:100vh !important; border-radius:0;
+}
+.focus-immersive-exit{
+  position:fixed; top:14px; right:14px; z-index:270;
+  background:rgba(12,12,16,.78); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  color:#fff; border:1px solid rgba(255,255,255,.14);
+  padding:10px 18px; border-radius:999px; font-weight:700;
+  cursor:pointer; font-size:13px; font-family:var(--ios-font);
+  letter-spacing:.2px; transition:all .15s;
+  display:none; align-items:center; gap:8px;
+}
+.focus-immersive-exit:hover{background:rgba(30,30,36,.9);border-color:rgba(255,255,255,.25)}
+body.focus-immersive .focus-immersive-exit{display:inline-flex}
+/* When immersive, hide chrome for a TV-clean view */
+body.focus-immersive .header,
+body.focus-immersive .tabs,
+body.focus-immersive .focus-bar,
+body.focus-immersive .add-plan,
+body.focus-immersive .notepad-fab,
+body.focus-immersive .mobile-nav,
+body.focus-immersive #calSidebar{display:none !important}
 @media(max-width:640px){
   .focus-bar-content{padding:8px 16px;gap:8px}
   .focus-bar-task{font-size:12px}
@@ -1222,6 +1253,12 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
+<!-- FOCUS IMMERSION EXIT (visible only when body.focus-immersive) -->
+<button class="focus-immersive-exit" onclick="exitFocusImmersion()" aria-label="Exit focus immersion">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+  <span>Exit focus</span>
+</button>
+
 <!-- PERSISTENT FOCUS BAR (visible only when a session is active) -->
 <div id="focusBar" class="focus-bar" style="display:none" onclick="focusBarTapped(event)">
   <div class="focus-bar-progress" id="focusBarProgress"></div>
@@ -1233,6 +1270,9 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     </div>
     <div class="focus-bar-time" id="focusBarTime">--:--</div>
     <div class="focus-bar-actions">
+      <button class="focus-bar-btn focus-bar-btn-expand" onclick="event.stopPropagation();enterFocusImmersion()" title="Expand to full screen">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </button>
       <button class="focus-bar-btn" onclick="event.stopPropagation();focusBarEndEarly()">End</button>
       <button class="focus-bar-btn focus-bar-btn-done" onclick="event.stopPropagation();focusBarMarkDone()">Done</button>
     </div>
@@ -1243,7 +1283,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 <div class="tabs">
   <div class="tab active" data-tab="plan" onclick="switchTab('plan')">Today's Plan</div>
   <div class="tab" data-tab="todos" onclick="switchTab('todos')">Personal</div>
-  <div class="tab" data-tab="focus" onclick="switchTab('focus')">Focus</div>
   <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab" data-tab="board" onclick="switchTab('board')">Board</div>
   <div class="tab" data-tab="coach" onclick="switchTab('coach')">Brain Dump</div>
@@ -1788,13 +1827,25 @@ function init(){
     document.getElementById('calSidebar').classList.remove('open');
     calOpen=false;
   }
-  // Restore tab
+  // Restore tab (migrate legacy 'focus' tab — now merged into plan via immersion)
+  if(ui.tab === 'focus'){
+    ui.tab = 'plan';
+    saveUiState({tab:'plan'});
+  }
   if(ui.tab && ui.tab!=='plan'){
     try { switchTab(ui.tab); } catch(e){}
   }
   // Restore fullscreen body class (native fullscreen requires a user gesture so we just restyle)
   if(ui.fullscreen){
     document.body.classList.add('fullscreen');
+  }
+  // Restore focus immersion only if there's an active session; otherwise clear it
+  if(ui.focusImmersive){
+    try {
+      const active = JSON.parse(localStorage.getItem('focus-active') || 'null');
+      if(active) enterFocusImmersion();
+      else saveUiState({focusImmersive:false});
+    } catch { saveUiState({focusImmersive:false}); }
   }
   renderCalMonth();
   fetchCalendar();
@@ -2523,6 +2574,37 @@ function exitFullscreen(){
   saveUiState({fullscreen:false});
   try { if(document.fullscreenElement) document.exitFullscreen(); } catch(e){}
 }
+
+// --- Focus immersion (merged Focus into Today's Plan) ---
+// When a focus session is active, tap the focus-bar (or the expand button) to
+// blow the focus-session UI up to full screen. Exit restores the planner.
+function enterFocusImmersion(){
+  const view = document.getElementById('focusView');
+  const frame = document.getElementById('focusFrame');
+  if(!view || !frame) return;
+  if(frame.src === 'about:blank' || frame.src === '' || !frame.src.includes('focus-session.html')){
+    frame.src = '/focus-session.html?embed=1';
+  }
+  view.classList.add('focus-immersive-view');
+  view.style.display = 'block';
+  document.body.classList.add('focus-immersive');
+  saveUiState({focusImmersive:true});
+}
+function exitFocusImmersion(){
+  const view = document.getElementById('focusView');
+  if(view){
+    view.classList.remove('focus-immersive-view');
+    // Only keep focusView visible if some code path still treats it as primary (legacy)
+    if(currentTab !== 'focus') view.style.display = 'none';
+  }
+  document.body.classList.remove('focus-immersive');
+  saveUiState({focusImmersive:false});
+}
+window.enterFocusImmersion = enterFocusImmersion;
+window.exitFocusImmersion = exitFocusImmersion;
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape' && document.body.classList.contains('focus-immersive')) exitFocusImmersion();
+});
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape' && document.body.classList.contains('fullscreen')) exitFullscreen();
 });
@@ -6403,6 +6485,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     }
     setActive(null);
     render();
+    // Auto-exit immersion so the user lands back on the plan
+    try{ if(typeof window.exitFocusImmersion === 'function') window.exitFocusImmersion(); } catch {}
     // Refresh planner UI if renderer exists (the global `render` lives on window)
     try{ if(typeof window.render === 'function') window.render(); } catch {}
   }
@@ -6417,8 +6501,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     finish(false, true);
   };
   window.focusBarTapped = function(ev){
-    // Tapping anywhere on the bar (non-button area) opens the full focus page
-    window.location.href = '/focus-session.html';
+    // Tap anywhere on the bar (non-button area) enters immersive focus overlay
+    if (typeof window.enterFocusImmersion === 'function') window.enterFocusImmersion();
   };
 
   // Per-task quick start: used by the focus button on each plan item
