@@ -2003,7 +2003,63 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
 // --- Data ---
 function loadPlan(){try{const d=JSON.parse(localStorage.getItem(PK));return d||{}}catch{return{}}}
 function savePlan(d){const s=JSON.stringify(d);localStorage.setItem(PK,s);backupKey(PK,s)}
-function currentPlan(){const p=loadPlan();const k=viewKey();if(!p[k])p[k]=[];return{all:p,items:p[k],key:k}}
+// Self-heal any plan keys that don't match our canonical YYYY-MM-DD zero-padded shape.
+// Legacy/imported keys like "2026-4-21" or "2026-04-21T00:00:00" get re-bucketed under
+// the canonical key so viewKey() lookups always find them.
+function normalizePlanKeys(p){
+  if(!p||typeof p!=='object')return {changed:false,plan:p};
+  let changed=false;
+  Object.keys(p).forEach(k=>{
+    if(!Array.isArray(p[k]))return;
+    let canonical=k;
+    const m=String(k).match(/^(\d{4})[-\/]?(\d{1,2})[-\/]?(\d{1,2})/);
+    if(m){
+      canonical=m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+    } else {
+      const d=new Date(k);
+      if(!isNaN(d.getTime())) canonical=dateKey(d);
+    }
+    if(canonical!==k){
+      if(!p[canonical]) p[canonical]=[];
+      p[canonical]=p[canonical].concat(p[k]);
+      delete p[k];
+      changed=true;
+    }
+  });
+  return {changed,plan:p};
+}
+function currentPlan(){
+  let p=loadPlan();
+  const fix=normalizePlanKeys(p);
+  if(fix.changed){ try{ savePlan(fix.plan); }catch{} p=fix.plan; }
+  const k=viewKey();
+  if(!p[k])p[k]=[];
+  return{all:p,items:p[k],key:k};
+}
+// Repair helper: re-buckets every plan key into its canonical YYYY-MM-DD form
+// and merges items whose stored key parses to the current viewDate.
+function _fixPlanKeyMismatch(){
+  const p=loadPlan();
+  const vk=viewKey();
+  if(!p[vk]) p[vk]=[];
+  const vDay=viewDate.getFullYear()+'-'+(viewDate.getMonth()+1)+'-'+viewDate.getDate();
+  Object.keys(p).forEach(k=>{
+    if(k===vk) return;
+    const arr=p[k];
+    if(!Array.isArray(arr)||!arr.length) return;
+    const d=new Date(k+'T12:00:00');
+    const kDay=isNaN(d)?null:(d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
+    if(kDay===vDay){
+      p[vk]=p[vk].concat(arr);
+      delete p[k];
+    }
+  });
+  // Also run general normalization.
+  const fix=normalizePlanKeys(p);
+  savePlan(fix.plan);
+  render();
+}
+try{ window._fixPlanKeyMismatch=_fixPlanKeyMismatch; }catch{}
 
 function loadTimeLog(){try{return JSON.parse(localStorage.getItem(TK))||[]}catch{return[]}}
 function saveTimeLog(l){const s=JSON.stringify(l.slice(-500));localStorage.setItem(TK,s);backupKey(TK,s)}
@@ -2475,7 +2531,40 @@ document.addEventListener('click', (e) => {
 
 // --- Render ---
 function render(){
-  const{items:planItems}=currentPlan();
+  const{items:planItems,all:_allPlan,key:_vk}=currentPlan();
+  // Diagnostic: if the view has 0 items but other plan keys have items whose
+  // parsed date matches viewDate, surface a banner so the mismatch is visible.
+  try{
+    if(planItems.length===0){
+      const vDay=viewDate.getFullYear()+'-'+(viewDate.getMonth()+1)+'-'+viewDate.getDate();
+      const strays=[];
+      Object.keys(_allPlan||{}).forEach(k=>{
+        if(k===_vk) return;
+        const arr=_allPlan[k];
+        if(!Array.isArray(arr)||!arr.length) return;
+        const d=new Date(k+'T12:00:00');
+        const kDay=isNaN(d)?null:(d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate());
+        if(kDay===vDay) strays.push({key:k,count:arr.length});
+      });
+      const banner=document.getElementById('planKeyMismatchBanner');
+      if(strays.length){
+        const html='<div style="background:rgba(255,138,61,.12);border:1px solid rgba(255,138,61,.4);color:#FF8A3D;padding:10px 12px;border-radius:10px;font-size:13px;margin:0 0 10px">Found '+strays.reduce((a,b)=>a+b.count,0)+' task(s) under mismatched key(s): '+strays.map(s=>s.key).join(', ')+'. <button onclick="_fixPlanKeyMismatch()" style="margin-left:8px;background:#FF8A3D;color:#000;border:none;padding:4px 10px;border-radius:6px;font-weight:700;cursor:pointer">Fix now</button></div>';
+        if(banner){ banner.innerHTML=html; }
+        else{
+          const host=document.getElementById('carryForward');
+          if(host){
+            const b=document.createElement('div');
+            b.id='planKeyMismatchBanner';
+            b.innerHTML=html;
+            host.parentNode.insertBefore(b,host);
+          }
+        }
+      } else if(banner){ banner.innerHTML=''; }
+    } else {
+      const banner=document.getElementById('planKeyMismatchBanner');
+      if(banner) banner.innerHTML='';
+    }
+  } catch(e){}
   SLOTS.forEach(slot=>{
     const items=planItems.filter(i=>normalizeSlot(i.slot)===slot);
     // Sort: done items sink to bottom, preserve order otherwise
