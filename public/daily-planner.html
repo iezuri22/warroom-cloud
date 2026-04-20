@@ -1416,11 +1416,21 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-modal-meta">
       <span class="focus-modal-chip" id="focusModalDuration">50 min</span>
     </div>
-    <div class="focus-modal-hint" id="focusModalHint">Pick how you want to start. iOS Focus can also be toggled from the panel later.</div>
+    <div class="focus-modal-hint" id="focusModalHint">Pick one. Only the Deep Work option touches iOS Focus.</div>
     <div class="focus-modal-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button class="focus-modal-btn" onclick="closeFocusStartModal()">Cancel</button>
-      <button class="focus-modal-btn" id="focusModalStartBtn" onclick="confirmFocusStart(false)" title="Start the timer, no iOS Focus">Just timer</button>
-      <button class="focus-modal-btn primary" style="grid-column:1 / -1" onclick="confirmFocusStart(true)" title="Start timer + fire Deep Work iOS Focus">Start with iOS Focus</button>
+      <button class="focus-modal-btn primary" id="focusModalStartBtn" style="grid-column:1 / -1;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);color:#fff" onclick="confirmFocusStart(false)">
+        <span style="display:flex;flex-direction:column;gap:2px;width:100%;text-align:left">
+          <span style="font-weight:700;font-size:14px">Regular timer</span>
+          <span style="font-size:11px;font-weight:500;opacity:.7">Just tracks time. No iOS Focus.</span>
+        </span>
+      </button>
+      <button class="focus-modal-btn primary" style="grid-column:1 / -1;background:#FF8A3D;border-color:#FF8A3D;color:#1a1a1a" onclick="confirmFocusStart(true)">
+        <span style="display:flex;flex-direction:column;gap:2px;width:100%;text-align:left">
+          <span style="font-weight:700;font-size:14px">Deep Work (iOS Focus)</span>
+          <span style="font-size:11px;font-weight:500;opacity:.75">Timer + fires Deep Work shortcut on iPhone</span>
+        </span>
+      </button>
+      <button class="focus-modal-btn" style="grid-column:1 / -1" onclick="closeFocusStartModal()">Cancel</button>
     </div>
   </div>
 </div>
@@ -2111,6 +2121,17 @@ function init(){
 
 function restoreActiveTimer(){
   try{
+    // If a focus session is active, the focus module owns time tracking.
+    // Skip plain-timer restore so we don't start a second interval that
+    // fights the focus ticker for item.timeSpent writes.
+    try{
+      const fa = localStorage.getItem('focus-active');
+      if(fa && JSON.parse(fa)){
+        // Also clear any stale active-task so nothing else resurrects it.
+        localStorage.removeItem('active-task');
+        return;
+      }
+    } catch {}
     const raw=localStorage.getItem('active-task');
     if(!raw)return;
     const at=JSON.parse(raw);
@@ -2540,9 +2561,35 @@ function toggleDone(id){
         focusSessionLogged = true;
       }
     } catch {}
-    // Stop timer
+    // Stop plain pomodoro timer if one was running
     stopTimer(id);
     const t=timers[id];
+    if(focusSessionLogged){
+      // finish() has already persisted timeSpent via patchTask directly to
+      // localStorage. Re-read from disk so we don't clobber that value when
+      // we savePlan() below. Keep the done/completedAt updates on the fresh
+      // item reference.
+      const fresh = loadPlan();
+      const freshItems = fresh[key] || [];
+      const freshIdx = freshItems.findIndex(i => i && i.id === id);
+      if(freshIdx >= 0){
+        const prevItem = freshItems[freshIdx];
+        freshItems[freshIdx] = Object.assign({}, prevItem, {
+          done: true,
+          completedAt: item.completedAt,
+          shifted: item.shifted
+        });
+        fresh[key] = freshItems;
+        savePlan(fresh);
+        render();
+        promptOutcome(id);
+        return;
+      }
+      // Fallback — if the fresh read failed somehow, fall through to the
+      // legacy path so we at least mark it done.
+    }
+    // Legacy path (no focus session): mark done and persist the plain-timer
+    // seconds if any.
     item.timeSpent=(t?t.seconds:0)||item.timeSpent;
     if(!focusSessionLogged){
       logTime({taskId:id,date:key,domain:item.domain,text:item.text,slot:item.originalSlot,completedSlot:actualSlot,seconds:item.timeSpent,shifted:item.shifted});
@@ -6908,16 +6955,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   }
   function saveSessions(arr){ localStorage.setItem(STORE_KEY, JSON.stringify(arr)); }
 
+  // NOTE: localStorage 'daily-plan' stores { "YYYY-MM-DD": [item, item, ...] }
+  // — a flat array per date, NOT nested by slot. An earlier version of these
+  // helpers incorrectly iterated Object.keys(day) as if slots existed, which
+  // made every task lookup silently fail (wrapped in try/catch). That's why
+  // timeSpent never advanced past the value stored before focus started
+  // writing. Now: treat plan[date] as the items array directly.
   function findTaskAcrossDates(taskId){
     try{
       const plan = JSON.parse(localStorage.getItem(PLAN_KEY) || '{}');
       for(const dateKey of Object.keys(plan)){
-        const day = plan[dateKey] || {};
-        for(const slot of Object.keys(day)){
-          const items = day[slot] || [];
-          const t = items.find(x => x && x.id === taskId);
-          if(t) return { task: t, dateKey, slot, items };
-        }
+        const items = Array.isArray(plan[dateKey]) ? plan[dateKey] : [];
+        const t = items.find(x => x && x.id === taskId);
+        if(t) return { task: t, dateKey, items };
       }
     } catch {}
     return null;
@@ -6927,16 +6977,14 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     try{
       const plan = JSON.parse(localStorage.getItem(PLAN_KEY) || '{}');
       for(const dateKey of Object.keys(plan)){
-        const day = plan[dateKey] || {};
-        for(const slot of Object.keys(day)){
-          const items = day[slot] || [];
-          const idx = items.findIndex(x => x && x.id === taskId);
-          if(idx >= 0){
-            items[idx] = Object.assign({}, items[idx], patch);
-            if(patch.done && !items[idx].completedAt) items[idx].completedAt = new Date().toISOString();
-            localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
-            return true;
-          }
+        const items = Array.isArray(plan[dateKey]) ? plan[dateKey] : [];
+        const idx = items.findIndex(x => x && x.id === taskId);
+        if(idx >= 0){
+          items[idx] = Object.assign({}, items[idx], patch);
+          if(patch.done && !items[idx].completedAt) items[idx].completedAt = new Date().toISOString();
+          plan[dateKey] = items;
+          localStorage.setItem(PLAN_KEY, JSON.stringify(plan));
+          return true;
         }
       }
     } catch {}
@@ -7528,22 +7576,20 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(bigTotal) bigTotal.textContent = fmtT(liveTotal);
       // Persist live total to the task every 5 seconds so timeSpent
       // accumulates even if the user never formally ends the session.
+      // plan storage shape: { "YYYY-MM-DD": [items] } — flat per-date array.
       if(elapsedSec > 0 && elapsedSec % 5 === 0){
         try{
           const plan = JSON.parse(localStorage.getItem('daily-plan') || '{}');
           let wrote = false;
           for(const dk of Object.keys(plan)){
-            const day = plan[dk] || {};
-            for(const sl of Object.keys(day)){
-              const items = day[sl] || [];
-              const idx = items.findIndex(x => x && x.id === active.taskId);
-              if(idx >= 0){
-                items[idx] = Object.assign({}, items[idx], { timeSpent: liveTotal });
-                wrote = true;
-                break;
-              }
+            const items = Array.isArray(plan[dk]) ? plan[dk] : [];
+            const idx = items.findIndex(x => x && x.id === active.taskId);
+            if(idx >= 0){
+              items[idx] = Object.assign({}, items[idx], { timeSpent: liveTotal });
+              plan[dk] = items;
+              wrote = true;
+              break;
             }
-            if(wrote) break;
           }
           if(wrote) localStorage.setItem('daily-plan', JSON.stringify(plan));
         } catch {}
