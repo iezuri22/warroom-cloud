@@ -185,39 +185,26 @@ body{padding:16px 14px 120px}
 .work-hidden-toggle:hover{color:var(--text);border-color:var(--border-2)}
 .work-hidden-toggle.on{background:var(--surface-2);color:var(--text)}
 
-.wg-board{margin-bottom:14px}
-.wg-board-head{
-  font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-dim);
-  display:flex;align-items:center;gap:8px;padding:0 4px 8px;
+/* Board-work cards share the quarterly goal card look so they feel like peers, not second-class rows */
+.bwg-list{display:flex;flex-direction:column;gap:10px}
+.bwg-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 14px 12px;display:flex;flex-direction:column;gap:10px;
+  transition:border-color .12s;position:relative;
 }
-.wg-board-head .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.wg-board-head .n{color:var(--text-fade);font-weight:700}
-.wg-list{display:flex;flex-direction:column;gap:6px}
+.bwg-card:hover{border-color:var(--border-2)}
+.bwg-card.dn{background:linear-gradient(180deg,var(--surface) 0%,rgba(90,200,250,.04) 100%);border-color:rgba(90,200,250,.18)}
+.bwg-card.is-hidden{opacity:.55;border-style:dashed}
+.bwg-card .title{cursor:pointer;transition:color .12s}
+.bwg-card .title:hover{color:var(--accent)}
+.bwg-card.dn .title{color:var(--text-mid);text-decoration:line-through;text-decoration-thickness:1.5px}
 
-.wg-row{
-  display:flex;align-items:center;gap:10px;
-  padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;
-  transition:border-color .1s,background .1s;
+.bwg-board-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-mid);
+  padding:3px 8px;border-radius:5px;background:var(--surface-2);
 }
-.wg-row:hover{border-color:var(--border-2)}
-.wg-row.done{opacity:.55}
-.wg-row.hidden{opacity:.4;border-style:dashed}
-.wg-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-.wg-main{flex:1;min-width:0;cursor:pointer;display:flex;flex-direction:column;gap:3px}
-.wg-title{font-size:14px;font-weight:600;color:var(--text);line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.01em}
-.wg-row.done .wg-title{text-decoration:line-through;color:var(--text-mid)}
-.wg-sub{font-size:10.5px;font-weight:600;color:var(--text-dim);letter-spacing:.2px;display:flex;align-items:center;gap:6px}
-.wg-sub .sep{opacity:.5}
-.wg-right{font-size:12px;font-weight:800;color:var(--text-mid);letter-spacing:-.01em;flex-shrink:0;min-width:42px;text-align:right}
-.wg-right.complete{color:var(--done)}
-.wg-hide{
-  background:none;border:none;cursor:pointer;color:var(--text-fade);
-  padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center;
-  transition:color .1s,background .1s;flex-shrink:0;
-}
-.wg-hide:hover{color:var(--text);background:var(--surface-2)}
-.wg-hide svg{width:15px;height:15px}
-.wg-hide.active{color:var(--accent)}
+.bwg-board-pill .d{width:7px;height:7px;border-radius:50%}
 
 .wg-empty{
   padding:30px 18px;text-align:center;border:1.5px dashed var(--border);border-radius:12px;
@@ -618,64 +605,70 @@ function renderBoardWork(){
   const tallyEl=document.getElementById('workTally');
   const hiddenBtn=document.getElementById('workHiddenToggle');
 
-  let totalVisible=0, totalHidden=0, totalDone=0;
+  // Flatten: board work cards render as peers of quarterly goals, not grouped rows
+  const all=[];
+  boards.forEach(b=>{
+    (b.goals||[]).forEach(g=>{
+      const col=(b.columns||[]).find(c=>c.id===g.columnId)||{title:'Board',color:'#888'};
+      all.push({b,g,col});
+    });
+  });
 
-  if(!boards.length){
+  if(!all.length){
     container.innerHTML=`<div class="wg-empty">No boards yet. Cards from your Board page will appear here automatically.</div>`;
     tallyEl.textContent='';
     hiddenBtn.style.display='none';
     return;
   }
 
-  let html='';
-  boards.forEach(b=>{
-    const goals=(b.goals||[]);
-    const visible=goals.filter(g=>showHidden?true:!g.hideFromGoals);
-    if(!visible.length) return;
-    html+=`<div class="wg-board">
-      <div class="wg-board-head">
-        <span class="d" style="background:${b.color||'#888'}"></span>
-        <span>${escapeHtml(b.name||'Board')}</span>
-        <span class="n">· ${visible.length}</span>
-      </div>
-      <div class="wg-list">`;
-    visible.forEach(g=>{
-      const col=(b.columns||[]).find(c=>c.id===g.columnId)||{title:'',color:'#888'};
+  let totalVisible=0,totalHidden=0,totalDone=0;
+  all.forEach(({g})=>{
+    if(g.hideFromGoals) totalHidden++;
+    else {
+      totalVisible++;
+      if(isBoardGoalDone(g)) totalDone++;
+    }
+  });
+
+  const visibleList=all.filter(x=>showHidden?true:!x.g.hideFromGoals);
+  if(!visibleList.length){
+    container.innerHTML=`<div class="wg-empty">Every card is hidden. Tap "Show hidden" above to bring them back.</div>`;
+  } else {
+    let html='<div class="bwg-list">';
+    visibleList.forEach(({b,g,col})=>{
       const items=g.actionItems||[];
       const done=items.filter(i=>i.done).length;
       const cardDone=isBoardGoalDone(g);
-      const rightTxt=cardDone?'Done':(items.length?`${done}/${items.length}`:'—');
-      const rowCls='wg-row'+(cardDone?' done':'')+(g.hideFromGoals?' hidden':'');
-      const hideIcon=g.hideFromGoals
-        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
-        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
-      const hideTitle=g.hideFromGoals?'Unhide from goals':'Hide from goals';
-      html+=`<div class="${rowCls}" data-goal-id="${g.id}">
-        <span class="wg-dot" style="background:${col.color}"></span>
-        <div class="wg-main" onclick="openBoardCard('${b.id}','${g.id}')">
-          <div class="wg-title">${escapeHtml(g.title||'(untitled)')}</div>
-          <div class="wg-sub"><span>${escapeHtml(col.title||'')}</span></div>
+      const pct=items.length?Math.round((done/items.length)*100):(cardDone?100:0);
+      const cardCls='bwg-card'+(cardDone?' dn':'')+(g.hideFromGoals?' is-hidden':'');
+      const rightTxt=items.length?`${done}/${items.length}`:(cardDone?'Done':'—');
+      html+=`<article class="${cardCls}" data-goal-id="${g.id}">
+        <div class="card-top">
+          <div class="card-top-l">
+            <span class="pillar"><span class="d" style="background:${col.color}"></span>${escapeHtml(col.title||'Board')}</span>
+            <span class="bwg-board-pill"><span class="d" style="background:${b.color||'#888'}"></span>${escapeHtml(b.name||'Board')}</span>
+          </div>
+          <span class="card-top-r">${rightTxt}</span>
         </div>
-        <div class="wg-right${cardDone?' complete':''}">${rightTxt}</div>
-        <button class="wg-hide${g.hideFromGoals?' active':''}" onclick="event.stopPropagation();toggleHideBoardCard('${b.id}','${g.id}')" title="${hideTitle}" aria-label="${hideTitle}">${hideIcon}</button>
-      </div>`;
-      if(g.hideFromGoals) totalHidden++;
-      else totalVisible++;
-      if(cardDone && !g.hideFromGoals) totalDone++;
+        <div class="title" onclick="openBoardCard('${b.id}','${g.id}')">${escapeHtml(g.title||'(untitled)')}</div>
+        <div class="prog-row">
+          <div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${col.color}"></div></div>
+          <div class="prog-num">${pct}%</div>
+        </div>
+        <div class="actions">
+          <button class="ab primary" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
+          <button class="ab" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide from goals'}</button>
+        </div>
+      </article>`;
     });
-    html+=`</div></div>`;
-  });
-
-  if(!html){
-    container.innerHTML=`<div class="wg-empty">Every card is hidden. Tap "Show hidden" above to bring them back.</div>`;
-  } else {
+    html+='</div>';
     container.innerHTML=html;
   }
 
   tallyEl.textContent=totalVisible?`${totalDone}/${totalVisible}`:'';
   hiddenBtn.style.display=totalHidden||showHidden?'':'none';
   if(totalHidden){
-    hiddenBtn.textContent=showHidden?'Hide hidden ('+totalHidden+')':'Show hidden ('+totalHidden+')';
+    hiddenBtn.textContent=showHidden?'Hide hidden':'Show hidden ('+totalHidden+')';
   } else if(showHidden){
     hiddenBtn.textContent='Hide hidden';
   }
