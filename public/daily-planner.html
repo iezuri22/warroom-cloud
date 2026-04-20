@@ -1470,6 +1470,10 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-big-sub">Total on this task today: <strong id="focusBigTotal">0m</strong></div>
     <div class="focus-big-progress" id="focusBigProgressWrap" style="display:none"><div class="focus-big-progress-fill" id="focusBigProgress"></div></div>
     <div class="focus-big-actions">
+      <button class="focus-big-btn" onclick="event.stopPropagation();focusFireIOSFocus()" title="Fire Deep Work iOS Shortcut">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+        iOS Focus
+      </button>
       <button class="focus-big-btn danger" onclick="event.stopPropagation();focusBarEndEarly()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         End early
@@ -7309,18 +7313,13 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     try{ requestAnimationFrame(render); } catch {}
     setTimeout(render, 80);
     setTimeout(render, 260);
-    // Only fire Deep Work shortcut when tracking with focus + countdown.
-    // Plain tracking = just the clock; stopwatch = no preset duration to pass.
-    // Fired via hidden iframe (see fireShortcut) AFTER 500ms so the panel is
-    // fully painted before iOS Safari gets interrupted by the URL scheme
-    // prompt. Previously the panel would only appear after a refresh because
-    // Safari suspended rendering when it handled the shortcuts:// scheme.
-    if(m === 'countdown' && tr === 'focus'){
-      setTimeout(() => {
-        fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work') +
-                    '&input=text&text=' + encodeURIComponent(String(duration)));
-      }, 500);
-    }
+    // NOTE: We intentionally do NOT auto-fire the Deep Work shortcut here.
+    // iOS Safari pauses the JS thread when it handles a shortcuts:// URL
+    // (even when fired via iframe), which freezes the setInterval tick and
+    // leaves the countdown visually stuck — even though the startedAt
+    // timestamp in localStorage is correct. The user can trigger the
+    // shortcut manually via the "iOS Focus" button in the floating panel,
+    // which fires inside a clean user gesture and doesn't race the render.
     // Re-render the planner so the task row gets the focus-active signals
     try{ if(typeof window.render === 'function') window.render(); } catch {}
     // Nudge the embedded focus page (if mounted) so it flips into running state immediately
@@ -7331,6 +7330,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       }
     } catch {}
   };
+  // Manual trigger — fires the iOS Deep Work shortcut on user tap.
+  // Because this runs inside a user gesture, we can use top-level navigation
+  // (which iOS handles most reliably) without the side-effect of freezing
+  // the focus panel on the way in.
+  window.focusFireIOSFocus = function(){
+    const active = getActive();
+    if(!active){ return; }
+    const minutes = String(active.durationMin || 50);
+    const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work') +
+                '&input=text&text=' + encodeURIComponent(minutes);
+    try{ window.location.href = url; } catch {}
+  };
+
   window.focusEndQuiet = function(broken, markTaskDone){
     if(!getActive()) return;
     fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
