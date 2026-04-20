@@ -238,8 +238,10 @@ body.focus-active .focus-bar{display:none !important}
   display:inline-flex; align-items:center; gap:5px; transition:all .12s;
 }
 .focus-big-ios-btn:hover{background:rgba(255,255,255,.09); color:#fff}
-.focus-big-ios-btn.on{border-color:rgba(255,138,61,.35); color:#FF8A3D}
-.focus-big-ios-btn.on:hover{background:rgba(255,138,61,.12); border-color:rgba(255,138,61,.55)}
+/* Default: neutral. Orange engaged state is opt-in via .engaged class */
+.focus-big-ios-btn.on{border-color:rgba(255,255,255,.12); color:rgba(255,255,255,.72)}
+.focus-big-ios-btn.on:hover{background:rgba(255,138,61,.08); border-color:rgba(255,138,61,.35); color:#FF8A3D}
+.focus-big-ios-btn.on.engaged{background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.55); color:#FF8A3D}
 .focus-big-ios-btn.off{border-color:rgba(255,255,255,.12); color:rgba(255,255,255,.55)}
 body.focus-big-min .focus-big-ios-row{display:none}
 /* Minimized state — collapse to a compact pill */
@@ -1493,7 +1495,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
   <div class="focus-big-body">
     <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">50 min</span></div>
-    <div class="focus-big-task" id="focusBigTask">Deep work</div>
+    <div class="focus-big-task" id="focusBigTask">Focus timer</div>
     <div class="focus-big-time" id="focusBigTime">00:00</div>
     <div class="focus-big-sub">
       <span class="focus-big-sub-label">Total on this task</span>
@@ -1530,7 +1532,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-bar-pulse"></div>
     <div class="focus-bar-text">
       <div class="focus-bar-label">In focus</div>
-      <div class="focus-bar-task" id="focusBarTask">Deep work</div>
+      <div class="focus-bar-task" id="focusBarTask">Focus timer</div>
     </div>
     <div class="focus-bar-time" id="focusBarTime">--:--</div>
     <div class="focus-bar-actions">
@@ -7056,7 +7058,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const found = findTaskAcrossDates(active.taskId);
       if(found && found.task) label = found.task.text;
     }
-    if(!label) label = 'Deep work';
+    if(!label) label = active.iosFocusEngaged ? 'Deep work' : 'Focus timer';
     const taskEl = document.getElementById('focusBarTask');
     if(taskEl) taskEl.textContent = label;
     // Big immersive overlay
@@ -7070,6 +7072,14 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(bigTime) bigTime.textContent = fmtHMS(displaySec);
       if(bigTask) bigTask.textContent = label;
       if(bigMode) bigMode.textContent = isStopwatch ? 'Stopwatch' : `${active.durationMin||25} min`;
+      // Reflect whether iOS Focus is actually engaged on the "iOS Focus On" button
+      try{
+        const iosOnBtn = document.querySelector('.focus-big-ios-btn.on');
+        if(iosOnBtn){
+          if(active.iosFocusEngaged) iosOnBtn.classList.add('engaged');
+          else iosOnBtn.classList.remove('engaged');
+        }
+      } catch {}
       if(active.taskId){
         const found = findTaskAcrossDates(active.taskId);
         const base = (found && found.task && found.task.timeSpent) || 0;
@@ -7279,17 +7289,20 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const isStopwatch = m.dataset.mode === 'stopwatch';
     const durChip = document.getElementById('focusModalDuration');
     const hint = document.getElementById('focusModalHint');
-    const startBtn = document.getElementById('focusModalStartBtn');
     const title = document.getElementById('focusModalTitle');
-    if(startBtn) startBtn.textContent = isStopwatch ? 'Start' : 'Start Focus';
-    if(title) title.textContent = 'Start focus session?';
+    // NOTE: we intentionally do NOT overwrite the Start-button text here.
+    // The modal has TWO explicit buttons ("Regular timer" vs "Deep Work (iOS Focus)")
+    // each with their own labels + subtitles baked into the HTML — overwriting
+    // would collapse the subtitle and make the grey button read "Start Focus"
+    // which misled the user into thinking regular timer was a focus session.
+    if(title) title.textContent = 'Start timer';
     if(isStopwatch){
       if(durChip) durChip.textContent = 'No limit';
-      if(hint) hint.textContent = 'Counts up from zero. Turn iOS Focus on from the panel anytime.';
+      if(hint) hint.textContent = 'Counts up from zero. Pick one below — only Deep Work touches iOS Focus.';
     } else {
       const dur = parseInt(m.dataset.durationMin,10) || 50;
       if(durChip) durChip.textContent = dur + ' min';
-      if(hint) hint.textContent = 'Counts down. Turn iOS Focus on from the panel anytime.';
+      if(hint) hint.textContent = 'Counts down. Pick one below — only Deep Work touches iOS Focus.';
     }
   }
   window.setFocusModalMode = function(mode){
