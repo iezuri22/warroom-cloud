@@ -206,6 +206,39 @@ body{padding:16px 14px 120px}
 }
 .bwg-board-pill .d{width:7px;height:7px;border-radius:50%}
 
+/* Inline task list */
+.bwg-tasks{display:flex;flex-direction:column;gap:2px;padding-top:10px;border-top:1px solid var(--border)}
+.bwg-task{
+  display:flex;align-items:center;gap:9px;padding:5px 2px;font-size:13px;cursor:pointer;
+  border-radius:5px;transition:background .1s;
+}
+.bwg-task:hover{background:var(--surface-2)}
+.bwg-task input[type=checkbox]{
+  appearance:none;-webkit-appearance:none;width:16px;height:16px;border:1.5px solid var(--border-2);
+  border-radius:4px;background:var(--surface-2);cursor:pointer;flex-shrink:0;
+  transition:all .12s;position:relative;
+}
+.bwg-task input[type=checkbox]:checked{background:var(--ok);border-color:var(--ok)}
+.bwg-task input[type=checkbox]:checked::after{
+  content:'';position:absolute;top:1px;left:4px;width:4px;height:8px;
+  border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg);
+}
+.bwg-task-txt{flex:1;color:var(--text-mid);line-height:1.4;word-break:break-word;letter-spacing:-.01em}
+.bwg-task.done .bwg-task-txt{text-decoration:line-through;color:var(--text-fade)}
+.bwg-add-task{display:flex;align-items:center;gap:6px;margin-top:4px}
+.bwg-add-task input{
+  flex:1;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;
+  font-family:inherit;font-size:12.5px;color:var(--text);outline:none;transition:border-color .1s;
+}
+.bwg-add-task input:focus{border-color:var(--accent)}
+.bwg-add-task input::placeholder{color:var(--text-fade)}
+
+/* Two progress bars with labels */
+.prog-row .prog-label{
+  font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
+  color:var(--text-dim);min-width:46px;
+}
+
 .wg-empty{
   padding:30px 18px;text-align:center;border:1.5px dashed var(--border);border-radius:12px;
   color:var(--text-fade);font-size:13px;line-height:1.55;
@@ -423,6 +456,7 @@ function saveBoardData(d){
   }catch(e){}
 }
 function isBoardGoalDone(g){
+  if(g.status==='dn') return true;
   const items=g.actionItems||[];
   if(!items.length) return !!g.completedAt;
   return items.every(i=>i.done);
@@ -434,6 +468,59 @@ function toggleHideBoardCard(boardId,goalId){
   g.hideFromGoals=!g.hideFromGoals;
   saveBoardData(bd);
   renderBoardWork();
+}
+function findBoardGoal(bd,boardId,goalId){
+  const b=(bd.boards||[]).find(x=>x.id===boardId); if(!b)return null;
+  const g=(b.goals||[]).find(x=>x.id===goalId); if(!g)return null;
+  return{b,g};
+}
+function cycleBoardStatus(boardId,goalId){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  const order=['on','at','bl','dn'];
+  r.g.status=order[(order.indexOf(r.g.status||'on')+1)%order.length];
+  if(r.g.status==='dn' && !r.g.completedAt) r.g.completedAt=new Date().toISOString();
+  if(r.g.status!=='dn') r.g.completedAt=null;
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd); renderBoardWork();
+}
+function nudgeBoardStatusProgress(boardId,goalId,delta){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  r.g.statusProgress=Math.max(0,Math.min(100,(r.g.statusProgress||0)+delta));
+  if(r.g.statusProgress===100 && r.g.status!=='dn'){r.g.status='dn'; r.g.completedAt=r.g.completedAt||new Date().toISOString();}
+  if(r.g.statusProgress<100 && r.g.status==='dn'){r.g.status='on'; r.g.completedAt=null;}
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd); renderBoardWork();
+}
+function shipBoardCard(boardId,goalId){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  r.g.status='dn'; r.g.statusProgress=100;
+  r.g.completedAt=new Date().toISOString(); r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd); renderBoardWork();
+}
+function toggleBoardTask(boardId,goalId,taskId){
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r)return;
+  const it=(r.g.actionItems||[]).find(x=>x.id===taskId); if(!it)return;
+  it.done=!it.done;
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd); renderBoardWork();
+}
+function addBoardTask(evt,boardId,goalId){
+  evt.preventDefault();
+  const input=evt.target.querySelector('input');
+  const text=(input.value||'').trim();
+  if(!text) return false;
+  const bd=loadBoard(); const r=findBoardGoal(bd,boardId,goalId); if(!r) return false;
+  if(!Array.isArray(r.g.actionItems)) r.g.actionItems=[];
+  r.g.actionItems.push({id:uid(),text,done:false});
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd);
+  input.value='';
+  renderBoardWork();
+  setTimeout(()=>{
+    const el=document.querySelector(`[data-goal-id="${goalId}"] .bwg-add-task input`);
+    if(el) el.focus();
+  },40);
+  return false;
 }
 function toggleShowHidden(){
   showHidden=!showHidden;
@@ -637,27 +724,50 @@ function renderBoardWork(){
     let html='<div class="bwg-list">';
     visibleList.forEach(({b,g,col})=>{
       const items=g.actionItems||[];
-      const done=items.filter(i=>i.done).length;
+      const doneCt=items.filter(i=>i.done).length;
       const cardDone=isBoardGoalDone(g);
-      const pct=items.length?Math.round((done/items.length)*100):(cardDone?100:0);
+      const taskPct=items.length?Math.round((doneCt/items.length)*100):(cardDone?100:0);
+      const sp=Math.max(0,Math.min(100,g.statusProgress||0));
+      const sm=statusMeta(g.status||'on');
       const cardCls='bwg-card'+(cardDone?' dn':'')+(g.hideFromGoals?' is-hidden':'');
-      const rightTxt=items.length?`${done}/${items.length}`:(cardDone?'Done':'—');
+
+      const tasksHTML=`<div class="bwg-tasks">
+        ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
+          <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
+          <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+        </label>`).join('')}
+        <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
+          <input type="text" placeholder="+ Add a task" maxlength="200" />
+        </form>
+      </div>`;
+
       html+=`<article class="${cardCls}" data-goal-id="${g.id}">
         <div class="card-top">
           <div class="card-top-l">
             <span class="pillar"><span class="d" style="background:${col.color}"></span>${escapeHtml(col.title||'Board')}</span>
             <span class="bwg-board-pill"><span class="d" style="background:${b.color||'#888'}"></span>${escapeHtml(b.name||'Board')}</span>
+            <span class="status ${sm.cls}">${sm.label}</span>
           </div>
-          <span class="card-top-r">${rightTxt}</span>
         </div>
         <div class="title" onclick="openBoardCard('${b.id}','${g.id}')">${escapeHtml(g.title||'(untitled)')}</div>
+        ${tasksHTML}
         <div class="prog-row">
-          <div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${col.color}"></div></div>
-          <div class="prog-num">${pct}%</div>
+          <span class="prog-label">Status</span>
+          <div class="prog-bar"><div class="prog-fill ${sm.cls}" style="width:${sp}%"></div></div>
+          <div class="prog-num">${sp}%</div>
+        </div>
+        <div class="prog-row">
+          <span class="prog-label">Tasks</span>
+          <div class="prog-bar"><div class="prog-fill" style="width:${taskPct}%;background:${col.color}"></div></div>
+          <div class="prog-num">${items.length?doneCt+'/'+items.length:'—'}</div>
         </div>
         <div class="actions">
-          <button class="ab primary" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
-          <button class="ab" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide from goals'}</button>
+          <button class="ab" onclick="cycleBoardStatus('${b.id}','${g.id}')" title="Cycle status">Status</button>
+          <button class="ab" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',-10)">–10%</button>
+          <button class="ab primary" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',10)">+10%</button>
+          ${cardDone?'':`<button class="ab ship" onclick="shipBoardCard('${b.id}','${g.id}')">Ship</button>`}
+          <button class="ab" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
+          <button class="ab del" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide'}</button>
         </div>
       </article>`;
     });
