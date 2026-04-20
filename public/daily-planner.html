@@ -625,6 +625,21 @@ body.focus-immersive #calSidebar{display:none !important}
 .plan-btn.reset-btn{font-size:11px;padding:6px;min-width:28px;min-height:28px}
 .plan-btn.reset-btn:hover{color:var(--c-work)}
 
+/* Ephemeral buttons — hidden until task is selected */
+.plan-btn.urgent-btn,.plan-btn.done-btn,.plan-btn.edit-btn,.plan-btn.remove-btn{
+  opacity:0;transform:translateX(4px);pointer-events:none;
+  transition:opacity .14s ease,transform .14s ease;
+  width:0 !important;min-width:0 !important;padding:0 !important;border:none !important;margin:0 !important;overflow:hidden;
+}
+.plan-item.selected .plan-btn.urgent-btn,
+.plan-item.selected .plan-btn.done-btn,
+.plan-item.selected .plan-btn.edit-btn,
+.plan-item.selected .plan-btn.remove-btn{
+  opacity:1;transform:none;pointer-events:auto;
+  width:auto !important;min-width:36px !important;padding:8px !important;border:1px solid var(--border) !important;overflow:visible;
+}
+.plan-item.selected{outline:1px solid rgba(255,138,61,.32);background:var(--surface-2)}
+
 /* TIMER DISPLAY - hidden by default, visible on hover */
 .timer-display{
   font-size:11px;font-weight:600;font-family:"SF Mono",ui-monospace,Menlo,Monaco,monospace;
@@ -1239,6 +1254,31 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
+<!-- PLAY PICKER MODAL — choose Focus session or plain time tracking -->
+<div class="focus-modal" id="playPickerModal" role="dialog" aria-modal="true" aria-labelledby="playPickerTitle">
+  <div class="focus-modal-card">
+    <div class="focus-modal-title" id="playPickerTitle">Start timer</div>
+    <div class="focus-modal-task" id="playPickerTask">&mdash;</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+      <button class="focus-modal-btn primary" style="justify-content:flex-start;text-align:left;padding:14px 16px;height:auto" onclick="playPickerChoose('focus')">
+        <div style="display:flex;flex-direction:column;gap:2px;width:100%">
+          <div style="font-weight:700">Track time with focus</div>
+          <div style="font-size:12px;font-weight:500;opacity:.85">Fires Deep Work shortcut + starts countdown</div>
+        </div>
+      </button>
+      <button class="focus-modal-btn" style="justify-content:flex-start;text-align:left;padding:14px 16px;height:auto" onclick="playPickerChoose('plain')">
+        <div style="display:flex;flex-direction:column;gap:2px;width:100%">
+          <div style="font-weight:700">Just track time</div>
+          <div style="font-size:12px;font-weight:500;opacity:.75">No shortcut, no countdown &mdash; just the clock</div>
+        </div>
+      </button>
+    </div>
+    <div class="focus-modal-actions" style="margin-top:12px">
+      <button class="focus-modal-btn" onclick="closePlayPicker()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="header">
   <div class="header-left">
     <div>
@@ -1668,6 +1708,7 @@ function currentPlan(){const p=loadPlan();const k=viewKey();if(!p[k])p[k]=[];ret
 function loadTimeLog(){try{return JSON.parse(localStorage.getItem(TK))||[]}catch{return[]}}
 function saveTimeLog(l){const s=JSON.stringify(l.slice(-500));localStorage.setItem(TK,s);backupKey(TK,s)}
 function logTime(entry){const l=loadTimeLog();l.push(entry);saveTimeLog(l)}
+try{ window.logTime = logTime; } catch {}
 
 // --- Backup Layer (IndexedDB) ---
 const BACKUP_DB='warroom-backup';
@@ -2103,6 +2144,24 @@ function carryDrop(sourceDate,itemId){
   render();
 }
 
+// --- Selection state for ephemeral action buttons ---
+let selectedPlanId = null;
+function togglePlanSelect(id){
+  selectedPlanId = (selectedPlanId === id) ? null : id;
+  // Update DOM in place so we don't rebuild (cheaper + preserves scroll)
+  document.querySelectorAll('.plan-item').forEach(el => {
+    if(el.dataset.id === selectedPlanId) el.classList.add('selected');
+    else el.classList.remove('selected');
+  });
+}
+// Deselect when clicking outside any plan-item
+document.addEventListener('click', (e) => {
+  if(!selectedPlanId) return;
+  if(e.target.closest('.plan-item')) return;
+  selectedPlanId = null;
+  document.querySelectorAll('.plan-item.selected').forEach(el => el.classList.remove('selected'));
+});
+
 // --- Render ---
 function render(){
   const{items:planItems}=currentPlan();
@@ -2124,7 +2183,7 @@ function render(){
       const d=D[item.domain]||D.personal;
       const el=document.createElement('div');
       const isFocusOn = !!(_focusActive && _focusActive.taskId === item.id);
-      el.className='plan-item'+(item.done?' done':'')+(item.shifted?' shifted':'')+(item.skipped?' skipped':'')+(item.urgent?' urgent-item':'')+(isFocusOn?' focus-active':'');
+      el.className='plan-item'+(item.done?' done':'')+(item.shifted?' shifted':'')+(item.skipped?' skipped':'')+(item.urgent?' urgent-item':'')+(isFocusOn?' focus-active':'')+(selectedPlanId===item.id?' selected':'');
       el.draggable=true;
       el.dataset.id=item.id;
       el.ondragstart=(e)=>{e.dataTransfer.effectAllowed='move';dragId=item.id;el.classList.add('dragging')};
@@ -2161,7 +2220,7 @@ function render(){
 
       el.innerHTML=`
         <span class="dtag" style="background:${d.bg};color:${d.color}">${d.name}</span>
-        <div class="plan-item-body" onclick="event.stopPropagation();openReschedule('${item.id}')" style="cursor:pointer;position:relative">
+        <div class="plan-item-body" onclick="event.stopPropagation();togglePlanSelect('${item.id}')" style="cursor:pointer;position:relative">
           <div class="plan-item-text">${esc(item.text)}</div>
           <div class="plan-item-meta">${metaHTML}</div>
           ${item.done&&item.outcome?`<div class="outcome-popover" id="op-${item.id}">
@@ -2171,10 +2230,9 @@ function render(){
           </div>`:''}
         </div>
         <div class="plan-actions">
-          <button class="plan-btn focus-btn${isFocusOn?' active':''}" onclick="event.stopPropagation();${isFocusOn?`focusStopForTask('${item.id}')`:`focusStartForTask('${item.id}', ${JSON.stringify(item.text).replace(/"/g,'&quot;')}, ${item.estMin||50})`}" title="${isFocusOn?'End focus session':'Start focus session on this task'}">
-            ${isFocusOn
-              ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>'
-              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>'}
+          ${(()=>{ const isRunning = isFocusOn || (t && t.running); const onclick = isRunning ? (isFocusOn ? `focusStopForTask('${item.id}')` : `stopPlainTimer('${item.id}')`) : `openPlayPicker('${item.id}', ${JSON.stringify(item.text).replace(/"/g,'&quot;')}, ${item.estMin||50})`; const titleT = isRunning ? (isFocusOn?'End focus session':'Pause timer') : 'Start timer'; const svgT = isRunning ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a.75.75 0 0 0 1.14.64l12-7.5a.75.75 0 0 0 0-1.28l-12-7.5A.75.75 0 0 0 7 4.5z"/></svg>'; return `<button class="plan-btn focus-btn${isRunning?' active':''}" onclick="event.stopPropagation();${onclick}" title="${titleT}">${svgT}</button>`; })()}
+          <button class="plan-btn edit-btn" onclick="event.stopPropagation();openReschedule('${item.id}')" title="Reschedule">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           </button>
           <button class="plan-btn urgent-btn${item.urgent?' is-urgent':''}" onclick="event.stopPropagation();togglePlanUrgent('${item.id}')" title="${item.urgent?'Remove urgent':'Mark urgent'}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -2242,7 +2300,7 @@ function toggleDone(id){
     stopTimer(id);
     const t=timers[id];
     item.timeSpent=(t?t.seconds:0)||item.timeSpent;
-    logTime({date:key,domain:item.domain,text:item.text,slot:item.originalSlot,completedSlot:actualSlot,seconds:item.timeSpent,shifted:item.shifted});
+    logTime({taskId:id,date:key,domain:item.domain,text:item.text,slot:item.originalSlot,completedSlot:actualSlot,seconds:item.timeSpent,shifted:item.shifted});
     // Sync completion to goals
     syncGoalDone(id,true);
     // Save first, render, then prompt for outcome
@@ -2430,6 +2488,84 @@ function stopTimer(id){
 }
 // Expose for the focus-bar module so it can stop timers when a session ends
 try{ window.stopTimer = stopTimer; window.timers = timers; } catch {}
+
+function stopPlainTimer(id){
+  const t = timers[id];
+  if(!t || !t.running) return;
+  stopTimer(id);
+  const{all,items,key}=currentPlan();
+  const item=items.find(i=>i.id===id);
+  if(item){
+    item.lastTimerCheckpoint = item.timeSpent || 0;
+    item.timeSpent = t.seconds || item.timeSpent || 0;
+    all[key]=items; savePlan(all);
+  }
+  render();
+}
+
+// --- Plain time tracking (no Deep Work shortcut, no countdown) ---
+function startPlainTimer(id){
+  if(!timers[id])timers[id]={seconds:0,running:false,interval:null};
+  const t=timers[id];
+  if(t.running) return; // already ticking
+  const{items:planItems}=currentPlan();
+  const item=planItems.find(i=>i.id===id);
+  if(item && !t.seconds) t.seconds = item.timeSpent || 0;
+  // Stop any other running per-task timer
+  Object.keys(timers).forEach(k=>{if(k!==id&&timers[k].running)stopTimer(k)});
+  t.running=true;
+  broadcastActiveTask(id,t.seconds);
+  t.interval=setInterval(()=>{
+    t.seconds++;
+    const el=document.getElementById('td-'+id);
+    if(el){el.textContent=fmtTime(t.seconds);el.classList.remove('idle')}
+    broadcastActiveTask(id,t.seconds);
+    if(t.seconds%30===0){
+      const{all,items:td,key}=currentPlan();
+      const itm=td.find(i=>i.id===id);
+      if(itm){itm.timeSpent=t.seconds;all[key]=td;savePlan(all)}
+    }
+  },1000);
+  render();
+}
+
+// --- Play button picker: focus vs plain ---
+let _playPickerTaskId = null;
+function openPlayPicker(id, text, estMin){
+  _playPickerTaskId = id;
+  const m = document.getElementById('playPickerModal');
+  if(!m){
+    // Fallback: go straight to focus if modal missing
+    focusStartForTask(id, text, estMin);
+    return;
+  }
+  m.dataset.taskId = id || '';
+  m.dataset.estMin = String(estMin || 50);
+  m.dataset.text = text || '';
+  const taskEl = document.getElementById('playPickerTask');
+  if(taskEl) taskEl.textContent = text || 'Deep work';
+  m.classList.add('open');
+}
+function closePlayPicker(){
+  const m = document.getElementById('playPickerModal');
+  if(m) m.classList.remove('open');
+  _playPickerTaskId = null;
+}
+function playPickerChoose(mode){
+  const m = document.getElementById('playPickerModal');
+  if(!m) return;
+  const id = m.dataset.taskId || _playPickerTaskId;
+  const text = m.dataset.text || '';
+  const estMin = parseInt(m.dataset.estMin,10) || 50;
+  m.classList.remove('open');
+  _playPickerTaskId = null;
+  if(!id) return;
+  if(mode === 'focus'){
+    try { focusStartForTask(id, text, estMin); } catch {}
+  } else {
+    startPlainTimer(id);
+  }
+}
 function resetTimer(id){
   // Store current time as lastSaved before resetting, so user can undo
   const t=timers[id];
@@ -6482,6 +6618,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
           if(typeof window.stopTimer === 'function') window.stopTimer(active.taskId);
         }
       } catch {}
+      // If finishing via "Done", also log to analytics so it shows as completed
+      if(markTaskDone && found && found.task){
+        try{
+          const it = found.task;
+          const h = new Date().getHours();
+          let actualSlot = 'morning';
+          if(h>=17) actualSlot='night'; else if(h>=12) actualSlot='afternoon';
+          const shifted = actualSlot !== (it.originalSlot || it.slot);
+          if(typeof window.logTime === 'function'){
+            window.logTime({taskId: active.taskId, date: found.date, domain: it.domain, text: it.text, slot: it.originalSlot || it.slot, completedSlot: actualSlot, seconds: patch.timeSpent, shifted});
+          }
+        } catch {}
+      }
     }
     setActive(null);
     render();
