@@ -226,6 +226,22 @@ body.focus-active .focus-bar{display:none !important}
 body.focus-paused .focus-big-time{color:rgba(255,255,255,.55)}
 body.focus-paused .focus-big-mode{background:rgba(255,138,61,.18); border-color:rgba(255,138,61,.5)}
 body.focus-paused .focus-big-mode .dot{animation:none; background:rgba(255,138,61,.6)}
+/* Pomodoro BREAK phase — green palette so the user instantly sees they're on break */
+body.focus-break .focus-big{
+  border-color:rgba(52,199,89,.28);
+  box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(52,199,89,.14), 0 0 40px -10px rgba(52,199,89,.30);
+}
+body.focus-break .focus-big::before{
+  background:radial-gradient(circle at 50% 0%, rgba(52,199,89,.12) 0%, transparent 50%);
+}
+body.focus-break .focus-big-mode{
+  color:#34C759; background:rgba(52,199,89,.10); border-color:rgba(52,199,89,.35);
+}
+body.focus-break .focus-big-mode .dot{background:#34C759}
+body.focus-break .focus-big-progress-fill{background:linear-gradient(90deg,#34C759,#30B84A)}
+body.focus-break .focus-big-time{color:#E8FFEC}
+body.focus-break .focus-bar-progress{background:linear-gradient(90deg,rgba(52,199,89,.32),rgba(52,199,89,.20))}
+body.focus-break .focus-bar-pulse{background:#34C759; box-shadow:0 0 0 0 rgba(52,199,89,.7)}
 .focus-big-progress{
   width:100%; height:3px; background:rgba(255,255,255,.08); border-radius:999px;
   overflow:hidden; margin:16px 0 16px;
@@ -1436,8 +1452,34 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
       <input type="number" id="focusModalDurInput" class="focus-modal-dur-input" min="1" max="240" step="1" value="50" oninput="(function(v){var c=document.getElementById('focusModalDuration');var m=document.getElementById('focusStartModal');var n=Math.min(240,Math.max(1,parseInt(v,10)||50));if(c)c.textContent=n+' min';if(m)m.dataset.durationMin=String(n);})(this.value)" />
       <span style="font-size:12px;color:rgba(245,241,232,.55)">minutes</span>
     </div>
+
+    <!-- POMODORO: break length + rounds (countdown only) -->
+    <div id="focusModalPomoBlock">
+      <div style="font-size:11px;font-weight:700;color:rgba(245,241,232,.55);letter-spacing:1px;text-transform:uppercase;margin:14px 0 6px">Break</div>
+      <div class="focus-mode-toggle" id="focusModalBreakPresets" role="tablist" aria-label="Break length" style="grid-template-columns:repeat(5,1fr)">
+        <button type="button" class="focus-mode-opt" data-break="0" onclick="setFocusModalBreak(0)">None</button>
+        <button type="button" class="focus-mode-opt active" data-break="5" onclick="setFocusModalBreak(5)">5m</button>
+        <button type="button" class="focus-mode-opt" data-break="10" onclick="setFocusModalBreak(10)">10m</button>
+        <button type="button" class="focus-mode-opt" data-break="15" onclick="setFocusModalBreak(15)">15m</button>
+        <button type="button" class="focus-mode-opt" data-break="custom" onclick="setFocusModalBreak('custom')">Custom</button>
+      </div>
+      <div class="focus-modal-dur-row" id="focusModalBreakRow" style="display:none">
+        <label for="focusModalBreakInput">Break</label>
+        <input type="number" id="focusModalBreakInput" class="focus-modal-dur-input" min="1" max="60" step="1" value="5" oninput="(function(v){var m=document.getElementById('focusStartModal');var n=Math.min(60,Math.max(1,parseInt(v,10)||5));if(m)m.dataset.breakMin=String(n);updateFocusModalSummary();})(this.value)" />
+        <span style="font-size:12px;color:rgba(245,241,232,.55)">minutes</span>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:rgba(245,241,232,.55);letter-spacing:1px;text-transform:uppercase;margin:12px 0 6px">Rounds</div>
+      <div class="focus-mode-toggle" id="focusModalRoundPresets" role="tablist" aria-label="Rounds" style="grid-template-columns:repeat(4,1fr)">
+        <button type="button" class="focus-mode-opt active" data-rounds="1" onclick="setFocusModalRounds(1)">1</button>
+        <button type="button" class="focus-mode-opt" data-rounds="2" onclick="setFocusModalRounds(2)">2</button>
+        <button type="button" class="focus-mode-opt" data-rounds="3" onclick="setFocusModalRounds(3)">3</button>
+        <button type="button" class="focus-mode-opt" data-rounds="4" onclick="setFocusModalRounds(4)">4</button>
+      </div>
+    </div>
+
     <div class="focus-modal-meta">
       <span class="focus-modal-chip" id="focusModalDuration">50 min</span>
+      <span class="focus-modal-chip" id="focusModalSummary" style="margin-left:6px">1 round &times; 5 min break</span>
     </div>
     <div class="focus-modal-hint" id="focusModalHint">Pick one. Only the Deep Work option touches iOS Focus.</div>
     <div class="focus-modal-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -7110,7 +7152,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     } else {
       const total = (active.durationMin || 25) * 60 * 1000;
       const remainingMs = total - elapsedMs;
-      if(remainingMs <= 0){ finish(false, false); return; }
+      if(remainingMs <= 0){
+        // Pomodoro phase transition: work→break or break→work.
+        // If this is the final work phase, we fall through to finish().
+        if(maybeTransitionPhase(active)) return;
+        finish(false, false); return;
+      }
       displaySec = Math.floor(remainingMs/1000);
       pct = Math.min(100, Math.max(0, (elapsedMs/total)*100));
     }
@@ -7125,6 +7172,21 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(found && found.task) label = found.task.text;
     }
     if(!label) label = active.iosFocusEngaged ? 'Deep work' : 'Focus timer';
+    // Pomodoro: on a break, override the task label so the user sees they
+    // are paused from the work item. The original task context is preserved
+    // in active.taskId so the UI snaps back on break end.
+    const isBreakPhase = active.phase === 'break';
+    const totalRounds = active.totalRounds || 1;
+    const currentRound = active.currentRound || 1;
+    if(isBreakPhase){
+      label = 'Break' + (totalRounds > 1 ? ` · round ${currentRound} of ${totalRounds}` : '');
+    }
+    // Keep the body class in sync with the current phase so CSS can tint
+    // the panel green during a break without JS races.
+    try{
+      if(isBreakPhase) document.body.classList.add('focus-break');
+      else document.body.classList.remove('focus-break');
+    } catch {}
     const taskEl = document.getElementById('focusBarTask');
     if(taskEl) taskEl.textContent = label;
     // Big immersive overlay
@@ -7137,7 +7199,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const bigProg = document.getElementById('focusBigProgress');
       if(bigTime) bigTime.textContent = fmtHMS(displaySec);
       if(bigTask) bigTask.textContent = label;
-      if(bigMode) bigMode.textContent = isStopwatch ? 'Stopwatch' : `${active.durationMin||25} min`;
+      if(bigMode){
+        const roundSuffix = totalRounds > 1 ? ` · ${currentRound}/${totalRounds}` : '';
+        if(isStopwatch) bigMode.textContent = 'Stopwatch';
+        else if(isBreakPhase) bigMode.textContent = `Break ${active.durationMin||5} min${roundSuffix}`;
+        else bigMode.textContent = `${active.durationMin||25} min${roundSuffix}`;
+      }
       // Reflect iOS Focus state on BOTH chips so the user sees which side is
       // currently selected. Deep Work → "iOS Focus On" lit orange. Regular
       // timer (or after user tapped Off) → "iOS Focus Off" shows as selected.
@@ -7156,9 +7223,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(active.taskId){
         const found = findTaskAcrossDates(active.taskId);
         const base = (found && found.task && found.task.timeSpent) || 0;
-        if(bigTotal) bigTotal.textContent = (window.fmtTime ? window.fmtTime(base + elapsedSec) : (base+elapsedSec)+'s');
+        // During a break, hold the total steady — break time is not work.
+        const addSec = isBreakPhase ? 0 : elapsedSec;
+        if(bigTotal) bigTotal.textContent = (window.fmtTime ? window.fmtTime(base + addSec) : (base+addSec)+'s');
       } else if(bigTotal){
-        bigTotal.textContent = (window.fmtTime ? window.fmtTime(elapsedSec) : elapsedSec+'s');
+        bigTotal.textContent = (window.fmtTime ? window.fmtTime(isBreakPhase ? 0 : elapsedSec) : (isBreakPhase ? 0 : elapsedSec)+'s');
       }
       if(bigProgWrap){
         if(isStopwatch) bigProgWrap.style.display = 'none';
@@ -7172,7 +7241,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
         if(td){
           const found = findTaskAcrossDates(active.taskId);
           const base = (found && found.task && found.task.timeSpent) || 0;
-          td.textContent = (window.fmtTime ? window.fmtTime(base + elapsedSec) : (base + elapsedSec) + 's');
+          const addSec = isBreakPhase ? 0 : elapsedSec;
+          td.textContent = (window.fmtTime ? window.fmtTime(base + addSec) : (base + addSec) + 's');
           td.classList.remove('idle');
         }
       } catch {}
@@ -7214,13 +7284,110 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     }
   });
 
+  // POMODORO PHASE TRANSITION
+  // Called when the current countdown hits zero. Handles the
+  // work → break and break → work hand-offs. Returns true if a new phase
+  // started (caller should NOT call finish()). Returns false if the session
+  // has run out of rounds/phases and the caller should finalize.
+  //
+  // Semantics — "full cycles":
+  //   For rounds=N with breakMin>0 the sequence is:
+  //     work(1) → break(1) → work(2) → break(2) → … → work(N) → break(N) → finish
+  //   For breakMin=0 it's just N consecutive work sessions (rare; usually rounds=1 in this case).
+  //
+  // Bookkeeping: when a work phase finishes we *roll* its seconds into
+  // baselineTimeSpent so the ticker's "baseline + current-elapsed" math keeps
+  // working without changing the ticker. Break time is NEVER added to baseline,
+  // so the task's timeSpent only accumulates actual work.
+  function maybeTransitionPhase(active){
+    if(!active) return false;
+    const now = Date.now();
+    const totalRounds = Math.max(1, active.totalRounds || 1);
+    const currentRound = Math.max(1, active.currentRound || 1);
+    const breakMin = Math.max(0, active.breakMin || 0);
+    const workMin = Math.max(1, active.workMin || active.durationMin || 25);
+
+    if(active.phase === 'work'){
+      // Roll the work time we just completed into the running baseline so
+      // the task's timeSpent display stays correct across phases.
+      try{
+        const workSecs = Math.max(0, Math.floor((now - (active.startedAt || now)) / 1000));
+        if(typeof active.baselineTimeSpent === 'number'){
+          active.baselineTimeSpent = active.baselineTimeSpent + workSecs;
+        }
+        // Persist the new baseline to the task now so reloads/cross-device see it.
+        if(active.taskId && workSecs > 0){
+          try{ patchTask(active.taskId, { timeSpent: active.baselineTimeSpent }); } catch {}
+        }
+      } catch {}
+
+      // No break configured — either advance round (rare) or finish.
+      if(breakMin <= 0){
+        if(currentRound >= totalRounds) return false;
+        active.currentRound = currentRound + 1;
+        active.phase = 'work';
+        active.startedAt = now;
+        active.durationMin = workMin;
+        delete active.pausedAt;
+        setActive(active);
+        try{ document.body.classList.remove('focus-break'); } catch {}
+        try{ render(); } catch {}
+        return true;
+      }
+
+      // Break configured — transition to break for this round.
+      // If iOS Focus is engaged, fire the OFF shortcut so the user gets
+      // a real mental break (notifications, etc. unblock).
+      if(active.iosFocusEngaged){
+        try{ fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF)); } catch {}
+        active.iosFocusEngaged = false;
+      }
+      active.phase = 'break';
+      active.startedAt = now;
+      active.durationMin = breakMin;
+      delete active.pausedAt;
+      setActive(active);
+      try{ document.body.classList.add('focus-break'); } catch {}
+      try{ render(); } catch {}
+      return true;
+    }
+
+    if(active.phase === 'break'){
+      // Break just finished. Advance to next work round, or finish if done.
+      if(currentRound >= totalRounds){
+        try{ document.body.classList.remove('focus-break'); } catch {}
+        return false;
+      }
+      active.currentRound = currentRound + 1;
+      active.phase = 'work';
+      active.startedAt = now;
+      active.durationMin = workMin;
+      delete active.pausedAt;
+      setActive(active);
+      try{ document.body.classList.remove('focus-break'); } catch {}
+      try{ render(); } catch {}
+      return true;
+    }
+
+    return false;
+  }
+  // Expose for the independent ticker fallback
+  window.focusBarMaybeTransitionPhase = maybeTransitionPhase;
+
   function finish(broken, markTaskDone){
     const active = getActive();
     if(!active){ render(); return; }
+    // Always clear the break tint when ending.
+    try{ document.body.classList.remove('focus-break'); } catch {}
     // If we're ending while paused, don't credit the current pause duration.
     // Use pausedAt as the effective end timestamp for elapsed calcs.
     const endedAt = active.pausedAt ? active.pausedAt : Date.now();
-    const actualMin = Math.max(1, Math.round((endedAt - active.startedAt)/60000));
+    // Pomodoro: time spent inside a break phase is NOT work time, so zero it
+    // out when crediting the task. The work time the user already earned in
+    // prior rounds is already rolled into baselineTimeSpent via
+    // maybeTransitionPhase(), so the task total stays correct.
+    const inBreak = active.phase === 'break';
+    const actualMin = inBreak ? 0 : Math.max(1, Math.round((endedAt - active.startedAt)/60000));
     const record = {
       id: 'fs_' + endedAt,
       startedAt: active.startedAt,
@@ -7237,7 +7404,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       // Use baseline + session seconds pattern to match the live ticker's writes.
       // The independent ticker writes (baseline + elapsed) to task.timeSpent every 5s,
       // so additive patterns would double-count. Compute the authoritative final value.
-      const sessionSecs = Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
+      // Pomodoro: if we're ending in a break phase, the "session seconds" here are
+      // break seconds and MUST NOT be credited to the task. Prior work rounds are
+      // already rolled into baselineTimeSpent by maybeTransitionPhase().
+      const sessionSecs = inBreak
+        ? 0
+        : Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
       const baseline = (typeof active.baselineTimeSpent === 'number')
         ? active.baselineTimeSpent
         : ((found && found.task && found.task.timeSpent) || 0);
@@ -7259,7 +7431,9 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
           let actualSlot = 'morning';
           if(h>=17) actualSlot='night'; else if(h>=12) actualSlot='afternoon';
           const shifted = actualSlot !== (it.originalSlot || it.slot);
-          const sessionSecs = Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
+          const sessionSecs = inBreak
+            ? 0
+            : Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
           if(typeof window.logTime === 'function' && sessionSecs > 0){
             window.logTime({taskId: active.taskId, date: found.date, domain: it.domain, text: it.text, slot: it.originalSlot || it.slot, completedSlot: actualSlot, seconds: sessionSecs, shifted, focusOnly: !markTaskDone});
           }
@@ -7402,6 +7576,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     modal.dataset.track = (track === 'plain') ? 'plain' : 'focus';
     modal.dataset.preset = ([25,50,90].includes(duration) ? String(duration) : 'custom');
     modal.dataset.taskText = taskText || '';
+    // Pomodoro defaults — single round, 5-min break to match the pill that's
+    // visibly active in the markup. User can pick None to disable breaks.
+    modal.dataset.breakMin = '5';
+    modal.dataset.breakPreset = '5';
+    modal.dataset.rounds = '1';
     const taskEl = document.getElementById('focusModalTask');
     const durEl = document.getElementById('focusModalDuration');
     const durInput = document.getElementById('focusModalDurInput');
@@ -7412,6 +7591,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     try{ if(typeof window.setFocusModalTrack === 'function') window.setFocusModalTrack(modal.dataset.track); } catch {}
     try{ if(typeof window.setFocusModalMode === 'function') window.setFocusModalMode('countdown'); } catch {}
     try{ if(typeof window.setFocusModalPreset === 'function') window.setFocusModalPreset(modal.dataset.preset); } catch {}
+    try{ if(typeof window.setFocusModalBreak === 'function') window.setFocusModalBreak(5); } catch {}
+    try{ if(typeof window.setFocusModalRounds === 'function') window.setFocusModalRounds(1); } catch {}
     modal.classList.add('open');
   };
 
@@ -7473,6 +7654,9 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const showCustom = !isStopwatch && m.dataset.preset === 'custom';
       durRow.style.display = showCustom ? '' : 'none';
     }
+    // Pomodoro (break + rounds) only applies to countdown mode
+    const pomo = document.getElementById('focusModalPomoBlock');
+    if(pomo) pomo.style.display = isStopwatch ? 'none' : '';
     refreshFocusModalChrome();
   };
   window.setFocusModalTrack = function(track){
@@ -7517,6 +7701,56 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       refreshFocusModalChrome();
     }
   };
+  // Break length & round count selectors for the pomodoro block.
+  window.setFocusModalBreak = function(val){
+    const m = document.getElementById('focusStartModal');
+    if(!m) return;
+    m.dataset.breakPreset = String(val);
+    const wrap = document.getElementById('focusModalBreakPresets');
+    if(wrap){
+      wrap.querySelectorAll('[data-break]').forEach(b => {
+        b.classList.toggle('active', b.dataset.break === String(val));
+      });
+    }
+    const row = document.getElementById('focusModalBreakRow');
+    if(val === 'custom'){
+      if(row) row.style.display = '';
+    } else {
+      const n = Math.max(0, Math.min(60, parseInt(val, 10) || 0));
+      m.dataset.breakMin = String(n);
+      const inp = document.getElementById('focusModalBreakInput');
+      if(inp && n > 0) inp.value = String(n);
+      if(row) row.style.display = 'none';
+    }
+    window.updateFocusModalSummary && window.updateFocusModalSummary();
+  };
+  window.setFocusModalRounds = function(n){
+    const m = document.getElementById('focusStartModal');
+    if(!m) return;
+    const rounds = Math.max(1, Math.min(8, parseInt(n, 10) || 1));
+    m.dataset.rounds = String(rounds);
+    const wrap = document.getElementById('focusModalRoundPresets');
+    if(wrap){
+      wrap.querySelectorAll('[data-rounds]').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.rounds, 10) === rounds);
+      });
+    }
+    window.updateFocusModalSummary && window.updateFocusModalSummary();
+  };
+  window.updateFocusModalSummary = function(){
+    const m = document.getElementById('focusStartModal');
+    if(!m) return;
+    const sum = document.getElementById('focusModalSummary');
+    if(!sum) return;
+    const rounds = parseInt(m.dataset.rounds, 10) || 1;
+    const breakMin = parseInt(m.dataset.breakMin, 10);
+    if(rounds <= 1 || !breakMin || breakMin <= 0){
+      sum.textContent = rounds > 1 ? (rounds + ' rounds (no break)') : 'Single session';
+    } else {
+      sum.textContent = rounds + ' rounds \u00d7 ' + breakMin + ' min break';
+    }
+  };
+
   window.confirmFocusStart = function(fireIOSFocus){
     const m = document.getElementById('focusStartModal');
     if(!m) return;
@@ -7531,8 +7765,20 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
         if(!isNaN(v)) duration = Math.min(240, Math.max(1, v));
       }
     }
+    // Pull pomodoro settings (only applied for countdown mode)
+    let breakMin = parseInt(m.dataset.breakMin, 10) || 0;
+    let rounds   = Math.max(1, Math.min(8, parseInt(m.dataset.rounds, 10) || 1));
+    if(mode !== 'countdown'){ breakMin = 0; rounds = 1; }
+    // If custom break row is open, use the input value
+    if(mode === 'countdown' && m.dataset.breakPreset === 'custom'){
+      const bInp = document.getElementById('focusModalBreakInput');
+      if(bInp){
+        const v = parseInt(bInp.value, 10);
+        if(!isNaN(v)) breakMin = Math.min(60, Math.max(1, v));
+      }
+    }
     m.classList.remove('open');
-    window.focusStartQuiet(taskId, duration, mode, track);
+    window.focusStartQuiet(taskId, duration, mode, track, { breakMin, rounds });
     // If the user picked "Start with iOS Focus", fire the Deep Work shortcut
     // right after the session is set up. focusFireIOSFocus sets
     // iosFocusEngaged=true so End early/Mark Done will fire the OFF shortcut.
@@ -7547,10 +7793,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
 
   // Quiet helpers — no dialogs. Used by modal confirm and programmatic starts.
   window.focusIsActive = function(){ return getActive(); };
-  window.focusStartQuiet = function(taskId, estMin, mode, track){
+  window.focusStartQuiet = function(taskId, estMin, mode, track, pomo){
     const m = (mode === 'stopwatch') ? 'stopwatch' : 'countdown';
     const tr = (track === 'plain') ? 'plain' : 'focus';
     const duration = Math.min(240, Math.max(1, parseInt(estMin,10) || 50));
+    const breakMin = (pomo && typeof pomo.breakMin === 'number') ? Math.max(0, Math.min(60, pomo.breakMin)) : 0;
+    const rounds   = (pomo && typeof pomo.rounds === 'number')   ? Math.max(1, Math.min(8,  pomo.rounds))   : 1;
     // Snapshot the task's existing timeSpent so the ticker can live-update
     // it as base + elapsed — this way time is persisted every tick, not
     // just on finish(). If the tab closes mid-session, no data is lost.
@@ -7569,7 +7817,16 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       intent: '',
       taskId: taskId || null,
       taskDate: null,
-      baselineTimeSpent
+      baselineTimeSpent,
+      // Pomodoro state. phase switches between 'work' and 'break'. currentRound
+      // is 1-based. When a work phase ends and rounds > 1, auto-transition to
+      // break. When a break ends, increment round and start next work. When
+      // the FINAL work phase ends, we call finish().
+      phase: 'work',
+      currentRound: 1,
+      totalRounds: rounds,
+      workMin: duration,
+      breakMin
     };
     setActive(active);
     // BELT-AND-SUSPENDERS panel reveal — directly force the floating panel
@@ -7731,7 +7988,15 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const total = (active.durationMin || 25) * 60 * 1000;
       const remainingMs = total - elapsedMs;
       if(remainingMs <= 0){
-        // Let the module finish the session
+        // Pomodoro-aware: try to advance to the next phase first. If that
+        // returns true, the module repainted and we bail. Otherwise, force
+        // the module's render() to run finish().
+        try{
+          if(typeof window.focusBarMaybeTransitionPhase === 'function'){
+            const moved = window.focusBarMaybeTransitionPhase(active);
+            if(moved) return;
+          }
+        } catch {}
         if(typeof window.focusBarForceRender === 'function') window.focusBarForceRender();
         return;
       }
@@ -7750,7 +8015,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     // Updating the per-task row and the big-panel total.
     const baseline = (typeof active.baselineTimeSpent === 'number')
       ? active.baselineTimeSpent : 0;
-    const liveTotal = baseline + elapsedSec;
+    // Pomodoro: during a break phase, don't add elapsed seconds to the
+    // task's total. Baseline already contains work time rolled in by
+    // maybeTransitionPhase() at the end of each work phase.
+    const inBreak = active.phase === 'break';
+    const liveTotal = baseline + (inBreak ? 0 : elapsedSec);
     if(active.taskId){
       const fmtT = window.fmtTime || (n => n + 's');
       const td = document.getElementById('td-' + active.taskId);
@@ -7763,7 +8032,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       // Persist live total to the task every 5 seconds so timeSpent
       // accumulates even if the user never formally ends the session.
       // plan storage shape: { "YYYY-MM-DD": [items] } — flat per-date array.
-      if(elapsedSec > 0 && elapsedSec % 5 === 0){
+      // During break: do NOT persist (liveTotal is static anyway, skip disk hit).
+      if(!inBreak && elapsedSec > 0 && elapsedSec % 5 === 0){
         try{
           const plan = JSON.parse(localStorage.getItem('daily-plan') || '{}');
           let wrote = false;
