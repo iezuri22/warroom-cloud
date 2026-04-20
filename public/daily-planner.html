@@ -197,17 +197,35 @@ body.focus-active .focus-bar{display:none !important}
   color:#fff; margin:4px 0 8px;
 }
 .focus-big-sub{
-  display:flex; flex-direction:column; align-items:center; gap:2px;
-  margin-top:6px; margin-bottom:10px;
+  /* Hidden by default so there aren't two timers ticking at once.
+     Reveal on hover/focus of the panel, or when iOS user taps it. */
+  display:flex; flex-direction:row; align-items:baseline; gap:8px;
+  margin-top:4px; margin-bottom:6px;
+  opacity:0; max-height:0; overflow:hidden; transition:opacity .18s, max-height .18s;
+  pointer-events:none;
+}
+.focus-big:hover .focus-big-sub,
+.focus-big:focus-within .focus-big-sub,
+.focus-big.reveal-total .focus-big-sub{
+  opacity:1; max-height:48px; pointer-events:auto;
 }
 .focus-big-sub .focus-big-sub-label{
   font-size:10px; font-weight:700; color:rgba(255,255,255,.45);
   letter-spacing:1.5px; text-transform:uppercase;
 }
 .focus-big-sub strong{
-  font-size:22px; font-weight:800; color:#fff;
-  letter-spacing:-.5px; font-variant-numeric:tabular-nums;
+  font-size:14px; font-weight:700; color:#fff;
+  letter-spacing:-.2px; font-variant-numeric:tabular-nums;
 }
+/* Pause button — subtle, neutral, slots between End early and Mark Done */
+.focus-big-btn.pause{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.14); color:rgba(255,255,255,.82)}
+.focus-big-btn.pause:hover{background:rgba(255,255,255,.12); color:#fff}
+.focus-big-btn.pause.resume{background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.45); color:#FF8A3D}
+.focus-big-btn.pause.resume:hover{background:rgba(255,138,61,.22); color:#FF8A3D}
+/* Paused state — dim the time, show a quiet "Paused" chip */
+body.focus-paused .focus-big-time{color:rgba(255,255,255,.55)}
+body.focus-paused .focus-big-mode{background:rgba(255,138,61,.18); border-color:rgba(255,138,61,.5)}
+body.focus-paused .focus-big-mode .dot{animation:none; background:rgba(255,138,61,.6)}
 .focus-big-progress{
   width:100%; height:3px; background:rgba(255,255,255,.08); border-radius:999px;
   overflow:hidden; margin:16px 0 16px;
@@ -1496,8 +1514,8 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="focus-big-body">
     <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">50 min</span></div>
     <div class="focus-big-task" id="focusBigTask">Focus timer</div>
-    <div class="focus-big-time" id="focusBigTime">00:00</div>
-    <div class="focus-big-sub">
+    <div class="focus-big-time" id="focusBigTime" onclick="event.stopPropagation();focusBigToggleTotal()" title="Tap to show total time on this task" style="cursor:pointer">00:00</div>
+    <div class="focus-big-sub" id="focusBigSub" title="Total time logged on this task">
       <span class="focus-big-sub-label">Total on this task</span>
       <strong id="focusBigTotal">0m</strong>
     </div>
@@ -1513,6 +1531,10 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
       </button>
     </div>
     <div class="focus-big-actions">
+      <button class="focus-big-btn pause" id="focusBigPauseBtn" onclick="event.stopPropagation();focusBarPause()" title="Pause timer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg>
+        <span>Pause</span>
+      </button>
       <button class="focus-big-btn danger" onclick="event.stopPropagation();focusBarEndEarly()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         End early
@@ -3150,6 +3172,20 @@ window.exitFocusImmersion = exitFocusImmersion;
     if(document.body.classList.contains('focus-big-min')){
       if(ev.target.closest('.focus-big-chrome-btn')) return;
       window.focusBigToggleMin();
+    }
+  };
+  // Tap the big time to toggle the "Total on this task" reveal (mobile-friendly
+  // alternative to the desktop hover state).
+  window.focusBigToggleTotal = function(){
+    const big = document.getElementById('focusBig');
+    if(!big) return;
+    big.classList.toggle('reveal-total');
+    // Auto-hide after 3s so it doesn't linger and re-create the two-timer issue
+    if(big.classList.contains('reveal-total')){
+      clearTimeout(window.__focusTotalHideT);
+      window.__focusTotalHideT = setTimeout(() => {
+        try{ big.classList.remove('reveal-total'); } catch {}
+      }, 3000);
     }
   };
 })();
@@ -7020,6 +7056,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(big) big.style.display = 'none';
       document.body.classList.remove('focus-active');
       document.body.classList.remove('focus-big-min');
+      document.body.classList.remove('focus-paused');
       if(tickHandle){ clearInterval(tickHandle); tickHandle = null; }
       if(rafHandle){ cancelAnimationFrame(rafHandle); rafHandle = null; }
       return;
@@ -7034,8 +7071,31 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       big.style.display = 'flex';
     }
     bar.style.display = '';
+    // Paused state visuals + clock freeze: when pausedAt is set, use that
+    // timestamp as "now" so elapsed math freezes. Also swap Pause button into
+    // Resume mode and tag body.focus-paused for CSS dimming.
+    const isPaused = !!active.pausedAt;
+    if(isPaused) document.body.classList.add('focus-paused');
+    else document.body.classList.remove('focus-paused');
+    try{
+      const pb = document.getElementById('focusBigPauseBtn');
+      if(pb){
+        if(isPaused){
+          pb.classList.add('resume');
+          pb.setAttribute('onclick', "event.stopPropagation();focusBarResume()");
+          pb.setAttribute('title', 'Resume timer');
+          pb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg><span>Resume</span>';
+        } else {
+          pb.classList.remove('resume');
+          pb.setAttribute('onclick', "event.stopPropagation();focusBarPause()");
+          pb.setAttribute('title', 'Pause timer');
+          pb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg><span>Pause</span>';
+        }
+      }
+    } catch {}
     const isStopwatch = active.mode === 'stopwatch';
-    const elapsedMs = Date.now() - (active.startedAt || Date.now());
+    const nowRef = isPaused ? active.pausedAt : Date.now();
+    const elapsedMs = nowRef - (active.startedAt || nowRef);
     const elapsedSec = Math.max(0, Math.floor(elapsedMs/1000));
     let displaySec, pct;
     if(isStopwatch){
@@ -7144,7 +7204,9 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   function finish(broken, markTaskDone){
     const active = getActive();
     if(!active){ render(); return; }
-    const endedAt = Date.now();
+    // If we're ending while paused, don't credit the current pause duration.
+    // Use pausedAt as the effective end timestamp for elapsed calcs.
+    const endedAt = active.pausedAt ? active.pausedAt : Date.now();
     const actualMin = Math.max(1, Math.round((endedAt - active.startedAt)/60000));
     const record = {
       id: 'fs_' + endedAt,
@@ -7199,16 +7261,32 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     try{ if(typeof window.render === 'function') window.render(); } catch {}
   }
 
+  // Belt-and-suspenders: directly hide the floating panel + bar regardless of
+  // what render() decides. Called from End early / Mark Done so the panel
+  // disappears even if iOS Safari is mid-suspend over a shortcuts:// URL.
+  function hardHidePanels(){
+    try{
+      const big = document.getElementById('focusBig');
+      const bar = document.getElementById('focusBar');
+      if(big){ big.style.display = 'none'; }
+      if(bar){ bar.style.display = 'none'; }
+      document.body.classList.remove('focus-active');
+      document.body.classList.remove('focus-big-min');
+    } catch {}
+  }
+
   window.focusBarEndEarly = function(){
     // No double-confirm — the user already tapped an explicit "End early" button.
     // iOS Safari's confirm() inside iframes can also fail silently, making the
     // button feel broken. Just end.
     const a = getActive();
-    if(!a) return;
+    if(!a){ hardHidePanels(); return; }
     if(a.iosFocusEngaged){
       fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
     }
     finish(true, false);
+    // Extra insurance — in case render() was starved by iOS Safari's URL handler
+    hardHidePanels();
   };
   window.focusBarMarkDone = function(){
     const a = getActive();
@@ -7216,6 +7294,35 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
     }
     finish(false, true);
+    hardHidePanels();
+  };
+
+  // Pause / resume — freezes the timer without ending the session.
+  // Uses active.pausedAt (timestamp when paused) + active.pausedMs (accumulated
+  // paused duration) so elapsed math becomes: now - startedAt - pausedMs.
+  // Ends any iOS Focus engagement so iPhone isn't locked down during a break.
+  window.focusBarPause = function(){
+    const a = getActive();
+    if(!a || a.pausedAt) return;
+    if(a.iosFocusEngaged){
+      fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+      a.iosFocusEngaged = false;
+    }
+    a.pausedAt = Date.now();
+    setActive(a);
+    try{ render(); } catch {}
+  };
+  window.focusBarResume = function(){
+    const a = getActive();
+    if(!a || !a.pausedAt) return;
+    const pausedDuration = Date.now() - a.pausedAt;
+    a.pausedMs = (a.pausedMs || 0) + pausedDuration;
+    // Shift startedAt forward by the paused duration so elapsed math still works
+    a.startedAt = a.startedAt + pausedDuration;
+    a.pausedAt = null;
+    setActive(a);
+    try{ render(); } catch {}
+    if(!tickHandle) startTicking();
   };
   window.focusBarTapped = function(ev){
     // Tap anywhere on the bar (non-button area) enters immersive focus overlay
@@ -7548,6 +7655,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     let active = null;
     try{ active = JSON.parse(localStorage.getItem(ACTIVE_KEY) || 'null'); } catch {}
     if(!active) return;
+    // When paused, freeze the clock by treating pausedAt as "now".
+    if(active.pausedAt) return;
     const isStopwatch = active.mode === 'stopwatch';
     const elapsedMs = Date.now() - (active.startedAt || Date.now());
     const elapsedSec = Math.max(0, Math.floor(elapsedMs/1000));
