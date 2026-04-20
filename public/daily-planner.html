@@ -261,6 +261,8 @@ body.focus-paused .focus-big-mode .dot{animation:none; background:rgba(255,138,6
 .focus-big-ios-btn.on:hover{background:rgba(255,138,61,.08); border-color:rgba(255,138,61,.35); color:#FF8A3D}
 .focus-big-ios-btn.on.engaged{background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.55); color:#FF8A3D}
 .focus-big-ios-btn.off{border-color:rgba(255,255,255,.12); color:rgba(255,255,255,.55)}
+/* When iOS Focus is NOT engaged (regular timer) the Off chip shows selected */
+.focus-big-ios-btn.off.selected{background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); color:#fff}
 body.focus-big-min .focus-big-ios-row{display:none}
 /* Minimized state — collapse to a compact pill */
 body.focus-big-min .focus-big{
@@ -1531,9 +1533,9 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
       </button>
     </div>
     <div class="focus-big-actions">
-      <button class="focus-big-btn pause" id="focusBigPauseBtn" onclick="event.stopPropagation();focusBarPause()" title="Pause timer">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg>
-        <span>Pause</span>
+      <button class="focus-big-btn pause" id="focusBigPauseBtn" onclick="event.stopPropagation();focusBarPauseToggle()" title="Pause timer">
+        <span id="focusBigPauseIcon" style="display:inline-flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg></span>
+        <span id="focusBigPauseLabel">Pause</span>
       </button>
       <button class="focus-big-btn danger" onclick="event.stopPropagation();focusBarEndEarly()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -7077,19 +7079,22 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const isPaused = !!active.pausedAt;
     if(isPaused) document.body.classList.add('focus-paused');
     else document.body.classList.remove('focus-paused');
+    // Update pause-button icon + label only (onclick is always Toggle — no race).
     try{
       const pb = document.getElementById('focusBigPauseBtn');
+      const pbIcon = document.getElementById('focusBigPauseIcon');
+      const pbLabel = document.getElementById('focusBigPauseLabel');
       if(pb){
         if(isPaused){
           pb.classList.add('resume');
-          pb.setAttribute('onclick', "event.stopPropagation();focusBarResume()");
           pb.setAttribute('title', 'Resume timer');
-          pb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg><span>Resume</span>';
+          if(pbIcon) pbIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>';
+          if(pbLabel) pbLabel.textContent = 'Resume';
         } else {
           pb.classList.remove('resume');
-          pb.setAttribute('onclick', "event.stopPropagation();focusBarPause()");
           pb.setAttribute('title', 'Pause timer');
-          pb.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg><span>Pause</span>';
+          if(pbIcon) pbIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg>';
+          if(pbLabel) pbLabel.textContent = 'Pause';
         }
       }
     } catch {}
@@ -7132,12 +7137,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(bigTime) bigTime.textContent = fmtHMS(displaySec);
       if(bigTask) bigTask.textContent = label;
       if(bigMode) bigMode.textContent = isStopwatch ? 'Stopwatch' : `${active.durationMin||25} min`;
-      // Reflect whether iOS Focus is actually engaged on the "iOS Focus On" button
+      // Reflect iOS Focus state on BOTH chips so the user sees which side is
+      // currently selected. Deep Work → "iOS Focus On" lit orange. Regular
+      // timer (or after user tapped Off) → "iOS Focus Off" shows as selected.
       try{
         const iosOnBtn = document.querySelector('.focus-big-ios-btn.on');
+        const iosOffBtn = document.querySelector('.focus-big-ios-btn.off');
         if(iosOnBtn){
           if(active.iosFocusEngaged) iosOnBtn.classList.add('engaged');
           else iosOnBtn.classList.remove('engaged');
+        }
+        if(iosOffBtn){
+          if(active.iosFocusEngaged) iosOffBtn.classList.remove('selected');
+          else iosOffBtn.classList.add('selected');
         }
       } catch {}
       if(active.taskId){
@@ -7297,33 +7309,37 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     hardHidePanels();
   };
 
-  // Pause / resume — freezes the timer without ending the session.
-  // Uses active.pausedAt (timestamp when paused) + active.pausedMs (accumulated
-  // paused duration) so elapsed math becomes: now - startedAt - pausedMs.
-  // Ends any iOS Focus engagement so iPhone isn't locked down during a break.
-  window.focusBarPause = function(){
+  // Single toggle — checks current state and does the opposite. Avoids the
+  // previous race where render() was re-setting inline onclick on every tick.
+  window.focusBarPauseToggle = function(){
     const a = getActive();
-    if(!a || a.pausedAt) return;
-    if(a.iosFocusEngaged){
-      fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
-      a.iosFocusEngaged = false;
+    if(!a) return;
+    if(a.pausedAt){
+      // RESUME: shift startedAt forward by the paused duration so elapsed
+      // math still reads correctly. Don't re-fire iOS Focus — user can
+      // manually re-engage if they want.
+      const pausedDuration = Date.now() - a.pausedAt;
+      a.pausedMs = (a.pausedMs || 0) + pausedDuration;
+      a.startedAt = a.startedAt + pausedDuration;
+      a.pausedAt = null;
+      setActive(a);
+      try{ render(); } catch {}
+      if(!tickHandle) startTicking();
+    } else {
+      // PAUSE: snapshot timestamp; kill iOS Focus if engaged so iPhone isn't
+      // locked down during a break.
+      if(a.iosFocusEngaged){
+        fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
+        a.iosFocusEngaged = false;
+      }
+      a.pausedAt = Date.now();
+      setActive(a);
+      try{ render(); } catch {}
     }
-    a.pausedAt = Date.now();
-    setActive(a);
-    try{ render(); } catch {}
   };
-  window.focusBarResume = function(){
-    const a = getActive();
-    if(!a || !a.pausedAt) return;
-    const pausedDuration = Date.now() - a.pausedAt;
-    a.pausedMs = (a.pausedMs || 0) + pausedDuration;
-    // Shift startedAt forward by the paused duration so elapsed math still works
-    a.startedAt = a.startedAt + pausedDuration;
-    a.pausedAt = null;
-    setActive(a);
-    try{ render(); } catch {}
-    if(!tickHandle) startTicking();
-  };
+  // Back-compat aliases (old code path can still call these)
+  window.focusBarPause = () => { const a = getActive(); if(a && !a.pausedAt) window.focusBarPauseToggle(); };
+  window.focusBarResume = () => { const a = getActive(); if(a && a.pausedAt) window.focusBarPauseToggle(); };
   window.focusBarTapped = function(ev){
     // Tap anywhere on the bar (non-button area) enters immersive focus overlay
     if (typeof window.enterFocusImmersion === 'function') window.enterFocusImmersion();
