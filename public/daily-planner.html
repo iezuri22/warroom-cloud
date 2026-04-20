@@ -180,13 +180,20 @@ body.focus-active .focus-bar{display:none !important}
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   padding:18px 20px 22px; flex:1; min-height:0; overflow-y:auto;
 }
+/* Mode chip is NEUTRAL by default (regular timer). Only goes orange/red when
+   iOS Focus is actually engaged (body.focus-ios-on) so the chip never looks
+   like Focus mode when it isn't. */
 .focus-big-mode{
   font-size:10px; font-weight:800; letter-spacing:1.6px; text-transform:uppercase;
-  color:#FF8A3D; background:rgba(255,138,61,.10); padding:5px 11px; border-radius:999px;
-  border:1px solid rgba(255,138,61,.28); margin-bottom:14px;
+  color:rgba(255,255,255,.72); background:rgba(255,255,255,.05); padding:5px 11px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.12); margin-bottom:14px;
   display:inline-flex; align-items:center; gap:6px;
 }
-.focus-big-mode .dot{width:6px;height:6px;border-radius:50%;background:#FF3B30;animation:focusLiveDot 1.1s ease-in-out infinite}
+.focus-big-mode .dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55);animation:focusLiveDot 1.1s ease-in-out infinite}
+body.focus-ios-on .focus-big-mode{
+  color:#FF8A3D; background:rgba(255,138,61,.10); border-color:rgba(255,138,61,.28);
+}
+body.focus-ios-on .focus-big-mode .dot{background:#FF3B30}
 .focus-big-task{
   font-size:clamp(15px,2.2vw,19px); font-weight:700; color:rgba(255,255,255,.9);
   letter-spacing:-.3px; line-height:1.25; max-width:100%; margin-bottom:10px;
@@ -246,7 +253,8 @@ body.focus-break .focus-bar-pulse{background:#34C759; box-shadow:0 0 0 0 rgba(52
   width:100%; height:3px; background:rgba(255,255,255,.08); border-radius:999px;
   overflow:hidden; margin:16px 0 16px;
 }
-.focus-big-progress-fill{height:100%;background:linear-gradient(90deg,#FF8A3D,#FF3B30);transition:width .6s linear;width:0}
+.focus-big-progress-fill{height:100%;background:linear-gradient(90deg,rgba(255,255,255,.35),rgba(255,255,255,.55));transition:width .6s linear;width:0}
+body.focus-ios-on .focus-big-progress-fill{background:linear-gradient(90deg,#FF8A3D,#FF3B30)}
 .focus-big-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:100%}
 .focus-big-btn{
   background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.14);
@@ -1481,21 +1489,10 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
       <span class="focus-modal-chip" id="focusModalDuration">50 min</span>
       <span class="focus-modal-chip" id="focusModalSummary" style="margin-left:6px">1 round &times; 5 min break</span>
     </div>
-    <div class="focus-modal-hint" id="focusModalHint">Pick one. Only the Deep Work option touches iOS Focus.</div>
+    <div class="focus-modal-hint" id="focusModalHint">iOS Focus stays off. Tap the chip in the panel if you want it on.</div>
     <div class="focus-modal-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button class="focus-modal-btn primary" id="focusModalStartBtn" style="grid-column:1 / -1;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);color:#fff" onclick="confirmFocusStart(false)">
-        <span style="display:flex;flex-direction:column;gap:2px;width:100%;text-align:left">
-          <span style="font-weight:700;font-size:14px">Regular timer</span>
-          <span style="font-size:11px;font-weight:500;opacity:.7">Just tracks time. No iOS Focus.</span>
-        </span>
-      </button>
-      <button class="focus-modal-btn primary" style="grid-column:1 / -1;background:#FF8A3D;border-color:#FF8A3D;color:#1a1a1a" onclick="confirmFocusStart(true)">
-        <span style="display:flex;flex-direction:column;gap:2px;width:100%;text-align:left">
-          <span style="font-weight:700;font-size:14px">Deep Work (iOS Focus)</span>
-          <span style="font-size:11px;font-weight:500;opacity:.75">Timer + fires Deep Work shortcut on iPhone</span>
-        </span>
-      </button>
-      <button class="focus-modal-btn" style="grid-column:1 / -1" onclick="closeFocusStartModal()">Cancel</button>
+      <button class="focus-modal-btn" onclick="closeFocusStartModal()">Cancel</button>
+      <button class="focus-modal-btn primary" id="focusModalStartBtn" onclick="confirmFocusStart(false)">Start</button>
     </div>
   </div>
 </div>
@@ -1558,7 +1555,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
   <div class="focus-big-body">
     <div class="focus-big-mode"><span class="dot"></span><span id="focusBigModeLabel">50 min</span></div>
-    <div class="focus-big-task" id="focusBigTask">Focus timer</div>
+    <div class="focus-big-task" id="focusBigTask">Timer</div>
     <div class="focus-big-time" id="focusBigTime" onclick="event.stopPropagation();focusBigToggleTotal()" title="Tap to show total time on this task" style="cursor:pointer">00:00</div>
     <div class="focus-big-sub" id="focusBigSub" title="Total time logged on this task">
       <span class="focus-big-sub-label">Total on this task</span>
@@ -7102,6 +7099,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       document.body.classList.remove('focus-active');
       document.body.classList.remove('focus-big-min');
       document.body.classList.remove('focus-paused');
+      document.body.classList.remove('focus-break');
+      document.body.classList.remove('focus-ios-on');
       if(tickHandle){ clearInterval(tickHandle); tickHandle = null; }
       if(rafHandle){ cancelAnimationFrame(rafHandle); rafHandle = null; }
       return;
@@ -7171,7 +7170,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const found = findTaskAcrossDates(active.taskId);
       if(found && found.task) label = found.task.text;
     }
-    if(!label) label = active.iosFocusEngaged ? 'Deep work' : 'Focus timer';
+    if(!label) label = active.iosFocusEngaged ? 'Deep work' : 'Timer';
     // Pomodoro: on a break, override the task label so the user sees they
     // are paused from the work item. The original task context is preserved
     // in active.taskId so the UI snaps back on break end.
@@ -7186,6 +7185,13 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     try{
       if(isBreakPhase) document.body.classList.add('focus-break');
       else document.body.classList.remove('focus-break');
+    } catch {}
+    // Body flag for "iOS Focus is engaged" — drives the orange mode chip +
+    // red dot. Neutral palette when this class is absent so Regular timer
+    // doesn't look like a Focus-mode session.
+    try{
+      if(active.iosFocusEngaged) document.body.classList.add('focus-ios-on');
+      else document.body.classList.remove('focus-ios-on');
     } catch {}
     const taskEl = document.getElementById('focusBarTask');
     if(taskEl) taskEl.textContent = label;
@@ -7630,11 +7636,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     if(title) title.textContent = 'Start timer';
     if(isStopwatch){
       if(durChip) durChip.textContent = 'No limit';
-      if(hint) hint.textContent = 'Counts up from zero. Pick one below — only Deep Work touches iOS Focus.';
+      if(hint) hint.textContent = 'Counts up from zero. iOS Focus stays off — tap the chip in the panel if you want it on.';
     } else {
       const dur = parseInt(m.dataset.durationMin,10) || 50;
       if(durChip) durChip.textContent = dur + ' min';
-      if(hint) hint.textContent = 'Counts down. Pick one below — only Deep Work touches iOS Focus.';
+      if(hint) hint.textContent = 'Counts down. iOS Focus stays off — tap the chip in the panel if you want it on.';
     }
   }
   window.setFocusModalMode = function(mode){
@@ -7885,6 +7891,11 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
         if(engaged) offBtn.classList.remove('selected');
         else offBtn.classList.add('selected');
       }
+      // Also toggle the body class so the mode chip + progress bar flip
+      // immediately without waiting for render() to run. iOS Safari may
+      // suspend the JS thread right after this for the shortcuts:// URL.
+      if(engaged) document.body.classList.add('focus-ios-on');
+      else document.body.classList.remove('focus-ios-on');
     } catch {}
   }
 
