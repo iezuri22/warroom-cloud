@@ -648,6 +648,7 @@ body.focus-immersive #calSidebar{display:none !important}
 }
 .plan-item:hover .timer-display,.plan-item:active .timer-display{opacity:1;pointer-events:auto}
 .plan-item.done .timer-display{opacity:1;pointer-events:auto}
+.plan-item.focus-active .timer-display,.plan-item.selected .timer-display{opacity:1;pointer-events:auto}
 .timer-display.idle{color:var(--text-dim);background:var(--surface-2)}
 .timer-display.done-time{color:var(--done);background:rgba(22,163,74,.08);opacity:1;pointer-events:auto}
 
@@ -2193,8 +2194,15 @@ function render(){
       el.ondrop=(e)=>{e.preventDefault();e.stopPropagation();el.classList.remove('drag-above');reorderWithinSlot(dragId,item.id)};
 
       const t=timers[item.id]||{seconds:item.timeSpent||0,running:false};
-      const timerClass=t.running?'':'idle';
-      const timerText=fmtTime(t.seconds);
+      // If focus is running on this task, compute live seconds = baseline + focus elapsed
+      let liveSecs = t.seconds;
+      if(isFocusOn && _focusActive && _focusActive.startedAt){
+        const base = item.timeSpent || 0;
+        const elapsed = Math.max(0, Math.floor((Date.now() - _focusActive.startedAt)/1000));
+        liveSecs = base + elapsed;
+      }
+      const timerClass=t.running||isFocusOn?'':'idle';
+      const timerText=fmtTime(liveSecs);
 
       let metaHTML='';
       if(isFocusOn)metaHTML+=`<span class="plan-focus-live"><span class="dot"></span>Focus On</span>`;
@@ -2208,7 +2216,7 @@ function render(){
       if(item.completedAt)metaHTML+=`<span class="plan-item-time">done ${new Date(item.completedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>`;
       if(item.done&&item.timeSpent>0){
         metaHTML+=`<span class="timer-display done-time" id="td-${item.id}">${fmtTime(item.timeSpent)}</span>`;
-      } else if(item.timeSpent>0||t.running){
+      } else if(item.timeSpent>0||t.running||isFocusOn){
         metaHTML+=`<span class="timer-display ${timerClass}" id="td-${item.id}">${timerText}</span>`;
       }
       if(item.done&&item.outcome){
@@ -2256,6 +2264,7 @@ function fmtTime(s){
   if(h>0)return `${h}h ${m}m ${sec.toString().padStart(2,'0')}s`;
   return m>0?`${m}m ${sec.toString().padStart(2,'0')}s`:`${sec}s`;
 }
+try{ window.fmtTime = fmtTime; } catch {}
 function fmtHM(s){
   const h=Math.floor(s/3600),m=Math.round((s%3600)/60);
   if(h>0&&m>0)return h+'h '+m+'m';
@@ -2296,11 +2305,23 @@ function toggleDone(id){
     let actualSlot='morning';
     if(h>=17)actualSlot='night'; else if(h>=12)actualSlot='afternoon';
     if(actualSlot!==item.originalSlot)item.shifted=true;
-    // Stop timer & log
+    // If focus is active on this task, end it cleanly. finish() will log the session
+    // to analytics, so we avoid double-logging here.
+    let focusSessionLogged = false;
+    try{
+      const active = window.focusIsActive && window.focusIsActive();
+      if(active && active.taskId === id){
+        window.focusEndQuiet(false, false);
+        focusSessionLogged = true;
+      }
+    } catch {}
+    // Stop timer
     stopTimer(id);
     const t=timers[id];
     item.timeSpent=(t?t.seconds:0)||item.timeSpent;
-    logTime({taskId:id,date:key,domain:item.domain,text:item.text,slot:item.originalSlot,completedSlot:actualSlot,seconds:item.timeSpent,shifted:item.shifted});
+    if(!focusSessionLogged){
+      logTime({taskId:id,date:key,domain:item.domain,text:item.text,slot:item.originalSlot,completedSlot:actualSlot,seconds:item.timeSpent,shifted:item.shifted});
+    }
     // Sync completion to goals
     syncGoalDone(id,true);
     // Save first, render, then prompt for outcome
@@ -6584,6 +6605,19 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(!label) label = 'Deep work';
       taskEl.textContent = label;
     }
+    // Live-update the per-task timer display on the plan row (if visible)
+    if(active.taskId){
+      try{
+        const td = document.getElementById('td-' + active.taskId);
+        if(td){
+          const found = findTaskAcrossDates(active.taskId);
+          const base = (found && found.task && found.task.timeSpent) || 0;
+          const elapsedSec = Math.max(0, Math.floor((Date.now() - active.startedAt)/1000));
+          td.textContent = (window.fmtTime ? window.fmtTime(base + elapsedSec) : (base + elapsedSec) + 's');
+          td.classList.remove('idle');
+        }
+      } catch {}
+    }
   }
 
   function startTicking(){
@@ -6618,16 +6652,18 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
           if(typeof window.stopTimer === 'function') window.stopTimer(active.taskId);
         }
       } catch {}
-      // If finishing via "Done", also log to analytics so it shows as completed
-      if(markTaskDone && found && found.task){
+      // Always log focus time to analytics — track this session's elapsed seconds.
+      // toggleDone will log again on completion, but analytics dedupes/aggregates by taskId.
+      if(found && found.task){
         try{
           const it = found.task;
           const h = new Date().getHours();
           let actualSlot = 'morning';
           if(h>=17) actualSlot='night'; else if(h>=12) actualSlot='afternoon';
           const shifted = actualSlot !== (it.originalSlot || it.slot);
-          if(typeof window.logTime === 'function'){
-            window.logTime({taskId: active.taskId, date: found.date, domain: it.domain, text: it.text, slot: it.originalSlot || it.slot, completedSlot: actualSlot, seconds: patch.timeSpent, shifted});
+          const sessionSecs = Math.max(0, Math.floor((endedAt - active.startedAt)/1000));
+          if(typeof window.logTime === 'function' && sessionSecs > 0){
+            window.logTime({taskId: active.taskId, date: found.date, domain: it.domain, text: it.text, slot: it.originalSlot || it.slot, completedSlot: actualSlot, seconds: sessionSecs, shifted, focusOnly: !markTaskDone});
           }
         } catch {}
       }
