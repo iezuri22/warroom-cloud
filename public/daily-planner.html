@@ -261,8 +261,9 @@ body.focus-paused .focus-big-mode .dot{animation:none; background:rgba(255,138,6
 .focus-big-ios-btn.on:hover{background:rgba(255,138,61,.08); border-color:rgba(255,138,61,.35); color:#FF8A3D}
 .focus-big-ios-btn.on.engaged{background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.55); color:#FF8A3D}
 .focus-big-ios-btn.off{border-color:rgba(255,255,255,.12); color:rgba(255,255,255,.55)}
-/* When iOS Focus is NOT engaged (regular timer) the Off chip shows selected */
-.focus-big-ios-btn.off.selected{background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); color:#fff}
+/* Orange highlight follows whichever side is selected — toggle pair. */
+.focus-big-ios-btn.off.selected{background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.55); color:#FF8A3D}
+.focus-big-ios-btn.off:hover{background:rgba(255,138,61,.08); border-color:rgba(255,138,61,.35); color:#FF8A3D}
 body.focus-big-min .focus-big-ios-row{display:none}
 /* Minimized state — collapse to a compact pill */
 body.focus-big-min .focus-big{
@@ -7309,6 +7310,29 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     hardHidePanels();
   };
 
+  // Directly paint the Pause button in a given state — used by the toggle
+  // BEFORE calling render() so the visible label flips immediately, even if
+  // iOS Safari starves the render loop mid-transition.
+  function paintPauseButton(isPaused){
+    try{
+      const pb = document.getElementById('focusBigPauseBtn');
+      const pbIcon = document.getElementById('focusBigPauseIcon');
+      const pbLabel = document.getElementById('focusBigPauseLabel');
+      if(!pb) return;
+      if(isPaused){
+        pb.classList.add('resume');
+        pb.setAttribute('title', 'Resume timer');
+        if(pbIcon) pbIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>';
+        if(pbLabel) pbLabel.textContent = 'Resume';
+      } else {
+        pb.classList.remove('resume');
+        pb.setAttribute('title', 'Pause timer');
+        if(pbIcon) pbIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/></svg>';
+        if(pbLabel) pbLabel.textContent = 'Pause';
+      }
+    } catch {}
+  }
+
   // Single toggle — checks current state and does the opposite. Avoids the
   // previous race where render() was re-setting inline onclick on every tick.
   window.focusBarPauseToggle = function(){
@@ -7323,6 +7347,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       a.startedAt = a.startedAt + pausedDuration;
       a.pausedAt = null;
       setActive(a);
+      paintPauseButton(false);         // immediate visual flip
+      document.body.classList.remove('focus-paused');
       try{ render(); } catch {}
       if(!tickHandle) startTicking();
     } else {
@@ -7334,6 +7360,8 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       }
       a.pausedAt = Date.now();
       setActive(a);
+      paintPauseButton(true);          // immediate visual flip
+      document.body.classList.add('focus-paused');
       try{ render(); } catch {}
     }
   };
@@ -7585,6 +7613,24 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   // Because this runs inside a user gesture, we can use top-level navigation
   // (which iOS handles most reliably) without the side-effect of freezing
   // the focus panel on the way in.
+  // Directly paint the iOS Focus chip pair — one orange (engaged/selected),
+  // the other dim. Called BEFORE iOS Safari suspends JS for a shortcuts:// URL
+  // so the visual state flips instantly, not after the redirect returns.
+  function paintIOSChips(engaged){
+    try{
+      const onBtn  = document.querySelector('.focus-big-ios-btn.on');
+      const offBtn = document.querySelector('.focus-big-ios-btn.off');
+      if(onBtn){
+        if(engaged) onBtn.classList.add('engaged');
+        else onBtn.classList.remove('engaged');
+      }
+      if(offBtn){
+        if(engaged) offBtn.classList.remove('selected');
+        else offBtn.classList.add('selected');
+      }
+    } catch {}
+  }
+
   window.focusFireIOSFocus = function(){
     const active = getActive();
     if(!active){ return; }
@@ -7596,6 +7642,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const cur = getActive();
       if(cur){ cur.iosFocusEngaged = true; setActive(cur); }
     } catch {}
+    paintIOSChips(true);  // flip visual state BEFORE iOS suspends JS
     try{ window.location.href = url; } catch {}
   };
   // Manual trigger — turns OFF iOS Focus. Fires the Deep Work Off shortcut
@@ -7607,6 +7654,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       const cur = getActive();
       if(cur){ cur.iosFocusEngaged = false; setActive(cur); }
     } catch {}
+    paintIOSChips(false);  // flip visual state BEFORE iOS suspends JS
     try{ window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF); } catch {}
   };
 
