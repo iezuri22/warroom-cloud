@@ -1394,8 +1394,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 <!-- FOCUS START MODAL -->
 <div class="focus-modal" id="focusStartModal" role="dialog" aria-modal="true" aria-labelledby="focusModalTitle">
   <div class="focus-modal-card">
-    <div class="focus-modal-badge" id="focusModalBadge"><span class="dot"></span><span id="focusModalBadgeText">Deep Work</span></div>
-    <div class="focus-modal-title" id="focusModalTitle">Start focus session?</div>
+    <div class="focus-modal-title" id="focusModalTitle">Start a session</div>
     <div class="focus-modal-task" id="focusModalTask">&mdash;</div>
     <!-- Timer mode: countdown vs stopwatch -->
     <div class="focus-mode-toggle" role="tablist" aria-label="Timer mode">
@@ -1417,10 +1416,11 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <div class="focus-modal-meta">
       <span class="focus-modal-chip" id="focusModalDuration">50 min</span>
     </div>
-    <div class="focus-modal-hint" id="focusModalHint">Start the timer. Turn iOS Focus on from the panel anytime.</div>
-    <div class="focus-modal-actions">
+    <div class="focus-modal-hint" id="focusModalHint">Pick how you want to start. iOS Focus can also be toggled from the panel later.</div>
+    <div class="focus-modal-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <button class="focus-modal-btn" onclick="closeFocusStartModal()">Cancel</button>
-      <button class="focus-modal-btn primary" id="focusModalStartBtn" onclick="confirmFocusStart()">Start Focus</button>
+      <button class="focus-modal-btn" id="focusModalStartBtn" onclick="confirmFocusStart(false)" title="Start the timer, no iOS Focus">Just timer</button>
+      <button class="focus-modal-btn primary" style="grid-column:1 / -1" onclick="confirmFocusStart(true)" title="Start timer + fire Deep Work iOS Focus">Start with iOS Focus</button>
     </div>
   </div>
 </div>
@@ -2406,15 +2406,27 @@ function render(){
       el.ondragleave=()=>{el.classList.remove('drag-above')};
       el.ondrop=(e)=>{e.preventDefault();e.stopPropagation();el.classList.remove('drag-above');reorderWithinSlot(dragId,item.id)};
 
-      const t=timers[item.id]||{seconds:item.timeSpent||0,running:false};
-      // If focus is running on this task, compute live seconds = baseline + focus elapsed
-      let liveSecs = t.seconds;
-      if(isFocusOn && _focusActive && _focusActive.startedAt){
-        const base = item.timeSpent || 0;
+      const t=timers[item.id];
+      const plainRunning = !!(t && t.running);
+      // Decide the displayed seconds:
+      //  - If a plain pomodoro timer is running, use its live `t.seconds`.
+      //  - Else if a focus session is active on this task, use baseline + elapsed.
+      //    (baseline captured at session start, so the tick matches what the
+      //    focus panel and finish() write.)
+      //  - Else (no timer active) show whatever is saved on item.timeSpent.
+      let liveSecs;
+      if(plainRunning){
+        liveSecs = t.seconds || 0;
+      } else if(isFocusOn && _focusActive && _focusActive.startedAt){
+        const base = (typeof _focusActive.baselineTimeSpent === 'number')
+          ? _focusActive.baselineTimeSpent
+          : (item.timeSpent || 0);
         const elapsed = Math.max(0, Math.floor((Date.now() - _focusActive.startedAt)/1000));
         liveSecs = base + elapsed;
+      } else {
+        liveSecs = item.timeSpent || 0;
       }
-      const timerClass=t.running||isFocusOn?'':'idle';
+      const timerClass=plainRunning||isFocusOn?'':'idle';
       const timerText=fmtTime(liveSecs);
 
       let metaHTML='';
@@ -7130,11 +7142,12 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
   }
 
   window.focusBarEndEarly = function(){
-    if(!confirm('End this focus session early?')) return;
-    // Only fire the OFF shortcut if iOS Focus was actually turned on this session.
-    // Otherwise Shortcuts throws "Invalid action. Current status: No timer running".
+    // No double-confirm — the user already tapped an explicit "End early" button.
+    // iOS Safari's confirm() inside iframes can also fail silently, making the
+    // button feel broken. Just end.
     const a = getActive();
-    if(a && a.iosFocusEngaged){
+    if(!a) return;
+    if(a.iosFocusEngaged){
       fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_OFF));
     }
     finish(true, false);
@@ -7167,7 +7180,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       window.focusEndQuiet(true, false);
     }
     // Stash pending params on the modal and open it
-    const duration = Math.min(240, Math.max(5, parseInt(estMin,10) || 50));
+    const duration = Math.min(240, Math.max(1, parseInt(estMin,10) || 50));
     const modal = document.getElementById('focusStartModal');
     if(!modal){
       // Fallback to quiet start if modal wasn't rendered (shouldn't happen)
@@ -7198,7 +7211,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const cur = getActive();
     if(!cur) return;
     if(cur.taskId && cur.taskId !== taskId) return;
-    if(!confirm('End this focus session?')) return;
+    // No confirm — iOS Safari confirm() inside iframes can fail silently.
     window.focusEndQuiet(false, false);
   };
 
@@ -7277,7 +7290,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       if(durRow) durRow.style.display = '';
       // keep current duration
     } else {
-      const n = Math.min(240, Math.max(5, parseInt(val, 10) || 50));
+      const n = Math.min(240, Math.max(1, parseInt(val, 10) || 50));
       m.dataset.durationMin = String(n);
       const inp = document.getElementById('focusModalDurInput');
       if(inp) inp.value = String(n);
@@ -7292,7 +7305,7 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       refreshFocusModalChrome();
     }
   };
-  window.confirmFocusStart = function(){
+  window.confirmFocusStart = function(fireIOSFocus){
     const m = document.getElementById('focusStartModal');
     if(!m) return;
     const taskId = m.dataset.taskId || null;
@@ -7308,6 +7321,16 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     }
     m.classList.remove('open');
     window.focusStartQuiet(taskId, duration, mode, track);
+    // If the user picked "Start with iOS Focus", fire the Deep Work shortcut
+    // right after the session is set up. focusFireIOSFocus sets
+    // iosFocusEngaged=true so End early/Mark Done will fire the OFF shortcut.
+    if(fireIOSFocus === true){
+      // Slight delay so the panel has painted before iOS Safari pauses the JS
+      // thread to handle the shortcuts:// URL.
+      setTimeout(() => {
+        try{ window.focusFireIOSFocus && window.focusFireIOSFocus(); } catch {}
+      }, 600);
+    }
   };
 
   // Quiet helpers — no dialogs. Used by modal confirm and programmatic starts.
