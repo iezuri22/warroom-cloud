@@ -6924,14 +6924,22 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     const active = getActive();
     if(!active){
       bar.style.display = 'none';
+      if(big) big.style.display = 'none';
       document.body.classList.remove('focus-active');
       document.body.classList.remove('focus-big-min');
       if(tickHandle){ clearInterval(tickHandle); tickHandle = null; }
       if(rafHandle){ cancelAnimationFrame(rafHandle); rafHandle = null; }
       return;
     }
-    // Mark body so the big overlay can show when immersive+active
+    // Mark body so the big overlay can show when immersive+active.
+    // Also directly set inline display on #focusBig as a safety net in case
+    // the CSS rule `body.focus-active .focus-big{display:flex}` hasn't
+    // committed yet (iOS Safari has been observed to skip the repaint when
+    // a shortcuts:// URL is handled during the same frame).
     document.body.classList.add('focus-active');
+    if(big && (big.style.display === '' || big.style.display === 'none')){
+      big.style.display = 'flex';
+    }
     bar.style.display = '';
     const isStopwatch = active.mode === 'stopwatch';
     const elapsedMs = Date.now() - (active.startedAt || Date.now());
@@ -7281,9 +7289,20 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
       taskDate: null
     };
     setActive(active);
-    // Reset minimized state + show the panel FIRST so the panel paints
-    // before we try to fire the iOS Shortcut URL scheme.
+    // BELT-AND-SUSPENDERS panel reveal — directly force the floating panel
+    // visible via inline style AND body class, then force a reflow so iOS
+    // Safari commits the layout before anything else (including the iOS
+    // Shortcut URL fire) can interrupt. Previously the panel relied solely
+    // on the `body.focus-active .focus-big { display:flex }` CSS rule, which
+    // sometimes didn't paint until a refresh.
     try{ document.body.classList.remove('focus-big-min'); } catch {}
+    try{ document.body.classList.add('focus-active'); } catch {}
+    const bigEl = document.getElementById('focusBig');
+    if(bigEl){
+      bigEl.style.display = 'flex';
+      // Force reflow — read a layout property after mutating display
+      void bigEl.offsetHeight;
+    }
     render();
     startTicking();
     // Force a couple of rapid follow-up renders so the first visible tick is immediate
@@ -7292,14 +7311,15 @@ body.iframe-tab .main{max-width:none;padding-left:16px;padding-right:16px}
     setTimeout(render, 260);
     // Only fire Deep Work shortcut when tracking with focus + countdown.
     // Plain tracking = just the clock; stopwatch = no preset duration to pass.
-    // Fired via hidden iframe (see fireShortcut) so the top window does not
-    // navigate — otherwise the panel would only appear after a refresh and
-    // the countdown would freeze visually while still ticking underneath.
+    // Fired via hidden iframe (see fireShortcut) AFTER 500ms so the panel is
+    // fully painted before iOS Safari gets interrupted by the URL scheme
+    // prompt. Previously the panel would only appear after a refresh because
+    // Safari suspended rendering when it handled the shortcuts:// scheme.
     if(m === 'countdown' && tr === 'focus'){
       setTimeout(() => {
         fireShortcut('shortcuts://run-shortcut?name=' + encodeURIComponent('Deep Work') +
                     '&input=text&text=' + encodeURIComponent(String(duration)));
-      }, 120);
+      }, 500);
     }
     // Re-render the planner so the task row gets the focus-active signals
     try{ if(typeof window.render === 'function') window.render(); } catch {}
