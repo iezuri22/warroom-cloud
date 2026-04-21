@@ -294,6 +294,7 @@ body.embed{padding-top:14px}
       <div class="hero-sub" id="heroSub">Horizon view</div>
     </div>
     <div class="hero-actions">
+      <button class="icon-btn" id="settingsBtn" title="Settings">&#9881;</button>
       <button class="icon-btn" id="syncBtn" title="Sync Google Calendar">&#8635;</button>
       <button class="icon-btn primary" id="addBtn" title="Add event">+</button>
     </div>
@@ -372,6 +373,23 @@ body.embed{padding-top:14px}
   </div>
 </div>
 
+<!-- SETTINGS MODAL -->
+<div class="modal-bg" id="settingsBg">
+  <div class="modal">
+    <div class="modal-title">Settings</div>
+    <button class="modal-close" id="settingsClose">&times;</button>
+    <div class="field">
+      <label>Timezone</label>
+      <select id="fTz"></select>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;font-weight:600" id="fTzHint"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="btnSettingsCancel">Cancel</button>
+      <button class="btn primary" id="btnSettingsSave">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -381,6 +399,21 @@ const GCAL_PRI_KEY='calendar-gcal-priority-v1';
 const GCAL_TITLE_KEY='calendar-gcal-titles-v1';
 const GCAL_CACHE_KEY='calendar-gcal-cache-v1';
 const FILTER_KEY='calendar-filter-v1';
+const TIMEZONE_KEY='calendar-tz-v1';
+const DEFAULT_TZ='America/Chicago';
+
+const TIMEZONES=[
+  {id:'America/Chicago',label:'Central — Chicago (CT)'},
+  {id:'America/New_York',label:'Eastern — New York (ET)'},
+  {id:'America/Denver',label:'Mountain — Denver (MT)'},
+  {id:'America/Los_Angeles',label:'Pacific — Los Angeles (PT)'},
+  {id:'America/Phoenix',label:'Arizona (MST no DST)'},
+  {id:'America/Anchorage',label:'Alaska (AKT)'},
+  {id:'Pacific/Honolulu',label:'Hawaii (HST)'},
+  {id:'UTC',label:'UTC'},
+  {id:'Europe/London',label:'London (GMT/BST)'},
+  {id:'Europe/Paris',label:'Paris (CET/CEST)'},
+];
 
 const CATEGORIES=[
   {id:'party',label:'Party',color:'#FF8A3D'},
@@ -407,6 +440,7 @@ let state={
   lastError:null,
   editingId:null,  // manual event id being edited
   modalCat:'event',
+  tz:DEFAULT_TZ,
 };
 
 /* ============ STORAGE ============ */
@@ -449,10 +483,16 @@ function loadFilter(){
 function saveFilter(){
   localStorage.setItem(FILTER_KEY,state.filter);
 }
+function loadTz(){
+  return localStorage.getItem(TIMEZONE_KEY)||DEFAULT_TZ;
+}
+function saveTz(){
+  localStorage.setItem(TIMEZONE_KEY,state.tz);
+}
 
 /* ============ DATE HELPERS (Chicago) ============ */
 function todayCT(){
-  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:state.tz||DEFAULT_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
   const y=parts.find(p=>p.type==='year').value;
   const m=parts.find(p=>p.type==='month').value;
   const d=parts.find(p=>p.type==='day').value;
@@ -506,6 +546,34 @@ function formatTime12(hhmm){
   return m===0?`${h12} ${ap}`:`${h12}:${String(m).padStart(2,'0')} ${ap}`;
 }
 
+function formatIsoTime(iso,tz){
+  if(!iso) return '';
+  try{
+    const d=new Date(iso);
+    if(isNaN(d.getTime())) return '';
+    const parts=new Intl.DateTimeFormat('en-US',{timeZone:tz||state.tz||DEFAULT_TZ,hour:'numeric',minute:'2-digit',hour12:true}).formatToParts(d);
+    const h=parts.find(p=>p.type==='hour').value;
+    const m=parts.find(p=>p.type==='minute').value;
+    const ap=(parts.find(p=>p.type==='dayPeriod')||{}).value||'';
+    return m==='00'?`${h} ${ap.toUpperCase()}`:`${h}:${m} ${ap.toUpperCase()}`;
+  }catch(e){return ''}
+}
+
+function formatIsoRange(startISO,endISO,tz){
+  const s=formatIsoTime(startISO,tz);
+  if(!endISO || endISO===startISO) return s;
+  const e=formatIsoTime(endISO,tz);
+  if(!e) return s;
+  return `${s} – ${e}`;
+}
+
+function tzAbbrev(tz){
+  try{
+    const parts=new Intl.DateTimeFormat('en-US',{timeZone:tz||state.tz||DEFAULT_TZ,timeZoneName:'short'}).formatToParts(new Date());
+    return (parts.find(p=>p.type==='timeZoneName')||{}).value||'';
+  }catch(e){return ''}
+}
+
 /* ============ UNIFIED EVENT LIST ============ */
 // Normalizes manual + gcal into { id, source, title, date, start, end, category, priority, location, notes }
 function unified(){
@@ -532,6 +600,7 @@ function unified(){
       id:g.id, source:'gcal',
       title:override || g.summary || '(untitled)',
       date:g.date, start:g.start||'', end:g.end||'',
+      startISO:g.startISO||'', endISO:g.endISO||g.startISO||'',
       category:g.category||'event', priority:pri,
       location:g.location||'', notes:'',
       cal:g.cal||'', allDay:!!g.allDay,
@@ -666,9 +735,10 @@ function renderStats(){
     document.getElementById('statNext').textContent='—';
   }
 
+  const tzBadge=tzAbbrev(state.tz);
   const sub=state.syncedAt
-    ? `Synced ${new Date(state.syncedAt).toLocaleTimeString('en-US',{timeZone:'America/Chicago',hour:'numeric',minute:'2-digit'}).toLowerCase()}`
-    : 'Horizon view';
+    ? `Synced ${new Date(state.syncedAt).toLocaleTimeString('en-US',{timeZone:state.tz||DEFAULT_TZ,hour:'numeric',minute:'2-digit'}).toLowerCase()} · ${tzBadge}`
+    : `Horizon view · ${tzBadge}`;
   document.getElementById('heroSub').textContent=sub;
 }
 
@@ -813,13 +883,16 @@ function renderDayRow(date,events,today){
 function renderEventPill(e){
   const cls=['event-pill'];
   if(e.priority) cls.push('priority');
-  const timeStr=e.allDay||(!e.start&&e.source==='manual')
-    ? 'All day'
-    : e.source==='gcal' && e.timeStr
-      ? e.timeStr
-      : e.start
-        ? (e.end?`${formatTime12(e.start)} – ${formatTime12(e.end)}`:formatTime12(e.start))
-        : '';
+  let timeStr='';
+  if(e.allDay){
+    timeStr='All day';
+  }else if(e.source==='gcal' && e.startISO){
+    timeStr=formatIsoRange(e.startISO,e.endISO,state.tz)||e.timeStr||'';
+  }else if(e.start){
+    timeStr=e.end?`${formatTime12(e.start)} – ${formatTime12(e.end)}`:formatTime12(e.start);
+  }else if(e.source==='manual'){
+    timeStr='All day';
+  }
   const metaBits=[];
   if(timeStr) metaBits.push(`<span>${escapeHTML(timeStr)}</span>`);
   if(e.location) metaBits.push(`<span class="sep">·</span><span>${escapeHTML(e.location)}</span>`);
@@ -1005,6 +1078,43 @@ function deleteFromModal(){
   render();
 }
 
+/* ============ SETTINGS MODAL ============ */
+function openSettings(){
+  const sel=document.getElementById('fTz');
+  const browserTz=(Intl.DateTimeFormat().resolvedOptions()||{}).timeZone||'';
+  // Build option list. Include browser tz if not already present.
+  const options=[...TIMEZONES];
+  if(browserTz && !options.find(o=>o.id===browserTz)){
+    options.push({id:browserTz,label:`Device — ${browserTz}`});
+  }
+  sel.innerHTML=options.map(o=>`<option value="${escapeAttr(o.id)}" ${o.id===state.tz?'selected':''}>${escapeHTML(o.label)}</option>`).join('');
+  updateTzHint(sel.value);
+  sel.onchange=()=>updateTzHint(sel.value);
+  document.getElementById('settingsBg').classList.add('open');
+}
+function updateTzHint(tz){
+  const now=new Date();
+  try{
+    const s=new Intl.DateTimeFormat('en-US',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true,weekday:'short'}).format(now);
+    document.getElementById('fTzHint').textContent=`Right now in ${tz}: ${s}`;
+  }catch(e){
+    document.getElementById('fTzHint').textContent='';
+  }
+}
+function closeSettings(){
+  document.getElementById('settingsBg').classList.remove('open');
+}
+function saveSettings(){
+  const tz=document.getElementById('fTz').value;
+  if(tz && tz!==state.tz){
+    state.tz=tz;
+    saveTz();
+    showToast(`Timezone set to ${tzAbbrev(tz)||tz}`);
+  }
+  closeSettings();
+  render();
+}
+
 /* ============ GOOGLE CALENDAR SYNC ============ */
 // Maps GCal summary to category. Heuristic only — user can still manually categorize via priority flags.
 function categorizeGcal(summary,location){
@@ -1067,6 +1177,8 @@ async function syncNow(){
           date:d,
           start:t.start,
           end:t.end,
+          startISO:it.startISO||'',
+          endISO:it.endISO||it.startISO||'',
           timeStr:it.time||'',
           location:it.location||'',
           cal:it.cal||'',
@@ -1106,17 +1218,23 @@ function init(){
   state.gcalPriority=loadGcalPriority();
   state.gcalTitles=loadGcalTitles();
   state.filter=loadFilter();
+  state.tz=loadTz();
   loadGcalCache();
   render();
 
   document.getElementById('addBtn').onclick=()=>openModal(null);
   document.getElementById('syncBtn').onclick=syncNow;
+  document.getElementById('settingsBtn').onclick=openSettings;
   document.getElementById('modalClose').onclick=closeModal;
   document.getElementById('btnCancel').onclick=closeModal;
   document.getElementById('btnSave').onclick=saveEvent;
   document.getElementById('btnDelete').onclick=deleteFromModal;
+  document.getElementById('settingsClose').onclick=closeSettings;
+  document.getElementById('btnSettingsCancel').onclick=closeSettings;
+  document.getElementById('btnSettingsSave').onclick=saveSettings;
+  document.getElementById('settingsBg').addEventListener('click',(e)=>{if(e.target.id==='settingsBg')closeSettings()});
   document.getElementById('modalBg').addEventListener('click',(e)=>{if(e.target.id==='modalBg')closeModal()});
-  document.addEventListener('keydown',(e)=>{if(e.key==='Escape')closeModal()});
+  document.addEventListener('keydown',(e)=>{if(e.key==='Escape'){closeModal();closeSettings()}});
 
   // Auto-sync on load if we've synced before OR if fresh session
   syncNow();

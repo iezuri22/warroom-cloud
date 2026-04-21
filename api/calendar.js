@@ -10,16 +10,19 @@ const CALENDARS = [
   { id: 'addressbook#contacts@group.v.calendar.google.com', label: 'Birthdays' },
 ];
 
-function formatTime(date) {
-  const h = date.getHours(), m = date.getMinutes();
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  const ap = h >= 12 ? 'PM' : 'AM';
-  return m === 0 ? `${h12} ${ap}` : `${h12}:${String(m).padStart(2, '0')} ${ap}`;
+function formatTime(date, tz = 'America/Chicago') {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date);
+  const h = parts.find(p => p.type === 'hour').value;
+  const m = parts.find(p => p.type === 'minute').value;
+  const ap = parts.find(p => p.type === 'dayPeriod').value.toUpperCase();
+  return m === '00' ? `${h} ${ap}` : `${h}:${m} ${ap}`;
 }
 
-function formatTimeRange(startISO, endISO) {
+function formatTimeRange(startISO, endISO, tz = 'America/Chicago') {
   const s = new Date(startISO), e = new Date(endISO);
-  return `${formatTime(s)} - ${formatTime(e)}`;
+  return `${formatTime(s, tz)} - ${formatTime(e, tz)}`;
 }
 
 function dateKey(d) {
@@ -134,6 +137,7 @@ export default async function handler(req, res) {
             time: 'All day',
             location: ev.location || '',
             startISO: `${dk}T06:00:00-05:00`,
+            endISO: `${dk}T23:59:00-05:00`,
             cal: ev._calLabel,
             allDay: true,
           });
@@ -147,6 +151,7 @@ export default async function handler(req, res) {
           time: formatTimeRange(startISO, endISO || startISO),
           location: ev.location || '',
           startISO,
+          endISO: endISO || startISO,
           cal: ev._calLabel,
         });
       }
