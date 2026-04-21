@@ -264,6 +264,17 @@ body{padding:16px 14px 120px}
 .field textarea{resize:vertical;min-height:70px}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .cat-picker{display:flex;flex-wrap:wrap;gap:6px}
+.loc-row{display:flex;gap:8px;align-items:stretch}
+.loc-row input{flex:1}
+.loc-maps-btn{flex:0 0 auto;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;height:auto}
+.event-loc{color:inherit;text-decoration:underline;text-decoration-color:var(--text-fade);text-underline-offset:2px;transition:color 0.15s}
+.event-loc:hover{color:var(--accent);text-decoration-color:var(--accent)}
+.detail-meta{display:flex;flex-wrap:wrap;gap:8px 12px;margin:-4px 0 14px;font-size:12px;font-weight:700;color:var(--text-mid)}
+.detail-meta .bit{display:inline-flex;align-items:center;gap:4px}
+.detail-loc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.detail-loc .loc-text{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text)}
+.detail-desc{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;color:var(--text-mid);white-space:pre-wrap;max-height:220px;overflow:auto}
+.detail-desc a{color:var(--accent);text-decoration:underline}
 .cat-opt{
   padding:8px 12px;border-radius:8px;border:1px solid var(--border);
   background:var(--surface-2);font-size:12px;font-weight:700;cursor:pointer;
@@ -493,6 +504,13 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
       <div class="cat-picker" id="fCatPicker"></div>
     </div>
     <div class="field">
+      <label>Location</label>
+      <div class="loc-row">
+        <input type="text" id="fLocation" placeholder="Address or place" autocomplete="off">
+        <a id="fLocationMaps" class="btn ghost loc-maps-btn" target="_blank" rel="noopener" style="display:none">Maps</a>
+      </div>
+    </div>
+    <div class="field">
       <label>Notes</label>
       <textarea id="fNotes" placeholder="Optional notes"></textarea>
     </div>
@@ -506,6 +524,31 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
       <button class="btn ghost" id="btnCancel">Cancel</button>
       <button class="btn ghost" id="btnDelete" style="display:none;color:#FF453A">Delete</button>
       <button class="btn primary" id="btnSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- GCAL DETAIL MODAL -->
+<div class="modal-bg" id="detailBg">
+  <div class="modal">
+    <div class="modal-title" id="detailTitle">Event</div>
+    <button class="modal-close" id="detailClose">&times;</button>
+    <div class="detail-meta" id="detailMeta"></div>
+    <div class="field" id="detailLocField" style="display:none">
+      <label>Location</label>
+      <div class="detail-loc" id="detailLoc"></div>
+    </div>
+    <div class="field" id="detailDescField" style="display:none">
+      <label>Description</label>
+      <div class="detail-desc" id="detailDesc"></div>
+    </div>
+    <div class="field">
+      <label>My notes</label>
+      <textarea id="detailNotes" placeholder="Add your own notes (saved on this device)"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="detailCancel">Close</button>
+      <button class="btn primary" id="detailSave">Save notes</button>
     </div>
   </div>
 </div>
@@ -534,6 +577,7 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
 const MANUAL_KEY='calendar-events-v1';
 const GCAL_PRI_KEY='calendar-gcal-priority-v1';
 const GCAL_TITLE_KEY='calendar-gcal-titles-v1';
+const GCAL_NOTES_KEY='calendar-gcal-notes-v1';
 const GCAL_CACHE_KEY='calendar-gcal-cache-v1';
 const FILTER_KEY='calendar-filter-v1';
 const TIMEZONE_KEY='calendar-tz-v1';
@@ -571,11 +615,13 @@ let state={
   gcal:[],         // live GCal events
   gcalPriority:{}, // map of gcal event id -> true
   gcalTitles:{},   // map of gcal event id -> overridden title
+  gcalNotes:{},    // map of gcal event id -> user-added notes
   filter:'priority',// 'all' | 'priority' | 'manual' | calendar label (Personal/TWEG/Partiful)
   syncStatus:'idle',// idle | syncing | connected | needs_auth | error
   syncedAt:null,
   lastError:null,
   editingId:null,  // manual event id being edited
+  detailId:null,   // gcal event id open in detail modal
   modalCat:'event',
   tz:DEFAULT_TZ,
 };
@@ -601,6 +647,16 @@ function loadGcalTitles(){
 }
 function saveGcalTitles(){
   localStorage.setItem(GCAL_TITLE_KEY,JSON.stringify(state.gcalTitles));
+}
+function loadGcalNotes(){
+  try{return JSON.parse(localStorage.getItem(GCAL_NOTES_KEY)||'{}')}catch(e){return{}}
+}
+function saveGcalNotes(){
+  localStorage.setItem(GCAL_NOTES_KEY,JSON.stringify(state.gcalNotes));
+}
+function mapsUrlFor(location){
+  if(!location) return '';
+  return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(location);
 }
 function loadGcalCache(){
   try{
@@ -724,7 +780,7 @@ function unified(){
       id:e.id, source:'manual', title:e.title||'(untitled)',
       date:e.date, start:e.start||'', end:e.end||'',
       category:e.category||'other', priority:!!e.priority,
-      location:'', notes:e.notes||'', _ref:e,
+      location:e.location||'', notes:e.notes||'', _ref:e,
     });
   }
 
@@ -740,6 +796,7 @@ function unified(){
       startISO:g.startISO||'', endISO:g.endISO||g.startISO||'',
       category:g.category||'event', priority:pri,
       location:g.location||'', notes:g.description||'',
+      userNotes:state.gcalNotes[g.id]||'',
       meetingUrl:g.meetingUrl||'',
       cal:g.cal||'', allDay:!!g.allDay,
       timeStr:g.timeStr||'',
@@ -984,9 +1041,10 @@ function renderHorizon(){
   });
   container.querySelectorAll('.event-pill').forEach(p=>{
     p.onclick=(e)=>{
-      // don't open modal if click landed on title/buttons
-      if(e.target.closest('.event-title,.event-actions')) return;
+      // don't open modal if click landed on title/buttons/location/meeting-link
+      if(e.target.closest('.event-title,.event-actions,.event-loc')) return;
       if(p.dataset.src==='manual') openModal(p.dataset.id);
+      else if(p.dataset.src==='gcal') openDetailModal(p.dataset.id);
     };
   });
 }
@@ -1059,7 +1117,7 @@ function renderEventPill(e){
   }
   const metaBits=[];
   if(timeStr) metaBits.push(`<span>${escapeHTML(timeStr)}</span>`);
-  if(e.location) metaBits.push(`<span class="sep">·</span><span>${escapeHTML(e.location)}</span>`);
+  if(e.location) metaBits.push(`<span class="sep">·</span><a class="event-loc" href="${escapeAttr(mapsUrlFor(e.location))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in Maps">${escapeHTML(e.location)}</a>`);
   if(e.cal && e.source==='gcal') metaBits.push(`<span class="sep">·</span><span>${escapeHTML(e.cal)}</span>`);
   const srcBadge=e.source==='gcal'?`<span class="event-src gcal">GCal</span>`:'';
   const delBtn=e.source==='manual'?`<button class="del-btn" data-id="${escapeAttr(e.id)}" title="Delete">&times;</button>`:'';
@@ -1173,6 +1231,7 @@ function openModal(id){
     document.getElementById('fStart').value=e.start||'';
     document.getElementById('fEnd').value=e.end||'';
     document.getElementById('fNotes').value=e.notes||'';
+    document.getElementById('fLocation').value=e.location||'';
     document.getElementById('fPriority').checked=!!e.priority;
     state.modalCat=e.category||'event';
   }else{
@@ -1183,9 +1242,11 @@ function openModal(id){
     document.getElementById('fStart').value='';
     document.getElementById('fEnd').value='';
     document.getElementById('fNotes').value='';
+    document.getElementById('fLocation').value='';
     document.getElementById('fPriority').checked=true;
     state.modalCat='event';
   }
+  updateLocationMapsBtn();
   renderCatPicker();
   mb.classList.add('open');
   setTimeout(()=>document.getElementById('fTitle').focus(),50);
@@ -1207,12 +1268,27 @@ function renderCatPicker(){
   });
 }
 
+function updateLocationMapsBtn(){
+  const inp=document.getElementById('fLocation');
+  const btn=document.getElementById('fLocationMaps');
+  if(!inp||!btn) return;
+  const v=inp.value.trim();
+  if(v){
+    btn.style.display='';
+    btn.href=mapsUrlFor(v);
+  }else{
+    btn.style.display='none';
+    btn.removeAttribute('href');
+  }
+}
+
 function saveEvent(){
   const title=document.getElementById('fTitle').value.trim();
   const date=document.getElementById('fDate').value;
   const start=document.getElementById('fStart').value;
   const end=document.getElementById('fEnd').value;
   const notes=document.getElementById('fNotes').value.trim();
+  const locVal=document.getElementById('fLocation').value.trim();
   const priority=document.getElementById('fPriority').checked;
   if(!title){showToast('Title required');return}
   if(!date){showToast('Date required');return}
@@ -1220,12 +1296,12 @@ function saveEvent(){
     const e=state.manual.find(x=>x.id===state.editingId);
     if(e){
       e.title=title;e.date=date;e.start=start;e.end=end;
-      e.notes=notes;e.priority=priority;e.category=state.modalCat;
+      e.notes=notes;e.location=locVal;e.priority=priority;e.category=state.modalCat;
     }
   }else{
     state.manual.push({
       id:'m-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
-      title,date,start,end,notes,priority,category:state.modalCat,
+      title,date,start,end,notes,location:locVal,priority,category:state.modalCat,
     });
   }
   saveManual();
@@ -1243,6 +1319,82 @@ function deleteFromModal(){
   saveManual();
   closeModal();
   showToast('Deleted');
+  render();
+}
+
+/* ============ GCAL DETAIL MODAL ============ */
+function openDetailModal(id){
+  const g=state.gcal.find(x=>x.id===id);
+  if(!g) return;
+  state.detailId=id;
+  const titleOverride=state.gcalTitles[id];
+  const title=titleOverride||g.summary||'(untitled)';
+  document.getElementById('detailTitle').textContent=title;
+
+  // Time / calendar meta
+  const bits=[];
+  let timeStr='';
+  if(g.allDay){ timeStr='All day'; }
+  else if(g.startISO){ timeStr=formatIsoRange(g.startISO,g.endISO,state.tz)||g.timeStr||''; }
+  else if(g.start){ timeStr=g.end?`${formatTime12(g.start)} – ${formatTime12(g.end)}`:formatTime12(g.start); }
+  if(g.date){
+    const dateLbl=formatDateLabel(g.date);
+    bits.push(`<span class="bit">${escapeHTML(dateLbl)}${timeStr?` · ${escapeHTML(timeStr)}`:''}</span>`);
+  }else if(timeStr){
+    bits.push(`<span class="bit">${escapeHTML(timeStr)}</span>`);
+  }
+  if(g.cal) bits.push(`<span class="bit">${escapeHTML(g.cal)}</span>`);
+  document.getElementById('detailMeta').innerHTML=bits.join('');
+
+  // Location w/ Maps link
+  const locField=document.getElementById('detailLocField');
+  const locEl=document.getElementById('detailLoc');
+  if(g.location){
+    locField.style.display='';
+    locEl.innerHTML=`<span class="loc-text">${escapeHTML(g.location)}</span><a class="btn ghost loc-maps-btn" href="${escapeAttr(mapsUrlFor(g.location))}" target="_blank" rel="noopener">Maps</a>`;
+  }else{
+    locField.style.display='none';
+    locEl.innerHTML='';
+  }
+
+  // Description — linkify URLs so meeting links are clickable
+  const descField=document.getElementById('detailDescField');
+  const descEl=document.getElementById('detailDesc');
+  const desc=(g.description||'').trim();
+  if(desc){
+    descField.style.display='';
+    descEl.innerHTML=linkifyText(desc);
+  }else{
+    descField.style.display='none';
+    descEl.innerHTML='';
+  }
+
+  // User notes (local)
+  document.getElementById('detailNotes').value=state.gcalNotes[id]||'';
+
+  document.getElementById('detailBg').classList.add('open');
+  setTimeout(()=>document.getElementById('detailNotes').focus(),60);
+}
+
+function linkifyText(s){
+  if(!s) return '';
+  const esc=escapeHTML(s);
+  return esc.replace(/(https?:\/\/[^\s<>"')]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+function closeDetailModal(){
+  document.getElementById('detailBg').classList.remove('open');
+  state.detailId=null;
+}
+
+function saveDetailNotes(){
+  if(!state.detailId) return;
+  const val=document.getElementById('detailNotes').value.trim();
+  if(val){ state.gcalNotes[state.detailId]=val; }
+  else { delete state.gcalNotes[state.detailId]; }
+  saveGcalNotes();
+  closeDetailModal();
+  showToast('Notes saved');
   render();
 }
 
@@ -1387,6 +1539,7 @@ function init(){
   state.manual=loadManual();
   state.gcalPriority=loadGcalPriority();
   state.gcalTitles=loadGcalTitles();
+  state.gcalNotes=loadGcalNotes();
   state.filter=loadFilter();
   state.tz=loadTz();
   loadGcalCache();
@@ -1404,7 +1557,12 @@ function init(){
   document.getElementById('btnSettingsSave').onclick=saveSettings;
   document.getElementById('settingsBg').addEventListener('click',(e)=>{if(e.target.id==='settingsBg')closeSettings()});
   document.getElementById('modalBg').addEventListener('click',(e)=>{if(e.target.id==='modalBg')closeModal()});
-  document.addEventListener('keydown',(e)=>{if(e.key==='Escape'){closeModal();closeSettings()}});
+  document.getElementById('detailClose').onclick=closeDetailModal;
+  document.getElementById('detailCancel').onclick=closeDetailModal;
+  document.getElementById('detailSave').onclick=saveDetailNotes;
+  document.getElementById('detailBg').addEventListener('click',(e)=>{if(e.target.id==='detailBg')closeDetailModal()});
+  document.getElementById('fLocation').addEventListener('input',updateLocationMapsBtn);
+  document.addEventListener('keydown',(e)=>{if(e.key==='Escape'){closeModal();closeSettings();closeDetailModal()}});
 
   // Auto-sync on load if we've synced before OR if fresh session
   syncNow();
