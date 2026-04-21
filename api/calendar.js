@@ -91,10 +91,10 @@ export default async function handler(req, res) {
     }
     const refreshToken = rows[0].value;
 
-    // Determine time range: current month + next month
+    // Determine time range: current month through +6 months (horizon view)
     const now = new Date();
     const timeMin = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59).toISOString();
+    const timeMax = new Date(now.getFullYear(), now.getMonth() + 7, 0, 23, 59, 59).toISOString();
 
     const accessToken = await getAccessToken(refreshToken);
 
