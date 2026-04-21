@@ -180,7 +180,7 @@ body{padding:16px 14px 120px}
 .event-cat.cat-work{background:var(--c-work)}
 .event-cat.cat-other{background:var(--c-other)}
 .event-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.event-title{font-size:15px;font-weight:700;letter-spacing:-0.01em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;padding:1px 4px;margin-left:-4px;border-radius:4px}
+.event-title{font-size:15px;font-weight:700;letter-spacing:-0.01em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding:1px 4px;margin-left:-4px;border-radius:4px}
 .event-title:hover{background:rgba(60,60,67,0.06)}
 .event-title.editing{background:rgba(60,60,67,0.08);outline:1px solid var(--accent)}
 .event-title input{
@@ -544,7 +544,11 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
 <!-- GCAL DETAIL MODAL -->
 <div class="modal-bg" id="detailBg">
   <div class="modal">
-    <div class="modal-title" id="detailTitle">Event</div>
+    <div class="field" style="margin-bottom:10px">
+      <label>Title</label>
+      <input type="text" id="detailTitle" placeholder="Event title">
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;font-weight:600">Renames are saved locally and restore if Google updates the event.</div>
+    </div>
     <button class="modal-close" id="detailClose">&times;</button>
     <div class="detail-meta" id="detailMeta"></div>
     <div class="field" id="detailLocField" style="display:none">
@@ -561,7 +565,7 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
     </div>
     <div class="modal-actions">
       <button class="btn ghost" id="detailCancel">Close</button>
-      <button class="btn primary" id="detailSave">Save notes</button>
+      <button class="btn primary" id="detailSave">Save</button>
     </div>
   </div>
 </div>
@@ -1049,13 +1053,11 @@ function renderHorizon(){
   container.querySelectorAll('.del-btn').forEach(b=>{
     b.onclick=(e)=>{e.stopPropagation();deleteEvent(b.dataset.id)};
   });
-  container.querySelectorAll('.event-title').forEach(t=>{
-    t.onclick=(e)=>{e.stopPropagation();beginTitleEdit(t)};
-  });
+  // Title click now opens detail modal (editable there) — no more inline rename
   container.querySelectorAll('.event-pill').forEach(p=>{
     p.onclick=(e)=>{
-      // don't open modal if click landed on title/buttons/location/meeting-link
-      if(e.target.closest('.event-title,.event-actions,.event-loc')) return;
+      // don't open modal if click landed on action buttons, the location link, or the meeting join link
+      if(e.target.closest('.event-actions,.event-loc,.join-btn')) return;
       if(p.dataset.src==='manual') openModal(p.dataset.id);
       else if(p.dataset.src==='gcal') openDetailModal(p.dataset.id);
     };
@@ -1145,7 +1147,7 @@ function renderEventPill(e){
   return `<div class="${cls.join(' ')}" data-src="${e.source}" data-id="${escapeAttr(e.id)}">
     <div class="event-cat cat-${e.category}"></div>
     <div class="event-body">
-      <div class="event-title" data-src="${e.source}" data-id="${escapeAttr(e.id)}" title="Click to rename">${escapeHTML(e.title)}${editedMark}</div>
+      <div class="event-title" data-src="${e.source}" data-id="${escapeAttr(e.id)}" title="Click to open">${escapeHTML(e.title)}${editedMark}</div>
       <div class="event-meta">${srcBadge}${notesBadge}${metaBits.join('')}</div>
     </div>
     <div class="event-actions">
@@ -1344,8 +1346,10 @@ function openDetailModal(id){
   if(!g) return;
   state.detailId=id;
   const titleOverride=state.gcalTitles[id];
-  const title=titleOverride||g.summary||'(untitled)';
-  document.getElementById('detailTitle').textContent=title;
+  const title=titleOverride||g.summary||'';
+  const titleInput=document.getElementById('detailTitle');
+  titleInput.value=title;
+  titleInput.dataset.originalTitle=g.summary||'';
 
   // Time / calendar meta
   const bits=[];
@@ -1405,12 +1409,27 @@ function closeDetailModal(){
 
 function saveDetailNotes(){
   if(!state.detailId) return;
-  const val=document.getElementById('detailNotes').value.trim();
-  if(val){ state.gcalNotes[state.detailId]=val; }
-  else { delete state.gcalNotes[state.detailId]; }
+  const id=state.detailId;
+  // Save notes
+  const noteVal=document.getElementById('detailNotes').value.trim();
+  if(noteVal){ state.gcalNotes[id]=noteVal; }
+  else { delete state.gcalNotes[id]; }
   saveGcalNotes();
+  // Save title override if it changed from the original Google summary
+  const titleInput=document.getElementById('detailTitle');
+  const newTitle=(titleInput.value||'').trim();
+  const originalTitle=(titleInput.dataset.originalTitle||'').trim();
+  if(newTitle && newTitle!==originalTitle){
+    state.gcalTitles[id]=newTitle;
+    saveGcalTitles();
+  }else if(!newTitle || newTitle===originalTitle){
+    if(state.gcalTitles[id]){
+      delete state.gcalTitles[id];
+      saveGcalTitles();
+    }
+  }
   closeDetailModal();
-  showToast('Notes saved');
+  showToast('Saved');
   render();
 }
 
