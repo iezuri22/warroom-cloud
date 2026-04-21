@@ -379,12 +379,19 @@
   .freq-select.has-freq { color: #FF8A3D; border-color: rgba(255,138,61,.35); }
   .freq-select option { background: #111; color: #fff; }
 
-  /* Custom-day chip row (appears when Custom selected) */
-  .freq-days {
-    display: none; gap: 8px; padding: 0 48px 8px;
-    flex-wrap: wrap;
+  /* Recurrence options panel — Outlook-style */
+  .freq-opts {
+    display: none; padding: 14px 48px 12px; gap: 14px; flex-direction: column;
+    background: linear-gradient(to top, rgba(255,138,61,.04), transparent);
   }
-  .freq-days.visible { display: flex; }
+  .freq-opts.visible { display: flex; }
+  .freq-opt-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .freq-opt-label {
+    font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase;
+    color: rgba(255,255,255,.5); white-space: nowrap;
+  }
   .freq-day-chip {
     padding: 8px 14px; font-size: 13px; font-weight: 700; letter-spacing: .5px;
     background: rgba(255,255,255,.04); color: rgba(255,255,255,.55);
@@ -395,6 +402,31 @@
   .freq-day-chip:hover { color: #fff; }
   .freq-day-chip.active {
     background: rgba(255,138,61,.14); color: #FF8A3D; border-color: rgba(255,138,61,.4);
+  }
+  .freq-inline-select {
+    height: 38px; padding: 0 28px 0 12px;
+    background: rgba(255,255,255,.04); color: #fff;
+    border: 1px solid rgba(255,255,255,.08); border-radius: 10px;
+    font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; font-weight: 600;
+    cursor: pointer; outline: none; appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23FF8A3D' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center;
+  }
+  .freq-inline-select:focus, .freq-inline-select:hover { border-color: rgba(255,138,61,.3); }
+  .freq-inline-select option { background: #111; color: #fff; }
+  .freq-mode-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; border-radius: 12px;
+    background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06);
+    transition: all .15s;
+  }
+  .freq-mode-row.active { border-color: rgba(255,138,61,.35); background: rgba(255,138,61,.05); }
+  .freq-mode-radio {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 700; color: rgba(255,255,255,.85); min-height: 28px;
+  }
+  .freq-mode-radio input[type="radio"] {
+    width: 16px; height: 16px; margin: 0; accent-color: #FF8A3D;
   }
 
   /* Recurring meta (shown on task instances + in Recurring panel) */
@@ -498,8 +530,9 @@
     .input-area input { padding: 14px 18px; font-size: 16px; border-radius: 12px; }
     .add-btn { padding: 14px 22px; font-size: 15px; border-radius: 12px; }
     .freq-select { height: 48px; min-height: 48px; font-size: 12px; padding: 0 34px 0 12px; border-radius: 12px; }
-    .freq-days { padding: 0 18px 6px; gap: 6px; }
+    .freq-opts { padding: 12px 18px; gap: 10px; }
     .freq-day-chip { padding: 7px 11px; font-size: 12px; }
+    .freq-inline-select { height: 36px; font-size: 12px; }
     .add-recurring { gap: 8px; }
     .add-recurring input { padding: 12px 14px; font-size: 15px; }
     .add-recurring button { padding: 12px 18px; font-size: 14px; }
@@ -569,15 +602,7 @@
   </div>
   <div class="main">
     <div class="list" id="list"></div>
-    <div class="freq-days" id="freqDays">
-      <button type="button" class="freq-day-chip" data-dow="1">Mon</button>
-      <button type="button" class="freq-day-chip" data-dow="2">Tue</button>
-      <button type="button" class="freq-day-chip" data-dow="3">Wed</button>
-      <button type="button" class="freq-day-chip" data-dow="4">Thu</button>
-      <button type="button" class="freq-day-chip" data-dow="5">Fri</button>
-      <button type="button" class="freq-day-chip" data-dow="6">Sat</button>
-      <button type="button" class="freq-day-chip" data-dow="0">Sun</button>
-    </div>
+    <div class="freq-opts" id="freqOpts"></div>
     <div class="input-area" id="inputArea">
       <input type="text" id="todoInput" placeholder="Add a task...">
       <select class="freq-select" id="freqSelect" title="Repeat">
@@ -585,7 +610,7 @@
         <option value="daily">Daily</option>
         <option value="weekdays">Weekdays</option>
         <option value="weekly">Weekly</option>
-        <option value="custom">Custom days</option>
+        <option value="custom">Custom</option>
         <option value="monthly">Monthly</option>
       </select>
       <button class="add-btn" id="addBtn">Add</button>
@@ -966,6 +991,20 @@ const VOICE = {
   // ---- Recurrence helpers ----
   // Parse a yyyy-mm-dd date key into a local Date at noon (avoids TZ drift).
   function parseDkey(k) { return new Date(k + 'T12:00:00'); }
+  const DOW_LONG = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const DOW_TINY = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const NTH_NAMES = { 1:'first', 2:'second', 3:'third', 4:'fourth', '-1':'last' };
+  // Which occurrence of this weekday within the month is `date` (1..5)?
+  function weekdayOccurrence(date) { return Math.ceil(date.getDate() / 7); }
+  function isLastWeekdayOccurrence(date) {
+    const nxt = new Date(date.getTime()); nxt.setDate(nxt.getDate() + 7);
+    return nxt.getMonth() !== date.getMonth();
+  }
+  function ordinal(n) {
+    const s=['th','st','nd','rd']; const v=n%100;
+    return n + (s[(v-20)%10] || s[v] || s[0]);
+  }
   // Should a template produce an instance on the given date key?
   function shouldRecurOn(tpl, dateKey) {
     if (!tpl) return false;
@@ -977,9 +1016,29 @@ const VOICE = {
     switch (freq) {
       case 'daily': return true;
       case 'weekdays': return dow >= 1 && dow <= 5;
-      case 'weekly': return dow === (typeof tpl.anchorDow === 'number' ? tpl.anchorDow : (tpl.startDate ? parseDkey(tpl.startDate).getDay() : 1));
+      case 'weekly': {
+        // Single-day weekly: anchorDow, or falls back to startDate's DOW or Monday
+        const anchor = (typeof tpl.anchorDow === 'number') ? tpl.anchorDow
+          : (tpl.startDate ? parseDkey(tpl.startDate).getDay() : 1);
+        return dow === anchor;
+      }
       case 'custom': return Array.isArray(tpl.weekdays) && tpl.weekdays.includes(dow);
-      case 'monthly': return dom === (typeof tpl.anchorDay === 'number' ? tpl.anchorDay : (tpl.startDate ? parseDkey(tpl.startDate).getDate() : 1));
+      case 'monthly': {
+        const mode = tpl.monthlyMode || 'date';
+        if (mode === 'nth-weekday') {
+          const nth = (typeof tpl.nthWeek === 'number') ? tpl.nthWeek : 1;
+          const nthDow = (typeof tpl.nthDow === 'number') ? tpl.nthDow : dow;
+          if (dow !== nthDow) return false;
+          if (nth === -1) return isLastWeekdayOccurrence(d);
+          return weekdayOccurrence(d) === nth;
+        }
+        // 'date' mode — last-day clamp so Jan 31 pattern still hits Feb 28/29
+        let anchor = (typeof tpl.anchorDay === 'number') ? tpl.anchorDay
+          : (tpl.startDate ? parseDkey(tpl.startDate).getDate() : 1);
+        const lastOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        if (anchor > lastOfMonth) anchor = lastOfMonth;
+        return dom === anchor;
+      }
       default: return false;
     }
   }
@@ -989,19 +1048,25 @@ const VOICE = {
     if (f === 'daily') return 'Every day';
     if (f === 'weekdays') return 'Weekdays';
     if (f === 'weekly') {
-      const names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      const dow = typeof tpl.anchorDow === 'number' ? tpl.anchorDow : (tpl.startDate ? parseDkey(tpl.startDate).getDay() : 1);
-      return 'Weekly · ' + names[dow];
+      const dow = (typeof tpl.anchorDow === 'number') ? tpl.anchorDow
+        : (tpl.startDate ? parseDkey(tpl.startDate).getDay() : 1);
+      return 'Weekly · ' + DOW_SHORT[dow];
     }
     if (f === 'custom') {
-      const names = ['Su','Mo','Tu','We','Th','Fr','Sa'];
       const ds = Array.isArray(tpl.weekdays) ? [...tpl.weekdays].sort() : [];
-      return ds.length ? ds.map(i => names[i]).join(' · ') : 'Custom';
+      return ds.length ? ds.map(i => DOW_TINY[i]).join(' · ') : 'Custom';
     }
     if (f === 'monthly') {
-      const dom = typeof tpl.anchorDay === 'number' ? tpl.anchorDay : (tpl.startDate ? parseDkey(tpl.startDate).getDate() : 1);
-      const suf = (n) => { const s=['th','st','nd','rd']; const v=n%100; return n + (s[(v-20)%10]||s[v]||s[0]); };
-      return 'Monthly · ' + suf(dom);
+      const mode = tpl.monthlyMode || 'date';
+      if (mode === 'nth-weekday') {
+        const nth = (typeof tpl.nthWeek === 'number') ? tpl.nthWeek : 1;
+        const nthDow = (typeof tpl.nthDow === 'number') ? tpl.nthDow : 1;
+        const nthLbl = NTH_NAMES[String(nth)] || 'first';
+        return 'Monthly · ' + nthLbl + ' ' + DOW_LONG[nthDow];
+      }
+      const dom = (typeof tpl.anchorDay === 'number') ? tpl.anchorDay
+        : (tpl.startDate ? parseDkey(tpl.startDate).getDate() : 1);
+      return 'Monthly · day ' + dom;
     }
     return '';
   }
@@ -1132,7 +1197,7 @@ const VOICE = {
       recurringTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch { recurringTasks = []; }
   }
-  // opts: { freq, weekdays, anchorDow, anchorDay, startDate }
+  // opts: { freq, weekdays, anchorDow, anchorDay, monthlyMode, nthWeek, nthDow, startDate }
   async function addRecurring(text, opts) {
     const o = opts || {};
     const freq = o.freq || 'daily';
@@ -1142,9 +1207,23 @@ const VOICE = {
       createdAt: new Date().toISOString(),
       startDate: o.startDate || todayKey()
     };
-    if (freq === 'weekly')  payload.anchorDow = (typeof o.anchorDow === 'number') ? o.anchorDow : parseDkey(payload.startDate).getDay();
-    if (freq === 'custom')  payload.weekdays  = Array.isArray(o.weekdays) && o.weekdays.length ? o.weekdays.slice().sort() : [parseDkey(payload.startDate).getDay()];
-    if (freq === 'monthly') payload.anchorDay = (typeof o.anchorDay === 'number') ? o.anchorDay : parseDkey(payload.startDate).getDate();
+    if (freq === 'weekly') {
+      payload.anchorDow = (typeof o.anchorDow === 'number') ? o.anchorDow : parseDkey(payload.startDate).getDay();
+    }
+    if (freq === 'custom') {
+      payload.weekdays = Array.isArray(o.weekdays) && o.weekdays.length
+        ? o.weekdays.slice().sort()
+        : [parseDkey(payload.startDate).getDay()];
+    }
+    if (freq === 'monthly') {
+      payload.monthlyMode = o.monthlyMode || 'date';
+      if (payload.monthlyMode === 'nth-weekday') {
+        payload.nthWeek = (typeof o.nthWeek === 'number') ? o.nthWeek : 1;
+        payload.nthDow  = (typeof o.nthDow  === 'number') ? o.nthDow  : parseDkey(payload.startDate).getDay();
+      } else {
+        payload.anchorDay = (typeof o.anchorDay === 'number') ? o.anchorDay : parseDkey(payload.startDate).getDate();
+      }
+    }
     try {
       const ref = await addDoc(recurringCol, payload);
       recurringTasks.push({ id: ref.id, ...payload });
@@ -1270,9 +1349,10 @@ const VOICE = {
       el.style.flexWrap = 'wrap';
       const body = document.createElement('div');
       body.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px';
+      const metaText = freqLabel(task) || 'Every day';
       body.innerHTML = `
         <span class="todo-text">${escHtml(task.text)}</span>
-        <span class="template-meta">${escHtml(freqLabel(task) || 'Every day')}</span>`;
+        <span class="template-meta" data-role="meta">${escHtml(metaText)}</span>`;
       el.appendChild(body);
 
       // Inline frequency editor
@@ -1286,14 +1366,6 @@ const VOICE = {
         <option value="custom">Custom</option>
         <option value="monthly">Monthly</option>`;
       freqSel.value = task.freq || 'daily';
-      freqSel.addEventListener('change', async () => {
-        const f = freqSel.value;
-        const patch = { freq: f };
-        if (f === 'weekly') patch.anchorDow = typeof task.anchorDow === 'number' ? task.anchorDow : new Date().getDay();
-        if (f === 'custom') patch.weekdays = Array.isArray(task.weekdays) && task.weekdays.length ? task.weekdays : [new Date().getDay()];
-        if (f === 'monthly') patch.anchorDay = typeof task.anchorDay === 'number' ? task.anchorDay : new Date().getDate();
-        await updateRecurring(task.id, patch);
-      });
       el.appendChild(freqSel);
 
       const addBtn = document.createElement('button');
@@ -1308,25 +1380,56 @@ const VOICE = {
       rmBtn.addEventListener('click', () => removeRecurring(task.id));
       el.appendChild(rmBtn);
 
-      // Custom weekday chip row (if freq=custom)
-      if ((task.freq || 'daily') === 'custom') {
-        const daysRow = document.createElement('div');
-        daysRow.style.cssText = 'flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;padding:8px 0 0';
-        ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach((lbl, i) => {
-          const chip = document.createElement('button');
-          chip.className = 'freq-day-chip';
-          chip.textContent = lbl;
-          if (Array.isArray(task.weekdays) && task.weekdays.includes(i)) chip.classList.add('active');
-          chip.addEventListener('click', async () => {
-            chip.classList.toggle('active');
-            const active = Array.from(daysRow.querySelectorAll('.freq-day-chip.active'))
-              .map(c => ['Su','Mo','Tu','We','Th','Fr','Sa'].indexOf(c.textContent));
-            await updateRecurring(task.id, { weekdays: active.slice().sort() });
-          });
-          daysRow.appendChild(chip);
-        });
-        el.appendChild(daysRow);
-      }
+      // Inline picker (weekly/custom/monthly)
+      const picker = document.createElement('div');
+      picker.className = 'freq-opts';
+      picker.style.cssText = 'flex-basis:100%;padding:10px 0 0;background:none';
+      const needsPicker = (f) => (f === 'weekly' || f === 'custom' || f === 'monthly');
+      const initialFreq = task.freq || 'daily';
+      let reader = needsPicker(initialFreq)
+        ? buildFreqPicker(picker, initialFreq, task)
+        : { read: () => ({}) };
+      if (needsPicker(initialFreq)) picker.classList.add('visible');
+      el.appendChild(picker);
+
+      // Push-on-change handler — commits every tweak
+      const commit = async () => {
+        const f = freqSel.value;
+        const patch = { freq: f };
+        // Clear stale fields so Firestore doesn't keep old pointers
+        patch.anchorDow = null;
+        patch.weekdays = null;
+        patch.anchorDay = null;
+        patch.monthlyMode = null;
+        patch.nthWeek = null;
+        patch.nthDow = null;
+        const picked = reader.read();
+        Object.assign(patch, picked);
+        // Apply side-effect defaults if nothing picked yet
+        if (f === 'weekly' && typeof patch.anchorDow !== 'number') patch.anchorDow = new Date().getDay();
+        if (f === 'custom' && (!Array.isArray(patch.weekdays) || !patch.weekdays.length)) patch.weekdays = [new Date().getDay()];
+        if (f === 'monthly' && !patch.monthlyMode) { patch.monthlyMode = 'date'; patch.anchorDay = new Date().getDate(); }
+        await updateRecurring(task.id, patch);
+        const metaEl = body.querySelector('[data-role="meta"]');
+        if (metaEl) metaEl.textContent = freqLabel({ ...task, ...patch });
+      };
+
+      freqSel.addEventListener('change', async () => {
+        const f = freqSel.value;
+        if (needsPicker(f)) {
+          reader = buildFreqPicker(picker, f, task);
+          picker.classList.add('visible');
+          // Rewire change listeners on any selects/inputs inside picker
+          wirePickerCommit(picker, commit);
+        } else {
+          picker.innerHTML = '';
+          picker.classList.remove('visible');
+          reader = { read: () => ({}) };
+        }
+        await commit();
+      });
+      wirePickerCommit(picker, commit);
+
       list.appendChild(el);
     });
     const addArea = document.createElement('div');
@@ -1531,12 +1634,166 @@ const VOICE = {
       el.classList.remove('drag-over-above','drag-over-below'));
   }
   function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-  // Read the selected custom weekdays (zero-indexed DOW, Sun=0)
-  function getCustomWeekdays() {
-    return Array.from(document.querySelectorAll('#freqDays .freq-day-chip.active'))
-      .map(c => parseInt(c.dataset.dow, 10))
-      .filter(n => !Number.isNaN(n));
+  // Render the inline Outlook-style options picker (weekly/custom/monthly)
+  // into the given container. Returns helpers to read current selections.
+  function buildFreqPicker(container, freq, seed) {
+    seed = seed || {};
+    container.innerHTML = '';
+    if (freq === 'once' || freq === 'daily' || freq === 'weekdays') return { read: () => ({}) };
+
+    if (freq === 'weekly') {
+      // Single-day picker (radio-style chips)
+      const row = document.createElement('div');
+      row.className = 'freq-opt-row';
+      row.innerHTML = `<div class="freq-opt-label">Every</div>`;
+      const chipWrap = document.createElement('div');
+      chipWrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+      const startDow = (typeof seed.anchorDow === 'number')
+        ? seed.anchorDow
+        : new Date().getDay();
+      DOW_SHORT.forEach((lbl, i) => {
+        const c = document.createElement('button');
+        c.type = 'button'; c.className = 'freq-day-chip'; c.textContent = lbl;
+        c.dataset.dow = String(i);
+        if (i === startDow) c.classList.add('active');
+        c.addEventListener('click', () => {
+          chipWrap.querySelectorAll('.freq-day-chip').forEach(x => x.classList.remove('active'));
+          c.classList.add('active');
+        });
+        chipWrap.appendChild(c);
+      });
+      row.appendChild(chipWrap);
+      container.appendChild(row);
+      return { read: () => {
+        const active = chipWrap.querySelector('.freq-day-chip.active');
+        return { anchorDow: active ? parseInt(active.dataset.dow, 10) : startDow };
+      }};
+    }
+
+    if (freq === 'custom') {
+      // Multi-day picker
+      const row = document.createElement('div');
+      row.className = 'freq-opt-row';
+      row.innerHTML = `<div class="freq-opt-label">Repeat on</div>`;
+      const chipWrap = document.createElement('div');
+      chipWrap.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+      const initial = Array.isArray(seed.weekdays) ? new Set(seed.weekdays) : new Set();
+      DOW_SHORT.forEach((lbl, i) => {
+        const c = document.createElement('button');
+        c.type = 'button'; c.className = 'freq-day-chip'; c.textContent = lbl;
+        c.dataset.dow = String(i);
+        if (initial.has(i)) c.classList.add('active');
+        c.addEventListener('click', () => c.classList.toggle('active'));
+        chipWrap.appendChild(c);
+      });
+      row.appendChild(chipWrap);
+      container.appendChild(row);
+      return { read: () => {
+        const days = Array.from(chipWrap.querySelectorAll('.freq-day-chip.active'))
+          .map(c => parseInt(c.dataset.dow, 10));
+        return { weekdays: days.slice().sort() };
+      }};
+    }
+
+    if (freq === 'monthly') {
+      // Two modes: Day [N] OR The [Nth] [Weekday]
+      const today = new Date();
+      const seedMode = seed.monthlyMode || 'date';
+      const seedDay = (typeof seed.anchorDay === 'number') ? seed.anchorDay : today.getDate();
+      const seedNth = (typeof seed.nthWeek === 'number') ? seed.nthWeek : Math.min(4, weekdayOccurrence(today));
+      const seedDow = (typeof seed.nthDow === 'number') ? seed.nthDow : today.getDay();
+
+      // Row 1: Day N
+      const row1 = document.createElement('label');
+      row1.className = 'freq-mode-row' + (seedMode === 'date' ? ' active' : '');
+      const daySelect = `<select class="freq-inline-select" data-role="mday">${
+        Array.from({length:31},(_,n)=>`<option value="${n+1}"${seedDay===n+1?' selected':''}>${n+1}</option>`).join('')
+      }</select>`;
+      row1.innerHTML = `
+        <span class="freq-mode-radio">
+          <input type="radio" name="mmode" value="date" ${seedMode === 'date' ? 'checked' : ''}>
+          <span>Day</span>
+        </span>
+        ${daySelect}
+        <span style="font-size:12px;color:rgba(255,255,255,.5);letter-spacing:.4px">of each month</span>
+      `;
+
+      // Row 2: The [Nth] [Weekday]
+      const row2 = document.createElement('label');
+      row2.className = 'freq-mode-row' + (seedMode === 'nth-weekday' ? ' active' : '');
+      const nthOpts = [[1,'first'],[2,'second'],[3,'third'],[4,'fourth'],[-1,'last']]
+        .map(([v,l]) => `<option value="${v}"${seedNth===v?' selected':''}>${l}</option>`).join('');
+      const dowOpts = DOW_LONG.map((l,i)=>`<option value="${i}"${seedDow===i?' selected':''}>${l}</option>`).join('');
+      row2.innerHTML = `
+        <span class="freq-mode-radio">
+          <input type="radio" name="mmode" value="nth-weekday" ${seedMode === 'nth-weekday' ? 'checked' : ''}>
+          <span>The</span>
+        </span>
+        <select class="freq-inline-select" data-role="mnth">${nthOpts}</select>
+        <select class="freq-inline-select" data-role="mdow">${dowOpts}</select>
+      `;
+
+      container.appendChild(row1);
+      container.appendChild(row2);
+
+      // Keep only one row visually active
+      const sync = () => {
+        const mode = container.querySelector('input[name="mmode"]:checked')?.value || 'date';
+        row1.classList.toggle('active', mode === 'date');
+        row2.classList.toggle('active', mode === 'nth-weekday');
+      };
+      container.querySelectorAll('input[name="mmode"]').forEach(r => r.addEventListener('change', sync));
+      // If a nested control is changed, auto-pick its row
+      row1.querySelector('[data-role="mday"]').addEventListener('focus', () => {
+        const r = row1.querySelector('input[type="radio"]'); r.checked = true; sync();
+      });
+      [row2.querySelector('[data-role="mnth"]'), row2.querySelector('[data-role="mdow"]')].forEach(sel => {
+        sel.addEventListener('focus', () => {
+          const r = row2.querySelector('input[type="radio"]'); r.checked = true; sync();
+        });
+      });
+      return { read: () => {
+        const mode = container.querySelector('input[name="mmode"]:checked')?.value || 'date';
+        if (mode === 'date') {
+          return { monthlyMode: 'date', anchorDay: parseInt(row1.querySelector('[data-role="mday"]').value, 10) };
+        }
+        return {
+          monthlyMode: 'nth-weekday',
+          nthWeek: parseInt(row2.querySelector('[data-role="mnth"]').value, 10),
+          nthDow: parseInt(row2.querySelector('[data-role="mdow"]').value, 10)
+        };
+      }};
+    }
+    return { read: () => ({}) };
   }
+
+  // Wire change/click events within a picker to fire a debounced commit().
+  // Use a microtask so handlers set by buildFreqPicker (e.g. radio-row sync)
+  // run first and our read() captures the post-click state.
+  function wirePickerCommit(container, commit) {
+    if (!container || !commit) return;
+    const fire = () => { queueMicrotask(commit); };
+    container.querySelectorAll('select').forEach(s => s.addEventListener('change', fire));
+    container.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener('change', fire));
+    container.querySelectorAll('.freq-day-chip').forEach(c => c.addEventListener('click', fire));
+  }
+
+  // Holds the active picker's read() so handleAdd can pull fresh values.
+  let _mainFreqReader = { read: () => ({}) };
+
+  function syncFreqUI() {
+    const sel = document.getElementById('freqSelect');
+    const opts = document.getElementById('freqOpts');
+    if (!sel) return;
+    const freq = sel.value;
+    sel.classList.toggle('has-freq', freq !== 'once');
+    const showPicker = (freq === 'weekly' || freq === 'custom' || freq === 'monthly');
+    if (opts) {
+      opts.classList.toggle('visible', showPicker);
+      _mainFreqReader = showPicker ? buildFreqPicker(opts, freq) : { read: () => ({}) };
+    }
+  }
+
   async function handleAdd() {
     const input = document.getElementById('todoInput');
     const text = input.value.trim();
@@ -1546,34 +1803,20 @@ const VOICE = {
     if (freq === 'once' || !freq) {
       addTodoItem(text);
     } else {
-      const opts = { freq };
-      if (freq === 'custom') {
-        const days = getCustomWeekdays();
-        if (!days.length) {
-          // Nothing picked yet — treat as one-off so we don't lose the text
-          addTodoItem(text);
-          input.value = ''; input.focus();
-          return;
-        }
-        opts.weekdays = days;
+      const opts = Object.assign({ freq }, _mainFreqReader.read());
+      // Guard: custom without any picked day → treat as one-off
+      if (freq === 'custom' && (!Array.isArray(opts.weekdays) || !opts.weekdays.length)) {
+        addTodoItem(text);
+        input.value = ''; input.focus();
+        return;
       }
       const tplId = await addRecurring(text, opts);
-      // If today qualifies, also drop an instance in right now so the user sees it
       if (tplId && shouldRecurOn(recurringTasks.find(t => t.id === tplId), dkey(currentDate))) {
         await materializeRecurringForDay(dkey(currentDate));
         render();
       }
     }
     input.value = ''; input.focus();
-  }
-  // Toggle custom day-chip row when frequency changes
-  function syncFreqUI() {
-    const sel = document.getElementById('freqSelect');
-    const row = document.getElementById('freqDays');
-    if (!sel) return;
-    const isCustom = sel.value === 'custom';
-    if (row) row.classList.toggle('visible', isCustom);
-    sel.classList.toggle('has-freq', sel.value !== 'once');
   }
   // ---- Init ----
   updateClock(); updateHeader(); loadTodos();
@@ -1645,12 +1888,9 @@ const VOICE = {
   setInterval(maybeRolloverToToday, 5 * 60 * 1000);
   document.getElementById('addBtn').addEventListener('click', handleAdd);
   document.getElementById('todoInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAdd(); });
-  // Frequency selector + custom-day chips
+  // Frequency selector — picker is rendered on demand by syncFreqUI
   const _freqSel = document.getElementById('freqSelect');
   if (_freqSel) _freqSel.addEventListener('change', syncFreqUI);
-  document.querySelectorAll('#freqDays .freq-day-chip').forEach(chip => {
-    chip.addEventListener('click', () => chip.classList.toggle('active'));
-  });
   syncFreqUI();
   // Preload recurring templates so today's instances can materialize
   loadRecurring().then(() => { if (isToday()) { materializeRecurringForDay(dkey(currentDate)).then(n => { if (n > 0) render(); }); } });
