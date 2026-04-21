@@ -197,7 +197,18 @@ body{padding:16px 14px 120px}
   background:var(--surface-3);color:var(--text-dim);
 }
 .event-src.gcal{background:rgba(2,132,199,0.14);color:var(--done)}
-.event-actions{display:flex;gap:4px;flex-shrink:0}
+.event-actions{display:flex;gap:4px;flex-shrink:0;align-items:center}
+.join-btn{
+  height:32px;padding:0 12px;border-radius:8px;
+  background:var(--accent);color:#1C1C1E;
+  font-size:11px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;
+  text-decoration:none;border:1px solid rgba(0,0,0,0.08);
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:all 0.15s;font-family:var(--font);
+  box-shadow:0 1px 2px rgba(60,60,67,0.08);
+}
+.join-btn:hover{filter:brightness(1.06);box-shadow:0 2px 6px rgba(255,138,61,0.32)}
+.join-btn:active{transform:translateY(1px)}
 .star-btn{
   width:32px;height:32px;border-radius:8px;
   background:transparent;border:1px solid var(--border);
@@ -728,7 +739,8 @@ function unified(){
       date:g.date, start:g.start||'', end:g.end||'',
       startISO:g.startISO||'', endISO:g.endISO||g.startISO||'',
       category:g.category||'event', priority:pri,
-      location:g.location||'', notes:'',
+      location:g.location||'', notes:g.description||'',
+      meetingUrl:g.meetingUrl||'',
       cal:g.cal||'', allDay:!!g.allDay,
       timeStr:g.timeStr||'',
       edited:!!override, originalTitle:g.summary||'',
@@ -1010,6 +1022,28 @@ function renderDayRow(date,events,today){
   </div>`;
 }
 
+// Detect video meeting URL from structured field first, then scan free text.
+const MEETING_URL_REGEX=/https?:\/\/(?:[\w-]+\.)?(?:zoom\.us|zoom\.com|zoomgov\.com|teams\.microsoft\.com|teams\.live\.com|meet\.google\.com|webex\.com|gotomeeting\.com|whereby\.com|chime\.aws)\/[^\s<>"')]+/i;
+function findMeetingUrl(e){
+  if(e&&e.meetingUrl) return e.meetingUrl;
+  const haystack=[e&&e.location, e&&e.notes, e&&e.title, e&&e.originalTitle].filter(Boolean).join(' \n ');
+  if(!haystack) return '';
+  const m=haystack.match(MEETING_URL_REGEX);
+  return m?m[0]:'';
+}
+function meetingPlatform(url){
+  if(!url) return '';
+  const u=url.toLowerCase();
+  if(u.includes('zoom.us')||u.includes('zoom.com')||u.includes('zoomgov.com')) return 'Zoom';
+  if(u.includes('teams.microsoft.com')||u.includes('teams.live.com')) return 'Teams';
+  if(u.includes('meet.google.com')) return 'Meet';
+  if(u.includes('webex.com')) return 'Webex';
+  if(u.includes('gotomeeting.com')) return 'GoTo';
+  if(u.includes('whereby.com')) return 'Whereby';
+  if(u.includes('chime.aws')) return 'Chime';
+  return 'Join';
+}
+
 function renderEventPill(e){
   const cls=['event-pill'];
   if(e.priority) cls.push('priority');
@@ -1031,6 +1065,9 @@ function renderEventPill(e){
   const delBtn=e.source==='manual'?`<button class="del-btn" data-id="${escapeAttr(e.id)}" title="Delete">&times;</button>`:'';
   const starOn=e.priority?'on':'';
   const editedMark=e.edited?`<span class="event-edited-mark" title="Renamed — original: ${escapeAttr(e.originalTitle)}">edited</span>`:'';
+  const meetingUrl=findMeetingUrl(e);
+  const platform=meetingPlatform(meetingUrl);
+  const joinBtn=meetingUrl?`<a class="join-btn" href="${escapeAttr(meetingUrl)}" target="_blank" rel="noopener" title="Join ${escapeAttr(platform)}" onclick="event.stopPropagation()">${escapeHTML(platform)}</a>`:'';
   return `<div class="${cls.join(' ')}" data-src="${e.source}" data-id="${escapeAttr(e.id)}">
     <div class="event-cat cat-${e.category}"></div>
     <div class="event-body">
@@ -1038,6 +1075,7 @@ function renderEventPill(e){
       <div class="event-meta">${srcBadge}${metaBits.join('')}</div>
     </div>
     <div class="event-actions">
+      ${joinBtn}
       <button class="star-btn ${starOn}" data-src="${e.source}" data-id="${escapeAttr(e.id)}" title="Toggle priority">${e.priority?'★':'☆'}</button>
       ${delBtn}
     </div>
@@ -1313,6 +1351,8 @@ async function syncNow(){
           location:it.location||'',
           cal:it.cal||'',
           allDay:!!it.allDay,
+          meetingUrl:it.meetingUrl||'',
+          description:it.description||'',
           category:categorizeGcal(it.summary,it.location),
         });
       }

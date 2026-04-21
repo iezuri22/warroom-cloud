@@ -124,6 +124,11 @@ export default async function handler(req, res) {
       const endISO = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T23:59:00-05:00` : null);
       if (!startISO) continue;
 
+      // Meeting URL: prefer conferenceData (Meet/Zoom/Teams video entry), then hangoutLink (legacy Meet)
+      const videoEntry = ev.conferenceData?.entryPoints?.find(x => x.entryPointType === 'video');
+      const meetingUrl = videoEntry?.uri || ev.hangoutLink || '';
+      const description = ev.description || '';
+
       if (isAllDay) {
         // Multi-day all-day events: one entry per day
         const start = new Date(ev.start.date + 'T12:00:00');
@@ -136,6 +141,8 @@ export default async function handler(req, res) {
             summary: ev.summary || '(untitled)',
             time: 'All day',
             location: ev.location || '',
+            description,
+            meetingUrl,
             startISO: `${dk}T06:00:00-05:00`,
             endISO: `${dk}T23:59:00-05:00`,
             cal: ev._calLabel,
@@ -150,6 +157,8 @@ export default async function handler(req, res) {
           summary: ev.summary || '(untitled)',
           time: formatTimeRange(startISO, endISO || startISO),
           location: ev.location || '',
+          description,
+          meetingUrl,
           startISO,
           endISO: endISO || startISO,
           cal: ev._calLabel,
