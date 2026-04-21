@@ -283,6 +283,8 @@
   }
   .template-item:hover { background: rgba(255,255,255,.06); }
   .template-item .todo-text { font-size: 20px; }
+  .template-item--muted { opacity: .6; }
+  .template-item--muted:hover { opacity: 1; }
   .template-add-btn {
     background: rgba(255,138,61,.1); border: 1.5px solid rgba(255,138,61,.2);
     color: #FF8A3D; height: 40px; padding: 0 20px;
@@ -1059,6 +1061,7 @@ const VOICE = {
   function freqLabel(tpl) {
     if (!tpl) return '';
     const f = tpl.freq || 'daily';
+    if (f === 'once') return 'Not recurring';
     if (f === 'daily') return 'Every day';
     if (f === 'weekdays') return 'Weekdays';
     if (f === 'weekly') {
@@ -1357,9 +1360,16 @@ const VOICE = {
       empty.innerHTML = `<div class="empty-text">No recurring tasks yet</div>`;
       list.appendChild(empty);
     }
-    recurringTasks.forEach(task => {
+    // Sort: recurring templates first (in original order), then None (freq === 'once') at the bottom
+    const sortedRecurring = [...recurringTasks].sort((a, b) => {
+      const aOnce = (a.freq || 'daily') === 'once' ? 1 : 0;
+      const bOnce = (b.freq || 'daily') === 'once' ? 1 : 0;
+      return aOnce - bOnce;
+    });
+    sortedRecurring.forEach(task => {
       const el = document.createElement('div');
       el.className = 'template-item';
+      if ((task.freq || 'daily') === 'once') el.classList.add('template-item--muted');
       el.style.flexWrap = 'wrap';
       const body = document.createElement('div');
       body.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:2px';
@@ -1410,12 +1420,6 @@ const VOICE = {
       // Push-on-change handler — commits every tweak
       const commit = async () => {
         const f = freqSel.value;
-        // Picking "None" removes the task from the recurring list
-        if (f === 'once') {
-          await removeRecurring(task.id);
-          render();
-          return;
-        }
         const patch = { freq: f };
         // Clear stale fields so Firestore doesn't keep old pointers
         patch.anchorDow = null;
