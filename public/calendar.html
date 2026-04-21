@@ -118,8 +118,10 @@ body{padding:16px 14px 120px}
   margin:0 2px 10px;padding-bottom:8px;
   border-bottom:1px solid var(--border);
 }
+.h-group-title-wrap{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
 .h-group-title{font-size:14px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--text)}
-.h-group-sub{font-size:11px;color:var(--text-dim);font-weight:700;letter-spacing:0.04em}
+.h-group-range{font-size:12px;font-weight:700;color:var(--text-dim);letter-spacing:0.01em;text-transform:none}
+.h-group-sub{font-size:11px;color:var(--text-dim);font-weight:700;letter-spacing:0.04em;flex-shrink:0}
 
 .day-row{
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
@@ -383,7 +385,7 @@ let state={
   manual:[],       // manual events from localStorage
   gcal:[],         // live GCal events
   gcalPriority:{}, // map of gcal event id -> true
-  filter:'all',    // 'all' | 'priority' | category id
+  filter:'priority',// 'all' | 'priority' | 'manual' | calendar label (Personal/TWEG/Partiful)
   syncStatus:'idle',// idle | syncing | connected | needs_auth | error
   syncedAt:null,
   lastError:null,
@@ -420,7 +422,7 @@ function saveGcalCache(){
   localStorage.setItem(GCAL_CACHE_KEY,JSON.stringify({events:state.gcal,syncedAt:state.syncedAt}));
 }
 function loadFilter(){
-  return localStorage.getItem(FILTER_KEY)||'all';
+  return localStorage.getItem(FILTER_KEY)||'priority';
 }
 function saveFilter(){
   localStorage.setItem(FILTER_KEY,state.filter);
@@ -525,10 +527,15 @@ function unified(){
 }
 
 /* ============ FILTER ============ */
+function eventSourceKey(e){
+  // Returns filter key for this event: 'manual' or calendar label ('Personal'/'TWEG'/'Partiful')
+  if(e.source==='manual') return 'manual';
+  return e.cal || 'Other';
+}
 function applyFilter(list){
   if(state.filter==='all') return list;
   if(state.filter==='priority') return list.filter(e=>e.priority);
-  return list.filter(e=>e.category===state.filter);
+  return list.filter(e=>eventSourceKey(e)===state.filter);
 }
 
 /* ============ HORIZON GROUPING ============ */
@@ -552,7 +559,39 @@ function groupByHorizon(list){
     groups[key].days.add(e.date);
   }
   const order=['TODAY','TOMORROW','THIS WEEK','NEXT WEEK','IN 2–4 WEEKS','IN 1–2 MONTHS','LATER'];
-  return order.filter(k=>groups[k]).map(k=>({key:k,events:groups[k].events,dayCount:groups[k].days.size}));
+  return order.filter(k=>groups[k]).map(k=>({
+    key:k,
+    events:groups[k].events,
+    dayCount:groups[k].days.size,
+    range:horizonRange(k,today),
+  }));
+}
+
+function horizonRange(key,today){
+  // Day offsets for each bucket
+  const offsets={
+    'TODAY':[0,0],
+    'TOMORROW':[1,1],
+    'THIS WEEK':[2,6],
+    'NEXT WEEK':[7,13],
+    'IN 2–4 WEEKS':[14,27],
+    'IN 1–2 MONTHS':[28,55],
+    'LATER':[56,null],
+  };
+  const [startOff,endOff]=offsets[key]||[null,null];
+  if(startOff===null) return '';
+  const t=dateFromKey(today);
+  const start=new Date(t);start.setDate(t.getDate()+startOff);
+  if(endOff===null){
+    return formatRangeDate(start)+' →';
+  }
+  const end=new Date(t);end.setDate(t.getDate()+endOff);
+  if(startOff===endOff) return formatRangeDate(start);
+  return `${formatRangeDate(start)} – ${formatRangeDate(end)}`;
+}
+
+function formatRangeDate(d){
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
 function groupEventsByDay(events){
@@ -607,22 +646,40 @@ function renderStats(){
 
 function renderFilterBar(){
   const list=unified();
-  const counts={all:list.length,priority:list.filter(e=>e.priority).length};
-  for(const c of CATEGORIES) counts[c.id]=list.filter(e=>e.category===c.id).length;
+  // Build source buckets from actual events present
+  const sourceCounts={};
+  for(const e of list){
+    const k=eventSourceKey(e);
+    sourceCounts[k]=(sourceCounts[k]||0)+1;
+  }
+  const SOURCE_COLORS={Personal:'#5AC8FA',TWEG:'#BF5AF2',Partiful:'#FF8A3D',manual:'#30D158'};
+  const SOURCE_LABELS={manual:'Manual'};
 
+  // Priority first, then All, then each calendar source found
   const chips=[
-    {id:'all',label:'All',color:null},
-    {id:'priority',label:'★ Priority',color:null},
-    ...CATEGORIES.map(c=>({id:c.id,label:c.label,color:c.color})),
+    {id:'priority',label:'Priority',color:'#FF8A3D',starred:true,count:list.filter(e=>e.priority).length},
+    {id:'all',label:'All',color:null,count:list.length},
   ];
+  // Sort sources: TWEG, Partiful, Personal, manual (stable, in that order if present)
+  const sourceOrder=['TWEG','Partiful','Personal','manual'];
+  for(const k of sourceOrder){
+    if(sourceCounts[k]){
+      chips.push({id:k,label:SOURCE_LABELS[k]||k,color:SOURCE_COLORS[k]||'#6E7074',count:sourceCounts[k]});
+    }
+  }
+  // Any other sources we didn't predict
+  for(const k of Object.keys(sourceCounts)){
+    if(!sourceOrder.includes(k)){
+      chips.push({id:k,label:k,color:'#6E7074',count:sourceCounts[k]});
+    }
+  }
 
   const bar=document.getElementById('filterBar');
   bar.innerHTML=chips.map(c=>{
-    const n=counts[c.id]||0;
-    if(c.id!=='all' && c.id!=='priority' && n===0) return '';
     const active=state.filter===c.id?'active':'';
     const dot=c.color?`<span class="dot" style="background:${c.color}"></span>`:'';
-    return `<div class="chip ${active}" data-f="${c.id}">${dot}${c.label}<span class="count">${n}</span></div>`;
+    const star=c.starred?'★ ':'';
+    return `<div class="chip ${active}" data-f="${c.id}">${dot}${star}${escapeHTML(c.label)}<span class="count">${c.count}</span></div>`;
   }).join('');
 
   bar.querySelectorAll('.chip').forEach(ch=>{
@@ -652,11 +709,14 @@ function renderHorizon(){
   const list=applyFilter(unified());
 
   if(!list.length){
-    const msg=state.filter==='all'
-      ? 'No events ahead. Hit + to add one, or sync Google Calendar.'
-      : state.filter==='priority'
-        ? 'No priority events ahead. Star an event to pin it here.'
-        : 'No events in this category.';
+    const totalUnfiltered=unified().length;
+    const msg=state.filter==='priority'
+      ? (totalUnfiltered
+          ? 'Nothing flagged as priority yet. Tap All to see everything, or star an event to pin it here.'
+          : 'No events on the horizon. Tap + to add one, or sync Google Calendar.')
+      : state.filter==='all'
+        ? 'No events ahead. Hit + to add one, or sync Google Calendar.'
+        : 'No events from this calendar.';
     container.innerHTML=`<div class="empty-horizon"><div class="empty-horizon-title">Clear horizon</div><div class="empty-horizon-msg">${msg}</div></div>`;
     return;
   }
@@ -668,7 +728,8 @@ function renderHorizon(){
     const days=groupEventsByDay(g.events);
     const dayHTML=days.map(({date,events})=>renderDayRow(date,events,today)).join('');
     const sub=g.events.length===1?'1 event':`${g.events.length} events · ${g.dayCount} ${g.dayCount===1?'day':'days'}`;
-    return `<div class="h-group"><div class="h-group-head"><div class="h-group-title">${g.key}</div><div class="h-group-sub">${sub}</div></div>${dayHTML}</div>`;
+    const rangeHTML=g.range?`<span class="h-group-range">${escapeHTML(g.range)}</span>`:'';
+    return `<div class="h-group"><div class="h-group-head"><div class="h-group-title-wrap"><span class="h-group-title">${g.key}</span>${rangeHTML}</div><div class="h-group-sub">${sub}</div></div>${dayHTML}</div>`;
   }).join('');
 
   // wire up event handlers
