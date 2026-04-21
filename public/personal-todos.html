@@ -1311,6 +1311,25 @@ const VOICE = {
   updateClock(); updateHeader(); loadTodos();
   setInterval(updateClock, 60000);
 
+  // ---- Inbound message bridge (from War Room shell) ----
+  // Accept tasks sent over from Today's Plan: { type: 'warroom:add-personal-todo', text }
+  window.addEventListener('message', async (ev) => {
+    try {
+      const d = ev && ev.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'warroom:add-personal-todo' && typeof d.text === 'string' && d.text.trim()) {
+        // Snap to today so the new item lands where the user expects
+        if (!isToday()) { currentDate = new Date(); updateHeader(); await loadTodos(); }
+        const text = d.text.trim();
+        // Skip obvious duplicates (same title, not yet done, same day)
+        const dup = todos.find(t => !t.done && (t.text || '').trim().toLowerCase() === text.toLowerCase());
+        if (!dup) await addTodoItem(text);
+        // Ack back so the sender can toast accurately
+        try { window.parent && window.parent.postMessage({ type: 'warroom:personal-todo-added', text, duplicate: !!dup }, '*'); } catch {}
+      }
+    } catch (e) { console.warn('personal-todos message handler failed', e); }
+  });
+
   // ---- Date rollover detector ----
   // If the page stays open across midnight (or the iframe stays cached),
   // jump currentDate forward to today, reload, and trigger carry-over.
