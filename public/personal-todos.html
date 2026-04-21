@@ -942,10 +942,22 @@ const VOICE = {
   }
   async function addCountdownTime(id, seconds = 150) {
     const todo = todos.find(t => t.id === id);
-    if (!todo || !todo.countdownSecs) return;
-    todo.countdownSecs = todo.countdownSecs + seconds;
-    render();
-    try { await updateDoc(doc(db, 'tv_todos', id), { countdownSecs: todo.countdownSecs }); } catch {}
+    if (!todo) return;
+    // First tap: seed a fresh countdown and reset spent time so the bar is clean
+    if (!todo.countdownSecs) {
+      // If stopwatch was already running on this task, stop it so we start cleanly
+      if (activeTimerId === id) await stopTimer(false);
+      todo.countdownSecs = seconds;
+      todo.timeSpent = 0;
+      announcedMilestones = new Set();
+      pickerOpenId = null;
+      render();
+      try { await updateDoc(doc(db, 'tv_todos', id), { countdownSecs: seconds, timeSpent: 0 }); } catch {}
+    } else {
+      todo.countdownSecs = todo.countdownSecs + seconds;
+      render();
+      try { await updateDoc(doc(db, 'tv_todos', id), { countdownSecs: todo.countdownSecs }); } catch {}
+    }
     // Auto-start the timer if it isn't already running on this task
     if (activeTimerId !== id) startTimer(id);
   }
@@ -1518,7 +1530,7 @@ const VOICE = {
     if (!todo.done) {
       const cd = countdownText ? `<span class="timer-countdown ${isActive?'active':''} ${isWarning?'warning':''}">${countdownText}</span>` : '';
       const setLabel = hasCountdown ? `${Math.floor(todo.countdownSecs/60)}m` : '';
-      const addCd = hasCountdown ? `<button class="countdown-add-btn" title="Add 2:30">+2:30</button>` : '';
+      const addCd = `<button class="countdown-add-btn" title="Add 2:30">+2:30</button>`;
       timerHTML = `<div class="timer-inline">
         ${addCd}
         ${cd}
