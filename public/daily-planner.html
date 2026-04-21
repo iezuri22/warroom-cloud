@@ -3002,6 +3002,9 @@ function toggleDone(id){
   const{all,items,key}=currentPlan();
   const item=items.find(i=>i.id===id);if(!item)return;
   item.done=!item.done;
+  // Mirror completion to linked Personal todo (fire-and-forget; Personal will
+  // ignore the message if its state already matches, which prevents loops)
+  try { const todoId = getPersonalTodoIdForPlan(id); if (todoId) mirrorPersonalTodoDone(todoId, item.done); } catch {}
   if(item.done){
     item.completedAt=new Date().toISOString();
     // Detect schedule shift
@@ -3087,6 +3090,68 @@ function removeItem(id){
   savePlan(all);render();
 }
 
+// --- Plan ↔ Personal link map (planTaskId ↔ personalTodoId) ---
+const PLAN_PERSONAL_LINK_KEY = 'plan-personal-links-v1';
+function loadPlanPersonalLinks(){
+  try { return JSON.parse(localStorage.getItem(PLAN_PERSONAL_LINK_KEY)) || {}; } catch { return {}; }
+}
+function savePlanPersonalLinks(m){
+  try { localStorage.setItem(PLAN_PERSONAL_LINK_KEY, JSON.stringify(m)); } catch {}
+}
+function linkPlanToPersonal(planTaskId, todoId){
+  if(!planTaskId || !todoId) return;
+  const m = loadPlanPersonalLinks();
+  m[planTaskId] = todoId;
+  savePlanPersonalLinks(m);
+}
+function getPersonalTodoIdForPlan(planTaskId){
+  return loadPlanPersonalLinks()[planTaskId] || null;
+}
+function getPlanIdForPersonalTodo(todoId){
+  const m = loadPlanPersonalLinks();
+  for (const k of Object.keys(m)) { if (m[k] === todoId) return k; }
+  return null;
+}
+
+// Mirror a done toggle from Personal back to the plan task (no persist loop)
+function mirrorPlanTaskDone(planTaskId, done){
+  const all = loadPlan();
+  let changed = false;
+  for (const dk of Object.keys(all)) {
+    const list = all[dk] || [];
+    for (const it of list) {
+      if (it && it.id === planTaskId && !!it.done !== !!done) {
+        it.done = !!done;
+        it.completedAt = done ? new Date().toISOString() : null;
+        if (!done) it.shifted = false;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    savePlan(all);
+    try { syncGoalDone(planTaskId, !!done); } catch {}
+    if (currentTab === 'planner') try { render(); } catch {}
+  }
+}
+
+// Mirror a done toggle from Today's Plan into Personal (via iframe)
+function mirrorPersonalTodoDone(todoId, done){
+  if(!todoId) return;
+  const frame = document.getElementById('todosFrame');
+  if(!frame) return;
+  const needsLoad = frame.src==='about:blank'||frame.src===''||!frame.src.includes('personal-todos.html');
+  const post = ()=>{
+    try { frame.contentWindow.postMessage({type:'warroom:plan-mirror-toggle', todoId, done:!!done}, '*'); }
+    catch(e){ console.warn('mirrorPersonalTodoDone failed', e); }
+  };
+  if(needsLoad){
+    frame.src = '/personal-todos.html?embed=1';
+    const onLoad = ()=>{ frame.removeEventListener('load', onLoad); setTimeout(post, 150); };
+    frame.addEventListener('load', onLoad);
+  } else { post(); }
+}
+
 // --- Send Today's Plan task over to the Personal todos iframe ---
 function sendTaskToPersonal(id){
   const{items}=currentPlan();
@@ -3094,16 +3159,14 @@ function sendTaskToPersonal(id){
   if(!item||!item.text){showToast('Nothing to send');return;}
   const frame=document.getElementById('todosFrame');
   if(!frame){showToast('Personal tab unavailable');return;}
-  // Lazy-load the iframe if the user hasn't opened the Personal tab yet
   const needsLoad=frame.src==='about:blank'||frame.src===''||!frame.src.includes('personal-todos.html');
   const post=()=>{
-    try{frame.contentWindow.postMessage({type:'warroom:add-personal-todo',text:item.text},'*');}
+    try{frame.contentWindow.postMessage({type:'warroom:add-personal-todo',text:item.text,planTaskId:item.id},'*');}
     catch(e){console.warn('sendTaskToPersonal postMessage failed',e);}
   };
   if(needsLoad){
     frame.src='/personal-todos.html?embed=1';
-    // Wait for the iframe to load its listener before posting
-    const onLoad=()=>{frame.removeEventListener('load',onLoad);setTimeout(post,120);};
+    const onLoad=()=>{frame.removeEventListener('load',onLoad);setTimeout(post,150);};
     frame.addEventListener('load',onLoad);
   } else {
     post();
@@ -3492,8 +3555,12 @@ window.addEventListener('message', (ev) => {
     } catch(e) {}
   } else if (d.type === 'warroom:personal-done') {
     if (d.taskId) setPersonalDone('todo:' + d.taskId, !!d.done);
+    // Mirror completion to the linked plan task, if any
+    const planId = d.planTaskId || getPlanIdForPersonalTodo(d.taskId);
+    if (planId) mirrorPlanTaskDone(planId, !!d.done);
     if (currentTab === 'analytics') try { renderAnalytics(); } catch {}
   } else if (d.type === 'warroom:personal-todo-added') {
+    if (d.planTaskId && d.todoId) linkPlanToPersonal(d.planTaskId, d.todoId);
     if (d.duplicate) try { showToast('Already in Personal'); } catch {}
   }
 });

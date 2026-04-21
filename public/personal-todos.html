@@ -916,16 +916,21 @@ const VOICE = {
     }
     render();
   }
-  async function addTodoItem(text) {
+  async function addTodoItem(text, planTaskId) {
     const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
     try {
-      const ref = await addDoc(todosCol, {
+      const payload = {
         text, done: false, date: dkey(currentDate), position: maxPos,
         timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString()
-      });
-      todos.push({ id: ref.id, text, done: false, date: dkey(currentDate), position: maxPos, timeSpent: 0, countdownSecs: 0 });
+      };
+      if (planTaskId) payload.planTaskId = planTaskId;
+      const ref = await addDoc(todosCol, payload);
+      const newTodo = { id: ref.id, text, done: false, date: dkey(currentDate), position: maxPos, timeSpent: 0, countdownSecs: 0 };
+      if (planTaskId) newTodo.planTaskId = planTaskId;
+      todos.push(newTodo);
       render();
-    } catch (e) { console.error('Add error:', e); }
+      return ref.id;
+    } catch (e) { console.error('Add error:', e); return null; }
   }
   async function toggleTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
@@ -933,14 +938,15 @@ const VOICE = {
     if (!todo) return;
     todo.done = !todo.done; render();
     try { await updateDoc(doc(db, 'tv_todos', id), { done: todo.done }); } catch {}
-    // Bridge completion state to War Room analytics
+    // Bridge completion state to War Room analytics + mirror to linked plan task
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({
           type: 'warroom:personal-done',
           taskId: id,
           done: !!todo.done,
-          taskName: todo.text || ''
+          taskName: todo.text || '',
+          planTaskId: todo.planTaskId || null
         }, '*');
       }
     } catch {}
@@ -1312,20 +1318,42 @@ const VOICE = {
   setInterval(updateClock, 60000);
 
   // ---- Inbound message bridge (from War Room shell) ----
-  // Accept tasks sent over from Today's Plan: { type: 'warroom:add-personal-todo', text }
   window.addEventListener('message', async (ev) => {
     try {
       const d = ev && ev.data;
       if (!d || typeof d !== 'object') return;
+
+      // Send a Today's Plan task over: { type, text, planTaskId? }
       if (d.type === 'warroom:add-personal-todo' && typeof d.text === 'string' && d.text.trim()) {
-        // Snap to today so the new item lands where the user expects
         if (!isToday()) { currentDate = new Date(); updateHeader(); await loadTodos(); }
         const text = d.text.trim();
-        // Skip obvious duplicates (same title, not yet done, same day)
+        const planTaskId = d.planTaskId || null;
         const dup = todos.find(t => !t.done && (t.text || '').trim().toLowerCase() === text.toLowerCase());
-        if (!dup) await addTodoItem(text);
-        // Ack back so the sender can toast accurately
-        try { window.parent && window.parent.postMessage({ type: 'warroom:personal-todo-added', text, duplicate: !!dup }, '*'); } catch {}
+        let todoId;
+        if (!dup) {
+          todoId = await addTodoItem(text, planTaskId);
+        } else {
+          todoId = dup.id;
+          // Back-fill the plan link on an existing duplicate so future completions mirror
+          if (planTaskId && !dup.planTaskId) {
+            dup.planTaskId = planTaskId;
+            try { await updateDoc(doc(db, 'tv_todos', dup.id), { planTaskId }); } catch {}
+          }
+        }
+        try { window.parent && window.parent.postMessage({ type: 'warroom:personal-todo-added', text, duplicate: !!dup, todoId, planTaskId }, '*'); } catch {}
+        return;
+      }
+
+      // Plan task marked done/undone in Today's Plan → mirror into Personal
+      if (d.type === 'warroom:plan-mirror-toggle' && d.todoId) {
+        const todo = todos.find(t => t.id === d.todoId);
+        if (!todo) return;
+        const want = !!d.done;
+        if (!!todo.done === want) return; // already in sync — prevents loops
+        if (activeTimerId === todo.id) await stopTimer(false);
+        todo.done = want; render();
+        try { await updateDoc(doc(db, 'tv_todos', todo.id), { done: want }); } catch {}
+        return;
       }
     } catch (e) { console.warn('personal-todos message handler failed', e); }
   });
