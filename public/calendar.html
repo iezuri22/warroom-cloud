@@ -359,20 +359,35 @@ body.embed{padding-top:14px}
 
 /* ============ TWO-COLUMN LAYOUT (desktop) ============ */
 @media(min-width:900px){
-  body{padding:20px;max-width:none}
+  body{padding:20px 28px;max-width:1240px;margin:0 auto}
   .cal-layout{
-    display:grid;grid-template-columns:300px 1fr;gap:24px;
+    display:grid;grid-template-columns:220px 1fr;gap:22px;
     align-items:start;
   }
   .cal-sidebar-pane{
     position:sticky;top:20px;
-    display:flex;flex-direction:column;gap:12px;
+    display:flex;flex-direction:column;gap:10px;
     max-height:calc(100vh - 40px);overflow-y:auto;
     padding-right:4px;
   }
-  .cal-sidebar-pane .hero{margin:0}
-  .cal-sidebar-pane .hero-stats{grid-template-columns:1fr 1fr;gap:10px}
-  .cal-sidebar-pane .toolbar{margin:0;flex-wrap:wrap}
+  .cal-sidebar-pane .hero{margin:0;padding:14px 14px 12px}
+  .cal-sidebar-pane .hero-title{font-size:18px}
+  /* Stats stack vertically: label on left, value on right */
+  .cal-sidebar-pane .hero-stats{
+    display:flex;flex-direction:column;gap:8px;margin-top:12px;
+  }
+  .cal-sidebar-pane .hero-stat{
+    display:flex;flex-direction:row-reverse;align-items:center;justify-content:space-between;
+    min-width:0;padding:8px 10px;border-radius:8px;background:var(--surface-2);
+  }
+  .cal-sidebar-pane .hero-stat-val{font-size:17px}
+  .cal-sidebar-pane .hero-stat-lbl{font-size:9.5px;letter-spacing:0.07em;white-space:normal}
+  /* Filter chips stack vertically */
+  .cal-sidebar-pane .toolbar{margin:0;flex-direction:column;align-items:stretch;gap:6px}
+  .cal-sidebar-pane .toolbar .chip{
+    justify-content:flex-start;padding:8px 12px;border-radius:8px;font-size:12px;
+  }
+  .cal-sidebar-pane .toolbar .chip .count{margin-left:auto}
   .cal-main{min-width:0;width:100%}
   .cal-main .horizon{max-width:none}
 }
@@ -862,21 +877,25 @@ function renderFilterBar(){
   const SOURCE_COLORS={Personal:'#5AC8FA',TWEG:'#BF5AF2',Partiful:'#FF8A3D',Birthdays:'#FFD60A',manual:'#30D158'};
   const SOURCE_LABELS={manual:'Manual'};
 
-  // Priority first, then All, then each calendar source found
+  // Priority first, then TWEG, then All, then remaining calendar sources
   const chips=[
     {id:'priority',label:'Priority',color:'#FF8A3D',starred:true,count:list.filter(e=>e.priority).length},
-    {id:'all',label:'All',color:null,count:list.length},
   ];
-  // Sort sources: TWEG, Partiful, Personal, Birthdays, manual (stable, in that order if present)
-  const sourceOrder=['TWEG','Partiful','Personal','Birthdays','manual'];
+  if(sourceCounts['TWEG']){
+    chips.push({id:'TWEG',label:'TWEG',color:SOURCE_COLORS['TWEG'],count:sourceCounts['TWEG']});
+  }
+  chips.push({id:'all',label:'All',color:null,count:list.length});
+  // Remaining sources: Partiful, Personal, Birthdays, manual (TWEG already placed)
+  const sourceOrder=['Partiful','Personal','Birthdays','manual'];
   for(const k of sourceOrder){
     if(sourceCounts[k]){
       chips.push({id:k,label:SOURCE_LABELS[k]||k,color:SOURCE_COLORS[k]||'#6E7074',count:sourceCounts[k]});
     }
   }
-  // Any other sources we didn't predict
+  // Any other sources we didn't predict (TWEG already placed above)
+  const placed=new Set(['TWEG',...sourceOrder]);
   for(const k of Object.keys(sourceCounts)){
-    if(!sourceOrder.includes(k)){
+    if(!placed.has(k)){
       chips.push({id:k,label:k,color:'#6E7074',count:sourceCounts[k]});
     }
   }
