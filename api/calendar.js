@@ -7,6 +7,7 @@ const CALENDARS = [
   { id: 'primary', label: 'Personal' },
   { id: 'gevtrfnupve04u82ik62pm4ctg2fbonf@import.calendar.google.com', label: 'TWEG' },
   { id: 'tk2nsridvpuqnulcldem56u8rkel04f7@import.calendar.google.com', label: 'Partiful' },
+  { id: 'addressbook#contacts@group.v.calendar.google.com', label: 'Birthdays' },
 ];
 
 function formatTime(date) {
