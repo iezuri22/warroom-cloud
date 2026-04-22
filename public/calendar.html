@@ -155,15 +155,12 @@ body{padding:16px 14px 120px}
   background:linear-gradient(135deg,#FFF5EC 0%,rgba(255,138,61,0.18) 100%);
   border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent) inset,0 2px 8px rgba(255,138,61,0.18);
 }
-.month-cell.today .mc-num{
-  color:#0a0a0f;font-weight:900;background:var(--accent);
-  padding:2px 6px;border-radius:6px;font-size:12px;letter-spacing:-0.02em;
-}
 .month-cell.today.weekend{background:linear-gradient(135deg,#FFF5EC 0%,rgba(255,138,61,0.18) 100%)}
 .month-cell.has-priority{border-color:rgba(255,138,61,0.5)}
 .mc-head{display:flex;align-items:center;justify-content:space-between;gap:4px;flex-shrink:0}
 .mc-num{font-size:12px;font-weight:700;color:var(--text);line-height:1}
-.month-cell.today .mc-num{color:var(--accent);font-weight:800}
+.month-cell.today .mc-num{color:var(--accent);font-weight:900;font-size:14px;letter-spacing:-0.03em}
+.month-cell.today .mc-num::after{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent);margin-left:4px;vertical-align:middle;box-shadow:0 0 0 2px rgba(255,138,61,0.25)}
 .mc-count{font-size:9px;font-weight:800;color:var(--text-dim);letter-spacing:.4px;text-transform:uppercase;line-height:1}
 .mc-events{display:flex;flex-direction:column;gap:2px;min-width:0;overflow:hidden;flex:1 1 auto}
 .mc-pill{
@@ -684,6 +681,7 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
     </div>
     <button class="modal-close" id="detailClose">&times;</button>
     <div class="detail-meta" id="detailMeta"></div>
+    <a class="btn primary join-btn" id="detailJoin" href="#" target="_blank" rel="noopener" style="display:none;margin-bottom:10px;text-decoration:none;text-align:center">Join meeting</a>
     <div class="field" id="detailLocField" style="display:none">
       <label>Location</label>
       <div class="detail-loc" id="detailLoc"></div>
@@ -971,15 +969,37 @@ function unified(){
     });
   }
 
+  // Dedupe — same date + start + normalized title collapses to one
+  // (fixes GCal birthdays/holidays appearing twice across synced calendars)
+  const seen=new Map();
+  const deduped=[];
+  for(const e of out){
+    const key=`${e.date}|${e.start||''}|${(e.title||'').toLowerCase().replace(/\s+/g,' ').trim()}`;
+    const existing=seen.get(key);
+    if(existing){
+      // Prefer manual over gcal, priority over non-priority
+      const existingScore=(existing.source==='manual'?2:0)+(existing.priority?1:0);
+      const newScore=(e.source==='manual'?2:0)+(e.priority?1:0);
+      if(newScore>existingScore){
+        const idx=deduped.indexOf(existing);
+        if(idx>=0) deduped[idx]=e;
+        seen.set(key,e);
+      }
+      continue;
+    }
+    seen.set(key,e);
+    deduped.push(e);
+  }
+
   // sort by date, then start time
-  out.sort((a,b)=>{
+  deduped.sort((a,b)=>{
     if(a.date!==b.date) return a.date<b.date?-1:1;
     const as=a.start||(a.allDay?'00:00':'99:99');
     const bs=b.start||(b.allDay?'00:00':'99:99');
     return as<bs?-1:as>bs?1:0;
   });
 
-  return out;
+  return deduped;
 }
 
 /* ============ FILTER ============ */
@@ -1721,6 +1741,19 @@ function openDetailModal(id){
     descEl.innerHTML='';
   }
 
+  // Join button — Zoom / Teams / Google Meet
+  const joinBtn=document.getElementById('detailJoin');
+  const meetUrl=detectMeetingUrl(g);
+  if(meetUrl){
+    joinBtn.href=meetUrl;
+    const kind=meetingKind(meetUrl);
+    joinBtn.textContent=kind?`Join ${kind}`:'Join meeting';
+    joinBtn.style.display='block';
+  }else{
+    joinBtn.style.display='none';
+    joinBtn.removeAttribute('href');
+  }
+
   // User notes (local)
   document.getElementById('detailNotes').value=state.gcalNotes[id]||'';
 
@@ -1732,6 +1765,22 @@ function linkifyText(s){
   if(!s) return '';
   const esc=escapeHTML(s);
   return esc.replace(/(https?:\/\/[^\s<>"')]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+const MEETING_RE=/(https?:\/\/[^\s<>"')]*(?:zoom\.us\/(?:j|my|w)\/|meet\.google\.com\/|teams\.microsoft\.com\/|teams\.live\.com\/)[^\s<>"')]*)/i;
+function detectMeetingUrl(g){
+  if(!g) return '';
+  if(g.meetingUrl) return g.meetingUrl;
+  const hay=[g.location||'',g.description||''].join(' \n ');
+  const m=hay.match(MEETING_RE);
+  return m?m[1]:'';
+}
+function meetingKind(url){
+  if(!url) return '';
+  if(/zoom\.us/i.test(url)) return 'Zoom';
+  if(/meet\.google\.com/i.test(url)) return 'Google Meet';
+  if(/teams\.(?:microsoft|live)\.com/i.test(url)) return 'Teams';
+  return '';
 }
 
 function closeDetailModal(){
