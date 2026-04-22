@@ -151,7 +151,15 @@ body{padding:16px 14px 120px}
 .month-cell.other{background:transparent;border-color:transparent}
 .month-cell.other .mc-num{color:var(--text-fade)}
 .month-cell.weekend{background:linear-gradient(135deg,var(--surface) 0%,rgba(2,132,199,0.04) 100%)}
-.month-cell.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.month-cell.today{
+  background:linear-gradient(135deg,#FFF5EC 0%,rgba(255,138,61,0.18) 100%);
+  border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent) inset,0 2px 8px rgba(255,138,61,0.18);
+}
+.month-cell.today .mc-num{
+  color:#0a0a0f;font-weight:900;background:var(--accent);
+  padding:2px 6px;border-radius:6px;font-size:12px;letter-spacing:-0.02em;
+}
+.month-cell.today.weekend{background:linear-gradient(135deg,#FFF5EC 0%,rgba(255,138,61,0.18) 100%)}
 .month-cell.has-priority{border-color:rgba(255,138,61,0.5)}
 .mc-head{display:flex;align-items:center;justify-content:space-between;gap:4px;flex-shrink:0}
 .mc-num{font-size:12px;font-weight:700;color:var(--text);line-height:1}
@@ -168,8 +176,32 @@ body{padding:16px 14px 120px}
 .mc-pill.priority{background:rgba(255,138,61,0.14);color:var(--accent)}
 .mc-pill .mc-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
 .mc-pill .mc-txt{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
-.mc-more{font-size:9px;font-weight:700;color:var(--text-dim);padding:0 2px;letter-spacing:.2px;line-height:1.2;flex-shrink:0}
+.mc-more{
+  font-size:9px;font-weight:800;color:var(--accent);padding:1px 4px;letter-spacing:.2px;line-height:1.2;
+  flex-shrink:0;cursor:pointer;border-radius:4px;background:rgba(255,138,61,0.08);
+  align-self:flex-start;transition:all .12s;
+}
+.mc-more:hover{background:rgba(255,138,61,0.18);color:#0a0a0f}
+.month-cell{cursor:pointer}
+.month-cell.other{cursor:default}
 .month-empty{text-align:center;padding:60px 20px;color:var(--text-dim);font-size:13px}
+
+/* ============ DAY MODAL ============ */
+.day-modal{max-width:480px}
+.day-list{display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;margin-top:4px}
+.day-item{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+  cursor:pointer;transition:all .12s;min-width:0;
+}
+.day-item:hover{background:var(--surface-3);border-color:var(--border-2)}
+.day-item.priority{border-color:rgba(255,138,61,0.45);background:#FFF5EC}
+.day-item-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:7px}
+.day-item-body{flex:1;min-width:0}
+.day-item-title{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-0.01em;line-height:1.3;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis}
+.day-item-meta{font-size:11px;color:var(--text-dim);font-weight:600;display:flex;gap:8px;flex-wrap:wrap}
+.day-item-meta .sep{color:var(--text-fade)}
+.day-empty{text-align:center;padding:32px 16px;color:var(--text-dim);font-size:13px}
 /* Month grid fits available vertical space on desktop */
 @media(min-width:900px){
   .month-grid{height:calc(100dvh - 220px);min-height:460px;max-height:720px}
@@ -668,6 +700,15 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
       <button class="btn ghost" id="detailCancel">Close</button>
       <button class="btn primary" id="detailSave">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- DAY EVENTS MODAL -->
+<div class="modal-bg" id="dayBg">
+  <div class="modal day-modal">
+    <div class="modal-title" id="dayTitle">Day</div>
+    <button class="modal-close" id="dayClose">&times;</button>
+    <div class="day-list" id="dayList"></div>
   </div>
 </div>
 
@@ -1262,7 +1303,7 @@ function renderMonth(){
   }
   grid.innerHTML=cells.join('');
 
-  // wire pill clicks
+  // wire pill clicks (individual event -> open edit/detail modal)
   grid.querySelectorAll('.mc-pill').forEach(p=>{
     p.onclick=(ev)=>{
       ev.stopPropagation();
@@ -1270,7 +1311,61 @@ function renderMonth(){
       else if(p.dataset.src==='gcal') openDetailModal(p.dataset.id);
     };
   });
+  // cell click (blank area or +more) -> open day list
+  grid.querySelectorAll('.month-cell').forEach(c=>{
+    if(c.classList.contains('other')) return;
+    c.onclick=(ev)=>{
+      if(ev.target.closest('.mc-pill')) return;
+      openDayModal(c.dataset.date);
+    };
+  });
 }
+
+function openDayModal(dateKey){
+  if(!dateKey) return;
+  const events=applyFilter(unified()).filter(e=>e.date===dateKey);
+  events.sort((a,b)=>{
+    if((a.priority?0:1)!==(b.priority?0:1)) return (a.priority?0:1)-(b.priority?0:1);
+    const at=a.startISO||a.start||'';
+    const bt=b.startISO||b.start||'';
+    return at.localeCompare(bt);
+  });
+  const titleEl=document.getElementById('dayTitle');
+  const listEl=document.getElementById('dayList');
+  if(!titleEl||!listEl) return;
+  // Friendly title: Wed, Apr 22 · 2026
+  const d=dateFromKey(dateKey);
+  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+  const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  titleEl.textContent=`${dow}, ${mo} ${d.getDate()} · ${d.getFullYear()}`;
+  if(!events.length){
+    listEl.innerHTML=`<div class="day-empty">No events on this day.</div>`;
+  } else {
+    listEl.innerHTML=events.map(e=>{
+      const color=catColor(e.category);
+      const pri=e.priority?'priority':'';
+      const time=e.startISO?(formatIsoRange(e.startISO,e.endISO,state.tz)||e.timeStr||''):(e.timeStr||e.start||'');
+      const loc=e.location?`<span class="sep">·</span><span>${escapeHTML(e.location)}</span>`:'';
+      const timeBit=time?`<span>${escapeHTML(time)}</span>`:'<span>All day</span>';
+      return `<div class="day-item ${pri}" data-src="${e.source}" data-id="${escapeAttr(e.id)}">
+        <span class="day-item-dot" style="background:${color}"></span>
+        <div class="day-item-body">
+          <div class="day-item-title">${escapeHTML(e.title||'(no title)')}</div>
+          <div class="day-item-meta">${timeBit}${loc}</div>
+        </div>
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('.day-item').forEach(it=>{
+      it.onclick=()=>{
+        closeDayModal();
+        if(it.dataset.src==='manual') openModal(it.dataset.id);
+        else if(it.dataset.src==='gcal') openDetailModal(it.dataset.id);
+      };
+    });
+  }
+  document.getElementById('dayBg').classList.add('open');
+}
+function closeDayModal(){ document.getElementById('dayBg').classList.remove('open'); }
 
 function setView(view){
   state.view=view;
@@ -1844,8 +1939,10 @@ function init(){
   document.getElementById('detailCancel').onclick=closeDetailModal;
   document.getElementById('detailSave').onclick=saveDetailNotes;
   document.getElementById('detailBg').addEventListener('click',(e)=>{if(e.target.id==='detailBg')closeDetailModal()});
+  document.getElementById('dayClose').onclick=closeDayModal;
+  document.getElementById('dayBg').addEventListener('click',(e)=>{if(e.target.id==='dayBg')closeDayModal()});
   document.getElementById('fLocation').addEventListener('input',updateLocationMapsBtn);
-  document.addEventListener('keydown',(e)=>{if(e.key==='Escape'){closeModal();closeSettings();closeDetailModal()}});
+  document.addEventListener('keydown',(e)=>{if(e.key==='Escape'){closeModal();closeSettings();closeDetailModal();closeDayModal()}});
 
   // View switcher
   document.getElementById('viewHorizonBtn').onclick=()=>setView('horizon');
