@@ -267,6 +267,60 @@
     transition: opacity .2s, color .2s; flex-shrink: 0;
   }
   .move-btn:hover, .move-btn:active { opacity: 1; color: #FF8A3D; }
+
+  /* Move-to-day modal */
+  .mdm-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(6px);
+    z-index: 1500; display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .mdm-overlay.open { display: flex; }
+  .mdm-modal {
+    background: #0F0F14; border: 1px solid rgba(255,255,255,.08); border-radius: 18px;
+    width: 100%; max-width: 360px; padding: 20px 20px 18px; box-shadow: 0 28px 60px rgba(0,0,0,.6);
+    animation: mdmIn .18s ease-out;
+  }
+  @keyframes mdmIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+  .mdm-title {
+    font-size: 15px; font-weight: 800; color: #fff; letter-spacing: -.2px;
+    margin-bottom: 4px;
+  }
+  .mdm-sub {
+    font-size: 13px; color: rgba(255,255,255,.55); margin-bottom: 14px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mdm-options { display: flex; flex-direction: column; gap: 6px; }
+  .mdm-opt {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 11px; padding: 12px 14px; color: #fff;
+    font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: all .12s; text-align: left; width: 100%;
+  }
+  .mdm-opt:hover, .mdm-opt:active { background: rgba(255,138,61,.12); border-color: rgba(255,138,61,.45); }
+  .mdm-opt-date { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.45); }
+  .mdm-opt:hover .mdm-opt-date { color: #FF8A3D; }
+  .mdm-custom {
+    margin-top: 4px; display: flex; gap: 8px; align-items: center;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 11px; padding: 10px 12px;
+  }
+  .mdm-custom input[type="date"] {
+    flex: 1; background: transparent; border: none; color: #fff;
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    color-scheme: dark; outline: none; min-width: 0;
+  }
+  .mdm-custom button {
+    background: #FF8A3D; color: #050507; border: none; border-radius: 8px;
+    font-family: inherit; font-size: 13px; font-weight: 800; padding: 8px 14px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .mdm-custom button:hover { background: #FF9B57; }
+  .mdm-cancel {
+    margin-top: 10px; width: 100%; background: none; border: none; color: rgba(255,255,255,.6);
+    font-family: inherit; font-size: 14px; font-weight: 600; padding: 10px; cursor: pointer;
+    border-radius: 9px; transition: all .12s;
+  }
+  .mdm-cancel:hover { background: rgba(255,255,255,.05); color: #fff; }
   .countdown-add-btn {
     background: rgba(255,138,61,.1); border: 1.5px solid rgba(255,138,61,.3);
     color: #FF8A3D; height: 32px; padding: 0 10px;
@@ -508,6 +562,9 @@
     /* Hide secondary actions on mobile — tasks breathe, primary actions only */
     .todo-item .drag-handle { display: none; }
     .todo-item .move-btn { display: none; }
+    /* Keep move-to-day button on mobile — it's a primary action for rescheduling */
+    .todo-item .move-day-btn { display: inline-flex; opacity: .6; padding: 4px 6px; }
+    .todo-item .move-day-btn svg { width: 18px; height: 18px; }
     .todo-item .timer-set-btn { display: none; }
     /* Remove X stays but becomes a tiny muted dot — tap-and-hold area */
     .todo-item .remove-btn { font-size: 20px; padding: 2px 6px; opacity: .25; }
@@ -621,6 +678,21 @@
     </div>
   </div>
 </div>
+
+<!-- Move-to-day modal -->
+<div class="mdm-overlay" id="mdmOverlay">
+  <div class="mdm-modal" role="dialog" aria-modal="true" aria-labelledby="mdmTitle">
+    <div class="mdm-title" id="mdmTitle">Move to another day</div>
+    <div class="mdm-sub" id="mdmSub"></div>
+    <div class="mdm-options" id="mdmOptions"></div>
+    <div class="mdm-custom">
+      <input type="date" id="mdmDateInput" aria-label="Pick a custom date">
+      <button id="mdmDateGo">Move</button>
+    </div>
+    <button class="mdm-cancel" id="mdmCancel">Cancel</button>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
   import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
@@ -1185,6 +1257,134 @@ const VOICE = {
     todos = todos.filter(t => t.id !== id); render();
     try { await deleteDoc(doc(db, 'tv_todos', id)); } catch {}
   }
+
+  // -------- Move task to another day --------
+  let moveDayTargetId = null;
+  function openMoveDay(id) {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    moveDayTargetId = id;
+    const overlay = document.getElementById('mdmOverlay');
+    const sub = document.getElementById('mdmSub');
+    const opts = document.getElementById('mdmOptions');
+    const dateInput = document.getElementById('mdmDateInput');
+    sub.textContent = todo.text || '';
+
+    // Build quick options in CT, anchored on currentDate
+    const base = new Date(currentDate); base.setHours(12,0,0,0);
+    const today = new Date(); today.setHours(12,0,0,0);
+    const tomorrow = new Date(base); tomorrow.setDate(tomorrow.getDate() + 1);
+    // This weekend = nearest upcoming Saturday from base (if base is Sat, use today; if Sun, use next Sat)
+    const dow = base.getDay();
+    const weekend = new Date(base);
+    const daysToSat = dow === 6 ? 0 : (6 - dow + 7) % 7 || 7;
+    weekend.setDate(base.getDate() + daysToSat);
+    // Next week = next Monday from base
+    const nextMon = new Date(base);
+    const daysToMon = ((1 - dow + 7) % 7) || 7;
+    nextMon.setDate(base.getDate() + daysToMon);
+    // In 7 days
+    const inWeek = new Date(base); inWeek.setDate(base.getDate() + 7);
+
+    const currentKey = dkey(base);
+    const todayKey_ = dkey(today);
+    const quickOpts = [];
+    // If not viewing today, offer "Today" as an option
+    if (currentKey !== todayKey_) {
+      quickOpts.push({ label: 'Today', date: today });
+    }
+    quickOpts.push({ label: 'Tomorrow', date: tomorrow });
+    // Only add weekend if it's actually ahead of current view
+    if (dkey(weekend) !== currentKey && dkey(weekend) !== dkey(tomorrow)) {
+      const wLabel = weekend.getDay() === 6 ? 'This Saturday' : 'This Weekend';
+      quickOpts.push({ label: wLabel, date: weekend });
+    }
+    // Only add next Monday if ahead
+    if (dkey(nextMon) !== currentKey && dkey(nextMon) !== dkey(tomorrow) && dkey(nextMon) !== dkey(weekend)) {
+      quickOpts.push({ label: 'Next Monday', date: nextMon });
+    }
+    quickOpts.push({ label: 'In 1 Week', date: inWeek });
+
+    const dowNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    opts.innerHTML = quickOpts.map(o => {
+      const d = o.date;
+      const sub = `${dowNames[d.getDay()]}, ${monthNames[d.getMonth()]} ${d.getDate()}`;
+      return `<button class="mdm-opt" data-key="${dkey(d)}"><span>${o.label}</span><span class="mdm-opt-date">${sub}</span></button>`;
+    }).join('');
+    opts.querySelectorAll('.mdm-opt').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const key = btn.dataset.key;
+        if (key) moveTodoToDate(moveDayTargetId, key);
+      });
+    });
+
+    // Seed the date input with tomorrow as a default
+    dateInput.value = dkey(tomorrow);
+    dateInput.min = dkey(today);
+    overlay.classList.add('open');
+  }
+
+  function closeMoveDay() {
+    moveDayTargetId = null;
+    document.getElementById('mdmOverlay').classList.remove('open');
+  }
+
+  async function moveTodoToDate(id, newDateKey) {
+    if (!id || !newDateKey) return;
+    const todo = todos.find(t => t.id === id);
+    if (!todo) { closeMoveDay(); return; }
+    if (newDateKey === dkey(currentDate)) { closeMoveDay(); return; }
+    if (activeTimerId === id) await stopTimer(false);
+    // Remove from current day's view immediately (it belongs to another day now)
+    todos = todos.filter(t => t.id !== id);
+    render();
+    closeMoveDay();
+    try {
+      const payload = { date: newDateKey };
+      // Unlink from today's Plan task since the personal todo is moving off this day
+      if (todo.planTaskId) payload.planTaskId = null;
+      await updateDoc(doc(db, 'tv_todos', id), payload);
+    } catch (e) {
+      console.error('Move to day failed', e);
+      // Put it back on failure
+      todos.push(todo); render();
+      return;
+    }
+    // Notify War Room shell so today's Plan can reflect the unlink
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'warroom:personal-moved',
+          taskId: id,
+          newDate: newDateKey,
+          planTaskId: todo.planTaskId || null
+        }, '*');
+      }
+    } catch {}
+    // Show a quick toast
+    try { showMoveToast(todo.text || '', newDateKey); } catch {}
+  }
+
+  function showMoveToast(text, dateKey) {
+    const d = new Date(dateKey + 'T12:00:00');
+    const dowNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const lbl = `${dowNames[d.getDay()]}, ${monthNames[d.getMonth()]} ${d.getDate()}`;
+    let toast = document.getElementById('mdmToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'mdmToast';
+      toast.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#0F0F14;border:1px solid rgba(255,138,61,.4);color:#fff;padding:12px 18px;border-radius:12px;font-family:inherit;font-size:14px;font-weight:600;z-index:2000;box-shadow:0 20px 40px rgba(0,0,0,.5);opacity:0;transition:opacity .18s, transform .18s;pointer-events:none;max-width:80%;text-align:center';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = `Moved to ${lbl}`;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { toast.style.opacity = '0'; }, 1800);
+  }
   async function clearCompleted() {
     const done = todos.filter(t => t.done);
     todos = todos.filter(t => !t.done); render();
@@ -1305,6 +1505,7 @@ const VOICE = {
   const clockSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
   const moveTopSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="4" x2="19" y2="4"/><polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="20"/></svg>`;
   const moveBottomSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="20" x2="19" y2="20"/><polyline points="17 13 12 18 7 13"/><line x1="12" y1="4" x2="12" y2="18"/></svg>`;
+  const moveDaySVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="14 14 17 17 14 20"/></svg>`;
   // ---- Render ----
   function render() {
     if (currentView === 'recurring') return renderRecurring();
@@ -1548,7 +1749,8 @@ const VOICE = {
     }
     const moveBtns = !todo.done
       ? `<button class="move-btn move-top-btn" title="Move to top">${moveTopSVG}</button>
-         <button class="move-btn move-bottom-btn" title="Move to bottom">${moveBottomSVG}</button>`
+         <button class="move-btn move-bottom-btn" title="Move to bottom">${moveBottomSVG}</button>
+         <button class="move-btn move-day-btn" title="Move to another day">${moveDaySVG}</button>`
       : '';
     el.innerHTML = `
       <div class="drag-handle" ${todo.done?'style="opacity:0;pointer-events:none"':''}>
@@ -1570,6 +1772,8 @@ const VOICE = {
     if (topBtnEl) topBtnEl.addEventListener('click', (e) => { e.stopPropagation(); moveToTop(todo.id); });
     const bottomBtnEl = el.querySelector('.move-bottom-btn');
     if (bottomBtnEl) bottomBtnEl.addEventListener('click', (e) => { e.stopPropagation(); moveToBottom(todo.id); });
+    const moveDayBtnEl = el.querySelector('.move-day-btn');
+    if (moveDayBtnEl) moveDayBtnEl.addEventListener('click', (e) => { e.stopPropagation(); openMoveDay(todo.id); });
     const addCdBtn = el.querySelector('.countdown-add-btn');
     if (addCdBtn) addCdBtn.addEventListener('click', (e) => { e.stopPropagation(); addCountdownTime(todo.id, 150); });
     const setBtn = el.querySelector('.timer-set-btn');
@@ -1924,6 +2128,25 @@ const VOICE = {
   document.getElementById('navTasks').addEventListener('click', () => switchView('tasks'));
   document.getElementById('navRecurring').addEventListener('click', () => switchView('recurring'));
   document.getElementById('navArchive').addEventListener('click', () => switchView('archive'));
+
+  // Move-to-day modal wiring
+  document.getElementById('mdmCancel').addEventListener('click', closeMoveDay);
+  document.getElementById('mdmOverlay').addEventListener('click', (e) => { if (e.target.id === 'mdmOverlay') closeMoveDay(); });
+  document.getElementById('mdmDateGo').addEventListener('click', () => {
+    const input = document.getElementById('mdmDateInput');
+    const val = input.value;
+    if (!val) return;
+    if (moveDayTargetId) moveTodoToDate(moveDayTargetId, val);
+  });
+  document.getElementById('mdmDateInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const val = e.target.value;
+      if (val && moveDayTargetId) moveTodoToDate(moveDayTargetId, val);
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('mdmOverlay').classList.contains('open')) closeMoveDay();
+  });
 </script>
 </body>
 </html>
