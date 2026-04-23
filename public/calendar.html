@@ -1178,7 +1178,13 @@ function renderFilterBar(){
 function renderSyncBanner(){
   const el=document.getElementById('syncBanner');
   if(state.syncStatus==='needs_auth'){
-    el.innerHTML=`<div class="sync-banner warn"><div class="sync-banner-msg">Connect Google Calendar to see parties, dates, and events pulled in automatically.</div><a href="/api/google-auth"><button class="sync-banner-btn">Connect</button></a></div>`;
+    // If we have cached events, this is a reconnect (token expired), otherwise first-time connect
+    const isReconnect=(state.gcal&&state.gcal.length>0)||!!state.syncedAt;
+    const msg=isReconnect
+      ? 'Google Calendar sign-in expired. Reconnect to keep events in sync.'
+      : 'Connect Google Calendar to see parties, dates, and events pulled in automatically.';
+    const label=isReconnect?'Reconnect':'Connect';
+    el.innerHTML=`<div class="sync-banner warn"><div class="sync-banner-msg">${msg}</div><a href="/api/google-auth"><button class="sync-banner-btn">${label}</button></a></div>`;
   }else if(state.syncStatus==='syncing'){
     el.innerHTML=`<div class="sync-banner"><div class="sync-banner-msg">Syncing Google Calendar…</div></div>`;
   }else if(state.syncStatus==='error'){
@@ -1898,6 +1904,13 @@ async function syncNow(){
     if(r.status===412){state.syncStatus='needs_auth';renderSyncBanner();return}
     if(!r.ok){
       const txt=await r.text().catch(()=>String(r.status));
+      // Refresh token expired/revoked — treat as needs_auth so user sees a
+      // Reconnect button instead of a Retry button that will keep failing.
+      if(/invalid_grant|Token has been expired|Token has been revoked/i.test(txt)){
+        state.syncStatus='needs_auth';
+        renderSyncBanner();
+        return;
+      }
       throw new Error(txt||`HTTP ${r.status}`);
     }
     const data=await r.json();
