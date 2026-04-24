@@ -52,9 +52,14 @@ async function getAccessToken(refreshToken) {
   });
   const data = await res.json();
   if (!data.access_token) {
-    // invalid_grant means the refresh token is expired/revoked — caller should prompt re-auth
+    // invalid_grant = refresh token expired/revoked
+    // unauthorized_client = client ID/secret mismatch or OAuth client is misconfigured
+    // Both require the user to re-auth (after fixing config in the unauthorized_client case)
     const err = new Error('Failed to refresh Google access token: ' + JSON.stringify(data));
-    if (data && data.error === 'invalid_grant') err.code = 'invalid_grant';
+    if (data && (data.error === 'invalid_grant' || data.error === 'unauthorized_client')) {
+      err.code = 'needs_reauth';
+      err.oauthError = data.error;
+    }
     throw err;
   }
   return data.access_token;
@@ -182,10 +187,14 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('calendar fetch error', e);
-    // Refresh token dead — surface as 412 so the client shows a Reconnect button
-    if (e && e.code === 'invalid_grant') {
+    // Refresh token dead OR OAuth client misconfigured — surface as 412 so the client shows Reconnect
+    if (e && e.code === 'needs_reauth') {
+      const msg = e.oauthError === 'unauthorized_client'
+        ? 'Google Calendar OAuth client misconfigured — reconnect to refresh credentials'
+        : 'Google Calendar sign-in expired';
       return res.status(412).json({
-        error: 'Google Calendar sign-in expired',
+        error: msg,
+        oauthError: e.oauthError || null,
         action: 'Visit /api/google-auth to reconnect your calendar',
       });
     }

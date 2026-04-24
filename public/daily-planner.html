@@ -2599,11 +2599,17 @@ async function syncCalendarNow(){
   try {
     const res=await fetch('/api/calendar',{credentials:'same-origin'});
     if(res.status===412){
-      // Not connected to Google, OR refresh token expired — prompt to (re)connect
+      // Not connected to Google, OR refresh token expired, OR OAuth client misconfigured
       const data=await res.json().catch(()=>({}));
-      const msg=/expired/i.test(data.error||'')
-        ? 'Google Calendar sign-in expired. Click OK to reconnect.'
-        : 'Google Calendar is not connected yet. Click OK to connect now.';
+      const oauthErr=data.oauthError||'';
+      let msg;
+      if(oauthErr==='unauthorized_client'){
+        msg='Google OAuth client is misconfigured (client ID/secret mismatch). Click OK to try reconnecting.';
+      } else if(/expired/i.test(data.error||'')){
+        msg='Google Calendar sign-in expired. Click OK to reconnect.';
+      } else {
+        msg='Google Calendar is not connected yet. Click OK to connect now.';
+      }
       if(confirm(msg)){
         window.location.href='/api/google-auth';
       }
@@ -2612,9 +2618,9 @@ async function syncCalendarNow(){
     if(!res.ok){
       const err=await res.json().catch(()=>({error:'HTTP '+res.status}));
       const errMsg=err.error||'';
-      // Fallback: if backend hasn't been updated yet, still catch invalid_grant here
-      if(/invalid_grant|Token has been expired|Token has been revoked/i.test(errMsg)){
-        if(confirm('Google Calendar sign-in expired. Click OK to reconnect.')){
+      // Fallback: if backend hasn't been updated yet, still catch OAuth auth failures here
+      if(/invalid_grant|unauthorized_client|Token has been expired|Token has been revoked/i.test(errMsg)){
+        if(confirm('Google Calendar sign-in needs to be refreshed. Click OK to reconnect.')){
           window.location.href='/api/google-auth';
         }
         return;
