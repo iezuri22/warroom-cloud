@@ -39,16 +39,22 @@ export default async function handler(req, res) {
 
     const accessToken = await getAccessToken(refreshToken);
 
-    // Who is signed in?
+    // Inspect the access token itself — this tells us the granted scopes and audience
+    const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+    const tokenInfo = await tokenInfoRes.json();
+
+    // Who is signed in? (requires `email` or `openid` scope)
     const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    const userStatus = userRes.status;
     const user = await userRes.json();
 
     // What calendars does this account see?
     const calRes = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    const calStatus = calRes.status;
     const calData = await calRes.json();
     const calendars = (calData.items || []).map(c => ({
       id: c.id,
@@ -76,9 +82,15 @@ export default async function handler(req, res) {
       signed_in_as: user.email || '(unknown)',
       name: user.name || null,
       refresh_token_stored_at: updatedAt,
+      token_info: tokenInfo,
+      userinfo_status: userStatus,
+      userinfo_response: user,
+      calendarlist_status: calStatus,
+      calendarlist_raw: calStatus === 200 ? { count: calendars.length } : calData,
       visible_calendar_count: calendars.length,
       calendars,
       hardcoded_calendar_check: hardcodedStatus,
+      oauth_client_id_tail: (process.env.GOOGLE_CLIENT_ID || '').slice(-12),
     });
   } catch (e) {
     console.error('whoami error', e);
