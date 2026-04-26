@@ -1041,6 +1041,9 @@
   let tickInterval = null;
   let pickerOpenId = null;
   let announcedMilestones = new Set();
+  // Track which task's drawer is open so re-renders (e.g. after a date input
+  // change) don't collapse it.
+  let expandedTaskId = null;
   // ---- Job categories (derived from Board page boards) ----
   // The user's boards on the Board page (localStorage['goal-board-v2']) are
   // the source of truth. Each board becomes a job: id=board.id, label=board.name,
@@ -2054,6 +2057,14 @@ const VOICE = {
     if (jobFilter && jobFilter !== 'all') {
       pending = pending.filter(t => (t.job || '') === jobFilter);
     }
+    // Sort pending so dated tasks bubble to the top by due date (soonest first).
+    // Tasks without a dueDate fall back to their stored position.
+    pending.sort((a, b) => {
+      if (a.dueDate && b.dueDate) return a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0;
+      if (a.dueDate) return -1;
+      if (b.dueDate) return 1;
+      return (a.position || 0) - (b.position || 0);
+    });
     if (pending.length === 0 && jobFilter !== 'all') {
       const empty = document.createElement('div');
       empty.className = 'empty'; empty.style.padding = '40px 0';
@@ -2067,6 +2078,13 @@ const VOICE = {
       label.className = 'section-label'; label.textContent = 'Completed';
       list.appendChild(label);
       done.forEach(todo => list.appendChild(buildItem(todo)));
+    }
+    // Reapply expanded drawer state if a task was open before re-render
+    // (date inputs trigger render() — without this, the drawer would close).
+    if (expandedTaskId) {
+      const w = list.querySelector(`.todo-wrapper[data-id="${expandedTaskId}"]`);
+      if (w) w.classList.add('expanded');
+      else expandedTaskId = null;
     }
   }
   // ============ JOB FILTER BAR ============
@@ -2575,7 +2593,11 @@ const VOICE = {
         document.querySelectorAll('.todo-wrapper.expanded').forEach(w => {
           if (w !== wrapper) w.classList.remove('expanded');
         });
+        const willExpand = !wrapper.classList.contains('expanded');
         wrapper.classList.toggle('expanded');
+        // Track for re-render (date-input changes call render() which would
+        // otherwise drop the expansion).
+        expandedTaskId = willExpand ? todo.id : null;
       };
       if (chevBtn) chevBtn.addEventListener('click', toggle);
       if (textEl) textEl.addEventListener('click', toggle);

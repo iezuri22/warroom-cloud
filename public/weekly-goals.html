@@ -319,17 +319,29 @@ body{padding:16px 14px 120px}
 /* Wrapper so each task can carry a date row underneath */
 .bwg-task-wrap{padding:2px 0}
 .bwg-task-wrap.done .bwg-task-dates{opacity:.45}
+.bwg-task-wrap > .bwg-task{cursor:pointer}
 .bwg-task-pushed{
   font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
   padding:2px 6px;border-radius:4px;background:var(--ok-bg);color:var(--ok);
   flex-shrink:0;
 }
+.bwg-task-due-pill{
+  font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  padding:2px 7px;border-radius:4px;
+  background:var(--surface-2);color:var(--text-dim);
+  flex-shrink:0;
+}
+.bwg-task-due-pill.soon{background:var(--accent-bg);color:var(--accent)}
+.bwg-task-due-pill.overdue{background:var(--block-bg);color:var(--block)}
+/* Dates row hidden by default; only revealed when the parent wrap is expanded
+   (toggled by clicking the task body). */
 .bwg-task-dates{
-  display:flex;align-items:center;flex-wrap:wrap;gap:6px;
-  margin-left:25px; /* align under the task text, past the checkbox */
+  display:none;align-items:center;flex-wrap:wrap;gap:6px;
+  margin-left:25px;
   padding:2px 0 4px;
   font-size:11px;
 }
+.bwg-task-wrap.expanded > .bwg-task-dates{display:flex}
 .bwg-task-dates-lbl{
   font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
   color:var(--text-fade);
@@ -1070,33 +1082,22 @@ function renderList(){
 
 // Inline task list for quarterly goals — same shape as board tasks, each row has "+ Today"
 function renderGoalTasksHTML(g){
-  const items=g.tasks||[];
+  const items=(g.tasks||[]).slice();
   const hidden=!!g.hideTasks;
   if(hidden){
     return `<div class="bwg-tasks collapsed">
       <button class="bwg-tasks-toggle" onclick="toggleGoalTasksHidden('${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
     </div>`;
   }
+  // Sort: dated (with dueDate) bubble to top, soonest due first; rest preserve order.
+  sortTasksByDue(items);
   return `<div class="bwg-tasks">
     <button class="bwg-tasks-toggle" onclick="toggleGoalTasksHidden('${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
-    ${items.map(it=>{
-      const pushed = it.pushedToPersonal ? `<span class="bwg-task-pushed" title="Auto-pushed to Personal on ${escapeHtml(it.pushedAt||'')}">→ Personal</span>` : '';
-      return `<div class="bwg-task-wrap${it.done?' done':''}">
-        <label class="bwg-task" onclick="event.stopPropagation()">
-          <input type="checkbox" ${it.done?'checked':''} onchange="toggleGoalTask('${g.id}','${it.id}')">
-          <span class="bwg-task-txt">${escapeHtml(it.text||'')}</span>
-          ${pushed}
-          <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addGoalTaskToToday('${g.id}','${it.id}')" title="Add to Personal now">+ Personal</button>
-        </label>
-        <div class="bwg-task-dates" onclick="event.stopPropagation()">
-          <span class="bwg-task-dates-lbl">Start</span>
-          <input type="date" class="bwg-task-date" value="${it.startDate||''}" onclick="event.stopPropagation()" onchange="setGoalTaskDate('${g.id}','${it.id}','startDate',this.value)">
-          <span class="bwg-task-dates-lbl">Due</span>
-          <input type="date" class="bwg-task-date" value="${it.dueDate||''}" onclick="event.stopPropagation()" onchange="setGoalTaskDate('${g.id}','${it.id}','dueDate',this.value)">
-          ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
-        </div>
-      </div>`;
-    }).join('')}
+    ${items.map(it=>renderTaskRow(it, `qg:${g.id}:${it.id}`, {
+      onCheck: `toggleGoalTask('${g.id}','${it.id}')`,
+      onPlan: `addGoalTaskToToday('${g.id}','${it.id}')`,
+      onSetDate: (field) => `setGoalTaskDate('${g.id}','${it.id}','${field}',this.value)`,
+    })).join('')}
     <form class="bwg-add-task" onsubmit="return addGoalTask(event,'${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
     </form>
@@ -1111,34 +1112,78 @@ function setGoalTaskDate(gid, tid, field, val){
   save(); renderList();
 }
 
+// ============ SHARED TASK ROW (used by both quarterly + board renderers) ============
+// State: which task row is expanded (showing date inputs).
+let _expandedTaskKey = null;
+function toggleTaskExpand(key){
+  _expandedTaskKey = (_expandedTaskKey === key) ? null : key;
+  renderList();
+}
+// Days until due (negative = overdue). null if no date.
+function daysFromTodayToKey(dk){
+  if(!dk) return null;
+  const target = new Date(dk+'T12:00:00');
+  const now = new Date(); now.setHours(12,0,0,0);
+  return Math.round((target.getTime()-now.getTime())/86400000);
+}
+// Sort: tasks with dueDate first (soonest first), rest preserve their order.
+function sortTasksByDue(items){
+  items.sort((a,b)=>{
+    if(a.dueDate && b.dueDate) return a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0;
+    if(a.dueDate) return -1;
+    if(b.dueDate) return 1;
+    return 0;
+  });
+}
+// Build one task row (used by quarterly + board renderers).
+function renderTaskRow(it, key, handlers){
+  const expanded = (_expandedTaskKey === key) ? ' expanded' : '';
+  const pushed = it.pushedToPersonal ? `<span class="bwg-task-pushed" title="Auto-pushed to Personal on ${escapeHtml(it.pushedAt||'')}">→ Personal</span>` : '';
+  // Due/overdue pill — visible inline next to text whenever dueDate is set
+  let duePill = '';
+  if(it.dueDate && !it.done){
+    const d = daysFromTodayToKey(it.dueDate);
+    let cls = '', label = '';
+    if(d<0){ cls='overdue'; label = `${Math.abs(d)}d overdue`; }
+    else if(d===0){ cls='soon'; label='due today'; }
+    else if(d<=7){ cls='soon'; label = `${d}d`; }
+    else { label = `${d}d`; }
+    duePill = `<span class="bwg-task-due-pill ${cls}" title="Due ${escapeHtml(it.dueDate)}">${label}</span>`;
+  }
+  return `<div class="bwg-task-wrap${it.done?' done':''}${expanded}">
+    <div class="bwg-task" onclick="toggleTaskExpand('${key}')">
+      <input type="checkbox" ${it.done?'checked':''} onclick="event.stopPropagation()" onchange="${handlers.onCheck}">
+      <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+      ${duePill}
+      ${pushed}
+      <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();${handlers.onPlan}" title="Add to Personal now">+ Personal</button>
+    </div>
+    <div class="bwg-task-dates" onclick="event.stopPropagation()">
+      <span class="bwg-task-dates-lbl">Start</span>
+      <input type="date" class="bwg-task-date" value="${it.startDate||''}" onclick="event.stopPropagation()" onchange="${handlers.onSetDate('startDate')}">
+      <span class="bwg-task-dates-lbl">Due</span>
+      <input type="date" class="bwg-task-date" value="${it.dueDate||''}" onclick="event.stopPropagation()" onchange="${handlers.onSetDate('dueDate')}">
+      ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
+    </div>
+  </div>`;
+}
+
 function renderBoardTasksHTML(b,g){
-  const items=g.actionItems||[];
+  const items=(g.actionItems||[]).slice();
   const hidden=!!g.hideTasks;
   if(hidden){
     return `<div class="bwg-tasks collapsed">
       <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Show tasks${items.length?' ('+items.length+')':''}</button>
     </div>`;
   }
+  sortTasksByDue(items);
   return `<div class="bwg-tasks">
     <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
-    ${items.map(it=>{
-      const pushed = it.pushedToPersonal ? `<span class="bwg-task-pushed" title="Auto-pushed to Personal on ${escapeHtml(it.pushedAt||'')}">→ Personal</span>` : '';
-      return `<div class="bwg-task-wrap${it.done?' done':''}">
-        <label class="bwg-task" onclick="event.stopPropagation()">
-          <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
-          <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
-          ${pushed}
-          <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addBoardTaskToToday('${b.id}','${g.id}','${it.id}')" title="Add to Personal now">+ Personal</button>
-        </label>
-        <div class="bwg-task-dates" onclick="event.stopPropagation()">
-          <span class="bwg-task-dates-lbl">Start</span>
-          <input type="date" class="bwg-task-date" value="${it.startDate||''}" onclick="event.stopPropagation()" onchange="setBoardTaskDate('${b.id}','${g.id}','${it.id}','startDate',this.value)">
-          <span class="bwg-task-dates-lbl">Due</span>
-          <input type="date" class="bwg-task-date" value="${it.dueDate||''}" onclick="event.stopPropagation()" onchange="setBoardTaskDate('${b.id}','${g.id}','${it.id}','dueDate',this.value)">
-          ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
-        </div>
-      </div>`;
-    }).join('')}
+    ${items.map(it=>renderTaskRow(it, `bd:${b.id}:${g.id}:${it.id}`, {
+      onCheck: `toggleBoardTask('${b.id}','${g.id}','${it.id}')`,
+      onPlan: `addBoardTaskToToday('${b.id}','${g.id}','${it.id}')`,
+      onSetDate: (field) => `setBoardTaskDate('${b.id}','${g.id}','${it.id}','${field}',this.value)`,
+    })).join('')}
     <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
     </form>
