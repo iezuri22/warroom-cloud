@@ -1041,37 +1041,43 @@
   let tickInterval = null;
   let pickerOpenId = null;
   let announcedMilestones = new Set();
-  // ---- Job categories (shared with Goals page via localStorage) ----
-  // Single source of truth lives at localStorage['warroom-jobs-v1']. IDs match
-  // the goals page's PILLARS so a goal's pillar maps cleanly to a task's job.
-  const JOBS_KEY = 'warroom-jobs-v1';
-  const JOBS_DEFAULT = [
+  // ---- Job categories (derived from Board page boards) ----
+  // The user's boards on the Board page (localStorage['goal-board-v2']) are
+  // the source of truth. Each board becomes a job: id=board.id, label=board.name,
+  // color=board.color. Manage by going to the Board page (gear icon links there).
+  const BOARDS_KEY = 'goal-board-v2';
+  // LEGACY_JOBS retained ONLY so old Personal tasks tagged with 'ezrk', 'vt',
+  // 'work', 'bha', 'personal' (or pre-unification 'govtech', 'vitaltouch')
+  // still render a sensible badge.
+  const LEGACY_JOBS = [
     { id: 'ezrk',     label: 'EZRK',       color: '#FF8A3D' },
     { id: 'vt',       label: 'VitalTouch', color: '#30D158' },
     { id: 'bha',      label: 'BHA',        color: '#BF5AF2' },
     { id: 'work',     label: 'GovTech',    color: '#5AC8FA' },
     { id: 'personal', label: 'Personal',   color: '#FF9F0A' }
   ];
-  // Migrations from the previous Personal-only ID set to the unified set.
+  // Migrations from older Personal-only IDs to the legacy unified set.
   const JOB_ID_MIGRATE = { 'govtech': 'work', 'vitaltouch': 'vt' };
   function loadJobsList() {
     try {
-      const raw = localStorage.getItem(JOBS_KEY);
+      const raw = localStorage.getItem(BOARDS_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed?.jobs) && parsed.jobs.length) return parsed.jobs;
+        const d = JSON.parse(raw);
+        if (Array.isArray(d?.boards) && d.boards.length) {
+          return d.boards.map(b => ({ id: b.id, label: b.name || '(unnamed)', color: b.color || '#888' }));
+        }
       }
     } catch {}
-    return JOBS_DEFAULT.slice();
-  }
-  function saveJobsList(jobs) {
-    try { localStorage.setItem(JOBS_KEY, JSON.stringify({ jobs })); } catch {}
+    return LEGACY_JOBS.slice();
   }
   function migrateJobId(id) { return JOB_ID_MIGRATE[id] || id; }
   let JOBS = loadJobsList();
   function jobMeta(id) {
+    if (!id) return null;
     const m = migrateJobId(id);
-    return JOBS.find(j => j.id === m) || null;
+    return JOBS.find(j => j.id === m)
+        || LEGACY_JOBS.find(j => j.id === m)
+        || null;
   }
   // Last-used job for the add bar (sticks per device). Filter applied to the list.
   let selectedJob = (function(){ try { return localStorage.getItem('personal-add-job') || ''; } catch { return ''; } })();
@@ -1618,36 +1624,65 @@ const VOICE = {
   // pushedToPersonal flag back so we don't push again.
   async function autoPushActiveGoalTasks() {
     const todayKeyStr = todayKey();
+    // ---- Quarterly goal sub-tasks (quarterly-goals-v1) ----
     let goalsData;
     try {
       const raw = localStorage.getItem('quarterly-goals-v1');
-      if (!raw) return;
-      goalsData = JSON.parse(raw);
-    } catch { return; }
-    if (!goalsData || !Array.isArray(goalsData.goals)) return;
-    let mutated = false;
-    for (const g of goalsData.goals) {
-      if (!Array.isArray(g.tasks)) continue;
-      for (const it of g.tasks) {
-        if (!it || it.done) continue;
-        if (it.pushedToPersonal) continue;
-        if (!it.startDate) continue;
-        if (it.startDate > todayKeyStr) continue;
-        // Push to Personal — pillar maps directly to job since we unified IDs
-        const job = g.pillar || 'personal';
-        await addTodoItem(it.text || '(untitled)', null, {
-          dueDate: it.dueDate || '',
-          startDate: it.startDate || '',
-          sourceGoalTaskId: `${g.id}:${it.id}`,
-          job
-        });
-        it.pushedToPersonal = true;
-        it.pushedAt = todayKeyStr;
-        mutated = true;
+      if (raw) goalsData = JSON.parse(raw);
+    } catch {}
+    let goalsMutated = false;
+    if (goalsData && Array.isArray(goalsData.goals)) {
+      for (const g of goalsData.goals) {
+        if (!Array.isArray(g.tasks)) continue;
+        for (const it of g.tasks) {
+          if (!it || it.done || it.pushedToPersonal || !it.startDate) continue;
+          if (it.startDate > todayKeyStr) continue;
+          await addTodoItem(it.text || '(untitled)', null, {
+            dueDate: it.dueDate || '',
+            startDate: it.startDate || '',
+            sourceGoalTaskId: `qg:${g.id}:${it.id}`,
+            job: g.pillar || ''
+          });
+          it.pushedToPersonal = true;
+          it.pushedAt = todayKeyStr;
+          goalsMutated = true;
+        }
+      }
+      if (goalsMutated) {
+        try { localStorage.setItem('quarterly-goals-v1', JSON.stringify(goalsData)); } catch {}
       }
     }
-    if (mutated) {
-      try { localStorage.setItem('quarterly-goals-v1', JSON.stringify(goalsData)); } catch {}
+    // ---- Board action items (goal-board-v2) ----
+    let boardData;
+    try {
+      const raw = localStorage.getItem('goal-board-v2');
+      if (raw) boardData = JSON.parse(raw);
+    } catch {}
+    let boardMutated = false;
+    if (boardData && Array.isArray(boardData.boards)) {
+      for (const b of boardData.boards) {
+        if (!Array.isArray(b.goals)) continue;
+        for (const g of b.goals) {
+          if (!Array.isArray(g.actionItems)) continue;
+          for (const it of g.actionItems) {
+            if (!it || it.done || it.pushedToPersonal || !it.startDate) continue;
+            if (it.startDate > todayKeyStr) continue;
+            // Job = the board's id (boards ARE the jobs now)
+            await addTodoItem(it.text || it.title || '(untitled)', null, {
+              dueDate: it.dueDate || '',
+              startDate: it.startDate || '',
+              sourceGoalTaskId: `bd:${b.id}:${g.id}:${it.id}`,
+              job: b.id
+            });
+            it.pushedToPersonal = true;
+            it.pushedAt = todayKeyStr;
+            boardMutated = true;
+          }
+        }
+      }
+      if (boardMutated) {
+        try { localStorage.setItem('goal-board-v2', JSON.stringify(boardData)); } catch {}
+      }
     }
   }
   async function addTodoItem(text, planTaskId, extra) {
@@ -2067,7 +2102,18 @@ const VOICE = {
       });
     });
     const editBtn = bar.querySelector('#jobsEditBtn');
-    if (editBtn) editBtn.addEventListener('click', (e) => { e.stopPropagation(); openJobsModal(); });
+    if (editBtn) editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Jobs are derived from Board page — open Board to manage.
+      // If we're embedded in War Room, navigate the top window to the Board tab.
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'warroom:switch-tab', tab: 'board' }, '*');
+          return;
+        }
+      } catch {}
+      window.location.href = '/goal-board.html';
+    });
     return bar;
   }
   // ============ MANAGE JOBS MODAL ============

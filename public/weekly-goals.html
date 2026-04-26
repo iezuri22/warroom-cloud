@@ -608,11 +608,12 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
 <script>
 const SK='quarterly-goals-v1';
 const BOARD_SK='goal-board-v2';
-// Pillars/jobs are a shared list across Personal and Goals.
-// Single source of truth: localStorage['warroom-jobs-v1']. Both pages read
-// from this and either page's "Manage Jobs" UI writes back to it.
-const JOBS_KEY='warroom-jobs-v1';
-const PILLARS_DEFAULT=[
+// Pillars/jobs are derived from the user's boards on the Board page.
+// Source of truth: localStorage['goal-board-v2'].boards. Each board becomes
+// a pillar/job: { id: board.id, label: board.name, color: board.color }.
+// LEGACY_PILLARS is kept as a fallback so old goals (pillar='ezrk' etc.)
+// still render their badge correctly even after the switch.
+const LEGACY_PILLARS=[
   {id:'ezrk',label:'EZRK',color:'#FF8A3D'},
   {id:'vt',label:'VitalTouch',color:'#30D158'},
   {id:'bha',label:'BHA',color:'#BF5AF2'},
@@ -621,13 +622,15 @@ const PILLARS_DEFAULT=[
 ];
 function loadPillars(){
   try{
-    const raw=localStorage.getItem(JOBS_KEY);
+    const raw=localStorage.getItem(BOARD_SK);
     if(raw){
-      const p=JSON.parse(raw);
-      if(Array.isArray(p?.jobs)&&p.jobs.length) return p.jobs;
+      const d=JSON.parse(raw);
+      if(Array.isArray(d?.boards)&&d.boards.length){
+        return d.boards.map(b=>({id:b.id,label:b.name||'(unnamed)',color:b.color||'#888'}));
+      }
     }
   }catch{}
-  return PILLARS_DEFAULT.slice();
+  return LEGACY_PILLARS.slice();
 }
 let PILLARS=loadPillars();
 const STATUSES=[
@@ -964,7 +967,15 @@ function setFilter(f){activeFilter=f;renderChips();renderList();}
 
 // ---- List ----
 function statusMeta(id){return STATUSES.find(s=>s.id===id)||STATUSES[0]}
-function pillarMeta(id){return PILLARS.find(p=>p.id===id)||PILLARS[0]}
+function pillarMeta(id){
+  // First check the live PILLARS list (derived from boards). If not found,
+  // fall back to LEGACY_PILLARS so old goals tagged with 'ezrk', 'vt', etc.
+  // still render a sensible badge.
+  return PILLARS.find(p=>p.id===id)
+      || LEGACY_PILLARS.find(p=>p.id===id)
+      || PILLARS[0]
+      || LEGACY_PILLARS[0];
+}
 
 // Build a unified, sortable item list from both quarterly goals and board cards
 function buildUnifiedItems(){
@@ -1110,15 +1121,36 @@ function renderBoardTasksHTML(b,g){
   }
   return `<div class="bwg-tasks">
     <button class="bwg-tasks-toggle" onclick="toggleBoardTasksHidden('${b.id}','${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
-    ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
-      <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
-      <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
-      <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addBoardTaskToToday('${b.id}','${g.id}','${it.id}')" title="Add to today's plan">+ Today</button>
-    </label>`).join('')}
+    ${items.map(it=>{
+      const pushed = it.pushedToPersonal ? `<span class="bwg-task-pushed" title="Auto-pushed to Personal on ${escapeHtml(it.pushedAt||'')}">→ Personal</span>` : '';
+      return `<div class="bwg-task-wrap${it.done?' done':''}">
+        <label class="bwg-task" onclick="event.stopPropagation()">
+          <input type="checkbox" ${it.done?'checked':''} onchange="toggleBoardTask('${b.id}','${g.id}','${it.id}')">
+          <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+          ${pushed}
+          <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addBoardTaskToToday('${b.id}','${g.id}','${it.id}')" title="Add to Personal now">+ Personal</button>
+        </label>
+        <div class="bwg-task-dates" onclick="event.stopPropagation()">
+          <span class="bwg-task-dates-lbl">Start</span>
+          <input type="date" class="bwg-task-date" value="${it.startDate||''}" onclick="event.stopPropagation()" onchange="setBoardTaskDate('${b.id}','${g.id}','${it.id}','startDate',this.value)">
+          <span class="bwg-task-dates-lbl">Due</span>
+          <input type="date" class="bwg-task-date" value="${it.dueDate||''}" onclick="event.stopPropagation()" onchange="setBoardTaskDate('${b.id}','${g.id}','${it.id}','dueDate',this.value)">
+          ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
     <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
     </form>
   </div>`;
+}
+// Set startDate or dueDate on a board action-item (the small date inputs under each row)
+function setBoardTaskDate(boardId, goalId, taskId, field, val){
+  const bd=loadBoard(); const r=findBoardGoal(bd, boardId, goalId); if(!r) return;
+  const it=(r.g.actionItems||[]).find(x=>x.id===taskId); if(!it) return;
+  it[field]=val||'';
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd); renderList();
 }
 
 function renderCard(g){
