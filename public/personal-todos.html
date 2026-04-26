@@ -650,6 +650,92 @@
     .input-area { padding: 12px 14px 20px; }
     .add-btn { padding: 14px 16px; font-size: 14px; }
   }
+
+  /* ============ ACTIVE GOALS SECTION ============ */
+  .ags-wrap {
+    background: rgba(255,138,61,.04);
+    border: 1px solid rgba(255,138,61,.14);
+    border-radius: 14px;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .ags-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; cursor: pointer; user-select: none;
+    transition: background .15s;
+  }
+  .ags-header:hover { background: rgba(255,138,61,.06); }
+  .ags-title-line { display: flex; align-items: center; gap: 10px; }
+  .ags-count {
+    background: #FF8A3D; color: #050507;
+    font-size: 13px; font-weight: 800;
+    min-width: 24px; height: 24px; padding: 0 8px;
+    border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ags-title {
+    font-size: 13px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #FF8A3D;
+  }
+  .ags-chevron {
+    font-size: 14px; color: rgba(255,255,255,.4);
+    transition: transform .2s;
+  }
+  .ags-chevron.collapsed { transform: rotate(-90deg); }
+  .ags-list {
+    display: flex; flex-direction: column; gap: 0;
+    border-top: 1px solid rgba(255,138,61,.08);
+    overflow: hidden; transition: max-height .25s ease;
+    max-height: 600px;
+  }
+  .ags-list.collapsed { max-height: 0; border-top-color: transparent; }
+  .ags-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+  }
+  .ags-item:last-child { border-bottom: none; }
+  .ags-item-body { flex: 1; min-width: 0; }
+  .ags-item-title {
+    font-size: 15px; font-weight: 600; color: rgba(255,255,255,.92);
+    margin-bottom: 4px; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ags-item-meta {
+    display: flex; gap: 10px; align-items: center;
+    font-size: 12px; color: rgba(255,255,255,.4); font-weight: 500;
+  }
+  .ags-due {
+    padding: 2px 8px; border-radius: 6px;
+    background: rgba(255,255,255,.06); color: rgba(255,255,255,.6);
+    font-weight: 700; letter-spacing: .3px;
+  }
+  .ags-due.soon { background: rgba(255,138,61,.18); color: #FF8A3D; }
+  .ags-due.overdue { background: rgba(220,38,38,.2); color: #FF6B6B; }
+  .ags-add-btn {
+    background: rgba(255,138,61,.14);
+    border: 1px solid rgba(255,138,61,.3);
+    color: #FF8A3D;
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    padding: 8px 12px; border-radius: 10px; cursor: pointer;
+    flex-shrink: 0; transition: all .15s; letter-spacing: .3px;
+  }
+  .ags-add-btn:hover { background: rgba(255,138,61,.22); }
+  .ags-add-btn.added { opacity: .5; pointer-events: none; }
+  /* Inline due-date pill on tasks (small badge next to task text) */
+  .todo-due-pill {
+    display: inline-flex; align-items: center;
+    margin-left: 8px; padding: 2px 8px;
+    background: rgba(255,138,61,.14); color: #FF8A3D;
+    border-radius: 6px; font-size: 11px; font-weight: 700;
+    letter-spacing: .3px; vertical-align: middle;
+  }
+  .todo-due-pill.overdue { background: rgba(220,38,38,.2); color: #FF6B6B; }
+  .todo-due-pill.soon { background: rgba(255,138,61,.22); }
+  @media (max-width: 720px) {
+    .ags-item { padding: 10px 12px; gap: 10px; }
+    .ags-item-title { font-size: 14px; }
+    .ags-add-btn { padding: 7px 10px; font-size: 11px; }
+  }
 </style>
 </head>
 <body>
@@ -1260,7 +1346,7 @@ const VOICE = {
     try { await materializeRecurringForDay(dkey(currentDate)); } catch {}
     render();
   }
-  async function addTodoItem(text, planTaskId) {
+  async function addTodoItem(text, planTaskId, extra) {
     const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
     try {
       const payload = {
@@ -1268,9 +1354,13 @@ const VOICE = {
         timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString()
       };
       if (planTaskId) payload.planTaskId = planTaskId;
+      if (extra && extra.dueDate) payload.dueDate = extra.dueDate;
+      if (extra && extra.sourceGoalId) payload.sourceGoalId = extra.sourceGoalId;
       const ref = await addDoc(todosCol, payload);
       const newTodo = { id: ref.id, text, done: false, date: dkey(currentDate), position: maxPos, timeSpent: 0, countdownSecs: 0 };
       if (planTaskId) newTodo.planTaskId = planTaskId;
+      if (extra && extra.dueDate) newTodo.dueDate = extra.dueDate;
+      if (extra && extra.sourceGoalId) newTodo.sourceGoalId = extra.sourceGoalId;
       todos.push(newTodo);
       render();
       return ref.id;
@@ -1578,8 +1668,15 @@ const VOICE = {
     } else { progressTrack.classList.remove('visible'); progressInfo.textContent = ''; }
     clearBtn.classList.toggle('visible', doneCount > 0);
     list.innerHTML = '';
+    // Pin active goals at the top (read from goals page localStorage). Falls
+    // back gracefully if no goals exist or storage is unparseable.
+    const activeGoalsEl = buildActiveGoalsSection();
+    if (activeGoalsEl) list.appendChild(activeGoalsEl);
     if (total === 0) {
-      list.innerHTML = `<div class="empty"><div class="empty-icon">+</div><div class="empty-text">No tasks yet</div></div>`;
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = `<div class="empty-icon">+</div><div class="empty-text">No tasks yet</div>`;
+      list.appendChild(empty);
       return;
     }
     const pending = todos.filter(t => !t.done);
@@ -1591,6 +1688,98 @@ const VOICE = {
       list.appendChild(label);
       done.forEach(todo => list.appendChild(buildItem(todo)));
     }
+  }
+  // ============ ACTIVE GOALS (read from weekly-goals localStorage) ============
+  function loadActiveGoalsFromStorage() {
+    try {
+      const raw = localStorage.getItem('quarterly-goals-v1');
+      if (!raw) return [];
+      const data = JSON.parse(raw);
+      return Array.isArray(data?.goals) ? data.goals : [];
+    } catch (e) { return []; }
+  }
+  function daysFromTodayTo(dateKeyStr) {
+    if (!dateKeyStr) return null;
+    const target = new Date(dateKeyStr + 'T12:00:00');
+    const now = new Date(); now.setHours(12,0,0,0);
+    return Math.round((target.getTime() - now.getTime()) / 86400000);
+  }
+  function fmtDateShort(dk) {
+    if (!dk) return '';
+    const d = new Date(dk + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function buildActiveGoalsSection() {
+    const todayKeyStr = todayKey();
+    const all = loadActiveGoalsFromStorage();
+    // Active = startDate set, startDate <= today, has targetDate, status not done
+    const active = all.filter(g =>
+      g.startDate && g.targetDate &&
+      g.startDate <= todayKeyStr &&
+      g.status !== 'dn'
+    );
+    if (active.length === 0) return null;
+    active.sort((a, b) => (a.targetDate < b.targetDate ? -1 : a.targetDate > b.targetDate ? 1 : 0));
+    const linkedSourceIds = new Set(todos.filter(t => t.sourceGoalId).map(t => t.sourceGoalId));
+    const collapsed = localStorage.getItem('active-goals-collapsed') === '1';
+    const wrap = document.createElement('div');
+    wrap.className = 'ags-wrap';
+    wrap.innerHTML = `
+      <div class="ags-header">
+        <div class="ags-title-line">
+          <span class="ags-count">${active.length}</span>
+          <span class="ags-title">Active goal${active.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="ags-chevron ${collapsed ? 'collapsed' : ''}">&#9662;</span>
+      </div>
+      <div class="ags-list ${collapsed ? 'collapsed' : ''}">
+        ${active.map(g => {
+          const days = daysFromTodayTo(g.targetDate);
+          let urg = '', dueLabel = '';
+          if (days < 0) { urg = 'overdue'; dueLabel = `${Math.abs(days)}d overdue`; }
+          else if (days === 0) { urg = 'soon'; dueLabel = 'due today'; }
+          else if (days <= 7) { urg = 'soon'; dueLabel = `${days}d to go`; }
+          else { dueLabel = `${days}d to go`; }
+          const alreadyAdded = linkedSourceIds.has(g.id);
+          return `
+            <div class="ags-item" data-gid="${escHtml(g.id)}">
+              <div class="ags-item-body">
+                <div class="ags-item-title">${escHtml(g.title || 'Untitled')}</div>
+                <div class="ags-item-meta">
+                  <span class="ags-due ${urg}">${dueLabel}</span>
+                  <span>due ${fmtDateShort(g.targetDate)}</span>
+                </div>
+              </div>
+              <button class="ags-add-btn ${alreadyAdded ? 'added' : ''}" data-gid="${escHtml(g.id)}">
+                ${alreadyAdded ? 'Added' : 'Add to Personal'}
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    wrap.querySelector('.ags-header').addEventListener('click', () => {
+      const cur = localStorage.getItem('active-goals-collapsed') === '1';
+      localStorage.setItem('active-goals-collapsed', cur ? '' : '1');
+      render();
+    });
+    wrap.querySelectorAll('.ags-add-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (btn.classList.contains('added')) return;
+        pushGoalToPersonal(btn.dataset.gid);
+      });
+    });
+    return wrap;
+  }
+  async function pushGoalToPersonal(goalId) {
+    const all = loadActiveGoalsFromStorage();
+    const goal = all.find(g => g.id === goalId);
+    if (!goal) return;
+    await addTodoItem(goal.title || 'Untitled', null, {
+      dueDate: goal.targetDate || '',
+      sourceGoalId: goal.id
+    });
   }
   function renderRecurring() {
     const list = document.getElementById('list');
@@ -1793,6 +1982,17 @@ const VOICE = {
     const chevronHTML = !todo.done
       ? `<button class="expand-chevron" title="More options">${chevronDownSVG}</button>`
       : '';
+    // Optional due-date pill (rendered when task carries a dueDate, e.g. from a goal)
+    let duePillHTML = '';
+    if (!todo.done && todo.dueDate) {
+      const days = daysFromTodayTo(todo.dueDate);
+      let urgCls = '', label = '';
+      if (days < 0) { urgCls = 'overdue'; label = `${Math.abs(days)}d overdue`; }
+      else if (days === 0) { urgCls = 'soon'; label = 'due today'; }
+      else if (days <= 7) { urgCls = 'soon'; label = `${days}d`; }
+      else { label = `${days}d`; }
+      duePillHTML = ` <span class="todo-due-pill ${urgCls}" title="Due ${fmtDateShort(todo.dueDate)}">${label}</span>`;
+    }
     el.innerHTML = `
       <div class="drag-handle" ${todo.done?'style="opacity:0;pointer-events:none"':''}>
         <span></span><span></span><span></span>
@@ -1802,7 +2002,7 @@ const VOICE = {
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       </div>
-      <span class="todo-text">${escHtml(todo.text)}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
+      <span class="todo-text">${escHtml(todo.text)}${duePillHTML}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
       ${mainTimerHTML}
       ${chevronHTML}`;
     const cbEl = el.querySelector('.checkbox');

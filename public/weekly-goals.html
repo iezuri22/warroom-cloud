@@ -542,6 +542,10 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
         <div class="picker" id="statusPicker"></div>
       </div>
       <div class="f">
+        <label class="f-l">Start date</label>
+        <input type="date" class="f-i" id="fStart" />
+      </div>
+      <div class="f">
         <label class="f-l">Target date</label>
         <input type="date" class="f-i" id="fTarget" />
       </div>
@@ -1054,7 +1058,10 @@ function renderCard(g){
   const days = g.targetDate ? daysUntil(g.targetDate) : daysLeft();
   const overdue = days===0 && g.status!=='dn';
   const soon = days>0 && days<=7 && g.status!=='dn';
-  const targetLbl = g.targetDate ? fmtDate(g.targetDate) : 'End of Q';
+  // If start date is set, show as range "Mar 5 → May 1"; otherwise just target.
+  const targetLbl = g.startDate && g.targetDate
+    ? `${fmtDate(g.startDate)} → ${fmtDate(g.targetDate)}`
+    : (g.targetDate ? fmtDate(g.targetDate) : 'End of Q');
   const isDone = g.status==='dn';
   const cardCls = 'card'+(isDone?' dn':'')+(g.status==='bl'?' bl':'');
   const topRCls = 'card-top-r'+(overdue?' overdue':(soon?' soon':''));
@@ -1248,6 +1255,7 @@ function openAddModal(){
   setSlider(0);
   modalQuarter=viewQuarter||currentQuarterKey();
   document.getElementById('fTarget').value=quarterEndKeyFor(modalQuarter);
+  document.getElementById('fStart').value='';
   modalPillar='ezrk';modalStatus='on';
   renderPickers();
   document.getElementById('modal').classList.add('open');
@@ -1262,6 +1270,7 @@ function openEditModal(gid){
   setSlider(g.progress||0);
   modalQuarter=g.quarter||currentQuarterKey();
   document.getElementById('fTarget').value=g.targetDate||quarterEndKeyFor(modalQuarter);
+  document.getElementById('fStart').value=g.startDate||'';
   modalPillar=g.pillar||'ezrk';modalStatus=g.status||'on';
   renderPickers();
   document.getElementById('modal').classList.add('open');
@@ -1317,15 +1326,16 @@ function saveGoal(){
   const notes=document.getElementById('fNotes').value.trim();
   const progress=Math.max(0,Math.min(100,parseInt(document.getElementById('fProgressSlider').value||'0',10)));
   const targetDate=document.getElementById('fTarget').value||quarterEndKeyFor(modalQuarter);
+  const startDate=document.getElementById('fStart').value||'';
   const quarter=modalQuarter||currentQuarterKey();
   const now=new Date().toISOString();
   if(editingId){
     const g=data.goals.find(x=>x.id===editingId);
-    if(g)Object.assign(g,{title,notes,progress,targetDate,pillar:modalPillar,status:modalStatus,quarter,updatedAt:now});
+    if(g)Object.assign(g,{title,notes,progress,targetDate,startDate,pillar:modalPillar,status:modalStatus,quarter,updatedAt:now});
   } else {
     if(!Array.isArray(data.goals))data.goals=[];
     data.goals.unshift({
-      id:uid(),title,notes,progress,targetDate,pillar:modalPillar,status:modalStatus,
+      id:uid(),title,notes,progress,targetDate,startDate,pillar:modalPillar,status:modalStatus,
       createdAt:now,updatedAt:now,quarter
     });
   }
