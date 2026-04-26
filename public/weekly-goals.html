@@ -316,6 +316,40 @@ body{padding:16px 14px 120px}
 .bwg-task-plan:active{transform:scale(.95)}
 .bwg-task-plan.queued{color:var(--ok);border-color:rgba(48,209,88,.35);background:var(--ok-bg)}
 
+/* Wrapper so each task can carry a date row underneath */
+.bwg-task-wrap{padding:2px 0}
+.bwg-task-wrap.done .bwg-task-dates{opacity:.45}
+.bwg-task-pushed{
+  font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  padding:2px 6px;border-radius:4px;background:var(--ok-bg);color:var(--ok);
+  flex-shrink:0;
+}
+.bwg-task-dates{
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px;
+  margin-left:25px; /* align under the task text, past the checkbox */
+  padding:2px 0 4px;
+  font-size:11px;
+}
+.bwg-task-dates-lbl{
+  font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--text-fade);
+}
+.bwg-task-date{
+  font-family:inherit;font-size:11px;color:var(--text-mid);
+  padding:3px 6px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:5px;
+  min-width:120px;
+}
+.bwg-task-date:focus{outline:none;border-color:var(--accent)}
+.bwg-task-auto-hint{
+  font-size:10px;color:var(--text-fade);font-weight:600;font-style:italic;
+}
+@media(max-width:560px){
+  .bwg-task-dates{margin-left:22px;gap:4px}
+  .bwg-task-date{min-width:108px;font-size:10.5px;padding:2px 5px}
+  .bwg-task-auto-hint{flex-basis:100%;margin-left:0}
+}
+
 /* Toolbar-level show-hidden toggle */
 .toolbar-hidden-toggle{
   font-family:inherit;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
@@ -574,13 +608,28 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
 <script>
 const SK='quarterly-goals-v1';
 const BOARD_SK='goal-board-v2';
-const PILLARS=[
-  {id:'ezrk',label:'EZRK',color:'var(--p-ezrk)'},
-  {id:'vt',label:'VitalTouch',color:'var(--p-vt)'},
-  {id:'bha',label:'BHA',color:'var(--p-bha)'},
-  {id:'work',label:'Day Job',color:'var(--p-work)'},
-  {id:'personal',label:'Personal',color:'var(--p-personal)'}
+// Pillars/jobs are a shared list across Personal and Goals.
+// Single source of truth: localStorage['warroom-jobs-v1']. Both pages read
+// from this and either page's "Manage Jobs" UI writes back to it.
+const JOBS_KEY='warroom-jobs-v1';
+const PILLARS_DEFAULT=[
+  {id:'ezrk',label:'EZRK',color:'#FF8A3D'},
+  {id:'vt',label:'VitalTouch',color:'#30D158'},
+  {id:'bha',label:'BHA',color:'#BF5AF2'},
+  {id:'work',label:'GovTech',color:'#5AC8FA'},
+  {id:'personal',label:'Personal',color:'#FF9F0A'}
 ];
+function loadPillars(){
+  try{
+    const raw=localStorage.getItem(JOBS_KEY);
+    if(raw){
+      const p=JSON.parse(raw);
+      if(Array.isArray(p?.jobs)&&p.jobs.length) return p.jobs;
+    }
+  }catch{}
+  return PILLARS_DEFAULT.slice();
+}
+let PILLARS=loadPillars();
 const STATUSES=[
   {id:'on',label:'On Track',cls:'on'},
   {id:'at',label:'At Risk',cls:'at'},
@@ -1019,15 +1068,36 @@ function renderGoalTasksHTML(g){
   }
   return `<div class="bwg-tasks">
     <button class="bwg-tasks-toggle" onclick="toggleGoalTasksHidden('${g.id}')">Hide tasks${items.length?' ('+items.length+')':''}</button>
-    ${items.map(it=>`<label class="bwg-task${it.done?' done':''}" onclick="event.stopPropagation()">
-      <input type="checkbox" ${it.done?'checked':''} onchange="toggleGoalTask('${g.id}','${it.id}')">
-      <span class="bwg-task-txt">${escapeHtml(it.text||'')}</span>
-      <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addGoalTaskToToday('${g.id}','${it.id}')" title="Add to today's plan">+ Today</button>
-    </label>`).join('')}
+    ${items.map(it=>{
+      const pushed = it.pushedToPersonal ? `<span class="bwg-task-pushed" title="Auto-pushed to Personal on ${escapeHtml(it.pushedAt||'')}">→ Personal</span>` : '';
+      return `<div class="bwg-task-wrap${it.done?' done':''}">
+        <label class="bwg-task" onclick="event.stopPropagation()">
+          <input type="checkbox" ${it.done?'checked':''} onchange="toggleGoalTask('${g.id}','${it.id}')">
+          <span class="bwg-task-txt">${escapeHtml(it.text||'')}</span>
+          ${pushed}
+          <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();addGoalTaskToToday('${g.id}','${it.id}')" title="Add to Personal now">+ Personal</button>
+        </label>
+        <div class="bwg-task-dates" onclick="event.stopPropagation()">
+          <span class="bwg-task-dates-lbl">Start</span>
+          <input type="date" class="bwg-task-date" value="${it.startDate||''}" onclick="event.stopPropagation()" onchange="setGoalTaskDate('${g.id}','${it.id}','startDate',this.value)">
+          <span class="bwg-task-dates-lbl">Due</span>
+          <input type="date" class="bwg-task-date" value="${it.dueDate||''}" onclick="event.stopPropagation()" onchange="setGoalTaskDate('${g.id}','${it.id}','dueDate',this.value)">
+          ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
     <form class="bwg-add-task" onsubmit="return addGoalTask(event,'${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
     </form>
   </div>`;
+}
+// Set startDate or dueDate on a goal task (the small date inputs under each row)
+function setGoalTaskDate(gid, tid, field, val){
+  const g=data.goals.find(x=>x.id===gid); if(!g) return;
+  const it=(g.tasks||[]).find(t=>t.id===tid); if(!it) return;
+  it[field]=val||'';
+  g.updatedAt=new Date().toISOString();
+  save(); renderList();
 }
 
 function renderBoardTasksHTML(b,g){

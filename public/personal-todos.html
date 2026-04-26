@@ -740,6 +740,89 @@
     .todo-date-row input[type="date"] { font-size: 12px; height: 34px; }
   }
 
+  /* ============ MANAGE JOBS MODAL ============ */
+  .jobs-modal {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.7);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1000; padding: 20px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .jobs-modal.open { display: flex; }
+  .jobs-modal-card {
+    background: #1A1A1F; border: 1px solid rgba(255,255,255,.08);
+    border-radius: 18px; padding: 22px; width: 100%; max-width: 480px;
+    max-height: 86vh; overflow-y: auto;
+    color: #fff;
+  }
+  .jobs-modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .jobs-modal-head span { font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+  .jobs-modal-close {
+    background: none; border: none; color: rgba(255,255,255,.5);
+    font-size: 26px; cursor: pointer; line-height: 1; padding: 0 6px;
+    font-family: inherit;
+  }
+  .jobs-modal-close:hover { color: #fff; }
+  .jobs-modal-sub {
+    font-size: 12.5px; color: rgba(255,255,255,.45);
+    line-height: 1.45; margin-bottom: 18px;
+  }
+  .jobs-modal-body { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .jobs-row {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px; padding: 8px 10px;
+  }
+  .jobs-color {
+    width: 32px; height: 32px; padding: 0; border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px; cursor: pointer; background: none;
+    flex-shrink: 0;
+  }
+  .jobs-label {
+    flex: 1; min-width: 0;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    color: #fff; padding: 8px 12px; border-radius: 8px;
+    font-family: inherit; font-size: 14px; font-weight: 600;
+  }
+  .jobs-label:focus { outline: none; border-color: rgba(255,138,61,.4); }
+  .jobs-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .jobs-row-btn {
+    width: 28px; height: 32px; border-radius: 7px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.6); cursor: pointer;
+    font-family: inherit; font-size: 12px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .jobs-row-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
+  .jobs-row-btn.danger:hover { color: #FF6B6B; background: rgba(255,80,80,.14); border-color: rgba(255,80,80,.3); }
+  .jobs-add-btn {
+    background: rgba(255,138,61,.1); border: 1px dashed rgba(255,138,61,.4);
+    color: #FF8A3D; padding: 10px; border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer; width: 100%; transition: all .15s;
+  }
+  .jobs-add-btn:hover { background: rgba(255,138,61,.16); }
+  .jobs-modal-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px;
+  }
+  .jobs-cancel, .jobs-save {
+    padding: 10px 20px; border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer; border: 1px solid rgba(255,255,255,.1);
+  }
+  .jobs-cancel { background: rgba(255,255,255,.05); color: rgba(255,255,255,.7); }
+  .jobs-cancel:hover { color: #fff; }
+  .jobs-save { background: #FF8A3D; color: #050507; border-color: #FF8A3D; }
+  .jobs-save:hover { background: #FFB07F; }
+  .jobs-edit-chip {
+    padding: 7px 10px !important;
+    color: rgba(255,255,255,.5) !important;
+  }
+  .jobs-edit-chip:hover { color: rgba(255,255,255,.9) !important; }
+
   /* ============ ACTIVE GOALS SECTION ============ */
   .ags-wrap {
     background: rgba(255,138,61,.04);
@@ -898,6 +981,23 @@
   </div>
 </div>
 
+<!-- Manage Jobs modal -->
+<div class="jobs-modal" id="jobsModal">
+  <div class="jobs-modal-card">
+    <div class="jobs-modal-head">
+      <span>Manage Jobs</span>
+      <button class="jobs-modal-close" onclick="closeJobsModal()">&times;</button>
+    </div>
+    <div class="jobs-modal-sub">Edit names, colors, order, or add/remove jobs. Changes apply across Personal and Goals.</div>
+    <div class="jobs-modal-body" id="jobsRows"></div>
+    <button class="jobs-add-btn" onclick="addJobsRow()">+ Add job</button>
+    <div class="jobs-modal-actions">
+      <button class="jobs-cancel" onclick="closeJobsModal()">Cancel</button>
+      <button class="jobs-save" onclick="saveJobsModal()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Move-to-day modal -->
 <div class="mdm-overlay" id="mdmOverlay">
   <div class="mdm-modal" role="dialog" aria-modal="true" aria-labelledby="mdmTitle">
@@ -941,17 +1041,38 @@
   let tickInterval = null;
   let pickerOpenId = null;
   let announcedMilestones = new Set();
-  // ---- Job categories ----
-  // Fixed list of jobs/contexts. Order here = order in the picker and chips.
-  // Stored on each task as t.job (string id). Tasks without a job show as 'Personal'.
-  const JOBS = [
-    { id: 'govtech',   label: 'GovTech',    color: '#5AC8FA' },
-    { id: 'ezrk',      label: 'EZRK',       color: '#FF8A3D' },
-    { id: 'vitaltouch',label: 'VitalTouch', color: '#30D158' },
-    { id: 'bha',       label: 'BHA',        color: '#BF5AF2' },
-    { id: 'personal',  label: 'Personal',   color: '#FF9F0A' }
+  // ---- Job categories (shared with Goals page via localStorage) ----
+  // Single source of truth lives at localStorage['warroom-jobs-v1']. IDs match
+  // the goals page's PILLARS so a goal's pillar maps cleanly to a task's job.
+  const JOBS_KEY = 'warroom-jobs-v1';
+  const JOBS_DEFAULT = [
+    { id: 'ezrk',     label: 'EZRK',       color: '#FF8A3D' },
+    { id: 'vt',       label: 'VitalTouch', color: '#30D158' },
+    { id: 'bha',      label: 'BHA',        color: '#BF5AF2' },
+    { id: 'work',     label: 'GovTech',    color: '#5AC8FA' },
+    { id: 'personal', label: 'Personal',   color: '#FF9F0A' }
   ];
-  function jobMeta(id) { return JOBS.find(j => j.id === id) || null; }
+  // Migrations from the previous Personal-only ID set to the unified set.
+  const JOB_ID_MIGRATE = { 'govtech': 'work', 'vitaltouch': 'vt' };
+  function loadJobsList() {
+    try {
+      const raw = localStorage.getItem(JOBS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.jobs) && parsed.jobs.length) return parsed.jobs;
+      }
+    } catch {}
+    return JOBS_DEFAULT.slice();
+  }
+  function saveJobsList(jobs) {
+    try { localStorage.setItem(JOBS_KEY, JSON.stringify({ jobs })); } catch {}
+  }
+  function migrateJobId(id) { return JOB_ID_MIGRATE[id] || id; }
+  let JOBS = loadJobsList();
+  function jobMeta(id) {
+    const m = migrateJobId(id);
+    return JOBS.find(j => j.id === m) || null;
+  }
   // Last-used job for the add bar (sticks per device). Filter applied to the list.
   let selectedJob = (function(){ try { return localStorage.getItem('personal-add-job') || ''; } catch { return ''; } })();
   let jobFilter   = (function(){ try { return localStorage.getItem('personal-job-filter') || 'all'; } catch { return 'all'; } })();
@@ -1465,6 +1586,9 @@ const VOICE = {
         merged.set(d.id, { id: d.id, ...data });
       });
       todos = Array.from(merged.values()).sort((a, b) => (a.position || 0) - (b.position || 0));
+      // Normalize any legacy job IDs ('govtech' -> 'work', 'vitaltouch' -> 'vt')
+      // so chips, filters, and badges all line up with the unified list.
+      todos.forEach(t => { if (t.job && JOB_ID_MIGRATE[t.job]) t.job = JOB_ID_MIGRATE[t.job]; });
     } catch (e) { console.error('Load error:', e); todos = []; }
     loading = false;
     // Auto carry-over when viewing today (range tasks are skipped — they handle themselves)
@@ -1479,7 +1603,52 @@ const VOICE = {
     }
     // Materialize recurring-task instances for this day
     try { await materializeRecurringForDay(dkey(currentDate)); } catch {}
+    // Auto-push any goal tasks whose start date has hit (idempotent — checks
+    // pushedToPersonal flag so we don't dupe). Best-effort, so any failure
+    // doesn't block render.
+    if (isToday()) {
+      try { await autoPushActiveGoalTasks(); } catch (e) { console.warn('auto-push failed', e); }
+    }
     render();
+  }
+  // ============ AUTO-PUSH ACTIVE GOAL TASKS TO PERSONAL ============
+  // Scans the goals page's localStorage for goal sub-tasks whose startDate
+  // has hit but haven't been pushed yet. Creates Personal tasks for each,
+  // copies dueDate, maps the goal's pillar to a job, then writes the
+  // pushedToPersonal flag back so we don't push again.
+  async function autoPushActiveGoalTasks() {
+    const todayKeyStr = todayKey();
+    let goalsData;
+    try {
+      const raw = localStorage.getItem('quarterly-goals-v1');
+      if (!raw) return;
+      goalsData = JSON.parse(raw);
+    } catch { return; }
+    if (!goalsData || !Array.isArray(goalsData.goals)) return;
+    let mutated = false;
+    for (const g of goalsData.goals) {
+      if (!Array.isArray(g.tasks)) continue;
+      for (const it of g.tasks) {
+        if (!it || it.done) continue;
+        if (it.pushedToPersonal) continue;
+        if (!it.startDate) continue;
+        if (it.startDate > todayKeyStr) continue;
+        // Push to Personal — pillar maps directly to job since we unified IDs
+        const job = g.pillar || 'personal';
+        await addTodoItem(it.text || '(untitled)', null, {
+          dueDate: it.dueDate || '',
+          startDate: it.startDate || '',
+          sourceGoalTaskId: `${g.id}:${it.id}`,
+          job
+        });
+        it.pushedToPersonal = true;
+        it.pushedAt = todayKeyStr;
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      try { localStorage.setItem('quarterly-goals-v1', JSON.stringify(goalsData)); } catch {}
+    }
   }
   async function addTodoItem(text, planTaskId, extra) {
     const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
@@ -1492,8 +1661,11 @@ const VOICE = {
       if (extra && extra.dueDate) payload.dueDate = extra.dueDate;
       if (extra && extra.startDate) payload.startDate = extra.startDate;
       if (extra && extra.sourceGoalId) payload.sourceGoalId = extra.sourceGoalId;
-      // Job: explicit override wins, otherwise the add-bar selection sticks
-      const job = (extra && extra.job) || selectedJob || '';
+      if (extra && extra.sourceGoalTaskId) payload.sourceGoalTaskId = extra.sourceGoalTaskId;
+      // Job: explicit override wins, otherwise the add-bar selection sticks.
+      // Migrate legacy IDs in case selectedJob is from the old set.
+      let job = (extra && extra.job) || selectedJob || '';
+      if (job) job = migrateJobId(job);
       if (job) payload.job = job;
       const ref = await addDoc(todosCol, payload);
       const newTodo = { id: ref.id, text, done: false, date: dkey(currentDate), position: maxPos, timeSpent: 0, countdownSecs: 0 };
@@ -1501,6 +1673,7 @@ const VOICE = {
       if (extra && extra.dueDate) newTodo.dueDate = extra.dueDate;
       if (extra && extra.startDate) newTodo.startDate = extra.startDate;
       if (extra && extra.sourceGoalId) newTodo.sourceGoalId = extra.sourceGoalId;
+      if (extra && extra.sourceGoalTaskId) newTodo.sourceGoalTaskId = extra.sourceGoalTaskId;
       if (job) newTodo.job = job;
       todos.push(newTodo);
       render();
@@ -1876,12 +2049,16 @@ const VOICE = {
     });
     const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
     JOBS.forEach(j => chips.push({ id: j.id, label: j.label, color: j.color, count: counts[j.id] }));
-    bar.innerHTML = chips.map(c => {
+    const chipsHTML = chips.map(c => {
       const active = jobFilter === c.id ? 'active' : '';
       const dot = c.color ? `<span class="dot" style="background:${c.color}"></span>` : '';
       return `<button class="job-chip ${active}" data-jobid="${c.id}">${dot}${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
     }).join('');
-    bar.querySelectorAll('.job-chip').forEach(ch => {
+    bar.innerHTML = chipsHTML +
+      `<button class="job-chip jobs-edit-chip" id="jobsEditBtn" title="Manage jobs">
+         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+       </button>`;
+    bar.querySelectorAll('.job-chip:not(.jobs-edit-chip)').forEach(ch => {
       ch.addEventListener('click', (e) => {
         e.stopPropagation();
         jobFilter = ch.dataset.jobid;
@@ -1889,8 +2066,83 @@ const VOICE = {
         render();
       });
     });
+    const editBtn = bar.querySelector('#jobsEditBtn');
+    if (editBtn) editBtn.addEventListener('click', (e) => { e.stopPropagation(); openJobsModal(); });
     return bar;
   }
+  // ============ MANAGE JOBS MODAL ============
+  // Drafts editing into a temp array, commits on Save.
+  let _jobsDraft = null;
+  function openJobsModal() {
+    _jobsDraft = JOBS.map(j => ({ ...j }));
+    renderJobsModal();
+    document.getElementById('jobsModal').classList.add('open');
+  }
+  function closeJobsModal() {
+    document.getElementById('jobsModal').classList.remove('open');
+    _jobsDraft = null;
+  }
+  function renderJobsModal() {
+    const rows = document.getElementById('jobsRows');
+    if (!rows || !_jobsDraft) return;
+    rows.innerHTML = _jobsDraft.map((j, i) => `
+      <div class="jobs-row" data-i="${i}">
+        <input type="color" class="jobs-color" value="${j.color || '#FF8A3D'}" title="Color">
+        <input type="text" class="jobs-label" value="${escHtml(j.label)}" placeholder="Job name" maxlength="40">
+        <div class="jobs-row-actions">
+          ${i > 0 ? `<button class="jobs-row-btn" data-act="up" title="Move up">&#9650;</button>` : '<span style="width:28px"></span>'}
+          ${i < _jobsDraft.length - 1 ? `<button class="jobs-row-btn" data-act="down" title="Move down">&#9660;</button>` : '<span style="width:28px"></span>'}
+          <button class="jobs-row-btn danger" data-act="del" title="Delete">&times;</button>
+        </div>
+      </div>
+    `).join('');
+    rows.querySelectorAll('.jobs-row').forEach(rowEl => {
+      const i = parseInt(rowEl.dataset.i, 10);
+      const colorInp = rowEl.querySelector('.jobs-color');
+      const labelInp = rowEl.querySelector('.jobs-label');
+      colorInp.addEventListener('input', () => { _jobsDraft[i].color = colorInp.value; });
+      labelInp.addEventListener('input', () => { _jobsDraft[i].label = labelInp.value; });
+      rowEl.querySelectorAll('.jobs-row-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          const act = b.dataset.act;
+          if (act === 'up' && i > 0) {
+            const tmp = _jobsDraft[i-1]; _jobsDraft[i-1] = _jobsDraft[i]; _jobsDraft[i] = tmp;
+          } else if (act === 'down' && i < _jobsDraft.length - 1) {
+            const tmp = _jobsDraft[i+1]; _jobsDraft[i+1] = _jobsDraft[i]; _jobsDraft[i] = tmp;
+          } else if (act === 'del') {
+            if (_jobsDraft.length <= 1) { alert('Need at least one job.'); return; }
+            _jobsDraft.splice(i, 1);
+          }
+          renderJobsModal();
+        });
+      });
+    });
+  }
+  function addJobsRow() {
+    if (!_jobsDraft) return;
+    // Pick a fresh id from a name-like seed; fallback to a uid.
+    const seed = 'job' + Date.now().toString(36).slice(-4);
+    _jobsDraft.push({ id: seed, label: 'New job', color: '#FF8A3D' });
+    renderJobsModal();
+  }
+  function saveJobsModal() {
+    if (!_jobsDraft) return closeJobsModal();
+    // Trim labels, drop empties
+    const cleaned = _jobsDraft
+      .map(j => ({ ...j, label: (j.label || '').trim() }))
+      .filter(j => j.label);
+    if (cleaned.length === 0) { alert('At least one job required.'); return; }
+    JOBS = cleaned;
+    saveJobsList(JOBS);
+    populateJobSelect();
+    render();
+    closeJobsModal();
+  }
+  // Expose modal handlers (the modal HTML uses onclick= attributes)
+  window.openJobsModal = openJobsModal;
+  window.closeJobsModal = closeJobsModal;
+  window.addJobsRow = addJobsRow;
+  window.saveJobsModal = saveJobsModal;
   // ============ JOB DROPDOWN (add bar) ============
   function populateJobSelect() {
     const sel = document.getElementById('jobSelect');
