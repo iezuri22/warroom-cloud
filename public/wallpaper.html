@@ -412,6 +412,8 @@
     flex-shrink: 0; letter-spacing: .3px;
   }
   .panel-customize-btn:hover { background: rgba(191,90,242,.22); }
+  /* Customize modal stacks above the settings modal */
+  #goalsCustomizeModal { z-index: 300; }
   /* Goals customize list */
   .goals-customize-list {
     display: flex; flex-direction: column; gap: 8px;
@@ -458,8 +460,9 @@
     display: flex; align-items: center; justify-content: center; gap: 6px;
     transition: all .15s;
   }
-  .gc-modes label:has(input:checked) {
-    background: rgba(255,138,61,.14); border-color: rgba(255,138,61,.3); color: #FF8A3D;
+  .gc-modes label.selected {
+    background: rgba(255,138,61,.18); border-color: rgba(255,138,61,.5);
+    color: #FF8A3D; box-shadow: 0 0 0 1px rgba(255,138,61,.25) inset;
   }
   .gc-modes input { appearance: none; -webkit-appearance: none; margin: 0; }
 
@@ -1314,19 +1317,23 @@
       return;
     }
     list.innerHTML = goals.map(g => {
+      // We use raw id values (no quoting) inside data attrs / radio names so they
+      // round-trip through the DOM. Goal ids are slug-safe (uid()/board id pattern).
+      const safeGid = String(g.id).replace(/"/g, '&quot;');
       const cfg = _goalsCustomizeDraft[g.id] || { show: true, mode: 'tasks' };
       const pm = pillarMetaTV(g.pillar);
       const taskCt = (g.tasks || []).filter(t => !t.done).length;
+      const isName = cfg.mode === 'name';
       return `
-        <div class="gc-row${cfg.show ? '' : ' disabled'}" data-gid="${escapeHtml(g.id)}">
+        <div class="gc-row${cfg.show ? '' : ' disabled'}" data-gid="${safeGid}">
           <div class="gc-row-head">
             <input type="checkbox" data-act="show" ${cfg.show ? 'checked' : ''}>
             <span class="gc-row-title">${escapeHtml(g.title || 'Untitled')}</span>
             <span class="gc-row-pillar" style="color:${pm.color};background:${pm.color}1f">${escapeHtml(pm.label)}</span>
           </div>
           <div class="gc-modes">
-            <label><input type="radio" name="mode-${escapeHtml(g.id)}" value="name" ${cfg.mode==='name'?'checked':''}><span>Name only</span></label>
-            <label><input type="radio" name="mode-${escapeHtml(g.id)}" value="tasks" ${cfg.mode!=='name'?'checked':''}><span>Show ${taskCt} task${taskCt===1?'':'s'}</span></label>
+            <label class="${isName ? 'selected' : ''}"><input type="radio" name="mode-${safeGid}" value="name" ${isName?'checked':''}><span>Name only</span></label>
+            <label class="${!isName ? 'selected' : ''}"><input type="radio" name="mode-${safeGid}" value="tasks" ${!isName?'checked':''}><span>Show ${taskCt} task${taskCt===1?'':'s'}</span></label>
           </div>
         </div>
       `;
@@ -1334,7 +1341,7 @@
     list.querySelectorAll('.gc-row').forEach(rowEl => {
       const gid = rowEl.dataset.gid;
       const showChk = rowEl.querySelector('[data-act="show"]');
-      showChk.addEventListener('change', () => {
+      if (showChk) showChk.addEventListener('change', () => {
         if (!_goalsCustomizeDraft[gid]) _goalsCustomizeDraft[gid] = { show: true, mode: 'tasks' };
         _goalsCustomizeDraft[gid].show = showChk.checked;
         renderGoalsCustomize();
@@ -1343,14 +1350,33 @@
         r.addEventListener('change', () => {
           if (!_goalsCustomizeDraft[gid]) _goalsCustomizeDraft[gid] = { show: true, mode: 'tasks' };
           _goalsCustomizeDraft[gid].mode = r.value;
+          // Visually toggle the .selected class so the user sees the choice
+          rowEl.querySelectorAll('.gc-modes label').forEach(l => l.classList.remove('selected'));
+          const lbl = r.closest('label'); if (lbl) lbl.classList.add('selected');
         });
       });
     });
   }
   function saveGoalsCustomize(){
     if (_goalsCustomizeIdx < 0 || !_goalsCustomizeDraft) return closeGoalsCustomize();
-    _draftCfg.panels[_goalsCustomizeIdx].goalDisplay = _goalsCustomizeDraft;
+    // Update both the in-progress draft (settings still being edited) AND the
+    // committed cfg, so closing the settings modal without explicit Save
+    // doesn't lose this customization. Also persist to localStorage immediately.
+    const snapshot = JSON.parse(JSON.stringify(_goalsCustomizeDraft));
+    _draftCfg.panels[_goalsCustomizeIdx].goalDisplay = snapshot;
+    const panelId = _draftCfg.panels[_goalsCustomizeIdx].id;
+    const livePanel = (cfg.panels || []).find(p => p.id === panelId);
+    if (livePanel) livePanel.goalDisplay = JSON.parse(JSON.stringify(snapshot));
+    saveCfg();
     closeGoalsCustomize();
+    // If TV mode is already running, rebuild so the change shows up immediately
+    if (panelIframes.length > 0) {
+      if (rotationTimer) clearTimeout(rotationTimer);
+      clearCustomTimers();
+      buildPanels();
+      activeIdx = -1;
+      rotate();
+    }
   }
   document.getElementById('goalsCustomizeModal').addEventListener('click', (e) => {
     if (e.target.id === 'goalsCustomizeModal') closeGoalsCustomize();
