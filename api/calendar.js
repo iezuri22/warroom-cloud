@@ -20,8 +20,39 @@ function formatTime(date, tz = 'America/Chicago') {
   return m === '00' ? `${h} ${ap}` : `${h}:${m} ${ap}`;
 }
 
-function formatTimeRange(startISO, endISO, tz = 'America/Chicago') {
-  const s = new Date(startISO), e = new Date(endISO);
+// How many minutes off UTC is `date` when expressed in `tz`?
+function tzOffsetMinutes(date, tz) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const get = t => parseInt(parts.find(p => p.type === t).value, 10);
+  let h = get('hour'); if (h === 24) h = 0;
+  const localMs = Date.UTC(get('year'), get('month') - 1, get('day'), h, get('minute'), get('second'));
+  return (localMs - date.getTime()) / 60000;
+}
+
+// Parse an ISO string. If it has an offset (or Z), trust it. If not, and a
+// `tz` hint is provided, treat the string as a wall-clock time in that tz —
+// Google sometimes returns offsetless dateTime when the event source (e.g.
+// an iCal subscription) only declares a separate timeZone. Falling back to
+// new Date() alone would cause wrong-by-N-hour bugs on UTC servers.
+function parseEventInstant(iso, tz) {
+  if (!iso) return null;
+  const hasOffset = /[+-]\d\d:?\d\d$/.test(iso) || /Z$/.test(iso);
+  if (hasOffset) return new Date(iso);
+  if (!tz) return new Date(iso); // best effort
+  // Wall-clock parsed as UTC, then shift by tz offset for that date
+  const provisional = new Date(iso + 'Z');
+  if (isNaN(provisional.getTime())) return new Date(iso);
+  const offsetMin = tzOffsetMinutes(provisional, tz);
+  return new Date(provisional.getTime() - offsetMin * 60 * 1000);
+}
+
+function formatTimeRange(startISO, endISO, tz = 'America/Chicago', startTz, endTz) {
+  const s = parseEventInstant(startISO, startTz || tz);
+  const e = parseEventInstant(endISO, endTz || tz);
   return `${formatTime(s, tz)} - ${formatTime(e, tz)}`;
 }
 
@@ -158,12 +189,17 @@ export default async function handler(req, res) {
           });
         }
       } else {
-        const dk = dateKey(new Date(startISO));
+        // Pass through the event's own timeZone hints so offsetless dateTime
+        // values (common on iCal-imported events) get parsed correctly.
+        const startTz = ev.start.timeZone || null;
+        const endTz = ev.end?.timeZone || startTz;
+        const startMoment = parseEventInstant(startISO, startTz);
+        const dk = dateKey(startMoment);
         if (!byDate[dk]) byDate[dk] = [];
         byDate[dk].push({
           id: ev.id || `${slugify(ev.summary)}-${dk}-${byDate[dk].length}`,
           summary: ev.summary || '(untitled)',
-          time: formatTimeRange(startISO, endISO || startISO),
+          time: formatTimeRange(startISO, endISO || startISO, 'America/Chicago', startTz, endTz),
           location: ev.location || '',
           description,
           meetingUrl,
@@ -179,12 +215,36 @@ export default async function handler(req, res) {
       byDate[dk].sort((a, b) => (a.startISO < b.startISO ? -1 : a.startISO > b.startISO ? 1 : 0));
     }
 
-    res.status(200).json({
+    // Debug mode: ?debug=1 — also returns raw start/end for the next 30 events
+    // so we can verify what Google is actually sending (useful for diagnosing
+    // wrong-time bugs from iCal-imported calendars).
+    const debug = req.query?.debug === '1';
+    const payload = {
       ok: true,
       synced_at: new Date().toISOString(),
       event_count: allEvents.length,
       by_date: byDate,
-    });
+    };
+    if (debug) {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      payload.debug_events = allEvents
+        .filter(ev => ev.start && (ev.start.dateTime || ev.start.date))
+        .filter(ev => {
+          const k = ev.start.dateTime ? ev.start.dateTime.slice(0,10) : ev.start.date;
+          return k >= todayKey;
+        })
+        .slice(0, 30)
+        .map(ev => ({
+          summary: ev.summary,
+          calendar: ev._calLabel,
+          start: ev.start,
+          end: ev.end,
+          formatted_time: ev.start.dateTime
+            ? formatTimeRange(ev.start.dateTime, ev.end?.dateTime || ev.start.dateTime, 'America/Chicago', ev.start.timeZone, ev.end?.timeZone)
+            : 'All day',
+        }));
+    }
+    res.status(200).json(payload);
   } catch (e) {
     console.error('calendar fetch error', e);
     // Refresh token dead OR OAuth client misconfigured — surface as 412 so the client shows Reconnect

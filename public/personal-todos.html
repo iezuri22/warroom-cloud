@@ -740,6 +740,57 @@
     .todo-date-row input[type="date"] { font-size: 12px; height: 34px; }
   }
 
+  /* ============ TIME-OF-DAY PERIODS ============ */
+  .period-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 8px; padding: 2px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: .3px;
+    background: color-mix(in srgb, var(--period-color) 18%, transparent);
+    color: var(--period-color, #fff);
+    vertical-align: middle;
+  }
+  .period-pill .period-was {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .2px;
+    color: rgba(255,255,255,.5); text-transform: uppercase;
+    margin-left: 3px;
+  }
+  .period-pill.shifted {
+    background: color-mix(in srgb, #FF6B6B 22%, transparent);
+    color: #FFB199;
+    --period-color: #FFB199;
+  }
+  /* When a task was shifted from its original period, highlight the whole row */
+  .todo-item.shifted {
+    border-left: 3px solid #FF6B6B;
+    padding-left: 21px; /* make room for the border (default padding 24) */
+    background: rgba(255,107,107,.04);
+  }
+  /* Period picker row in the drawer */
+  .todo-period-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    flex-basis: 100%; padding: 4px 0;
+  }
+  .todo-period-row .lbl {
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: rgba(255,255,255,.35);
+  }
+  .period-btn {
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.65); padding: 6px 12px;
+    border-radius: 8px; font-family: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .period-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
+  .period-btn.active {
+    background: rgba(255,138,61,.18); border-color: rgba(255,138,61,.4);
+    color: #FF8A3D;
+  }
+  @media (max-width: 720px) {
+    .period-btn { padding: 6px 10px; font-size: 11px; }
+    .todo-period-row .lbl { font-size: 10px; }
+    .period-pill { font-size: 10px; padding: 2px 6px; }
+  }
+
   /* ============ MANAGE JOBS MODAL ============ */
   .jobs-modal {
     position: fixed; inset: 0;
@@ -1044,6 +1095,27 @@
   // Track which task's drawer is open so re-renders (e.g. after a date input
   // change) don't collapse it.
   let expandedTaskId = null;
+  // Time-of-day periods: tasks default to whatever bucket you're in when you
+  // add them; auto-shift forward if not done by the cutoff.
+  // morning ends at 12:00, afternoon ends at 17:00. After 17:00 → evening.
+  // Cutoffs are tied to America/Chicago wall-clock.
+  const PERIOD_CUTOFFS = { morning: 12, afternoon: 17 };
+  function currentChicagoHour() {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }).formatToParts(new Date());
+      let h = parseInt(parts.find(p => p.type === 'hour').value, 10);
+      if (h === 24) h = 0;
+      return h;
+    } catch { return new Date().getHours(); }
+  }
+  function getCurrentPeriod() {
+    const h = currentChicagoHour();
+    if (h < PERIOD_CUTOFFS.morning) return 'morning';
+    if (h < PERIOD_CUTOFFS.afternoon) return 'afternoon';
+    return 'evening';
+  }
+  const PERIOD_LABEL = { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' };
+  const PERIOD_COLOR = { morning: '#FFD60A', afternoon: '#FF8A3D', evening: '#5AC8FA' };
   // ---- Job categories (derived from Board page boards) ----
   // The user's boards on the Board page (localStorage['goal-board-v2']) are
   // the source of truth. Each board becomes a job: id=board.id, label=board.name,
@@ -1617,8 +1689,42 @@ const VOICE = {
     // doesn't block render.
     if (isToday()) {
       try { await autoPushActiveGoalTasks(); } catch (e) { console.warn('auto-push failed', e); }
+      try { await shiftStalePeriods(); } catch (e) { console.warn('period shift failed', e); }
     }
     render();
+  }
+  // ============ AUTO-SHIFT TIME-OF-DAY PERIODS ============
+  // If a morning task isn't done by noon, bump it to afternoon (preserve original
+  // period so the badge can still show "was Morning"). Same for afternoon→evening
+  // at 5 PM. Evening tasks don't shift further.
+  async function shiftStalePeriods() {
+    const h = currentChicagoHour();
+    const updates = [];
+    for (const t of todos) {
+      if (t.done) continue;
+      if (!t.period) continue;
+      let newPeriod = null;
+      if (t.period === 'morning' && h >= PERIOD_CUTOFFS.morning) {
+        newPeriod = (h >= PERIOD_CUTOFFS.afternoon) ? 'evening' : 'afternoon';
+      } else if (t.period === 'afternoon' && h >= PERIOD_CUTOFFS.afternoon) {
+        newPeriod = 'evening';
+      }
+      if (!newPeriod) continue;
+      const patch = { period: newPeriod };
+      // Preserve the FIRST shift's original — don't overwrite if already set.
+      if (!t.originalPeriod) patch.originalPeriod = t.period;
+      updates.push({ id: t.id, patch });
+    }
+    if (!updates.length) return;
+    try {
+      const batch = writeBatch(db);
+      for (const u of updates) {
+        batch.update(doc(db, 'tv_todos', u.id), u.patch);
+        const local = todos.find(x => x.id === u.id);
+        if (local) Object.assign(local, u.patch);
+      }
+      await batch.commit();
+    } catch (e) { console.warn('period batch update failed', e); }
   }
   // ============ AUTO-PUSH ACTIVE GOAL TASKS TO PERSONAL ============
   // Scans the goals page's localStorage for goal sub-tasks whose startDate
@@ -1700,6 +1806,13 @@ const VOICE = {
       if (extra && extra.startDate) payload.startDate = extra.startDate;
       if (extra && extra.sourceGoalId) payload.sourceGoalId = extra.sourceGoalId;
       if (extra && extra.sourceGoalTaskId) payload.sourceGoalTaskId = extra.sourceGoalTaskId;
+      // Auto-bucket by current Chicago time when no explicit period given.
+      // Only when adding for today's date — don't auto-tag tasks scheduled
+      // for other days.
+      const period = (extra && extra.period !== undefined)
+        ? extra.period
+        : (isToday() ? getCurrentPeriod() : '');
+      if (period) payload.period = period;
       // Job: explicit override wins, otherwise the add-bar selection sticks.
       // Migrate legacy IDs in case selectedJob is from the old set.
       let job = (extra && extra.job) || selectedJob || '';
@@ -1713,6 +1826,7 @@ const VOICE = {
       if (extra && extra.sourceGoalId) newTodo.sourceGoalId = extra.sourceGoalId;
       if (extra && extra.sourceGoalTaskId) newTodo.sourceGoalTaskId = extra.sourceGoalTaskId;
       if (job) newTodo.job = job;
+      if (period) newTodo.period = period;
       todos.push(newTodo);
       render();
       return ref.id;
@@ -2496,7 +2610,8 @@ const VOICE = {
     const wrapper = document.createElement('div');
     wrapper.className = 'todo-wrapper'; wrapper.dataset.id = todo.id;
     const el = document.createElement('div');
-    el.className = 'todo-item' + (todo.done ? ' done' : '') + (isActive ? ' timing' : '');
+    const wasShifted = !todo.done && !!todo.originalPeriod && todo.originalPeriod !== todo.period;
+    el.className = 'todo-item' + (todo.done ? ' done' : '') + (isActive ? ' timing' : '') + (wasShifted ? ' shifted' : '');
     el.dataset.id = todo.id;
     if (!todo.done) el.draggable = true;
     // Main row: keep calm — drag, checkbox, text, (countdown if running), play/pause, chevron
@@ -2541,6 +2656,18 @@ const VOICE = {
         jobBadgeHTML = ` <span class="job-badge" title="${escHtml(jm.label)}"><span class="dot" style="background:${jm.color}"></span>${escHtml(jm.label)}</span>`;
       }
     }
+    // Period pill (morning/afternoon/evening). If it was auto-shifted from
+    // an earlier period, show the original alongside.
+    let periodPillHTML = '';
+    if (!todo.done && todo.period && PERIOD_LABEL[todo.period]) {
+      const wasShifted = !!todo.originalPeriod && todo.originalPeriod !== todo.period;
+      const origLabel = wasShifted ? PERIOD_LABEL[todo.originalPeriod] || '' : '';
+      const cls = wasShifted ? 'period-pill shifted' : 'period-pill';
+      const inner = wasShifted
+        ? `${PERIOD_LABEL[todo.period]} <span class="period-was">was ${origLabel}</span>`
+        : PERIOD_LABEL[todo.period];
+      periodPillHTML = ` <span class="${cls}" style="--period-color:${PERIOD_COLOR[todo.period]||'#888'}" title="${wasShifted?`Originally ${origLabel}`:`Period: ${PERIOD_LABEL[todo.period]}`}">${inner}</span>`;
+    }
     el.innerHTML = `
       <div class="drag-handle" ${todo.done?'style="opacity:0;pointer-events:none"':''}>
         <span></span><span></span><span></span>
@@ -2550,7 +2677,7 @@ const VOICE = {
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       </div>
-      <span class="todo-text">${escHtml(todo.text)}${duePillHTML}${startsPillHTML}${jobBadgeHTML}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
+      <span class="todo-text">${escHtml(todo.text)}${duePillHTML}${startsPillHTML}${periodPillHTML}${jobBadgeHTML}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
       ${mainTimerHTML}
       ${chevronHTML}`;
     const cbEl = el.querySelector('.checkbox');
@@ -2579,6 +2706,13 @@ const VOICE = {
           <span class="lbl">Due</span>
           <input type="date" class="due-date-input" value="${todo.dueDate || ''}">
           ${(todo.startDate || todo.dueDate) ? `<button class="clear-dates" type="button">Clear</button>` : ''}
+        </div>
+        <div class="todo-period-row">
+          <span class="lbl">Period</span>
+          <button class="period-btn ${todo.period==='morning'?'active':''}" data-period="morning">Morning</button>
+          <button class="period-btn ${todo.period==='afternoon'?'active':''}" data-period="afternoon">Afternoon</button>
+          <button class="period-btn ${todo.period==='evening'?'active':''}" data-period="evening">Evening</button>
+          <button class="period-btn ${!todo.period?'active':''}" data-period="">None</button>
         </div>`;
       wrapper.appendChild(drawer);
 
@@ -2641,6 +2775,17 @@ const VOICE = {
         e.stopPropagation();
         startInp.value = ''; dueInp.value = '';
         await commitDates();
+      });
+      // ---- Period buttons ----
+      drawer.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const newPeriod = btn.dataset.period || '';
+          // Clearing the originalPeriod when user manually changes period —
+          // a manual change resets the "shifted" state.
+          await updateTodoFields(todo.id, { period: newPeriod, originalPeriod: '' });
+          render();
+        });
       });
     }
     if (showPicker && !todo.done) {
@@ -2905,6 +3050,12 @@ const VOICE = {
   populateJobSelect();
   updateClock(); updateHeader(); loadTodos();
   setInterval(updateClock, 60000);
+  // Re-check period shifts every minute when viewing today (e.g. clock crosses
+  // noon → morning tasks bump to afternoon without needing a refresh).
+  setInterval(() => {
+    if (!isToday()) return;
+    shiftStalePeriods().then(() => render()).catch(() => {});
+  }, 60000);
 
   // ---- Inbound message bridge (from War Room shell) ----
   window.addEventListener('message', async (ev) => {
