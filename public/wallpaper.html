@@ -921,12 +921,46 @@
   //   panelCfg.goalIds  — if non-empty, only show goals whose id is in the set
   //   panelCfg.taskIds  — if non-empty, only show tasks whose `${goalId}:${taskId}` is in the set
   function loadGoalsFromStorage(){
+    const out = [];
+    // Quarterly goals — already in the right shape
     try {
       const raw = localStorage.getItem('quarterly-goals-v1');
-      if (!raw) return [];
-      const data = JSON.parse(raw);
-      return Array.isArray(data?.goals) ? data.goals : [];
-    } catch { return []; }
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (Array.isArray(data?.goals)) {
+          for (const g of data.goals) out.push({ ...g, _source: 'quarterly' });
+        }
+      }
+    } catch {}
+    // Board cards — normalize to look like a quarterly goal so the same renderer works
+    try {
+      const raw = localStorage.getItem('goal-board-v2');
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (Array.isArray(data?.boards)) {
+          for (const b of data.boards) {
+            const items = Array.isArray(b.goals) ? b.goals : [];
+            for (const g of items) {
+              if (g.hideFromGoals) continue; // user explicitly hid this card
+              out.push({
+                id: `bd:${b.id}:${g.id}`,
+                title: g.title || 'Untitled',
+                pillar: b.id, // board id IS the pillar
+                status: g.status || 'on',
+                progress: g.statusProgress || 0,
+                targetDate: g.targetDate || '',
+                tasks: (g.actionItems || []).map(it => ({
+                  id: it.id, text: it.text || it.title || '',
+                  done: !!it.done, dueDate: it.dueDate || '',
+                })),
+                _source: 'board',
+              });
+            }
+          }
+        }
+      }
+    } catch {}
+    return out;
   }
   function loadBoardsForJobMap(){
     // For pillar/job display — board id → {label, color}
