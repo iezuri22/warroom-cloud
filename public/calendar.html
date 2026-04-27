@@ -1202,7 +1202,12 @@ function renderSyncBanner(){
 
 function renderHorizon(){
   const container=document.getElementById('horizon');
-  const list=applyFilter(unified());
+  let list=applyFilter(unified());
+  // ?view=today wallpaper mode — limit to events on today's date only
+  if(state.todayOnly){
+    const todayKey=todayCT();
+    list=list.filter(e=>e.date===todayKey);
+  }
 
   if(!list.length){
     const totalUnfiltered=unified().length;
@@ -1981,6 +1986,16 @@ function init(){
   state.filter=loadFilter();
   state.tz=loadTz();
   state.view=loadView();
+  // Allow URL params to override stored state (used by /wallpaper.html when
+  // it embeds the calendar with a specific filter or today-only view).
+  try{
+    const sp=new URLSearchParams(location.search);
+    const f=sp.get('filter');
+    if(f) state.filter=f;
+    if(sp.get('view')==='today'){
+      state.todayOnly=true; // applied at render time below
+    }
+  }catch{}
   state.monthCursor=loadMonthCursor()||monthKeyFromToday();
   loadGcalCache();
   // Apply initial view state to DOM before first render

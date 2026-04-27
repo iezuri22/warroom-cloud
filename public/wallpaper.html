@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>War Room — TV Mode</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #050507; color: #fff; font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; }
+
+  /* ============ START SCREEN ============ */
+  .start-screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 28px; z-index: 100;
+    background: radial-gradient(ellipse at center, #1a1a1f 0%, #050507 70%);
+  }
+  .start-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 4px; text-transform: uppercase; color: rgba(255,138,61,.7); }
+  .start-title { font-size: clamp(36px, 7vw, 64px); font-weight: 900; letter-spacing: -.04em; line-height: 1; }
+  .start-sub { font-size: 16px; color: rgba(255,255,255,.5); max-width: 480px; text-align: center; line-height: 1.5; }
+  .start-actions { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; justify-content: center; }
+  .start-btn {
+    background: #FF8A3D; color: #050507; border: none;
+    padding: 16px 36px; border-radius: 14px;
+    font-family: inherit; font-size: 18px; font-weight: 800; letter-spacing: -.01em;
+    cursor: pointer; transition: transform .12s, background .12s;
+  }
+  .start-btn:hover { background: #FFB07F; transform: translateY(-1px); }
+  .start-btn.ghost { background: rgba(255,255,255,.08); color: #fff; }
+  .start-btn.ghost:hover { background: rgba(255,255,255,.14); }
+  .start-summary {
+    margin-top: 20px; font-size: 13px; color: rgba(255,255,255,.4);
+    display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 600px;
+  }
+  .start-summary .chip {
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    padding: 6px 12px; border-radius: 8px; font-weight: 600;
+  }
+
+  /* ============ STAGE (rotating iframes) ============ */
+  .stage { position: fixed; inset: 0; }
+  .panel-frame {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0; opacity: 0;
+    transition: opacity .8s ease;
+    pointer-events: none;
+  }
+  .panel-frame.active { opacity: 1; pointer-events: auto; }
+
+  /* ============ CONTROL BAR ============ */
+  .control-bar {
+    position: fixed; top: 20px; right: 20px; z-index: 50;
+    display: flex; gap: 8px;
+    background: rgba(10,10,12,.8);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 8px; border-radius: 14px;
+    transition: opacity .4s;
+  }
+  .control-bar.hidden { opacity: 0; pointer-events: none; }
+  .ctrl-btn {
+    width: 40px; height: 40px; border-radius: 9px;
+    background: rgba(255,255,255,.06); border: none;
+    color: rgba(255,255,255,.85); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all .15s; font-family: inherit;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+  .ctrl-btn.active { background: rgba(255,138,61,.18); color: #FF8A3D; }
+  .ctrl-btn svg { width: 18px; height: 18px; }
+
+  /* Now-playing chip */
+  .now-playing {
+    position: fixed; bottom: 20px; left: 20px; z-index: 50;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(10,10,12,.8);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 10px 14px; border-radius: 12px;
+    font-size: 13px; font-weight: 700; letter-spacing: .3px;
+    transition: opacity .4s;
+  }
+  .now-playing.hidden { opacity: 0; pointer-events: none; }
+  .now-playing .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #FF8A3D;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .5; transform: scale(.8); }
+  }
+  .np-progress {
+    position: absolute; bottom: 0; left: 0; height: 2px;
+    background: #FF8A3D; transition: width .3s linear;
+    border-radius: 0 0 12px 12px;
+  }
+
+  /* ============ SETTINGS MODAL ============ */
+  .settings-modal {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.7);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .settings-modal.open { display: flex; }
+  .settings-card {
+    background: #1A1A1F; border: 1px solid rgba(255,255,255,.08);
+    border-radius: 18px; padding: 24px; width: 100%; max-width: 580px;
+    max-height: 86vh; overflow-y: auto;
+  }
+  .settings-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 18px;
+  }
+  .settings-title { font-size: 22px; font-weight: 900; letter-spacing: -.02em; }
+  .settings-close {
+    background: none; border: none; color: rgba(255,255,255,.5);
+    font-size: 28px; cursor: pointer; line-height: 1; font-family: inherit;
+  }
+  .settings-section-label {
+    font-size: 11px; font-weight: 800; letter-spacing: 2px;
+    text-transform: uppercase; color: rgba(255,255,255,.4);
+    margin: 18px 0 10px;
+  }
+  .panels-list { display: flex; flex-direction: column; gap: 8px; }
+  .panel-row {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .panel-row.disabled { opacity: .45; }
+  .panel-row input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 22px; height: 22px; border-radius: 6px;
+    background: rgba(255,255,255,.08); border: 1.5px solid rgba(255,255,255,.2);
+    cursor: pointer; position: relative; flex-shrink: 0;
+  }
+  .panel-row input[type="checkbox"]:checked {
+    background: #FF8A3D; border-color: #FF8A3D;
+  }
+  .panel-row input[type="checkbox"]:checked::after {
+    content: ''; position: absolute; top: 3px; left: 7px;
+    width: 5px; height: 10px;
+    border: solid #050507; border-width: 0 2.5px 2.5px 0;
+    transform: rotate(45deg);
+  }
+  .panel-label { flex: 1; font-size: 14px; font-weight: 700; }
+  .panel-row .seconds-input {
+    width: 70px; padding: 7px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    color: #fff; font-family: inherit; font-size: 13px; font-weight: 700;
+    text-align: center;
+  }
+  .panel-row .seconds-suffix { font-size: 11px; color: rgba(255,255,255,.4); font-weight: 700; }
+  .panel-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .reorder-btn {
+    width: 26px; height: 28px; border-radius: 6px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.5); cursor: pointer; font-family: inherit; font-size: 11px;
+  }
+  .reorder-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
+  /* Music section */
+  .music-row { display: flex; align-items: center; gap: 12px; }
+  .music-toggle {
+    appearance: none; -webkit-appearance: none;
+    width: 44px; height: 24px; border-radius: 12px;
+    background: rgba(255,255,255,.1); cursor: pointer; position: relative;
+    transition: background .2s;
+  }
+  .music-toggle:checked { background: #FF8A3D; }
+  .music-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px; border-radius: 50%; background: #fff;
+    transition: transform .2s;
+  }
+  .music-toggle:checked::after { transform: translateX(20px); }
+  .music-input {
+    flex: 1; padding: 8px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    color: #fff; font-family: inherit; font-size: 13px;
+  }
+  .music-help {
+    font-size: 11.5px; color: rgba(255,255,255,.4);
+    line-height: 1.5; margin-top: 8px;
+  }
+  /* Settings actions */
+  .settings-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px;
+    border-top: 1px solid rgba(255,255,255,.06); padding-top: 18px;
+  }
+  .settings-actions .ghost-btn,
+  .settings-actions .save-btn {
+    padding: 10px 20px; border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer; border: 1px solid rgba(255,255,255,.1);
+  }
+  .settings-actions .ghost-btn { background: rgba(255,255,255,.04); color: rgba(255,255,255,.7); }
+  .settings-actions .ghost-btn:hover { color: #fff; }
+  .settings-actions .save-btn { background: #FF8A3D; color: #050507; border-color: #FF8A3D; }
+  .settings-actions .save-btn:hover { background: #FFB07F; }
+</style>
+</head>
+<body>
+<div class="start-screen" id="startScreen">
+  <div class="start-eyebrow">War Room</div>
+  <div class="start-title">TV Mode</div>
+  <div class="start-sub">Rotate through your work on the big screen. Lofi in the background.</div>
+  <div class="start-actions">
+    <button class="start-btn" onclick="startWallpaper()">Start</button>
+    <button class="start-btn ghost" onclick="openSettings()">Configure</button>
+    <button class="start-btn ghost" onclick="exitWallpaper()">Back to War Room</button>
+  </div>
+  <div class="start-summary" id="startSummary"></div>
+</div>
+
+<div class="stage" id="stage" style="display:none"></div>
+
+<!-- Hidden YouTube iframe for music -->
+<iframe id="musicFrame" style="position:absolute;width:1px;height:1px;left:-9999px;top:-9999px;border:0" allow="autoplay" title="Background music"></iframe>
+
+<div class="control-bar hidden" id="controls">
+  <button class="ctrl-btn" id="musicBtn" onclick="toggleMusic()" title="Toggle music">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+  </button>
+  <button class="ctrl-btn" onclick="manualNext()" title="Next panel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+  </button>
+  <button class="ctrl-btn" onclick="openSettings()" title="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <button class="ctrl-btn" onclick="exitWallpaper()" title="Exit">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="now-playing hidden" id="nowPlaying">
+  <span class="dot"></span>
+  <span id="nowPlayingLabel">—</span>
+  <div class="np-progress" id="npProgress"></div>
+</div>
+
+<!-- Settings modal -->
+<div class="settings-modal" id="settingsModal">
+  <div class="settings-card">
+    <div class="settings-head">
+      <span class="settings-title">TV Mode Settings</span>
+      <button class="settings-close" onclick="closeSettings()">&times;</button>
+    </div>
+
+    <div class="settings-section-label">Panels &amp; rotation</div>
+    <div class="panels-list" id="panelsList"></div>
+
+    <div class="settings-section-label">Background music</div>
+    <div class="music-row">
+      <input type="checkbox" class="music-toggle" id="musicToggle">
+      <input type="text" class="music-input" id="musicInput" placeholder="YouTube video ID">
+    </div>
+    <div class="music-help">Default is the Lofi Girl stream (jfKfPfyJRdk). Paste any YouTube video ID for a different vibe. Music starts when you tap Start (browsers require a tap before audio plays).</div>
+
+    <div class="settings-actions">
+      <button class="ghost-btn" onclick="closeSettings()">Cancel</button>
+      <button class="save-btn" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ============ CONFIG ============
+  const CFG_KEY = 'warroom-wallpaper-cfg-v1';
+  // Catalog of available panels. Each maps to a War Room URL with embed mode.
+  const PANEL_CATALOG = [
+    { id: 'personal',     label: 'Personal tasks',           url: '/personal-todos.html?embed=1' },
+    { id: 'cal-all',      label: 'Calendar — all upcoming',  url: '/calendar.html?embed=1&filter=all' },
+    { id: 'cal-today',    label: 'Calendar — today only',    url: '/calendar.html?embed=1&view=today' },
+    { id: 'cal-priority', label: 'Calendar — priorities',    url: '/calendar.html?embed=1&filter=priority' },
+    { id: 'goals',        label: 'Goals',                    url: '/weekly-goals.html?embed=1' },
+    { id: 'board',        label: 'Board',                    url: '/goal-board.html?embed=1' },
+  ];
+  const DEFAULT_CFG = {
+    panels: [
+      { id: 'personal',     enabled: true,  seconds: 30 },
+      { id: 'cal-today',    enabled: true,  seconds: 25 },
+      { id: 'cal-priority', enabled: true,  seconds: 20 },
+      { id: 'cal-all',      enabled: false, seconds: 30 },
+      { id: 'goals',        enabled: true,  seconds: 30 },
+      { id: 'board',        enabled: false, seconds: 25 },
+    ],
+    musicOn: true,
+    musicVideoId: 'jfKfPfyJRdk' // Lofi Girl stream
+  };
+  function loadCfg() {
+    try {
+      const raw = localStorage.getItem(CFG_KEY);
+      if (raw) {
+        const c = JSON.parse(raw);
+        // Backfill any panels that were added to the catalog after the cfg was saved
+        const known = new Set(c.panels.map(p => p.id));
+        for (const p of DEFAULT_CFG.panels) {
+          if (!known.has(p.id)) c.panels.push({ ...p });
+        }
+        return c;
+      }
+    } catch {}
+    return JSON.parse(JSON.stringify(DEFAULT_CFG));
+  }
+  function saveCfg() {
+    try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch {}
+  }
+
+  let cfg = loadCfg();
+  let panelIframes = []; // [{ id, label, iframe, seconds }]
+  let activeIdx = -1;
+  let rotationTimer = null;
+  let progressTimer = null;
+  let progressStart = 0;
+  let progressDuration = 0;
+  let musicPlaying = false;
+
+  // ============ START SCREEN summary ============
+  function renderStartSummary() {
+    const el = document.getElementById('startSummary');
+    const enabled = cfg.panels.filter(p => p.enabled);
+    if (enabled.length === 0) {
+      el.innerHTML = '<span class="chip">No panels selected — tap Configure</span>';
+      return;
+    }
+    const total = enabled.reduce((s, p) => s + (p.seconds || 30), 0);
+    el.innerHTML =
+      `<span class="chip">${enabled.length} panel${enabled.length===1?'':'s'}</span>` +
+      `<span class="chip">${Math.round(total)}s loop</span>` +
+      `<span class="chip">Music ${cfg.musicOn ? 'on' : 'off'}</span>`;
+  }
+  renderStartSummary();
+
+  // ============ START ROTATION ============
+  function startWallpaper() {
+    const enabled = cfg.panels.filter(p => p.enabled);
+    if (enabled.length === 0) {
+      alert('Pick at least one panel in Configure first.');
+      return;
+    }
+    document.getElementById('startScreen').style.display = 'none';
+    document.getElementById('stage').style.display = 'block';
+    document.getElementById('controls').classList.remove('hidden');
+    document.getElementById('nowPlaying').classList.remove('hidden');
+    buildPanels();
+    if (cfg.musicOn) startMusic();
+    activeIdx = -1;
+    rotate();
+    setupAutoHide();
+  }
+
+  function buildPanels() {
+    const stage = document.getElementById('stage');
+    stage.innerHTML = '';
+    panelIframes = [];
+    const enabled = cfg.panels.filter(p => p.enabled);
+    for (const p of enabled) {
+      const meta = PANEL_CATALOG.find(x => x.id === p.id);
+      if (!meta) continue;
+      const ifr = document.createElement('iframe');
+      ifr.className = 'panel-frame';
+      ifr.src = meta.url;
+      ifr.title = meta.label;
+      stage.appendChild(ifr);
+      panelIframes.push({ id: p.id, label: meta.label, iframe: ifr, seconds: Math.max(5, p.seconds || 30) });
+    }
+  }
+
+  function rotate() {
+    if (panelIframes.length === 0) return;
+    if (activeIdx >= 0 && panelIframes[activeIdx]) {
+      panelIframes[activeIdx].iframe.classList.remove('active');
+    }
+    activeIdx = (activeIdx + 1) % panelIframes.length;
+    const cur = panelIframes[activeIdx];
+    cur.iframe.classList.add('active');
+    document.getElementById('nowPlayingLabel').textContent = cur.label;
+    if (rotationTimer) clearTimeout(rotationTimer);
+    rotationTimer = setTimeout(rotate, cur.seconds * 1000);
+    // Progress bar animation
+    progressStart = Date.now();
+    progressDuration = cur.seconds * 1000;
+    if (progressTimer) clearInterval(progressTimer);
+    progressTimer = setInterval(updateProgress, 200);
+    updateProgress();
+  }
+
+  function updateProgress() {
+    const elapsed = Date.now() - progressStart;
+    const pct = Math.min(100, (elapsed / progressDuration) * 100);
+    document.getElementById('npProgress').style.width = pct + '%';
+  }
+
+  function manualNext() { rotate(); }
+
+  // ============ MUSIC ============
+  function startMusic() {
+    const id = (cfg.musicVideoId || 'jfKfPfyJRdk').trim();
+    const frame = document.getElementById('musicFrame');
+    // Use the youtube-nocookie embed for fewer trackers; loop=1 + playlist=ID makes loop work
+    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&loop=1&playlist=${id}&controls=0&showinfo=0&iv_load_policy=3&modestbranding=1`;
+    musicPlaying = true;
+    document.getElementById('musicBtn').classList.add('active');
+  }
+  function stopMusic() {
+    document.getElementById('musicFrame').src = '';
+    musicPlaying = false;
+    document.getElementById('musicBtn').classList.remove('active');
+  }
+  function toggleMusic() {
+    if (musicPlaying) stopMusic(); else startMusic();
+  }
+
+  // ============ EXIT ============
+  function exitWallpaper() {
+    stopMusic();
+    if (rotationTimer) clearTimeout(rotationTimer);
+    if (progressTimer) clearInterval(progressTimer);
+    // Send the user back to War Room. Use top-window navigation in case we're embedded.
+    try {
+      if (window.top && window.top !== window) {
+        window.top.location.href = '/daily-planner.html';
+        return;
+      }
+    } catch {}
+    window.location.href = '/daily-planner.html';
+  }
+
+  // ============ AUTO-HIDE CONTROLS ============
+  let hideTimeout = null;
+  function setupAutoHide() {
+    const onActivity = () => {
+      document.getElementById('controls').classList.remove('hidden');
+      document.getElementById('nowPlaying').classList.remove('hidden');
+      if (hideTimeout) clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        document.getElementById('controls').classList.add('hidden');
+        document.getElementById('nowPlaying').classList.add('hidden');
+      }, 4000);
+    };
+    document.addEventListener('mousemove', onActivity);
+    document.addEventListener('touchstart', onActivity);
+    document.addEventListener('keydown', onActivity);
+    onActivity();
+  }
+  // Esc to exit
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      // If settings is open, close it instead
+      if (document.getElementById('settingsModal').classList.contains('open')) {
+        closeSettings();
+      } else {
+        exitWallpaper();
+      }
+    } else if (e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      manualNext();
+    }
+  });
+
+  // ============ SETTINGS MODAL ============
+  let _draftCfg = null;
+  function openSettings() {
+    _draftCfg = JSON.parse(JSON.stringify(cfg));
+    renderSettings();
+    document.getElementById('settingsModal').classList.add('open');
+  }
+  function closeSettings() {
+    document.getElementById('settingsModal').classList.remove('open');
+    _draftCfg = null;
+  }
+  function renderSettings() {
+    const list = document.getElementById('panelsList');
+    list.innerHTML = _draftCfg.panels.map((p, i) => {
+      const meta = PANEL_CATALOG.find(x => x.id === p.id);
+      const label = meta ? meta.label : p.id;
+      return `
+        <div class="panel-row${p.enabled ? '' : ' disabled'}" data-i="${i}">
+          <input type="checkbox" ${p.enabled ? 'checked' : ''} data-act="enable">
+          <span class="panel-label">${label}</span>
+          <input type="number" class="seconds-input" min="5" max="600" step="5" value="${p.seconds || 30}" data-act="seconds">
+          <span class="seconds-suffix">sec</span>
+          <div class="panel-row-actions">
+            <button class="reorder-btn" data-act="up" ${i===0?'disabled':''}>&#9650;</button>
+            <button class="reorder-btn" data-act="down" ${i===_draftCfg.panels.length-1?'disabled':''}>&#9660;</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    list.querySelectorAll('.panel-row').forEach(row => {
+      const i = parseInt(row.dataset.i, 10);
+      row.querySelector('[data-act="enable"]').addEventListener('change', (e) => {
+        _draftCfg.panels[i].enabled = e.target.checked;
+        renderSettings();
+      });
+      row.querySelector('[data-act="seconds"]').addEventListener('change', (e) => {
+        _draftCfg.panels[i].seconds = Math.max(5, parseInt(e.target.value, 10) || 30);
+      });
+      row.querySelectorAll('.reorder-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const act = btn.dataset.act;
+          if (act === 'up' && i > 0) {
+            const tmp = _draftCfg.panels[i-1]; _draftCfg.panels[i-1] = _draftCfg.panels[i]; _draftCfg.panels[i] = tmp;
+          } else if (act === 'down' && i < _draftCfg.panels.length - 1) {
+            const tmp = _draftCfg.panels[i+1]; _draftCfg.panels[i+1] = _draftCfg.panels[i]; _draftCfg.panels[i] = tmp;
+          }
+          renderSettings();
+        });
+      });
+    });
+    document.getElementById('musicToggle').checked = !!_draftCfg.musicOn;
+    document.getElementById('musicInput').value = _draftCfg.musicVideoId || '';
+  }
+  function saveSettings() {
+    if (!_draftCfg) return closeSettings();
+    _draftCfg.musicOn = document.getElementById('musicToggle').checked;
+    _draftCfg.musicVideoId = document.getElementById('musicInput').value.trim() || 'jfKfPfyJRdk';
+    cfg = _draftCfg;
+    saveCfg();
+    closeSettings();
+    renderStartSummary();
+    // If we're already running, rebuild
+    if (panelIframes.length > 0) {
+      if (rotationTimer) clearTimeout(rotationTimer);
+      stopMusic();
+      buildPanels();
+      activeIdx = -1;
+      if (cfg.musicOn) startMusic();
+      rotate();
+    }
+  }
+  // Click backdrop to close
+  document.getElementById('settingsModal').addEventListener('click', (e) => {
+    if (e.target.id === 'settingsModal') closeSettings();
+  });
+
+  // Expose globals for inline onclick handlers
+  window.startWallpaper = startWallpaper;
+  window.exitWallpaper = exitWallpaper;
+  window.toggleMusic = toggleMusic;
+  window.manualNext = manualNext;
+  window.openSettings = openSettings;
+  window.closeSettings = closeSettings;
+  window.saveSettings = saveSettings;
+</script>
+</body>
+</html>
