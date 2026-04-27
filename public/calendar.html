@@ -399,6 +399,17 @@ body{padding:16px 14px 120px}
 .detail-loc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .detail-loc .loc-text{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text)}
 .detail-desc{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;color:var(--text-mid);white-space:pre-wrap;max-height:220px;overflow:auto}
+.time-override-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.time-override-row input[type="time"]{padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;color:var(--text);min-width:120px}
+.time-override-row input[type="time"]:focus{outline:none;border-color:var(--accent)}
+.time-override-sep{font-size:12px;font-weight:600;color:var(--text-dim)}
+.time-override-scope{display:flex;flex-direction:column;gap:4px;margin-top:8px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}
+.time-override-scope label{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text-mid);cursor:pointer;padding:2px 0}
+.time-override-scope input[type="radio"]{margin:0;cursor:pointer;accent-color:var(--accent)}
+.time-override-scope label:has(input:checked){color:var(--text)}
+.time-override-clear{padding:6px 12px;font-size:12px;flex-shrink:0;margin-left:auto}
+.time-override-orig{font-size:11.5px;color:var(--text-fade);margin-top:6px;letter-spacing:.2px;font-style:italic}
+.field label .hint{display:block;font-size:11px;font-weight:600;color:var(--text-fade);text-transform:none;letter-spacing:0;margin-top:2px}
 .detail-desc a{color:var(--accent);text-decoration:underline}
 .cat-opt{
   padding:8px 12px;border-radius:8px;border:1px solid var(--border);
@@ -696,6 +707,23 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
       <label>Description</label>
       <div class="detail-desc" id="detailDesc"></div>
     </div>
+    <div class="field" id="detailTimeOverrideField">
+      <label>Override time
+        <span class="hint" id="detailTimeOverrideHint">Use when the source calendar has the wrong time</span>
+      </label>
+      <div class="time-override-row">
+        <input type="time" id="detailOverrideStart" step="300">
+        <span class="time-override-sep">to</span>
+        <input type="time" id="detailOverrideEnd" step="300">
+        <button type="button" class="btn ghost time-override-clear" id="detailOverrideClear">Clear</button>
+      </div>
+      <div class="time-override-scope">
+        <label><input type="radio" name="ovScope" value="id" checked><span>Just this instance</span></label>
+        <label><input type="radio" name="ovScope" value="pattern"><span>Every <span id="detailOverrideDow">Monday</span> at this time</span></label>
+        <label><input type="radio" name="ovScope" value="master"><span>Every instance of this recurring meeting</span></label>
+      </div>
+      <div class="time-override-orig" id="detailOverrideOrig"></div>
+    </div>
     <div class="field">
       <label>My notes</label>
       <textarea id="detailNotes" placeholder="Add your own notes (saved on this device)"></textarea>
@@ -741,6 +769,15 @@ const MANUAL_KEY='calendar-events-v1';
 const GCAL_PRI_KEY='calendar-gcal-priority-v1';
 const GCAL_TITLE_KEY='calendar-gcal-titles-v1';
 const GCAL_NOTES_KEY='calendar-gcal-notes-v1';
+// Per-event time overrides for events whose source iCal feed is wrong
+// (Outlook iCal exports notoriously botch recurring-event exceptions).
+// Two storage layers, checked in order:
+//   byId       — single instance override   { [eventId]: {start:'13:30', end:'14:30'} }
+//   byPattern  — apply to all instances of a recurring series whose master
+//                event id + day-of-week + original start time match. Lets you
+//                fix every Monday with one click instead of 50.
+//                key format: `${masterId}|${dow}|${origStartHHMM}`
+const GCAL_TIME_OVERRIDE_KEY='calendar-gcal-time-overrides-v1';
 const GCAL_CACHE_KEY='calendar-gcal-cache-v1';
 const FILTER_KEY='calendar-filter-v1';
 const TIMEZONE_KEY='calendar-tz-v1';
@@ -824,6 +861,75 @@ function loadGcalNotes(){
 }
 function saveGcalNotes(){
   localStorage.setItem(GCAL_NOTES_KEY,JSON.stringify(state.gcalNotes));
+}
+function loadGcalTimeOverrides(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(GCAL_TIME_OVERRIDE_KEY)||'{}');
+    return {
+      byId:      raw.byId||{},
+      byPattern: raw.byPattern||{},
+      byMaster:  raw.byMaster||{}, // every instance of a recurring series
+    };
+  }catch(e){return { byId:{}, byPattern:{}, byMaster:{} }}
+}
+function saveGcalTimeOverrides(){
+  localStorage.setItem(GCAL_TIME_OVERRIDE_KEY,JSON.stringify(state.gcalTimeOverrides));
+}
+// Extract the recurring master id (everything before the trailing _YYYYMMDDTHHMMSSZ)
+function gcalMasterId(id){
+  if(!id) return '';
+  return String(id).replace(/_\d{8}T\d{6}Z$/,'');
+}
+// Build pattern key: master + dow + original start time
+// Used to apply one override to every Monday instance of a recurring series.
+function gcalPatternKey(eventId, dateKey, origStartHHMM){
+  const master = gcalMasterId(eventId);
+  if(!master || !dateKey) return '';
+  const d = new Date(dateKey + 'T12:00:00');
+  const dow = d.getDay();
+  return `${master}|${dow}|${origStartHHMM||''}`;
+}
+// Convert "9:30 AM" / "1:30 PM" to "HH:MM" 24-hour, used as both pattern key
+// part and as the value stored in the override.
+function timeStrToHHMM(s){
+  if(!s) return '';
+  const m = String(s).trim().match(/^(\d{1,2}):?(\d{0,2})\s*(AM|PM|am|pm)?$/);
+  if(!m) return '';
+  let h = parseInt(m[1],10);
+  const min = parseInt(m[2]||'0',10) || 0;
+  const ap = (m[3]||'').toUpperCase();
+  if(ap === 'PM' && h !== 12) h += 12;
+  if(ap === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+}
+function hhmmToDisplay(hhmm){
+  if(!hhmm) return '';
+  const [hh,mm] = hhmm.split(':').map(n=>parseInt(n,10));
+  const h12 = ((hh+11)%12)+1;
+  const ap = hh<12 ? 'AM' : 'PM';
+  return mm===0 ? `${h12} ${ap}` : `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
+}
+// Look up an override for a given gcal event. Returns null if none.
+// Priority: byId (single instance) > byPattern (specific weekday + time)
+//         > byMaster (every instance of the recurring series).
+function findTimeOverride(ev){
+  if(!ev || !state.gcalTimeOverrides) return null;
+  const ov = state.gcalTimeOverrides;
+  if(ov.byId && ov.byId[ev.id]) return { kind:'id', value: ov.byId[ev.id] };
+  const orig = timeStrToHHMM(ev.start);
+  const pkey = gcalPatternKey(ev.id, ev.date, orig);
+  if(pkey && ov.byPattern && ov.byPattern[pkey]) {
+    return { kind:'pattern', key: pkey, value: ov.byPattern[pkey] };
+  }
+  // Master-level override matches the recurring series across every instance,
+  // qualified by original start time so a series with multiple time variants
+  // (e.g. 5:30 AM Tue–Fri + 9:30 AM Mon) isn't accidentally collapsed.
+  const master = gcalMasterId(ev.id);
+  const mkey = master ? `${master}|${orig}` : '';
+  if(mkey && ov.byMaster && ov.byMaster[mkey]) {
+    return { kind:'master', key: mkey, value: ov.byMaster[mkey] };
+  }
+  return null;
 }
 function mapsUrlFor(location){
   if(!location) return '';
@@ -960,17 +1066,44 @@ function unified(){
     if(g.date<today) continue;
     const pri=!!state.gcalPriority[g.id];
     const override=state.gcalTitles[g.id];
+    // Local time override (Outlook iCal export bug workaround) — patch the
+    // event's start/end/timeStr in-place so all downstream rendering picks
+    // it up. Pattern overrides match every Monday instance of a recurring
+    // series in one shot. Original times are preserved on `_originalStart`/
+    // `_originalEnd` so the modal can show "originally 9:30 AM".
+    let start = g.start||'';
+    let end   = g.end||'';
+    let timeStr = g.timeStr||'';
+    let timeOverridden = false;
+    if(!g.allDay){
+      const ov = findTimeOverride(g);
+      if(ov && ov.value){
+        const newStart = ov.value.start || '';
+        const newEnd   = ov.value.end   || '';
+        if(newStart){
+          const startDisp = hhmmToDisplay(newStart);
+          const endDisp   = newEnd ? hhmmToDisplay(newEnd) : '';
+          start = startDisp;
+          end   = endDisp;
+          timeStr = endDisp ? `${startDisp} - ${endDisp}` : startDisp;
+          timeOverridden = true;
+        }
+      }
+    }
     out.push({
       id:g.id, source:'gcal',
       title:override || g.summary || '(untitled)',
-      date:g.date, start:g.start||'', end:g.end||'',
+      date:g.date, start, end,
       startISO:g.startISO||'', endISO:g.endISO||g.startISO||'',
       category:g.category||'event', priority:pri,
       location:g.location||'', notes:g.description||'',
       userNotes:state.gcalNotes[g.id]||'',
       meetingUrl:g.meetingUrl||'',
       cal:g.cal||'', allDay:!!g.allDay,
-      timeStr:g.timeStr||'',
+      timeStr,
+      timeOverridden,
+      _originalStart: g.start||'',
+      _originalEnd:   g.end||'',
       edited:!!override, originalTitle:g.summary||'',
     });
   }
@@ -1777,6 +1910,33 @@ function openDetailModal(id){
   // User notes (local)
   document.getElementById('detailNotes').value=state.gcalNotes[id]||'';
 
+  // Time override fields — only meaningful for timed events, not all-day
+  const ovField = document.getElementById('detailTimeOverrideField');
+  const startInp = document.getElementById('detailOverrideStart');
+  const endInp   = document.getElementById('detailOverrideEnd');
+  const dowLbl   = document.getElementById('detailOverrideDow');
+  const origLbl  = document.getElementById('detailOverrideOrig');
+  if(g.allDay){
+    ovField.style.display='none';
+  }else{
+    ovField.style.display='';
+    const existing = findTimeOverride(g);
+    startInp.value = existing ? (existing.value.start || '') : '';
+    endInp.value   = existing ? (existing.value.end   || '') : '';
+    // Set the scope radio based on what kind of override (if any) exists
+    const scope = existing ? (existing.kind === 'master' ? 'master' : existing.kind === 'pattern' ? 'pattern' : 'id') : 'id';
+    document.querySelectorAll('input[name="ovScope"]').forEach(r => { r.checked = (r.value === scope); });
+    // Day-of-week label for the "Every Monday" option
+    if(g.date){
+      const d = new Date(g.date+'T12:00:00');
+      const dows = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      dowLbl.textContent = dows[d.getDay()] || '';
+    }
+    // Show original (Google) time so user can see what they're overriding
+    const origStr = g.start ? (g.end ? `${g.start} – ${g.end}` : g.start) : '';
+    origLbl.textContent = origStr ? `Source calendar says: ${origStr}` : '';
+  }
+
   document.getElementById('detailBg').classList.add('open');
   setTimeout(()=>document.getElementById('detailNotes').focus(),60);
 }
@@ -1829,8 +1989,59 @@ function saveDetailNotes(){
       saveGcalTitles();
     }
   }
+  // ---- Time override ----
+  const g = state.gcal.find(x=>x.id===id);
+  if(g && !g.allDay){
+    const newStart = (document.getElementById('detailOverrideStart').value || '').trim();
+    const newEnd   = (document.getElementById('detailOverrideEnd').value   || '').trim();
+    const scopeEl  = document.querySelector('input[name="ovScope"]:checked');
+    const scope    = scopeEl ? scopeEl.value : 'id';
+    if(!state.gcalTimeOverrides) state.gcalTimeOverrides = { byId:{}, byPattern:{}, byMaster:{} };
+    if(!state.gcalTimeOverrides.byMaster) state.gcalTimeOverrides.byMaster = {};
+    // Always clear any previous override for this id/pattern/master before re-applying
+    if(state.gcalTimeOverrides.byId[id]) delete state.gcalTimeOverrides.byId[id];
+    const origHHMM = timeStrToHHMM(g.start);
+    const pkey = gcalPatternKey(id, g.date, origHHMM);
+    if(pkey && state.gcalTimeOverrides.byPattern[pkey]) delete state.gcalTimeOverrides.byPattern[pkey];
+    const master = gcalMasterId(id);
+    const mkey = master ? `${master}|${origHHMM}` : '';
+    if(mkey && state.gcalTimeOverrides.byMaster[mkey]) delete state.gcalTimeOverrides.byMaster[mkey];
+    if(newStart){
+      const value = { start: newStart, end: newEnd || '' };
+      if(scope === 'master' && mkey){
+        state.gcalTimeOverrides.byMaster[mkey] = value;
+      } else if(scope === 'pattern' && pkey){
+        state.gcalTimeOverrides.byPattern[pkey] = value;
+      } else {
+        state.gcalTimeOverrides.byId[id] = value;
+      }
+    }
+    saveGcalTimeOverrides();
+  }
   closeDetailModal();
   showToast('Saved');
+  render();
+}
+function clearDetailTimeOverride(){
+  if(!state.detailId) return;
+  const id = state.detailId;
+  const g = state.gcal.find(x=>x.id===id);
+  if(!g) return;
+  if(!state.gcalTimeOverrides) state.gcalTimeOverrides = { byId:{}, byPattern:{}, byMaster:{} };
+  if(!state.gcalTimeOverrides.byMaster) state.gcalTimeOverrides.byMaster = {};
+  if(state.gcalTimeOverrides.byId[id]) delete state.gcalTimeOverrides.byId[id];
+  const origHHMM = timeStrToHHMM(g.start);
+  const pkey = gcalPatternKey(id, g.date, origHHMM);
+  if(pkey && state.gcalTimeOverrides.byPattern[pkey]) delete state.gcalTimeOverrides.byPattern[pkey];
+  const master = gcalMasterId(id);
+  const mkey = master ? `${master}|${origHHMM}` : '';
+  if(mkey && state.gcalTimeOverrides.byMaster[mkey]) delete state.gcalTimeOverrides.byMaster[mkey];
+  saveGcalTimeOverrides();
+  document.getElementById('detailOverrideStart').value = '';
+  document.getElementById('detailOverrideEnd').value = '';
+  const idRadio = document.querySelector('input[name="ovScope"][value="id"]');
+  if(idRadio) idRadio.checked = true;
+  showToast('Override cleared');
   render();
 }
 
@@ -1983,6 +2194,7 @@ function init(){
   state.gcalPriority=loadGcalPriority();
   state.gcalTitles=loadGcalTitles();
   state.gcalNotes=loadGcalNotes();
+  state.gcalTimeOverrides=loadGcalTimeOverrides();
   state.filter=loadFilter();
   state.tz=loadTz();
   state.view=loadView();
@@ -2024,6 +2236,8 @@ function init(){
   document.getElementById('detailClose').onclick=closeDetailModal;
   document.getElementById('detailCancel').onclick=closeDetailModal;
   document.getElementById('detailSave').onclick=saveDetailNotes;
+  const ovClear=document.getElementById('detailOverrideClear');
+  if(ovClear) ovClear.onclick=clearDetailTimeOverride;
   document.getElementById('detailBg').addEventListener('click',(e)=>{if(e.target.id==='detailBg')closeDetailModal()});
   document.getElementById('dayClose').onclick=closeDayModal;
   document.getElementById('dayBg').addEventListener('click',(e)=>{if(e.target.id==='dayBg')closeDayModal()});
