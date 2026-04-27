@@ -922,6 +922,19 @@ function hhmmToDisplay(hhmm){
   const ap = hh<12 ? 'AM' : 'PM';
   return mm===0 ? `${h12} ${ap}` : `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
 }
+function hhmmToMin(hhmm){
+  if(!hhmm) return NaN;
+  const [hh,mm] = String(hhmm).split(':').map(n=>parseInt(n,10));
+  if(Number.isNaN(hh) || Number.isNaN(mm)) return NaN;
+  return hh*60 + mm;
+}
+function minToHhmm(min){
+  if(!Number.isFinite(min)) return '';
+  const m = ((min % (24*60)) + 24*60) % (24*60);
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return `${String(h).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+}
 // Build the option list for the override dropdowns: 15-minute increments
 // across 24 hours, value = HH:MM 24h, label = "9:30 AM" style.
 // `selected` is an HH:MM string to mark selected; if it doesn't fall on a
@@ -1970,6 +1983,25 @@ function openDetailModal(id){
     ovField.dataset.origStart = origStartHHMM || '';
     ovField.dataset.origEnd   = origEndHHMM   || '';
     ovField.dataset.hadOverride = existing ? '1' : '';
+    // Cache the original duration in minutes so changing start auto-shifts end.
+    const durMin = (origStartHHMM && origEndHHMM)
+      ? Math.max(0, hhmmToMin(origEndHHMM) - hhmmToMin(origStartHHMM))
+      : 0;
+    ovField.dataset.durMin = String(durMin);
+    // Wire the start dropdown to drag end with it. Replace any prior listener
+    // by reassigning .onchange (idempotent across modal re-opens).
+    startInp.onchange = () => {
+      const dm = parseInt(ovField.dataset.durMin || '0', 10);
+      if (!dm) return;
+      const newStartMin = hhmmToMin(startInp.value);
+      if (Number.isNaN(newStartMin)) return;
+      const newEndHHMM = minToHhmm((newStartMin + dm) % (24 * 60));
+      // Make sure the option exists (handles odd off-grid durations)
+      if (!Array.from(endInp.options).some(o => o.value === newEndHHMM)) {
+        endInp.innerHTML = buildTimeOptionsHtml(newEndHHMM);
+      }
+      endInp.value = newEndHHMM;
+    };
     // Set the scope radio based on what kind of override (if any) exists
     const scope = existing ? (existing.kind === 'master' ? 'master' : existing.kind === 'pattern' ? 'pattern' : 'id') : 'id';
     document.querySelectorAll('input[name="ovScope"]').forEach(r => { r.checked = (r.value === scope); });
