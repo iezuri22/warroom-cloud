@@ -406,8 +406,15 @@ body{padding:16px 14px 120px}
 .detail-loc .loc-text{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text)}
 .detail-desc{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;color:var(--text-mid);white-space:pre-wrap;max-height:220px;overflow:auto}
 .time-override-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.time-override-row input[type="time"]{padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;color:var(--text);min-width:120px}
-.time-override-row input[type="time"]:focus{outline:none;border-color:var(--accent)}
+.time-override-row select{
+  padding:8px 30px 8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  font-family:inherit;font-size:13px;font-weight:600;color:var(--text);min-width:130px;cursor:pointer;
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='0.6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center;background-size:12px;
+}
+.time-override-row select:focus{outline:none;border-color:var(--accent)}
+.time-override-row select option{background:var(--surface-2);color:var(--text)}
 .time-override-sep{font-size:12px;font-weight:600;color:var(--text-dim)}
 .time-override-scope{display:flex;flex-direction:column;gap:4px;margin-top:8px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px}
 .time-override-scope label{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--text-mid);cursor:pointer;padding:2px 0}
@@ -718,9 +725,9 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
         <span class="hint" id="detailTimeOverrideHint">Use when the source calendar has the wrong time</span>
       </label>
       <div class="time-override-row">
-        <input type="time" id="detailOverrideStart" step="300">
+        <select id="detailOverrideStart"></select>
         <span class="time-override-sep">to</span>
-        <input type="time" id="detailOverrideEnd" step="300">
+        <select id="detailOverrideEnd"></select>
         <button type="button" class="btn ghost time-override-clear" id="detailOverrideClear">Clear</button>
       </div>
       <div class="time-override-scope">
@@ -914,6 +921,23 @@ function hhmmToDisplay(hhmm){
   const h12 = ((hh+11)%12)+1;
   const ap = hh<12 ? 'AM' : 'PM';
   return mm===0 ? `${h12} ${ap}` : `${h12}:${String(mm).padStart(2,'0')} ${ap}`;
+}
+// Build the option list for the override dropdowns: 15-minute increments
+// across 24 hours, value = HH:MM 24h, label = "9:30 AM" style.
+// `selected` is an HH:MM string to mark selected; if it doesn't fall on a
+// 15-min boundary it gets injected as its own option so we never lose the
+// user's existing choice.
+function buildTimeOptionsHtml(selected){
+  const opts = [];
+  for(let h=0; h<24; h++){
+    for(let m=0; m<60; m+=15){
+      const hhmm = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      opts.push(hhmm);
+    }
+  }
+  if(selected && !opts.includes(selected)) opts.push(selected);
+  opts.sort();
+  return opts.map(v => `<option value="${v}"${v===selected?' selected':''}>${escapeHTML(hhmmToDisplay(v))}</option>`).join('');
 }
 // Look up an override for a given gcal event. Returns null if none.
 // Priority: byId (single instance) > byPattern (specific weekday + time)
@@ -1932,8 +1956,20 @@ function openDetailModal(id){
   }else{
     ovField.style.display='';
     const existing = findTimeOverride(g);
-    startInp.value = existing ? (existing.value.start || '') : '';
-    endInp.value   = existing ? (existing.value.end   || '') : '';
+    // Default the dropdowns to the existing override (if any), otherwise to the
+    // event's current source-calendar time. User can dropdown to change.
+    const origStartHHMM = timeStrToHHMM(g.start || '');
+    const origEndHHMM   = timeStrToHHMM(g.end   || '');
+    const startVal = existing ? (existing.value.start || origStartHHMM) : origStartHHMM;
+    const endVal   = existing ? (existing.value.end   || origEndHHMM)   : origEndHHMM;
+    startInp.innerHTML = buildTimeOptionsHtml(startVal);
+    endInp.innerHTML   = buildTimeOptionsHtml(endVal);
+    startInp.value = startVal || '';
+    endInp.value   = endVal   || '';
+    // Stash original time on the field so Save can detect "user didn't change anything → no override"
+    ovField.dataset.origStart = origStartHHMM || '';
+    ovField.dataset.origEnd   = origEndHHMM   || '';
+    ovField.dataset.hadOverride = existing ? '1' : '';
     // Set the scope radio based on what kind of override (if any) exists
     const scope = existing ? (existing.kind === 'master' ? 'master' : existing.kind === 'pattern' ? 'pattern' : 'id') : 'id';
     document.querySelectorAll('input[name="ovScope"]').forEach(r => { r.checked = (r.value === scope); });
@@ -2003,8 +2039,12 @@ function saveDetailNotes(){
   // ---- Time override ----
   const g = state.gcal.find(x=>x.id===id);
   if(g && !g.allDay){
+    const ovField = document.getElementById('detailTimeOverrideField');
     const newStart = (document.getElementById('detailOverrideStart').value || '').trim();
     const newEnd   = (document.getElementById('detailOverrideEnd').value   || '').trim();
+    const origStart = ovField.dataset.origStart || '';
+    const origEnd   = ovField.dataset.origEnd   || '';
+    const hadOverride = ovField.dataset.hadOverride === '1';
     const scopeEl  = document.querySelector('input[name="ovScope"]:checked');
     const scope    = scopeEl ? scopeEl.value : 'id';
     if(!state.gcalTimeOverrides) state.gcalTimeOverrides = { byId:{}, byPattern:{}, byMaster:{} };
@@ -2017,7 +2057,13 @@ function saveDetailNotes(){
     const master = gcalMasterId(id);
     const mkey = master ? `${master}|${origHHMM}` : '';
     if(mkey && state.gcalTimeOverrides.byMaster[mkey]) delete state.gcalTimeOverrides.byMaster[mkey];
-    if(newStart){
+    // Only write a new override if the dropdown selections actually differ from
+    // the source-calendar time. Otherwise, the user opened the modal, didn't
+    // touch the time, and saving a "1:30 → 1:30" override would be pointless.
+    const userChanged = newStart && (newStart !== origStart || newEnd !== origEnd);
+    // If they had an override before but the dropdowns now match the source,
+    // treat that as "remove override" (no write).
+    if(userChanged){
       const value = { start: newStart, end: newEnd || '' };
       if(scope === 'master' && mkey){
         state.gcalTimeOverrides.byMaster[mkey] = value;
@@ -2048,8 +2094,18 @@ function clearDetailTimeOverride(){
   const mkey = master ? `${master}|${origHHMM}` : '';
   if(mkey && state.gcalTimeOverrides.byMaster[mkey]) delete state.gcalTimeOverrides.byMaster[mkey];
   saveGcalTimeOverrides();
-  document.getElementById('detailOverrideStart').value = '';
-  document.getElementById('detailOverrideEnd').value = '';
+  // Reset dropdowns back to the source-calendar time so the modal reflects
+  // "no override" — selects can't be empty, so default to original.
+  const startSel = document.getElementById('detailOverrideStart');
+  const endSel   = document.getElementById('detailOverrideEnd');
+  const ovField  = document.getElementById('detailTimeOverrideField');
+  const origStart = ovField.dataset.origStart || '';
+  const origEnd   = ovField.dataset.origEnd   || '';
+  startSel.innerHTML = buildTimeOptionsHtml(origStart);
+  endSel.innerHTML   = buildTimeOptionsHtml(origEnd);
+  startSel.value = origStart || '';
+  endSel.value   = origEnd   || '';
+  ovField.dataset.hadOverride = '';
   const idRadio = document.querySelector('input[name="ovScope"][value="id"]');
   if(idRadio) idRadio.checked = true;
   showToast('Override cleared');
