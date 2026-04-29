@@ -1619,7 +1619,22 @@ function renderTvToday(){
       }
     }
     const cal  = e.cal || '';
-    const meta = [e.location, e.allDay?'':(e.end?`until ${e.end}`:'')].filter(Boolean).join(' · ');
+    // End time — same 12-hour treatment as start. e.end is stored as "HH:MM"
+    // 24h, so we prefer formatIsoTime → timeStr split → manual conversion.
+    let endTime = '';
+    if (!e.allDay) {
+      if (e.endISO) endTime = formatIsoTime(e.endISO, state.tz) || '';
+      if (!endTime) endTime = (e.timeStr || '').split(/\s*-\s*/)[1] || '';
+      if (!endTime && e.end) {
+        const m = String(e.end).match(/^(\d{1,2}):(\d{2})$/);
+        if (m) {
+          const h = parseInt(m[1],10), mm = m[2];
+          const h12 = ((h+11)%12)+1, ap = h<12 ? 'AM':'PM';
+          endTime = mm==='00' ? `${h12} ${ap}` : `${h12}:${mm} ${ap}`;
+        } else { endTime = e.end; }
+      }
+    }
+    const meta = [e.location, e.allDay?'':(endTime?`until ${endTime}`:'')].filter(Boolean).join(' · ');
     return `
       <div class="${cls}">
         <div class="tv-event-time">${escapeHTML(time)}</div>
