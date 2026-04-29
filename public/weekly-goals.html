@@ -141,6 +141,79 @@ body{padding:16px 14px 120px}
 }
 .add-btn:active{transform:scale(.97);filter:brightness(.95)}
 
+/* ============ VIEW TOGGLE (List | Timeline) ============ */
+.view-toggle{
+  display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:10px;padding:3px;gap:2px;margin:0 auto 12px;max-width:1180px;
+}
+.vt-btn{
+  background:transparent;border:none;cursor:pointer;font-family:inherit;
+  font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--text-mid);padding:7px 14px;border-radius:7px;transition:all .12s;
+}
+.vt-btn:hover{color:var(--text)}
+.vt-btn.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+
+/* ============ TIMELINE VIEW ============ */
+.timeline{display:flex;flex-direction:column;gap:10px;max-width:1180px;margin:0 auto}
+.tl-week{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:14px 16px 12px;display:flex;flex-direction:column;gap:10px;position:relative;
+}
+.tl-week.current{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-bg)}
+.tl-week.empty{opacity:.5}
+.tl-week-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.tl-week-label{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.tl-week-eyebrow{
+  font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+  color:var(--text-fade);
+}
+.tl-week.current .tl-week-eyebrow{color:var(--accent)}
+.tl-week-title{font-size:18px;font-weight:900;letter-spacing:-.02em;color:var(--text)}
+.tl-week-range{font-size:12px;font-weight:600;color:var(--text-dim);letter-spacing:.2px}
+.tl-week-count{font-size:11px;font-weight:700;color:var(--text-dim);letter-spacing:.4px}
+.tl-week-empty{
+  font-size:13px;color:var(--text-fade);font-style:italic;letter-spacing:.1px;
+}
+.tl-goals{display:flex;flex-direction:column;gap:8px}
+.tl-goal{
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+  padding:10px 12px;display:flex;flex-direction:column;gap:6px;
+  border-left:3px solid var(--accent);
+}
+.tl-goal-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.tl-goal-pillar{
+  font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
+  padding:3px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--text-mid);
+  flex-shrink:0;
+}
+.tl-goal-title{font-size:15px;font-weight:800;letter-spacing:-.01em;color:var(--text);line-height:1.25;flex:1;min-width:0}
+.tl-goal-tag{
+  font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
+  padding:3px 7px;border-radius:999px;background:var(--accent-bg);color:var(--accent);
+  flex-shrink:0;
+}
+.tl-tasks{display:flex;flex-direction:column;gap:4px;margin-left:6px}
+.tl-task{
+  display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;
+  color:var(--text-mid);line-height:1.3;
+}
+.tl-task .cb{
+  width:14px;height:14px;border-radius:4px;border:1.5px solid var(--border-2);
+  flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;
+}
+.tl-task.done{color:var(--text-fade)}
+.tl-task.done .cb{background:var(--ok);border-color:var(--ok);color:#000}
+.tl-task.done .cb::after{content:'✓'}
+.tl-task .due{
+  margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.05);color:var(--text-fade);
+  flex-shrink:0;
+}
+.tl-task .due.overdue{background:var(--block-bg);color:var(--block)}
+.tl-task .due.today{background:var(--ok-bg);color:var(--ok)}
+.tl-task .due.soon{background:var(--accent-bg);color:var(--accent)}
+
 /* ============ CARD ============ */
 .list{display:grid;grid-template-columns:1fr;gap:14px;align-items:start;max-width:1180px;margin:0 auto}
 @media(min-width:620px){.list{grid-template-columns:repeat(2,1fr);gap:16px}}
@@ -550,9 +623,15 @@ textarea.f-i{min-height:70px;resize:vertical;line-height:1.5;font-size:14px}
   <button class="add-btn" onclick="openAddModal()">+ Goal</button>
 </div>
 
+<div class="view-toggle" role="tablist" aria-label="Goals view">
+  <button class="vt-btn" id="vtList" data-view="list" onclick="setGoalsView('list')">List</button>
+  <button class="vt-btn" id="vtTimeline" data-view="timeline" onclick="setGoalsView('timeline')">Timeline</button>
+</div>
+
 </aside>
 <main class="wg-main">
 <div class="list" id="list"></div>
+<div class="timeline" id="timeline" style="display:none"></div>
 </main>
 </div>
 
@@ -662,6 +741,11 @@ let modalStatus='on';
 let modalQuarter=currentQuarterKey();
 let viewQuarter=currentQuarterKey();
 let showHidden=false;
+// 'list' (default card grid) | 'timeline' (12-week vertical view)
+let goalsView = (()=>{
+  try { const v = localStorage.getItem('weekly-goals-view'); return v === 'timeline' ? 'timeline' : 'list'; }
+  catch { return 'list'; }
+})();
 
 // ---- Board data access ----
 function loadBoard(){
@@ -1498,7 +1582,192 @@ function escapeHtml(s){const d=document.createElement('div');d.textContent=s==nu
 function fmtDate(dk){const d=new Date(dk+'T12:00:00');return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
 function daysUntil(dk){const d=new Date(dk+'T12:00:00');return Math.max(0,Math.ceil((d.getTime()-Date.now())/86400000))}
 
-function renderAll(){renderHeader();renderHealth();renderChips();renderList();}
+// ============ TIMELINE VIEW (12-week rolling) ============
+// Each row = one calendar week (Mon → Sun). For each week, show goals whose
+// targetDate falls in the week, plus any tasks on any goal whose dueDate
+// falls in the week. Goals with no signal in a given week are skipped.
+function setGoalsView(v){
+  goalsView = (v === 'timeline') ? 'timeline' : 'list';
+  try { localStorage.setItem('weekly-goals-view', goalsView); } catch {}
+  applyGoalsView();
+  renderAll();
+}
+function applyGoalsView(){
+  const listEl = document.getElementById('list');
+  const tlEl   = document.getElementById('timeline');
+  const vtList = document.getElementById('vtList');
+  const vtTl   = document.getElementById('vtTimeline');
+  if (listEl) listEl.style.display = (goalsView === 'list') ? '' : 'none';
+  if (tlEl)   tlEl.style.display   = (goalsView === 'timeline') ? '' : 'none';
+  if (vtList) vtList.classList.toggle('active', goalsView === 'list');
+  if (vtTl)   vtTl.classList.toggle('active', goalsView === 'timeline');
+}
+// yyyy-mm-dd for a Date in local time (no UTC drift)
+function dkeyLocal(d){
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+// Monday-anchored start of the week containing d
+function startOfWeekMon(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = x.getDay(); // 0=Sun
+  const diff = (dow === 0 ? -6 : 1 - dow); // shift back to Monday
+  x.setDate(x.getDate() + diff);
+  return x;
+}
+function addDays(d, n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+function fmtWeekRange(start, end){
+  const sameMonth = start.getMonth() === end.getMonth();
+  const sFmt = { month:'short', day:'numeric' };
+  const eFmt = sameMonth ? { day:'numeric' } : { month:'short', day:'numeric' };
+  return `${start.toLocaleDateString('en-US', sFmt)} – ${end.toLocaleDateString('en-US', eFmt)}`;
+}
+// Pull every active goal (quarterly + board) regardless of viewQuarter — the
+// timeline is a rolling 12-week look-ahead, not bound to a specific quarter.
+function loadAllGoalsForTimeline(){
+  const out = [];
+  (data.goals || []).forEach(g => {
+    if (g.status === 'dn') return;
+    out.push({
+      id: g.id,
+      title: g.title || 'Untitled',
+      pillar: g.pillar || 'personal',
+      status: g.status || 'on',
+      progress: g.progress || 0,
+      targetDate: g.targetDate || '',
+      tasks: (g.tasks || []).map(t => ({ id: t.id, text: t.text || '', done: !!t.done, dueDate: t.dueDate || '' })),
+      _source: 'quarterly',
+    });
+  });
+  const bd = loadBoard();
+  (bd.boards || []).forEach(b => {
+    (b.goals || []).forEach(g => {
+      if (g.hideFromGoals) return;
+      const effStatus = (typeof isBoardGoalDone === 'function' && isBoardGoalDone(g)) ? 'dn' : (g.status || 'on');
+      if (effStatus === 'dn') return;
+      out.push({
+        id: `bd:${b.id}:${g.id}`,
+        title: g.title || 'Untitled',
+        pillar: boardPillar(b),
+        status: effStatus,
+        progress: g.statusProgress || 0,
+        targetDate: g.targetDate || '',
+        tasks: (g.actionItems || []).map(it => ({ id: it.id, text: it.text || it.title || '', done: !!it.done, dueDate: it.dueDate || '' })),
+        _source: 'board',
+      });
+    });
+  });
+  return out;
+}
+function pillarMetaTL(pillarId){
+  const p = (PILLARS || []).find(x => x.id === pillarId);
+  if (p) return p;
+  const lp = LEGACY_PILLARS.find(x => x.id === pillarId);
+  return lp || { id: pillarId, label: pillarId || '—', color: '#888' };
+}
+function dueClassTL(dueKey, weekStartKey){
+  if (!dueKey) return '';
+  const todayKey = dkeyLocal(new Date());
+  if (dueKey < todayKey) return 'overdue';
+  if (dueKey === todayKey) return 'today';
+  if (dueKey <= weekStartKey) return 'soon';
+  return 'soon';
+}
+function renderTimeline(){
+  const el = document.getElementById('timeline');
+  if (!el) return;
+  const allGoals = loadAllGoalsForTimeline().filter(g => {
+    if (activeFilter === 'all') return true;
+    return g.pillar === activeFilter;
+  });
+  const today = new Date();
+  const week0 = startOfWeekMon(today);
+  const todayKey = dkeyLocal(today);
+  const weeks = [];
+  for (let i = 0; i < 12; i++) {
+    const start = addDays(week0, i * 7);
+    const end   = addDays(start, 6);
+    const startKey = dkeyLocal(start);
+    const endKey   = dkeyLocal(end);
+    // Bucket goals/tasks into this week
+    const buckets = []; // [{goal, reasonTargets:bool, tasks:[]}]
+    allGoals.forEach(g => {
+      const targetInWeek = g.targetDate && g.targetDate >= startKey && g.targetDate <= endKey;
+      const tasksInWeek = (g.tasks || []).filter(t => t.dueDate && t.dueDate >= startKey && t.dueDate <= endKey);
+      if (!targetInWeek && tasksInWeek.length === 0) return;
+      buckets.push({ goal: g, reasonTargets: !!targetInWeek, tasks: tasksInWeek });
+    });
+    weeks.push({ start, end, startKey, endKey, buckets });
+  }
+  el.innerHTML = weeks.map((w, idx) => {
+    const isCurrent = (todayKey >= w.startKey && todayKey <= w.endKey);
+    const eyebrow = idx === 0 ? 'This week' : (idx === 1 ? 'Next week' : `Week +${idx}`);
+    const range = fmtWeekRange(w.start, w.end);
+    if (w.buckets.length === 0) {
+      return `<div class="tl-week empty${isCurrent ? ' current' : ''}">
+        <div class="tl-week-head">
+          <div class="tl-week-label">
+            <span class="tl-week-eyebrow">${eyebrow}</span>
+            <span class="tl-week-title">${escapeHtml(range)}</span>
+          </div>
+          <span class="tl-week-count">—</span>
+        </div>
+        <div class="tl-week-empty">No goal targets or task due dates this week.</div>
+      </div>`;
+    }
+    const goalsHTML = w.buckets.map(bk => {
+      const g = bk.goal;
+      const pm = pillarMetaTL(g.pillar);
+      const tagHTML = bk.reasonTargets
+        ? `<span class="tl-goal-tag">Target ${escapeHtml(fmtDate(g.targetDate))}</span>`
+        : '';
+      const tasksHTML = bk.tasks.length
+        ? `<div class="tl-tasks">${bk.tasks.map(t => {
+            const cls = dueClassTL(t.dueDate, w.startKey);
+            const dueLabel = t.dueDate ? new Date(t.dueDate+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}) : '';
+            return `<div class="tl-task ${t.done ? 'done' : ''}">
+              <span class="cb"></span>
+              <span class="txt">${escapeHtml(t.text || '')}</span>
+              ${dueLabel ? `<span class="due ${cls}">${escapeHtml(dueLabel)}</span>` : ''}
+            </div>`;
+          }).join('')}</div>`
+        : '';
+      return `<div class="tl-goal" style="border-left-color:${pm.color}">
+        <div class="tl-goal-head">
+          <span class="tl-goal-pillar" style="color:${pm.color};background:${pm.color}1f">${escapeHtml(pm.label)}</span>
+          <span class="tl-goal-title">${escapeHtml(g.title)}</span>
+          ${tagHTML}
+        </div>
+        ${tasksHTML}
+      </div>`;
+    }).join('');
+    const totalTasks = w.buckets.reduce((s, b) => s + b.tasks.length, 0);
+    const targetsCt = w.buckets.filter(b => b.reasonTargets).length;
+    const countLbl = [
+      targetsCt ? `${targetsCt} target${targetsCt === 1 ? '' : 's'}` : '',
+      totalTasks ? `${totalTasks} task${totalTasks === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="tl-week${isCurrent ? ' current' : ''}">
+      <div class="tl-week-head">
+        <div class="tl-week-label">
+          <span class="tl-week-eyebrow">${eyebrow}</span>
+          <span class="tl-week-title">${escapeHtml(range)}</span>
+        </div>
+        <span class="tl-week-count">${escapeHtml(countLbl)}</span>
+      </div>
+      <div class="tl-goals">${goalsHTML}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAll(){
+  renderHeader();renderHealth();renderChips();
+  applyGoalsView();
+  if (goalsView === 'timeline') renderTimeline();
+  else renderList();
+}
 
 // Close modal on backdrop/Esc
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
