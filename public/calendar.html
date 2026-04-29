@@ -844,10 +844,16 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
     </div>
     <div class="field">
       <label>Sync</label>
-      <button type="button" class="btn ghost" id="btnForceResync" style="text-align:left;width:100%">
-        Force fresh resync
-        <span style="display:block;font-size:11px;color:var(--text-dim);font-weight:600;margin-top:2px">Clears the local cache and re-pulls Google/Outlook events.</span>
-      </button>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button type="button" class="btn ghost" id="btnForceResync" style="text-align:left">
+          Force fresh resync
+          <span style="display:block;font-size:11px;color:var(--text-dim);font-weight:600;margin-top:2px">Clears the local cache and re-pulls Google events.</span>
+        </button>
+        <button type="button" class="btn ghost" id="btnReconnectGoogle" style="text-align:left">
+          Reconnect Google
+          <span style="display:block;font-size:11px;color:var(--text-dim);font-weight:600;margin-top:2px">Wipes saved Google credentials and re-authorizes from scratch. Use when calendar data looks stale.</span>
+        </button>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn ghost" id="btnSettingsCancel">Cancel</button>
@@ -2087,6 +2093,28 @@ async function forceFreshResync(){
     render();
   }
 }
+// Reconnect Google — wipes the saved refresh token + local cache, then sends
+// the user through OAuth from scratch. Comes back to /daily-planner.html.
+async function reconnectGoogle(){
+  if (!confirm('Disconnect Google and re-authorize from scratch?')) return;
+  try {
+    showToast('Disconnecting…');
+    const r = await fetch('/api/google-disconnect', { method:'POST', credentials:'same-origin' });
+    if (!r.ok) {
+      const t = await r.text().catch(()=>String(r.status));
+      alert('Disconnect failed: ' + t);
+      return;
+    }
+    // Clear local cache too so we don't keep showing the stale data while
+    // the user is going through the OAuth flow.
+    try { localStorage.removeItem(GCAL_CACHE_KEY); } catch {}
+    // Send through OAuth — Google will redirect back to /daily-planner.html
+    // after the consent screen. The new refresh token gets saved server-side.
+    window.location.href = '/api/google-auth';
+  } catch (e) {
+    alert('Reconnect failed: ' + (e && e.message || e));
+  }
+}
 function updateTzHint(tz){
   const now=new Date();
   try{
@@ -2270,6 +2298,8 @@ function init(){
   document.getElementById('btnSettingsSave').onclick=saveSettings;
   const refBtn=document.getElementById('btnForceResync');
   if(refBtn) refBtn.onclick=()=>{ forceFreshResync(); closeSettings(); };
+  const reconnectBtn=document.getElementById('btnReconnectGoogle');
+  if(reconnectBtn) reconnectBtn.onclick=reconnectGoogle;
   document.getElementById('settingsBg').addEventListener('click',(e)=>{if(e.target.id==='settingsBg')closeSettings()});
   document.getElementById('modalBg').addEventListener('click',(e)=>{if(e.target.id==='modalBg')closeModal()});
   document.getElementById('detailClose').onclick=closeDetailModal;
