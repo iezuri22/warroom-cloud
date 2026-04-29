@@ -3776,6 +3776,13 @@ window.addEventListener('message', (ev) => {
     try { switchTab(d.tab); } catch {}
     return;
   }
+  // Iframe asking the shell for current fullscreen state on load. Reply
+  // directly to that frame so it can sync up without polling.
+  if (d.type === 'warroom:request-fullscreen-state') {
+    const on = document.body.classList.contains('fullscreen');
+    try { ev.source && ev.source.postMessage({ type:'warroom:fullscreen', on }, '*'); } catch {}
+    return;
+  }
   if (d.type === 'warroom:personal-time') {
     const secs = Number(d.seconds) || 0;
     if (secs < 1) return;
@@ -3803,15 +3810,25 @@ window.addEventListener('message', (ev) => {
 });
 
 // --- Fullscreen (cast-friendly: hide top nav) ---
+function broadcastFullscreenToFrames(on){
+  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame'];
+  frames.forEach(id => {
+    const f = document.getElementById(id);
+    if (!f || !f.contentWindow) return;
+    try { f.contentWindow.postMessage({ type:'warroom:fullscreen', on:!!on }, '*'); } catch {}
+  });
+}
 function enterFullscreen(){
   document.body.classList.add('fullscreen');
   saveUiState({fullscreen:true});
+  broadcastFullscreenToFrames(true);
   // Nudge native fullscreen if the user prefers it (fails silently on iOS Safari)
   try { (document.documentElement.requestFullscreen && document.documentElement.requestFullscreen()) || null; } catch(e){}
 }
 function exitFullscreen(){
   document.body.classList.remove('fullscreen');
   saveUiState({fullscreen:false});
+  broadcastFullscreenToFrames(false);
   try { if(document.fullscreenElement) document.exitFullscreen(); } catch(e){}
 }
 

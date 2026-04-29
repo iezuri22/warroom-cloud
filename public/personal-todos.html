@@ -165,7 +165,27 @@
   .todo-expanded .exp-btn:hover { background: rgba(255,138,61,.12); border-color: rgba(255,138,61,.3); color: #fff; }
   .todo-expanded .exp-btn:active { transform: scale(.96); }
   .todo-expanded .exp-btn.danger:hover { background: rgba(255,80,80,.14); border-color: rgba(255,80,80,.4); color: #FF6B6B; }
+  /* Priority button — when on, fills with accent so user can see at a glance */
+  .todo-expanded .exp-btn.priority-btn.on {
+    background: rgba(255,138,61,.18); border-color: rgba(255,138,61,.55);
+    color: #FF8A3D;
+  }
+  .todo-expanded .exp-btn.priority-btn.on:hover {
+    background: rgba(255,138,61,.26); border-color: rgba(255,138,61,.7);
+    color: #FFB07F;
+  }
   .todo-expanded .exp-btn svg { flex-shrink: 0; }
+  /* Row-level visual: priority tasks get a subtle orange left border + tinted bg */
+  .todo-item.priority {
+    border-left: 3px solid #FF8A3D;
+    background: linear-gradient(90deg, rgba(255,138,61,.08) 0%, rgba(255,138,61,0) 35%);
+  }
+  .todo-item.priority::after {
+    content: '★';
+    position: absolute; top: 8px; right: 10px;
+    font-size: 13px; color: #FF8A3D; font-weight: 800; line-height: 1;
+    pointer-events: none;
+  }
   .expand-chevron {
     background: none; border: none; color: rgba(255,255,255,.3);
     cursor: pointer; padding: 8px; border-radius: 8px;
@@ -1484,6 +1504,16 @@ const VOICE = {
     todos.forEach((t,i) => t.position = i);
     render(); savePositions();
   }
+  // Toggle priority on a task. Priority tasks bubble to the top of the pending
+  // list (above non-priority items). Persists to Firestore.
+  async function togglePriority(id) {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    const newVal = !todo.priority;
+    todo.priority = newVal;
+    render();
+    try { await updateDoc(doc(db, 'tv_todos', id), { priority: newVal }); } catch {}
+  }
   function moveToBottom(id) {
     const idx = todos.findIndex(t => t.id === id);
     if (idx === -1 || idx === todos.length - 1) return;
@@ -2124,6 +2154,9 @@ const VOICE = {
   const pauseSVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="5" height="18"/><rect x="14" y="3" width="5" height="18"/></svg>`;
   const clockSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
   const moveTopSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="4" x2="19" y2="4"/><polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="20"/></svg>`;
+  // Star — used for priority toggle and the row badge on prioritized tasks
+  const starSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
+  const starFilledSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`;
   const moveBottomSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="20" x2="19" y2="20"/><polyline points="17 13 12 18 7 13"/><line x1="12" y1="4" x2="12" y2="18"/></svg>`;
   const moveDaySVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><polyline points="14 14 17 17 14 20"/></svg>`;
   const chevronDownSVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
@@ -2175,12 +2208,12 @@ const VOICE = {
     if (jobFilter && jobFilter !== 'all') {
       pending = pending.filter(t => (t.job || '') === jobFilter);
     }
-    // Sort purely by stored position. We previously bubbled dated tasks to the
-    // top, but that broke explicit reorders (Move to Top, drag-drop) because
-    // the visible order stopped matching the underlying array order. With
-    // position-only sort, manual reorders are honored. Dated tasks still get
-    // visual due-date pills, just no automatic re-sort.
-    pending.sort((a, b) => (a.position || 0) - (b.position || 0));
+    // Priority items sort above non-priority. Within each group, sort purely by
+    // stored position so manual Move to Top / drag-drop is honored.
+    pending.sort((a, b) => {
+      if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
+      return (a.position || 0) - (b.position || 0);
+    });
     if (pending.length === 0 && jobFilter !== 'all') {
       const empty = document.createElement('div');
       empty.className = 'empty'; empty.style.padding = '40px 0';
@@ -2621,10 +2654,11 @@ const VOICE = {
       if (remaining <= 30 && remaining > 0 && isActive) isWarning = true;
     } else if (elapsed > 0) { countdownText = fmtTime(elapsed); }
     const wrapper = document.createElement('div');
-    wrapper.className = 'todo-wrapper'; wrapper.dataset.id = todo.id;
+    wrapper.className = 'todo-wrapper' + (todo.priority && !todo.done ? ' priority' : '');
+    wrapper.dataset.id = todo.id;
     const el = document.createElement('div');
     const wasShifted = !todo.done && !!todo.originalPeriod && todo.originalPeriod !== todo.period;
-    el.className = 'todo-item' + (todo.done ? ' done' : '') + (isActive ? ' timing' : '') + (wasShifted ? ' shifted' : '');
+    el.className = 'todo-item' + (todo.done ? ' done' : '') + (isActive ? ' timing' : '') + (wasShifted ? ' shifted' : '') + (todo.priority && !todo.done ? ' priority' : '');
     el.dataset.id = todo.id;
     if (!todo.done) el.draggable = true;
     // Main row: keep calm — drag, checkbox, text, (countdown if running), play/pause, chevron
@@ -2705,6 +2739,7 @@ const VOICE = {
       drawer.className = 'todo-expanded';
       const setLabel = hasCountdown ? `${Math.floor(todo.countdownSecs/60)}m` : '';
       drawer.innerHTML = `
+        <button class="exp-btn priority-btn ${todo.priority?'on':''}" title="${todo.priority?'Remove priority':'Mark priority — bumps to top'}">${todo.priority?starFilledSVG:starSVG}<span>${todo.priority?'Priority':'Priority'}</span></button>
         <button class="exp-btn countdown-add-btn" title="Add 2 min 30 sec">+2:30</button>
         <button class="exp-btn timer-set-btn" title="Set timer">${clockSVG}${setLabel ? `<span>${setLabel}</span>` : '<span>Timer</span>'}</button>
         <span class="divider"></span>
@@ -2752,6 +2787,8 @@ const VOICE = {
       // Wire drawer buttons (scoped to drawer)
       const removeBtn = drawer.querySelector('.remove-btn');
       if (removeBtn) removeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeTodo(todo.id); });
+      const priBtn = drawer.querySelector('.priority-btn');
+      if (priBtn) priBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePriority(todo.id); });
       const topBtnEl = drawer.querySelector('.move-top-btn');
       if (topBtnEl) topBtnEl.addEventListener('click', (e) => { e.stopPropagation(); moveToTop(todo.id); });
       const bottomBtnEl = drawer.querySelector('.move-bottom-btn');

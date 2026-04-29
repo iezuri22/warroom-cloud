@@ -721,19 +721,25 @@ input[type="date"].f-i{
 .fab:hover{filter:brightness(1.05)}
 
 /* ============ TWO-COLUMN LAYOUT (desktop) ============ */
+/* Top bar over the main content holds the view toggle (List | Timeline). */
+.wg-main-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-bottom:14px;flex-wrap:wrap;
+}
+.wg-main-head .view-toggle{margin:0}
 @media(min-width:900px){
-  body{padding:20px 28px;max-width:none;margin:0}
+  body{padding:24px 28px;max-width:none;margin:0}
   .wg-layout{
-    display:grid;grid-template-columns:230px 1fr;gap:22px;
+    display:grid;grid-template-columns:240px 1fr;gap:24px;
     max-width:none;align-items:start;
   }
   .wg-sidebar{
-    position:sticky;top:20px;
-    display:flex;flex-direction:column;gap:10px;
-    max-height:calc(100vh - 40px);overflow-y:auto;
-    padding-right:4px;
+    position:sticky;top:24px;
+    display:flex;flex-direction:column;gap:14px;
+    max-height:calc(100vh - 48px);overflow-y:auto;
+    padding:6px 4px 8px 0;
   }
-  .wg-sidebar .hero{max-width:none;margin:0}
+  .wg-sidebar .hero{max-width:none;margin:0;padding:20px 18px 18px}
   .wg-sidebar .qnav{margin:0;justify-content:flex-start;gap:6px;flex-wrap:wrap}
   .wg-sidebar .qnav-btn{font-size:11px;padding:6px 10px}
   .wg-sidebar .health{
@@ -752,6 +758,11 @@ input[type="date"].f-i{
   .wg-main .list{max-width:none;margin:0}
   /* Hide floating FAB on desktop — use + Goal button in sidebar */
   .fab{display:none}
+  /* Fullscreen mode (parent War Room sends a postMessage when fullscreen
+     toggles): collapse sidebar entirely so Goals takes the full width. */
+  body.wg-fullscreen .wg-layout{grid-template-columns:1fr}
+  body.wg-fullscreen .wg-sidebar{display:none}
+  body.wg-fullscreen .fab{display:flex}
 }
 </style>
 </head>
@@ -795,13 +806,16 @@ input[type="date"].f-i{
   <button class="add-btn" onclick="openAddModal()">+ Goal</button>
 </div>
 
-<div class="view-toggle" role="tablist" aria-label="Goals view">
-  <button class="vt-btn" id="vtList" data-view="list" onclick="setGoalsView('list')">List</button>
-  <button class="vt-btn" id="vtTimeline" data-view="timeline" onclick="setGoalsView('timeline')">Timeline</button>
-</div>
-
 </aside>
 <main class="wg-main">
+
+<div class="wg-main-head">
+  <div class="view-toggle" role="tablist" aria-label="Goals view">
+    <button class="vt-btn" id="vtList" data-view="list" onclick="setGoalsView('list')">List</button>
+    <button class="vt-btn" id="vtTimeline" data-view="timeline" onclick="setGoalsView('timeline')">Timeline</button>
+  </div>
+</div>
+
 <div class="list" id="list"></div>
 <div class="timeline" id="timeline" style="display:none"></div>
 </main>
@@ -1996,6 +2010,22 @@ window.addEventListener('storage',e=>{
   if(e.key===SK){data=load();renderAll();}
   if(e.key===BOARD_SK){renderAll();}
 });
+
+// Listen for fullscreen toggles from the War Room shell — when active, drop
+// the left sidebar so Goals takes the full canvas. When the iframe first
+// loads inside the shell, ask the parent for current fullscreen state.
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'warroom:fullscreen') {
+    document.body.classList.toggle('wg-fullscreen', !!d.on);
+  }
+});
+try {
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ type:'warroom:request-fullscreen-state' }, '*');
+  }
+} catch {}
 
 renderAll();
 
