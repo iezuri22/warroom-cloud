@@ -136,6 +136,9 @@ body{padding:16px 14px 120px}
 }
 .chip:hover{border-color:var(--border-2);color:var(--text)}
 .chip:active{transform:scale(.97)}
+/* Empty job chips (count 0) — dim slightly so jobs with goals stand out */
+.chip.empty{opacity:.55}
+.chip.empty:hover,.chip.active{opacity:1}
 /* Active state — fill with the pillar color so it's obvious which job is selected */
 .chip.active{
   background:var(--accent-bg);color:var(--text);border-color:var(--accent);
@@ -911,7 +914,14 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 // ---- Cross-page glue: infer pillar from board, map to daily-plan domain, push tasks ----
 function boardPillar(b){
   if(!b) return 'personal';
+  // Modern model: boards ARE pillars/jobs (PILLARS is derived from boards via
+  // loadPillars()). The board's own id is the pillar id, so a board named
+  // "ECM" maps cleanly to an "ECM" pillar without depending on regex guessing.
+  if(b.id && PILLARS.some(p=>p.id===b.id)) return b.id;
+  // Explicit pillar field (older data shape)
   if(b.pillar && PILLARS.some(p=>p.id===b.pillar)) return b.pillar;
+  // Legacy fallback: infer pillar from the board name/description for boards
+  // that predate the boards-as-pillars model.
   const n=((b.name||'')+' '+(b.description||'')).toLowerCase();
   if(/\b(ezrk|ez reader|ez chef|sidequest|ez voter|ez money|ez learning|ez blueprint)\b/.test(n)) return 'ezrk';
   if(/\b(vitaltouch|vital touch|home care|caregiver|medicaid|client|idph)\b/.test(n)) return 'vt';
@@ -1093,9 +1103,13 @@ function renderChips(){
     });
   });
   let html=`<button class="chip ${activeFilter==='all'?'active':''}" onclick="setFilter('all')">All<span class="num">${counts.all}</span></button>`;
+  // Show every job/pillar chip even when its count is 0 so the user can
+  // always switch between jobs (VitalTouch, ECM, etc.) without first having
+  // to add a goal under that job.
   PILLARS.forEach(p=>{
-    if(!counts[p.id])return;
-    html+=`<button class="chip ${activeFilter===p.id?'active':''}" onclick="setFilter('${p.id}')"><span class="dot" style="background:${p.color}"></span>${p.label}<span class="num">${counts[p.id]}</span></button>`;
+    const ct = counts[p.id] || 0;
+    const dim = ct === 0 ? ' empty' : '';
+    html+=`<button class="chip ${activeFilter===p.id?'active':''}${dim}" onclick="setFilter('${p.id}')"><span class="dot" style="background:${p.color}"></span>${p.label}<span class="num">${ct}</span></button>`;
   });
   document.getElementById('chips').innerHTML=html;
 }
