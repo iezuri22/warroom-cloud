@@ -3,12 +3,41 @@
 import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
 
-const CALENDARS = [
+// Fallback hardcoded list — used only if the dynamic discovery fails.
+// Real list is fetched via calendarList.list() below so we're resilient to
+// calendar IDs changing when the user re-subscribes to an iCal feed.
+const CALENDARS_FALLBACK = [
   { id: 'primary', label: 'Personal' },
-  { id: 'gevtrfnupve04u82ik62pm4ctg2fbonf@import.calendar.google.com', label: 'TWEG' },
-  { id: 'tk2nsridvpuqnulcldem56u8rkel04f7@import.calendar.google.com', label: 'Partiful' },
-  { id: 'addressbook#contacts@group.v.calendar.google.com', label: 'Birthdays' },
 ];
+
+// Pull the user's full calendar list and shape it into our { id, label }
+// format. We always include 'primary' explicitly because it's special.
+async function discoverCalendars(accessToken) {
+  try {
+    const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&showHidden=false', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      console.warn('calendarList fetch failed', res.status, await res.text().catch(() => ''));
+      return CALENDARS_FALLBACK;
+    }
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    const out = [{ id: 'primary', label: 'Personal' }];
+    for (const cal of items) {
+      if (!cal.id) continue;
+      // Skip the primary alias so we don't double-fetch
+      if (cal.primary) continue;
+      // Skip the holidays calendar (noise) but keep birthdays + everything else
+      if (/holiday@group/.test(cal.id)) continue;
+      out.push({ id: cal.id, label: cal.summaryOverride || cal.summary || '(unnamed)' });
+    }
+    return out;
+  } catch (e) {
+    console.warn('calendarList exception', e.message);
+    return CALENDARS_FALLBACK;
+  }
+}
 
 function formatTime(date, tz = 'America/Chicago') {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -141,9 +170,15 @@ export default async function handler(req, res) {
 
     const accessToken = await getAccessToken(refreshToken);
 
-    // Fetch all 3 calendars in parallel
+    // Discover calendars dynamically — when an iCal subscription is removed
+    // and re-added on Google's side, the calendar gets a new ID. Hardcoded
+    // IDs go stale. Listing the user's calendars at request time keeps us
+    // current automatically.
+    const calendars = await discoverCalendars(accessToken);
+
+    // Fetch all calendars in parallel
     const results = await Promise.all(
-      CALENDARS.map(cal =>
+      calendars.map(cal =>
         fetchCalendarEvents(accessToken, cal.id, timeMin, timeMax)
           .then(items => items.map(ev => ({ ...ev, _calLabel: cal.label })))
           .catch(err => {
@@ -244,6 +279,11 @@ export default async function handler(req, res) {
             : 'All day',
         }));
     }
+    // Hard no-cache so Vercel/CDN/browsers can't serve a stale response
+    // when upstream Google data has changed.
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.status(200).json(payload);
   } catch (e) {
     console.error('calendar fetch error', e);
