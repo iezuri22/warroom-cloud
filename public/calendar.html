@@ -876,6 +876,19 @@ body.embed .cal-sidebar-pane{position:static;max-height:none;overflow:visible}
       <select id="fTz"></select>
       <div style="font-size:11px;color:var(--text-dim);margin-top:6px;font-weight:600" id="fTzHint"></div>
     </div>
+    <div class="field">
+      <label>Sync &amp; overrides</label>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button type="button" class="btn ghost" id="btnForceResync" style="text-align:left">
+          Force fresh resync
+          <span style="display:block;font-size:11px;color:var(--text-dim);font-weight:600;margin-top:2px">Clears the local cache and re-pulls Google/Outlook events.</span>
+        </button>
+        <button type="button" class="btn ghost" id="btnClearOverrides" style="text-align:left">
+          Clear all time overrides
+          <span style="display:block;font-size:11px;color:var(--text-dim);font-weight:600;margin-top:2px" id="overridesCountLbl">No overrides set.</span>
+        </button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="btnSettingsCancel">Cancel</button>
       <button class="btn primary" id="btnSettingsSave">Save</button>
@@ -1749,7 +1762,22 @@ function renderTvToday(){
     const isPast  = endMs && endMs < nowMs;
     const isNow   = startMs && endMs && startMs <= nowMs && nowMs < endMs;
     const cls = `tv-event ${isPast?'past':''} ${isNow?'now':''}`;
-    const time = e.allDay ? 'All day' : (e.start || e.timeStr || '');
+    // Always render times in 12-hour format. e.start is stored as 24h "HH:MM"
+    // for gcal events (parseGcalTime), so we prefer formatIsoTime → timeStr →
+    // a manual conversion of e.start as a last resort.
+    let time = 'All day';
+    if (!e.allDay) {
+      if (e.startISO) time = formatIsoTime(e.startISO, state.tz) || '';
+      if (!time) time = (e.timeStr || '').split(/\s*-\s*/)[0] || '';
+      if (!time && e.start) {
+        const m = String(e.start).match(/^(\d{1,2}):(\d{2})$/);
+        if (m) {
+          const h = parseInt(m[1],10), mm = m[2];
+          const h12 = ((h+11)%12)+1, ap = h<12 ? 'AM':'PM';
+          time = mm==='00' ? `${h12} ${ap}` : `${h12}:${mm} ${ap}`;
+        } else { time = e.start; }
+      }
+    }
     const cal  = e.cal || '';
     const meta = [e.location, e.allDay?'':(e.end?`until ${e.end}`:'')].filter(Boolean).join(' · ');
     return `
@@ -2338,7 +2366,47 @@ function openSettings(){
   sel.innerHTML=options.map(o=>`<option value="${escapeAttr(o.id)}" ${o.id===state.tz?'selected':''}>${escapeHTML(o.label)}</option>`).join('');
   updateTzHint(sel.value);
   sel.onchange=()=>updateTzHint(sel.value);
+  // Refresh the override-count label so the user knows what's about to be wiped
+  updateOverridesCountLbl();
   document.getElementById('settingsBg').classList.add('open');
+}
+function countTimeOverrides(){
+  const ov=state.gcalTimeOverrides||{byId:{},byPattern:{},byMaster:{}};
+  return Object.keys(ov.byId||{}).length
+       + Object.keys(ov.byPattern||{}).length
+       + Object.keys(ov.byMaster||{}).length;
+}
+function updateOverridesCountLbl(){
+  const el=document.getElementById('overridesCountLbl');
+  if(!el) return;
+  const n=countTimeOverrides();
+  el.textContent = n
+    ? `${n} active override${n===1?'':'s'} — clear them once upstream sync is correct.`
+    : 'No overrides set.';
+}
+function clearAllTimeOverrides(){
+  const n=countTimeOverrides();
+  if(n===0){ showToast('No overrides to clear'); return; }
+  if(!confirm(`Clear ${n} time override${n===1?'':'s'}? This can't be undone.`)) return;
+  state.gcalTimeOverrides={byId:{},byPattern:{},byMaster:{}};
+  saveGcalTimeOverrides();
+  updateOverridesCountLbl();
+  showToast(`Cleared ${n} override${n===1?'':'s'}`);
+  render();
+}
+async function forceFreshResync(){
+  // Wipe the cache so the next fetch hits the network instead of reading
+  // localStorage. Useful when upstream Google/Outlook data has changed and
+  // the local cache is stale.
+  try { localStorage.removeItem(GCAL_CACHE_KEY); } catch {}
+  state.gcal=[];
+  state.syncedAt=null;
+  showToast('Cache cleared — refreshing');
+  if (typeof syncNow === 'function') {
+    try { await syncNow(); } catch(e){ console.warn(e); }
+  } else {
+    render();
+  }
 }
 function updateTzHint(tz){
   const now=new Date();
@@ -2512,6 +2580,10 @@ function init(){
   document.getElementById('settingsClose').onclick=closeSettings;
   document.getElementById('btnSettingsCancel').onclick=closeSettings;
   document.getElementById('btnSettingsSave').onclick=saveSettings;
+  const clrBtn=document.getElementById('btnClearOverrides');
+  if(clrBtn) clrBtn.onclick=clearAllTimeOverrides;
+  const refBtn=document.getElementById('btnForceResync');
+  if(refBtn) refBtn.onclick=()=>{ forceFreshResync(); closeSettings(); };
   document.getElementById('settingsBg').addEventListener('click',(e)=>{if(e.target.id==='settingsBg')closeSettings()});
   document.getElementById('modalBg').addEventListener('click',(e)=>{if(e.target.id==='modalBg')closeModal()});
   document.getElementById('detailClose').onclick=closeDetailModal;
