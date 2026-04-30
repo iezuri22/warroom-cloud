@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sprint — War Room</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#050507">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent }
+:root {
+  --bg:#050507; --surface:#15151B; --surface-2:#0E0E13; --surface-3:#1E1E26;
+  --border:rgba(255,255,255,.10); --border-2:rgba(255,255,255,.20);
+  --text:#FFFFFF; --text-mid:rgba(255,255,255,.78); --text-dim:rgba(255,255,255,.55); --text-fade:rgba(255,255,255,.36);
+  --accent:#FF8A3D; --accent-bg:rgba(255,138,61,.18);
+  --ok:#4ADE80; --ok-bg:rgba(74,222,128,.18);
+  --warn:#FBBF24; --warn-bg:rgba(251,191,36,.18);
+  --bad:#F87171; --bad-bg:rgba(248,113,113,.18);
+  --font:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;
+}
+html, body {
+  height:100%; background:var(--bg); color:var(--text); font-family:var(--font);
+  letter-spacing:-.01em; -webkit-font-smoothing:antialiased; overflow:hidden;
+}
+body { display:flex; flex-direction:column; position:relative }
+
+/* ============ TOP CHROME ============ */
+.top-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 20px 10px; gap:14px; flex-shrink:0;
+  background:linear-gradient(to bottom, rgba(255,138,61,.04), transparent);
+}
+.title-block { display:flex; align-items:baseline; gap:12px }
+.title { font-size:24px; font-weight:900; letter-spacing:-.03em; color:var(--text) }
+.sub { font-size:11px; font-weight:800; letter-spacing:2px; text-transform:uppercase; color:var(--accent) }
+.nav-tabs { display:flex; gap:4px; background:var(--surface-2); border:1px solid var(--border); padding:3px; border-radius:10px }
+.nav-tab {
+  background:transparent; border:none; cursor:pointer; font-family:inherit;
+  font-size:11.5px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+  color:var(--text-dim); padding:7px 14px; border-radius:7px; transition:all .15s;
+}
+.nav-tab:hover { color:var(--text) }
+.nav-tab.active { background:var(--surface); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.25) }
+
+/* ============ STATS STRIP ============ */
+.stats-strip {
+  display:flex; gap:8px; padding:0 20px 12px; flex-wrap:wrap; flex-shrink:0;
+}
+.stat-chip {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+  padding:8px 14px; display:flex; flex-direction:column; gap:2px; flex:1; min-width:90px;
+}
+.stat-chip .v { font-size:18px; font-weight:900; letter-spacing:-.02em; color:var(--text) }
+.stat-chip.streak .v { color:var(--accent) }
+.stat-chip.winrate .v { color:var(--ok) }
+.stat-chip .l { font-size:9px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-fade) }
+
+/* ============ STAGE (the main area) ============ */
+.stage {
+  flex:1; min-height:0; position:relative; overflow-y:auto;
+}
+
+/* ============ LANDING ============ */
+.landing {
+  padding:24px 20px 40px; max-width:560px; margin:0 auto;
+  display:flex; flex-direction:column; gap:18px;
+}
+.field-block { display:flex; flex-direction:column; gap:8px }
+.field-block label {
+  font-size:10px; font-weight:800; letter-spacing:2px; text-transform:uppercase; color:var(--text-fade);
+  padding-left:2px;
+}
+.task-input {
+  width:100%; background:var(--surface-2); border:1.5px solid var(--border); border-radius:12px;
+  padding:14px 16px; font-family:inherit; font-size:16px; font-weight:700; color:var(--text); outline:none;
+  transition:border-color .15s;
+}
+.task-input::placeholder { color:var(--text-fade); font-weight:600 }
+.task-input:focus { border-color:var(--accent) }
+
+.suggestions {
+  display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:6px;
+}
+.suggestion {
+  padding:8px 12px; border-radius:8px; cursor:pointer; font-size:13.5px; font-weight:600;
+  color:var(--text-mid); display:flex; align-items:center; gap:10px; transition:all .12s;
+}
+.suggestion:hover { background:var(--surface-3); color:var(--text) }
+.suggestion .job { font-size:9px; font-weight:800; letter-spacing:1px; text-transform:uppercase; opacity:.7 }
+.suggestion .arr { margin-left:auto; opacity:0; transition:opacity .12s; color:var(--accent) }
+.suggestion:hover .arr { opacity:1 }
+.suggestions-empty { padding:14px; text-align:center; font-size:12px; color:var(--text-fade); font-style:italic }
+
+.target-row { display:flex; gap:8px; flex-wrap:wrap }
+.target-chip {
+  background:var(--surface-2); border:1.5px solid var(--border); border-radius:10px;
+  padding:10px 16px; cursor:pointer; font-family:inherit; font-size:14px; font-weight:800;
+  color:var(--text-mid); transition:all .12s; flex:1; min-width:70px; text-align:center;
+}
+.target-chip:hover { color:var(--text); border-color:var(--border-2) }
+.target-chip.active {
+  background:var(--accent-bg); border-color:var(--accent); color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent-bg) inset;
+}
+.target-custom-row { display:flex; gap:8px; align-items:center; margin-top:6px }
+.target-custom-row input[type="number"] {
+  flex:1; background:var(--surface-2); border:1.5px solid var(--border); border-radius:10px;
+  padding:10px 14px; font-family:inherit; font-size:15px; font-weight:700; color:var(--text); outline:none;
+}
+.target-custom-row input[type="number"]:focus { border-color:var(--accent) }
+.target-custom-row .lbl { font-size:13px; color:var(--text-dim); font-weight:700 }
+
+.start-btn {
+  margin-top:8px; padding:18px 24px; border:none; border-radius:14px;
+  background:linear-gradient(135deg, var(--accent), #FFB07F);
+  color:#050507; font-family:inherit; font-size:18px; font-weight:900;
+  letter-spacing:1px; text-transform:uppercase; cursor:pointer;
+  box-shadow:0 8px 24px rgba(255,138,61,.35), 0 0 0 1px rgba(255,138,61,.4);
+  transition:transform .12s, box-shadow .12s;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+}
+.start-btn:hover { transform:translateY(-2px); box-shadow:0 12px 32px rgba(255,138,61,.5), 0 0 0 1px rgba(255,138,61,.6) }
+.start-btn:active { transform:translateY(0) }
+.start-btn:disabled {
+  background:var(--surface-3); color:var(--text-fade); cursor:not-allowed; box-shadow:none;
+}
+.start-btn .icon { font-size:22px }
+
+/* ============ ACTIVE GAME ============ */
+.game {
+  position:absolute; inset:0; display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:24px;
+  padding:24px;
+  background: radial-gradient(circle at 50% 30%, rgba(255,138,61,.10), transparent 60%), var(--bg);
+}
+.game.show { display:flex }
+.game-task {
+  font-size:clamp(20px, 2.6vw, 32px); font-weight:800; letter-spacing:-.02em;
+  color:var(--text); text-align:center; max-width:80%; line-height:1.2;
+}
+.game-eyebrow {
+  font-size:11px; font-weight:900; letter-spacing:3px; text-transform:uppercase;
+  color:var(--accent); display:flex; align-items:center; gap:8px;
+}
+.game-eyebrow .dot {
+  width:8px; height:8px; border-radius:50%; background:var(--accent);
+  animation:pulseDot 1s ease-in-out infinite;
+}
+@keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.7)} }
+
+.timer-wrap {
+  position:relative; width:min(360px, 70vw); aspect-ratio:1; display:flex;
+  align-items:center; justify-content:center;
+}
+.timer-ring { position:absolute; inset:0; transform:rotate(-90deg) }
+.timer-ring circle {
+  fill:none; stroke-width:14; stroke-linecap:round;
+}
+.timer-ring .bg { stroke:rgba(255,255,255,.06) }
+.timer-ring .fg {
+  stroke:var(--accent); transition:stroke-dashoffset .3s linear, stroke .3s;
+  filter:drop-shadow(0 0 8px rgba(255,138,61,.5));
+}
+.timer-ring.warn .fg { stroke:var(--warn); filter:drop-shadow(0 0 10px rgba(251,191,36,.6)) }
+.timer-ring.danger .fg { stroke:var(--bad); filter:drop-shadow(0 0 12px rgba(248,113,113,.7)) }
+
+.timer-time {
+  font-size:clamp(56px, 12vw, 110px); font-weight:900; letter-spacing:-.04em;
+  font-variant-numeric:tabular-nums; line-height:1; color:var(--text);
+  position:relative; z-index:1;
+}
+.timer-time.pulse { animation:tickPulse 1s ease-in-out infinite }
+@keyframes tickPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+.timer-time.danger { color:var(--bad); animation:dangerShake .5s ease-in-out infinite }
+@keyframes dangerShake {
+  0%,100% { transform:translate(0,0) }
+  25% { transform:translate(-3px,1px) }
+  50% { transform:translate(3px,-1px) }
+  75% { transform:translate(-2px,1px) }
+}
+.timer-sub {
+  position:absolute; bottom:-30px; left:50%; transform:translateX(-50%);
+  font-size:11px; font-weight:800; letter-spacing:2px; text-transform:uppercase; color:var(--text-fade);
+  white-space:nowrap;
+}
+
+.runner-track {
+  width:min(420px, 80vw); height:46px; position:relative;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:99px;
+  overflow:hidden;
+}
+.runner-fill {
+  position:absolute; top:0; left:0; bottom:0;
+  background:linear-gradient(90deg, rgba(255,138,61,.4), rgba(255,138,61,.15));
+  border-radius:99px 0 0 99px; transition:width .3s linear;
+}
+.runner {
+  position:absolute; top:50%; transform:translate(-50%, -50%); font-size:30px;
+  transition:left .3s linear;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.5));
+}
+.runner.warn { animation:runnerBounce .25s ease-in-out infinite }
+@keyframes runnerBounce { 0%,100%{margin-top:0} 50%{margin-top:-3px} }
+
+.game-controls { display:flex; gap:12px; flex-wrap:wrap; justify-content:center }
+.btn-done {
+  padding:18px 36px; border:none; border-radius:14px;
+  background:linear-gradient(135deg, var(--ok), #6FE89C);
+  color:#050507; font-family:inherit; font-size:17px; font-weight:900; letter-spacing:1px; text-transform:uppercase;
+  cursor:pointer; box-shadow:0 6px 20px rgba(74,222,128,.3);
+  transition:transform .1s, box-shadow .15s;
+  display:inline-flex; align-items:center; gap:10px;
+}
+.btn-done:hover { transform:translateY(-2px); box-shadow:0 10px 28px rgba(74,222,128,.5) }
+.btn-done:active { transform:translateY(0) }
+.btn-quit {
+  padding:14px 24px; border:1px solid var(--border-2); border-radius:12px;
+  background:var(--surface-2); color:var(--text-mid);
+  font-family:inherit; font-size:13px; font-weight:700; cursor:pointer; transition:all .15s;
+}
+.btn-quit:hover { color:var(--text); background:var(--surface-3) }
+
+/* ============ RESULT OVERLAY ============ */
+.result {
+  position:fixed; inset:0; z-index:90; display:none;
+  align-items:center; justify-content:center; padding:24px;
+  background:rgba(5,5,7,.92); backdrop-filter:blur(8px);
+  animation:resultIn .4s cubic-bezier(.2,1.6,.4,1);
+}
+.result.show { display:flex }
+@keyframes resultIn { from{opacity:0; backdrop-filter:blur(0)} to{opacity:1; backdrop-filter:blur(8px)} }
+.result-card {
+  max-width:480px; width:100%; padding:36px 28px;
+  background:var(--surface); border:1px solid var(--border-2); border-radius:24px;
+  text-align:center; position:relative;
+}
+.result.win .result-card { border-color:rgba(74,222,128,.4); box-shadow:0 0 0 4px rgba(74,222,128,.12), 0 24px 64px rgba(0,0,0,.6) }
+.result.lose .result-card { border-color:rgba(248,113,113,.3); box-shadow:0 0 0 4px rgba(248,113,113,.08), 0 24px 64px rgba(0,0,0,.6) }
+.result-emoji {
+  font-size:80px; line-height:1; margin-bottom:8px;
+  display:inline-block; animation:emojiPop .6s cubic-bezier(.2,1.6,.4,1);
+}
+@keyframes emojiPop {
+  0% { transform:scale(0) rotate(-30deg) }
+  50% { transform:scale(1.3) rotate(10deg) }
+  100% { transform:scale(1) rotate(0) }
+}
+.result-headline {
+  font-size:34px; font-weight:900; letter-spacing:-.03em; line-height:1.05; margin-bottom:6px;
+}
+.result.win .result-headline {
+  background:linear-gradient(135deg, var(--ok), #6FE89C);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+.result.lose .result-headline { color:var(--text) }
+.result-sub { font-size:14px; color:var(--text-dim); font-weight:600; line-height:1.4; margin-bottom:20px }
+.result-stat-row {
+  display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:24px;
+}
+.result-stat {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+  padding:14px 12px; text-align:center;
+}
+.result-stat .v { font-size:24px; font-weight:900; letter-spacing:-.02em; line-height:1.1 }
+.result-stat .l { font-size:9.5px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-fade); margin-top:4px }
+.result.win .result-stat.hero .v { color:var(--ok) }
+.result-streak {
+  background:var(--accent-bg); border:1px solid rgba(255,138,61,.3); border-radius:12px;
+  padding:14px; margin-bottom:20px;
+  font-size:14px; font-weight:700; color:var(--accent);
+  display:flex; align-items:center; justify-content:center; gap:8px;
+}
+.result-streak.broken { background:rgba(248,113,113,.08); border-color:rgba(248,113,113,.2); color:var(--bad-bg) }
+.result-actions { display:flex; gap:10px }
+.result-actions button {
+  flex:1; padding:14px; border-radius:12px; border:none; font-family:inherit;
+  font-size:14px; font-weight:800; letter-spacing:.4px; cursor:pointer; transition:all .12s;
+}
+.result-actions .again {
+  background:linear-gradient(135deg, var(--accent), #FFB07F); color:#050507;
+}
+.result-actions .again:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(255,138,61,.35) }
+.result-actions .home { background:var(--surface-2); border:1px solid var(--border-2); color:var(--text-mid) }
+.result-actions .home:hover { color:var(--text); background:var(--surface-3) }
+
+/* Confetti canvas */
+.confetti-canvas { position:fixed; inset:0; pointer-events:none; z-index:80 }
+
+/* ============ HISTORY ============ */
+.history {
+  padding:16px 20px 40px; max-width:780px; margin:0 auto;
+  display:flex; flex-direction:column; gap:8px;
+}
+.history-empty {
+  padding:60px 20px; text-align:center; color:var(--text-fade);
+  font-size:14px; font-weight:600;
+}
+.history-empty .icon { font-size:48px; display:block; margin-bottom:14px; opacity:.5 }
+.h-row {
+  display:grid; grid-template-columns:auto 1fr auto auto;
+  gap:14px; align-items:center;
+  padding:12px 16px;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+  transition:border-color .12s;
+}
+.h-row:hover { border-color:var(--border-2) }
+.h-row.win { border-left:3px solid var(--ok) }
+.h-row.lose { border-left:3px solid var(--bad) }
+.h-icon { font-size:22px }
+.h-body { display:flex; flex-direction:column; gap:2px; min-width:0 }
+.h-task { font-size:14.5px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.h-meta { font-size:11px; color:var(--text-fade); font-weight:600; letter-spacing:.2px }
+.h-time { font-variant-numeric:tabular-nums; font-size:13px; font-weight:800; color:var(--text-mid) }
+.h-time .actual { color:var(--text) }
+.h-result {
+  font-size:9.5px; font-weight:900; letter-spacing:1.2px; text-transform:uppercase;
+  padding:5px 9px; border-radius:999px; flex-shrink:0;
+}
+.h-result.win { background:var(--ok-bg); color:var(--ok) }
+.h-result.lose { background:var(--bad-bg); color:var(--bad) }
+.history-actions { display:flex; justify-content:flex-end; padding-top:8px }
+.btn-clear {
+  font-family:inherit; font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+  padding:7px 12px; background:transparent; border:1px solid var(--border); border-radius:8px;
+  color:var(--text-fade); cursor:pointer; transition:all .12s;
+}
+.btn-clear:hover { color:var(--bad); border-color:var(--bad) }
+
+@media (max-width:560px) {
+  .top-bar { padding:10px 14px 8px }
+  .title { font-size:20px }
+  .stats-strip { padding:0 14px 10px; gap:6px }
+  .stat-chip { padding:7px 10px }
+  .stat-chip .v { font-size:16px }
+  .landing { padding:18px 14px 40px }
+  .history { padding:12px 14px 40px }
+  .h-row { grid-template-columns:auto 1fr auto; padding:10px 12px }
+  .h-result { display:none }
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="title-block">
+    <span class="title">Sprint</span>
+    <span class="sub">Beat the Clock</span>
+  </div>
+  <div class="nav-tabs" role="tablist">
+    <button class="nav-tab active" id="navPlay" data-view="play">Play</button>
+    <button class="nav-tab" id="navHistory" data-view="history">History</button>
+  </div>
+</div>
+
+<div class="stats-strip" id="statsStrip">
+  <!-- Populated by JS -->
+</div>
+
+<div class="stage" id="stage">
+  <!-- LANDING -->
+  <div class="landing" id="landingView">
+    <div class="field-block">
+      <label>What are you racing?</label>
+      <input type="text" class="task-input" id="taskInput" placeholder="e.g. Write the JD draft" autocomplete="off" maxlength="120">
+      <div class="suggestions" id="suggestions" style="display:none"></div>
+    </div>
+    <div class="field-block">
+      <label>Target time</label>
+      <div class="target-row" id="targetChips">
+        <button class="target-chip" data-min="5">5 min</button>
+        <button class="target-chip" data-min="10">10 min</button>
+        <button class="target-chip active" data-min="15">15 min</button>
+        <button class="target-chip" data-min="25">25 min</button>
+        <button class="target-chip" data-min="45">45 min</button>
+      </div>
+      <div class="target-custom-row">
+        <input type="number" id="targetCustom" placeholder="Custom" min="1" max="240" inputmode="numeric">
+        <span class="lbl">min</span>
+      </div>
+    </div>
+    <button class="start-btn" id="startBtn">
+      <span class="icon">⚡</span>
+      <span>Start the Sprint</span>
+    </button>
+  </div>
+
+  <!-- ACTIVE GAME -->
+  <div class="game" id="gameView">
+    <div class="game-eyebrow"><span class="dot"></span><span id="gameEyebrowText">Sprint in progress</span></div>
+    <div class="game-task" id="gameTask">—</div>
+    <div class="timer-wrap">
+      <svg class="timer-ring" id="timerRing" viewBox="0 0 200 200">
+        <circle class="bg" cx="100" cy="100" r="90"></circle>
+        <circle class="fg" cx="100" cy="100" r="90" stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
+      </svg>
+      <div class="timer-time" id="timerTime">00:00</div>
+      <div class="timer-sub" id="timerSub">target — 00:00</div>
+    </div>
+    <div class="runner-track">
+      <div class="runner-fill" id="runnerFill" style="width:0%"></div>
+      <div class="runner" id="runner" style="left:0%">🏃</div>
+    </div>
+    <div class="game-controls">
+      <button class="btn-done" id="doneBtn">
+        <span style="font-size:20px">✓</span>
+        <span>I'm Done!</span>
+      </button>
+      <button class="btn-quit" id="quitBtn">Quit</button>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="history" id="historyView" style="display:none">
+    <!-- populated by JS -->
+  </div>
+</div>
+
+<!-- Result overlay -->
+<div class="result" id="resultOverlay">
+  <div class="result-card">
+    <div class="result-emoji" id="resultEmoji">🏆</div>
+    <div class="result-headline" id="resultHeadline">BEAT IT!</div>
+    <div class="result-sub" id="resultSub">—</div>
+    <div class="result-stat-row" id="resultStats"></div>
+    <div class="result-streak" id="resultStreak" style="display:none"></div>
+    <div class="result-actions">
+      <button class="again" id="againBtn">Race again</button>
+      <button class="home" id="homeBtn">Done</button>
+    </div>
+  </div>
+</div>
+
+<canvas class="confetti-canvas" id="confetti"></canvas>
+
+<script>
+(function(){
+  // ============ STORAGE ============
+  const STORAGE_KEY = 'sprint-history-v1';
+  function loadStore(){
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return { history:[], currentStreak:0, bestStreak:0 };
+      const d = JSON.parse(raw);
+      return {
+        history: Array.isArray(d.history) ? d.history : [],
+        currentStreak: Number(d.currentStreak) || 0,
+        bestStreak: Number(d.bestStreak) || 0,
+      };
+    } catch { return { history:[], currentStreak:0, bestStreak:0 }; }
+  }
+  function saveStore(s){
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+  }
+  let store = loadStore();
+
+  // ============ STATE ============
+  let targetSeconds = 15 * 60;
+  let lastTaskName = '';
+  let timerHandle = null;
+  let startedAt = 0;
+  let endsAt = 0;
+  let currentTask = '';
+  let beepedAt = new Set();
+  const RING_CIRC = 565.48; // 2 * π * 90
+
+  // ============ ELEMENTS ============
+  const $ = id => document.getElementById(id);
+  const taskInput = $('taskInput');
+  const targetChips = $('targetChips');
+  const targetCustom = $('targetCustom');
+  const startBtn = $('startBtn');
+  const landingView = $('landingView');
+  const gameView = $('gameView');
+  const historyView = $('historyView');
+  const stage = $('stage');
+  const navPlay = $('navPlay');
+  const navHistory = $('navHistory');
+  const timerTime = $('timerTime');
+  const timerSub = $('timerSub');
+  const timerRing = $('timerRing');
+  const ringFg = timerRing.querySelector('.fg');
+  const runnerFill = $('runnerFill');
+  const runner = $('runner');
+  const gameTask = $('gameTask');
+  const doneBtn = $('doneBtn');
+  const quitBtn = $('quitBtn');
+  const resultOverlay = $('resultOverlay');
+  const resultEmoji = $('resultEmoji');
+  const resultHeadline = $('resultHeadline');
+  const resultSub = $('resultSub');
+  const resultStats = $('resultStats');
+  const resultStreak = $('resultStreak');
+  const againBtn = $('againBtn');
+  const homeBtn = $('homeBtn');
+  const suggestions = $('suggestions');
+
+  // ============ AUDIO (Web Audio synthesized) ============
+  let audioCtx;
+  function ac(){ if (!audioCtx) try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} return audioCtx; }
+  function beep(freq, dur, vol){
+    const c = ac(); if (!c) return;
+    try {
+      if (c.state === 'suspended') c.resume();
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, c.currentTime);
+      gain.gain.linearRampToValueAtTime(vol || .12, c.currentTime + .01);
+      gain.gain.exponentialRampToValueAtTime(.001, c.currentTime + (dur || .15));
+      osc.connect(gain); gain.connect(c.destination);
+      osc.start(); osc.stop(c.currentTime + (dur || .15) + .02);
+    } catch {}
+  }
+  function playStartFanfare(){ beep(660, .12); setTimeout(()=>beep(880, .12), 130); setTimeout(()=>beep(1320, .25, .15), 260); }
+  function playTickBeep(){ beep(880, .08, .1); }
+  function playLastSecond(){ beep(1320, .12, .14); }
+  function playWinFanfare(){
+    beep(523, .12); setTimeout(()=>beep(659, .12), 120); setTimeout(()=>beep(784, .12), 240);
+    setTimeout(()=>beep(1047, .35, .18), 360);
+  }
+  function playLoseSound(){ beep(196, .25, .1); setTimeout(()=>beep(155, .35, .1), 220); }
+
+  // ============ STATS ============
+  function fmtMMSS(secs){
+    const s = Math.max(0, Math.round(secs));
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+  }
+  function fmtFriendly(secs){
+    const s = Math.max(0, Math.round(secs));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60), r = s % 60;
+    return r === 0 ? `${m}m` : `${m}m ${r}s`;
+  }
+  function renderStats(){
+    const total = store.history.length;
+    const wins = store.history.filter(h => h.won).length;
+    const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+    const todayKey = new Date().toLocaleDateString('en-CA', { timeZone:'America/Chicago' });
+    const todayWins = store.history.filter(h => h.won && (h.completedAt || '').slice(0,10) === todayKey).length;
+    const timeSaved = store.history.filter(h => h.won).reduce((sum, h) => sum + Math.max(0, h.targetSeconds - h.actualSeconds), 0);
+    $('statsStrip').innerHTML = `
+      <div class="stat-chip streak"><div class="v">${store.currentStreak}🔥</div><div class="l">Streak</div></div>
+      <div class="stat-chip"><div class="v">${todayWins}</div><div class="l">Wins Today</div></div>
+      <div class="stat-chip winrate"><div class="v">${winRate}%</div><div class="l">Win Rate</div></div>
+      <div class="stat-chip"><div class="v">${fmtFriendly(timeSaved)}</div><div class="l">Time Saved</div></div>
+      <div class="stat-chip"><div class="v">${total}</div><div class="l">Total Sprints</div></div>
+    `;
+  }
+
+  // ============ TASK SUGGESTIONS (from Personal todos in localStorage if any) ============
+  function loadSuggestions(){
+    // Pull undone tasks from a daily-plan localStorage if it exists, plus today's personal todos cache
+    const seen = new Set();
+    const out = [];
+    try {
+      const raw = localStorage.getItem('daily-plan');
+      if (raw) {
+        const plan = JSON.parse(raw) || {};
+        const today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Chicago' });
+        const items = Array.isArray(plan[today]) ? plan[today] : [];
+        items.forEach(it => {
+          if (it.done) return;
+          const t = (it.text || '').trim();
+          if (!t || seen.has(t)) return;
+          seen.add(t);
+          out.push({ text: t, job: (it.domain || '').toUpperCase() });
+        });
+      }
+    } catch {}
+    // Recent winning tasks from history
+    store.history.slice(-15).reverse().forEach(h => {
+      const t = (h.taskName || '').trim();
+      if (!t || seen.has(t)) return;
+      seen.add(t);
+      out.push({ text: t, job: 'RECENT' });
+    });
+    return out.slice(0, 8);
+  }
+  function renderSuggestions(){
+    const items = loadSuggestions();
+    if (items.length === 0) { suggestions.style.display = 'none'; return; }
+    suggestions.style.display = '';
+    suggestions.innerHTML = items.map(it => `
+      <div class="suggestion" data-text="${escapeAttr(it.text)}">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
+        <span class="job">${escapeHtml(it.job)}</span>
+        <span class="arr">→</span>
+      </div>
+    `).join('');
+    suggestions.querySelectorAll('.suggestion').forEach(el => {
+      el.addEventListener('click', () => {
+        taskInput.value = el.dataset.text;
+        suggestions.style.display = 'none';
+        taskInput.focus();
+      });
+    });
+  }
+  function escapeHtml(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function escapeAttr(s){ return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+  // ============ TARGET PICKER ============
+  targetChips.querySelectorAll('.target-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      targetChips.querySelectorAll('.target-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      targetSeconds = parseInt(chip.dataset.min, 10) * 60;
+      targetCustom.value = '';
+    });
+  });
+  targetCustom.addEventListener('input', () => {
+    const v = parseInt(targetCustom.value, 10);
+    if (!Number.isFinite(v) || v <= 0) return;
+    targetChips.querySelectorAll('.target-chip').forEach(c => c.classList.remove('active'));
+    targetSeconds = v * 60;
+  });
+
+  // ============ NAV ============
+  function showView(v){
+    if (v === 'play') {
+      landingView.style.display = '';
+      gameView.style.display = 'none';
+      historyView.style.display = 'none';
+      navPlay.classList.add('active'); navHistory.classList.remove('active');
+      stage.style.overflowY = 'auto';
+      renderSuggestions();
+    } else if (v === 'history') {
+      landingView.style.display = 'none';
+      gameView.style.display = 'none';
+      historyView.style.display = '';
+      navPlay.classList.remove('active'); navHistory.classList.add('active');
+      stage.style.overflowY = 'auto';
+      renderHistory();
+    } else if (v === 'game') {
+      landingView.style.display = 'none';
+      gameView.style.display = '';
+      historyView.style.display = 'none';
+      stage.style.overflowY = 'hidden';
+    }
+  }
+  navPlay.onclick = () => showView('play');
+  navHistory.onclick = () => showView('history');
+
+  // ============ START ============
+  startBtn.addEventListener('click', () => {
+    const text = (taskInput.value || '').trim();
+    if (!text) { taskInput.focus(); return; }
+    if (targetSeconds <= 0) return;
+    currentTask = text;
+    lastTaskName = text;
+    startedAt = Date.now();
+    endsAt = startedAt + targetSeconds * 1000;
+    beepedAt = new Set();
+    gameTask.textContent = text;
+    timerSub.textContent = `target — ${fmtMMSS(targetSeconds)}`;
+    showView('game');
+    timerRing.classList.remove('warn','danger');
+    timerTime.classList.remove('danger');
+    runner.classList.remove('warn');
+    playStartFanfare();
+    tickGame();
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = setInterval(tickGame, 200);
+  });
+
+  // ============ TICK ============
+  function tickGame(){
+    const now = Date.now();
+    const remainingMs = endsAt - now;
+    const elapsedMs = now - startedAt;
+    const elapsed = Math.max(0, elapsedMs / 1000);
+    const remaining = Math.max(0, remainingMs / 1000);
+    const pct = Math.min(1, elapsedMs / (targetSeconds * 1000));
+    timerTime.textContent = fmtMMSS(remaining);
+    document.title = `⏱ ${fmtMMSS(remaining)} — Sprint`;
+    // Ring fills as time elapses (stroke-dashoffset goes from 0 → -CIRC)
+    ringFg.setAttribute('stroke-dashoffset', String(-RING_CIRC * pct));
+    // Runner moves from 0 → 100
+    runnerFill.style.width = `${pct * 100}%`;
+    runner.style.left = `${pct * 100}%`;
+    // Color phases
+    timerRing.classList.toggle('warn', remaining <= 30 && remaining > 10);
+    timerRing.classList.toggle('danger', remaining <= 10);
+    timerTime.classList.toggle('danger', remaining <= 10);
+    runner.classList.toggle('warn', remaining <= 30);
+    timerTime.classList.toggle('pulse', remaining > 10);
+    // Beep on each of the last 5 seconds
+    const wholeSecondsLeft = Math.ceil(remaining);
+    if (wholeSecondsLeft <= 5 && wholeSecondsLeft > 0 && !beepedAt.has(wholeSecondsLeft)) {
+      beepedAt.add(wholeSecondsLeft);
+      if (wholeSecondsLeft === 1) playLastSecond(); else playTickBeep();
+    }
+    // Time's up — auto-finish
+    if (remainingMs <= 0) {
+      finishSprint(false);
+    }
+  }
+
+  // ============ FINISH ============
+  function finishSprint(hitDone){
+    if (!timerHandle) return;
+    clearInterval(timerHandle); timerHandle = null;
+    document.title = 'Sprint — War Room';
+    const now = Date.now();
+    const actualSeconds = Math.round((now - startedAt) / 1000);
+    const won = hitDone && actualSeconds <= targetSeconds;
+    // Record history
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      taskName: currentTask,
+      targetSeconds,
+      actualSeconds,
+      won,
+      completedAt: new Date().toISOString(),
+    };
+    store.history.push(entry);
+    // Keep history under 500 entries to avoid localStorage bloat
+    if (store.history.length > 500) store.history = store.history.slice(-500);
+    if (won) {
+      store.currentStreak += 1;
+      if (store.currentStreak > store.bestStreak) store.bestStreak = store.currentStreak;
+    } else {
+      store.currentStreak = 0;
+    }
+    saveStore(store);
+    renderStats();
+    showResult(entry);
+  }
+  doneBtn.addEventListener('click', () => finishSprint(true));
+  quitBtn.addEventListener('click', () => {
+    if (!confirm('Quit this sprint? It won\\'t be recorded.')) return;
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = null;
+    document.title = 'Sprint — War Room';
+    showView('play');
+  });
+
+  // ============ RESULT ============
+  function showResult(entry){
+    const won = entry.won;
+    const remain = Math.max(0, entry.targetSeconds - entry.actualSeconds);
+    const over = Math.max(0, entry.actualSeconds - entry.targetSeconds);
+    resultOverlay.classList.remove('win','lose');
+    resultOverlay.classList.add(won ? 'win' : 'lose');
+    if (won) {
+      // Pick a fun headline based on remaining time
+      const pct = remain / entry.targetSeconds;
+      let head, emoji;
+      if (pct >= .5)        { head = 'BLOWOUT!';      emoji = '🚀'; }
+      else if (pct >= .25)  { head = 'CRUSHED IT!';   emoji = '🏆'; }
+      else if (pct >= .1)   { head = 'BEAT IT!';      emoji = '🔥'; }
+      else                  { head = 'PHOTO FINISH!'; emoji = '⚡'; }
+      resultEmoji.textContent = emoji;
+      resultHeadline.textContent = head;
+      resultSub.textContent = `${fmtFriendly(remain)} to spare on "${entry.taskName}"`;
+      resultStats.innerHTML = `
+        <div class="result-stat hero"><div class="v">${fmtMMSS(entry.actualSeconds)}</div><div class="l">Your Time</div></div>
+        <div class="result-stat"><div class="v">${fmtMMSS(entry.targetSeconds)}</div><div class="l">Target</div></div>
+      `;
+      if (store.currentStreak > 1) {
+        resultStreak.style.display = '';
+        resultStreak.classList.remove('broken');
+        resultStreak.innerHTML = `🔥 <strong>${store.currentStreak} in a row</strong>${store.currentStreak===store.bestStreak?` &nbsp;·&nbsp; new best!`:''}`;
+      } else {
+        resultStreak.style.display = '';
+        resultStreak.classList.remove('broken');
+        resultStreak.innerHTML = `🔥 <strong>Streak started</strong>`;
+      }
+      playWinFanfare();
+      fireConfetti();
+    } else {
+      resultEmoji.textContent = '😤';
+      resultHeadline.textContent = "TIME'S UP";
+      resultSub.textContent = `Logged "${entry.taskName}" — went ${fmtFriendly(over)} over. Beat it next time.`;
+      resultStats.innerHTML = `
+        <div class="result-stat"><div class="v">${fmtMMSS(entry.actualSeconds)}</div><div class="l">Your Time</div></div>
+        <div class="result-stat"><div class="v">${fmtMMSS(entry.targetSeconds)}</div><div class="l">Target</div></div>
+      `;
+      if (store.currentStreak === 0 && store.history.length >= 2) {
+        const prev = store.history[store.history.length - 2];
+        if (prev && prev.won) {
+          resultStreak.style.display = '';
+          resultStreak.classList.add('broken');
+          resultStreak.innerHTML = `Streak ended at <strong>${store.bestStreak}</strong>`;
+        } else {
+          resultStreak.style.display = 'none';
+        }
+      } else {
+        resultStreak.style.display = 'none';
+      }
+      playLoseSound();
+    }
+    resultOverlay.classList.add('show');
+  }
+  againBtn.addEventListener('click', () => {
+    resultOverlay.classList.remove('show');
+    showView('play');
+    if (lastTaskName) taskInput.value = lastTaskName;
+    setTimeout(() => taskInput.focus(), 100);
+  });
+  homeBtn.addEventListener('click', () => {
+    resultOverlay.classList.remove('show');
+    showView('play');
+  });
+
+  // ============ CONFETTI ============
+  const confettiCanvas = $('confetti');
+  const cctx = confettiCanvas.getContext('2d');
+  let confettiPieces = [];
+  let confettiRaf = null;
+  function resizeConfetti(){
+    confettiCanvas.width = window.innerWidth;
+    confettiCanvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeConfetti);
+  resizeConfetti();
+  function fireConfetti(){
+    const colors = ['#FF8A3D','#FFB07F','#4ADE80','#FBBF24','#F87171','#A78BFA','#5AC8FA','#FFFFFF'];
+    const count = 180;
+    confettiPieces = [];
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + (Math.random() * .4 - .2);
+      const v = 6 + Math.random() * 9;
+      confettiPieces.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * v,
+        vy: Math.sin(angle) * v - 4,
+        size: 4 + Math.random() * 6,
+        color: colors[(Math.random() * colors.length) | 0],
+        rot: Math.random() * Math.PI * 2,
+        vRot: (Math.random() - .5) * .3,
+        life: 1,
+      });
+    }
+    if (confettiRaf) cancelAnimationFrame(confettiRaf);
+    const startTs = performance.now();
+    function step(ts){
+      const elapsed = ts - startTs;
+      cctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+      let alive = 0;
+      for (const p of confettiPieces) {
+        p.vy += .25; // gravity
+        p.x += p.vx; p.y += p.vy;
+        p.vx *= .995;
+        p.rot += p.vRot;
+        p.life = Math.max(0, 1 - elapsed / 2800);
+        if (p.life > 0 && p.y < confettiCanvas.height + 40) alive++;
+        cctx.save();
+        cctx.translate(p.x, p.y);
+        cctx.rotate(p.rot);
+        cctx.globalAlpha = p.life;
+        cctx.fillStyle = p.color;
+        cctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * .5);
+        cctx.restore();
+      }
+      if (alive > 0) {
+        confettiRaf = requestAnimationFrame(step);
+      } else {
+        cctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+        confettiPieces = [];
+        confettiRaf = null;
+      }
+    }
+    confettiRaf = requestAnimationFrame(step);
+  }
+
+  // ============ HISTORY VIEW ============
+  function renderHistory(){
+    const items = store.history.slice().reverse();
+    if (items.length === 0) {
+      historyView.innerHTML = `<div class="history-empty"><span class="icon">⏱</span>No sprints yet. Race your first task to start building a streak.</div>`;
+      return;
+    }
+    const rows = items.map(h => {
+      const won = h.won;
+      const dt = new Date(h.completedAt);
+      const when = dt.toLocaleString('en-US', { timeZone:'America/Chicago', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      const delta = h.targetSeconds - h.actualSeconds;
+      const deltaStr = delta >= 0 ? `${fmtFriendly(delta)} early` : `${fmtFriendly(-delta)} over`;
+      return `
+        <div class="h-row ${won?'win':'lose'}">
+          <span class="h-icon">${won?'🏆':'⏰'}</span>
+          <div class="h-body">
+            <div class="h-task">${escapeHtml(h.taskName)}</div>
+            <div class="h-meta">${when} · target ${fmtFriendly(h.targetSeconds)} · ${deltaStr}</div>
+          </div>
+          <div class="h-time"><span class="actual">${fmtMMSS(h.actualSeconds)}</span></div>
+          <span class="h-result ${won?'win':'lose'}">${won?'Win':'Loss'}</span>
+        </div>
+      `;
+    }).join('');
+    historyView.innerHTML = rows + `<div class="history-actions"><button class="btn-clear" id="clearBtn">Clear history</button></div>`;
+    const cb = $('clearBtn');
+    if (cb) cb.onclick = () => {
+      if (!confirm('Clear all sprint history? This can\\'t be undone.')) return;
+      store.history = [];
+      store.currentStreak = 0;
+      saveStore(store);
+      renderStats();
+      renderHistory();
+    };
+  }
+
+  // ============ KEYBOARD ============
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (resultOverlay.classList.contains('show')) {
+        resultOverlay.classList.remove('show');
+        showView('play');
+      }
+    }
+    // Spacebar to mark done during game
+    if (e.key === ' ' && gameView.style.display !== 'none' && !resultOverlay.classList.contains('show')) {
+      e.preventDefault();
+      finishSprint(true);
+    }
+  });
+
+  // Prevent accidental tab close while sprint is running
+  window.addEventListener('beforeunload', (e) => {
+    if (timerHandle) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
+
+  // ============ INIT ============
+  renderStats();
+  renderSuggestions();
+  // Pre-fill task from URL ?task=...
+  try {
+    const sp = new URLSearchParams(location.search);
+    const t = sp.get('task');
+    if (t) taskInput.value = t;
+    const tgt = parseInt(sp.get('min') || '', 10);
+    if (Number.isFinite(tgt) && tgt > 0) {
+      targetSeconds = tgt * 60;
+      targetChips.querySelectorAll('.target-chip').forEach(c => {
+        c.classList.toggle('active', parseInt(c.dataset.min, 10) === tgt);
+      });
+      // If no chip matched, write to custom
+      if (!targetChips.querySelector('.target-chip.active')) {
+        targetCustom.value = tgt;
+      }
+    }
+  } catch {}
+})();
+</script>
+</body>
+</html>
