@@ -1718,6 +1718,17 @@ const VOICE = {
     }
     // Materialize recurring-task instances for this day
     try { await materializeRecurringForDay(dkey(currentDate)); } catch {}
+    // One-time dedup of goal-sourced tasks. Prior versions could push the
+    // same goal task multiple times when the pushedToPersonal flag got
+    // cleared by cross-device sync. Keep the first non-done copy per
+    // sourceGoalTaskId, delete the rest. Gated by a localStorage flag so
+    // it only runs once per device.
+    try {
+      if (isToday() && !localStorage.getItem('personal-goal-dedup-v1')) {
+        await dedupGoalSourcedTodos();
+        localStorage.setItem('personal-goal-dedup-v1', '1');
+      }
+    } catch (e) { console.warn('goal-source dedup failed', e); }
     // Auto-push any goal tasks whose start date has hit (idempotent — checks
     // pushedToPersonal flag so we don't dupe). Best-effort, so any failure
     // doesn't block render.
@@ -1765,6 +1776,60 @@ const VOICE = {
   // has hit but haven't been pushed yet. Creates Personal tasks for each,
   // copies dueDate, maps the goal's pillar to a job, then writes the
   // pushedToPersonal flag back so we don't push again.
+  // Belt-and-suspenders dedup: also keys off `sourceGoalTaskId` on the
+  // personal-todos side so cross-device sync issues / cleared flags can't
+  // produce duplicates. Returns true if a task with this source already
+  // lives in Personal.
+  async function personalAlreadyHasGoalTask(sourceGoalTaskId) {
+    if (!sourceGoalTaskId) return false;
+    // Check the in-memory list first (covers today's view) then Firestore
+    if (todos.some(t => t.sourceGoalTaskId === sourceGoalTaskId)) return true;
+    try {
+      const q = query(todosCol, where('sourceGoalTaskId', '==', sourceGoalTaskId));
+      const snap = await getDocs(q);
+      return !snap.empty;
+    } catch { return false; }
+  }
+  // One-time cleanup: if multiple non-done todos share a sourceGoalTaskId
+  // (artifact of an old auto-push bug), keep the oldest by createdAt and
+  // delete the rest. Done todos are left alone — they're history.
+  async function dedupGoalSourcedTodos() {
+    try {
+      const q = query(todosCol, where('done', '==', false));
+      const snap = await getDocs(q);
+      if (snap.empty) return;
+      const bySource = new Map();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const src = data.sourceGoalTaskId;
+        if (!src) return;
+        if (!bySource.has(src)) bySource.set(src, []);
+        bySource.get(src).push({ id: d.id, ...data });
+      });
+      const batch = writeBatch(db);
+      let removed = 0;
+      for (const [, items] of bySource) {
+        if (items.length < 2) continue;
+        // Sort by createdAt ascending — keep the oldest, delete duplicates
+        items.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+        for (let i = 1; i < items.length; i++) {
+          batch.delete(doc(db, 'tv_todos', items[i].id));
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        await batch.commit();
+        // Drop the deleted ones from the in-memory list too
+        const deletedIds = new Set();
+        for (const [, items] of bySource) {
+          if (items.length < 2) continue;
+          for (let i = 1; i < items.length; i++) deletedIds.add(items[i].id);
+        }
+        todos = todos.filter(t => !deletedIds.has(t.id));
+        console.log(`Goal-source dedup: removed ${removed} duplicate todos`);
+      }
+    } catch (e) { console.warn('dedupGoalSourcedTodos failed', e); }
+  }
   async function autoPushActiveGoalTasks() {
     const todayKeyStr = todayKey();
     // ---- Quarterly goal sub-tasks (quarterly-goals-v1) ----
@@ -1780,10 +1845,19 @@ const VOICE = {
         for (const it of g.tasks) {
           if (!it || it.done || it.pushedToPersonal || !it.startDate) continue;
           if (it.startDate > todayKeyStr) continue;
+          const sourceId = `qg:${g.id}:${it.id}`;
+          // Skip if this goal task is already in Personal — protects against
+          // sync-cleared flags causing repeat pushes
+          if (await personalAlreadyHasGoalTask(sourceId)) {
+            it.pushedToPersonal = true;
+            it.pushedAt = todayKeyStr;
+            goalsMutated = true;
+            continue;
+          }
           await addTodoItem(it.text || '(untitled)', null, {
             dueDate: it.dueDate || '',
             startDate: it.startDate || '',
-            sourceGoalTaskId: `qg:${g.id}:${it.id}`,
+            sourceGoalTaskId: sourceId,
             job: g.pillar || ''
           });
           it.pushedToPersonal = true;
@@ -1810,11 +1884,18 @@ const VOICE = {
           for (const it of g.actionItems) {
             if (!it || it.done || it.pushedToPersonal || !it.startDate) continue;
             if (it.startDate > todayKeyStr) continue;
+            const sourceId = `bd:${b.id}:${g.id}:${it.id}`;
+            if (await personalAlreadyHasGoalTask(sourceId)) {
+              it.pushedToPersonal = true;
+              it.pushedAt = todayKeyStr;
+              boardMutated = true;
+              continue;
+            }
             // Job = the board's id (boards ARE the jobs now)
             await addTodoItem(it.text || it.title || '(untitled)', null, {
               dueDate: it.dueDate || '',
               startDate: it.startDate || '',
-              sourceGoalTaskId: `bd:${b.id}:${g.id}:${it.id}`,
+              sourceGoalTaskId: sourceId,
               job: b.id
             });
             it.pushedToPersonal = true;
@@ -2163,6 +2244,26 @@ const VOICE = {
   const trashSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>`;
   // ---- Render ----
   function render() {
+    // Cache open todos to localStorage so other War Room pages (Sprint, etc.)
+    // can read them without hitting Firestore. Only writes a slim shape.
+    try {
+      if (Array.isArray(todos)) {
+        const open = todos
+          .filter(t => !t.done)
+          .slice(0, 40)
+          .map(t => ({
+            id: t.id,
+            text: t.text || '',
+            job: t.job || '',
+            priority: !!t.priority
+          }));
+        localStorage.setItem('personal-todos-cache', JSON.stringify({
+          updatedAt: Date.now(),
+          dateKey: dkey(currentDate),
+          items: open
+        }));
+      }
+    } catch {}
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
     renderTasks();

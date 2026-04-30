@@ -552,11 +552,74 @@ body { display:flex; flex-direction:column; position:relative }
     `;
   }
 
-  // ============ TASK SUGGESTIONS (from Personal todos in localStorage if any) ============
+  // ============ TASK SUGGESTIONS ============
+  // Sources, in priority order:
+  //   1. Personal todos cache (priority items first) — written by personal-todos.html
+  //   2. Quarterly goals open action items — quarterly-goals-v1
+  //   3. Board card open action items — goal-board-v2
+  //   4. Today's plan — daily-plan
+  //   5. Recent winning sprints — sprint history
   function loadSuggestions(){
-    // Pull undone tasks from a daily-plan localStorage if it exists, plus today's personal todos cache
     const seen = new Set();
     const out = [];
+    const push = (text, job) => {
+      const t = (text || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push({ text: t, job: (job || '').toUpperCase() });
+    };
+
+    // 1. Personal todos cache (priority first, then regular)
+    try {
+      const raw = localStorage.getItem('personal-todos-cache');
+      if (raw) {
+        const cache = JSON.parse(raw) || {};
+        const items = Array.isArray(cache.items) ? cache.items : [];
+        // Priority items first
+        items.filter(i => i.priority).forEach(i => push(i.text, '★ PERSONAL'));
+        items.filter(i => !i.priority).forEach(i => push(i.text, 'PERSONAL'));
+      }
+    } catch {}
+
+    // 2. Quarterly goals open action items (current quarter)
+    try {
+      const raw = localStorage.getItem('quarterly-goals-v1');
+      if (raw) {
+        const data = JSON.parse(raw) || {};
+        const goals = Array.isArray(data.goals) ? data.goals : [];
+        // Current quarter only
+        const now = new Date();
+        const curQ = now.getFullYear() + '-Q' + (Math.floor(now.getMonth() / 3) + 1);
+        goals
+          .filter(g => (g.quarter || curQ) === curQ && g.status !== 'dn')
+          .forEach(g => {
+            (g.actionItems || []).forEach(ai => {
+              if (ai && !ai.done) push(ai.text, 'GOAL');
+            });
+          });
+      }
+    } catch {}
+
+    // 3. Board card open action items (open goals only)
+    try {
+      const raw = localStorage.getItem('goal-board-v2');
+      if (raw) {
+        const data = JSON.parse(raw) || {};
+        const boards = Array.isArray(data.boards) ? data.boards : [];
+        boards.forEach(b => {
+          (b.goals || []).forEach(g => {
+            if (g.status === 'dn') return;
+            (g.actionItems || []).forEach(ai => {
+              if (ai && !ai.done) push(ai.text, (b.name || 'BOARD').slice(0, 10));
+            });
+          });
+        });
+      }
+    } catch {}
+
+    // 4. Today's plan
     try {
       const raw = localStorage.getItem('daily-plan');
       if (raw) {
@@ -565,21 +628,15 @@ body { display:flex; flex-direction:column; position:relative }
         const items = Array.isArray(plan[today]) ? plan[today] : [];
         items.forEach(it => {
           if (it.done) return;
-          const t = (it.text || '').trim();
-          if (!t || seen.has(t)) return;
-          seen.add(t);
-          out.push({ text: t, job: (it.domain || '').toUpperCase() });
+          push(it.text, (it.domain || 'PLAN'));
         });
       }
     } catch {}
-    // Recent winning tasks from history
-    store.history.slice(-15).reverse().forEach(h => {
-      const t = (h.taskName || '').trim();
-      if (!t || seen.has(t)) return;
-      seen.add(t);
-      out.push({ text: t, job: 'RECENT' });
-    });
-    return out.slice(0, 8);
+
+    // 5. Recent winning sprints
+    store.history.slice(-15).reverse().forEach(h => push(h.taskName, 'RECENT'));
+
+    return out.slice(0, 20);
   }
   function renderSuggestions(){
     const items = loadSuggestions();
@@ -732,7 +789,7 @@ body { display:flex; flex-direction:column; position:relative }
   }
   doneBtn.addEventListener('click', () => finishSprint(true));
   quitBtn.addEventListener('click', () => {
-    if (!confirm('Quit this sprint? It won\\'t be recorded.')) return;
+    if (!confirm("Quit this sprint? It won't be recorded.")) return;
     if (timerHandle) clearInterval(timerHandle);
     timerHandle = null;
     document.title = 'Sprint — War Room';
@@ -898,7 +955,7 @@ body { display:flex; flex-direction:column; position:relative }
     historyView.innerHTML = rows + `<div class="history-actions"><button class="btn-clear" id="clearBtn">Clear history</button></div>`;
     const cb = $('clearBtn');
     if (cb) cb.onclick = () => {
-      if (!confirm('Clear all sprint history? This can\\'t be undone.')) return;
+      if (!confirm("Clear all sprint history? This can't be undone.")) return;
       store.history = [];
       store.currentStreak = 0;
       saveStore(store);
