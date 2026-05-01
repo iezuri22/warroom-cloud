@@ -81,9 +81,15 @@ body { display:flex; flex-direction:column; position:relative }
 .task-input::placeholder { color:var(--text-fade); font-weight:600 }
 .task-input:focus { border-color:var(--accent) }
 
-/* Filter chip strip above the suggestions */
+/* Filter chip strip above the suggestions — two rows: categories + jobs */
 .filter-row {
-  display:flex; gap:6px; flex-wrap:wrap; padding:2px 2px 2px;
+  display:flex; flex-direction:column; gap:6px;
+}
+.filter-row-inner {
+  display:flex; gap:6px; flex-wrap:wrap;
+}
+.filter-row-jobs {
+  padding-top:6px; border-top:1px dashed var(--border);
 }
 .filter-chip {
   background:var(--surface-2); border:1px solid var(--border); border-radius:99px;
@@ -94,6 +100,9 @@ body { display:flex; flex-direction:column; position:relative }
 .filter-chip:hover { color:var(--text); border-color:var(--border-2) }
 .filter-chip.active {
   background:var(--accent-bg); border-color:var(--accent); color:var(--accent);
+}
+.filter-row-jobs .filter-chip.active {
+  background:rgba(90,200,250,.16); border-color:#5AC8FA; color:#5AC8FA;
 }
 .filter-chip .count {
   font-size:10px; font-weight:900; opacity:.7;
@@ -670,26 +679,104 @@ body { display:flex; flex-direction:column; position:relative }
     try { return localStorage.getItem('sprint-filter') || 'all'; } catch { return 'all'; }
   })();
 
+  // Top row: category filters
   const FILTERS = [
     { id:'all',      label:'All' },
-    { id:'priority', label:'★' },
-    { id:'personal', label:'Personal' },
-    { id:'goal',     label:'Goals' },
-    { id:'board',    label:'Board' },
-    { id:'plan',     label:'Plan' },
+    { id:'due_week', label:'Due This Week' },
+    { id:'due_next', label:'Due Next Week' },
+    { id:'priority', label:'★ Priority' },
     { id:'recent',   label:'Recent' },
   ];
 
+  // Domain → job ID normalization. Plan rows use domains like "work" / "vt" / "ezrk" / "personal".
+  // Personal todos use the same scheme. Goal pillars use board IDs directly (which are also lowercase).
+  const JOB_ALIASES = {
+    'work':'ecm', 'govtech':'ecm',
+    'vitaltouch':'vt',
+    'ezrklabs':'ezrk',
+    'butterfly':'bha',
+  };
+  function normalizeJobId(j){
+    if (!j) return '';
+    const k = String(j).toLowerCase().trim();
+    return JOB_ALIASES[k] || k;
+  }
+  let activeJob = (function(){
+    try { return localStorage.getItem('sprint-job') || 'all'; } catch { return 'all'; }
+  })();
+
+  // ============ DATE HELPERS (Chicago time) ============
+  // Returns YYYY-MM-DD for "today" in Chicago.
+  function todayKeyChi(){
+    return new Date().toLocaleDateString('en-CA', { timeZone:'America/Chicago' });
+  }
+  // Parse YYYY-MM-DD into a Date pinned to local-midnight (compare-safe vs other YYYY-MM-DD strings).
+  // Returns range [thisWeekStart, thisWeekEnd, nextWeekStart, nextWeekEnd] as YYYY-MM-DD strings.
+  // Week = Monday → Sunday (matches ISO and the rest of War Room).
+  function weekRanges(){
+    const todayKey = todayKeyChi();
+    // Build Chi-local Date by parsing YYYY-MM-DD
+    const [y, m, d] = todayKey.split('-').map(Number);
+    const today = new Date(y, m - 1, d);
+    const dow = today.getDay(); // 0=Sun..6=Sat
+    // Monday-based offset: Sun=-6, Mon=0, Tue=-1, etc.
+    const mondayOffset = dow === 0 ? -6 : 1 - dow;
+    const thisMon = new Date(today); thisMon.setDate(today.getDate() + mondayOffset);
+    const thisSun = new Date(thisMon); thisSun.setDate(thisMon.getDate() + 6);
+    const nextMon = new Date(thisMon); nextMon.setDate(thisMon.getDate() + 7);
+    const nextSun = new Date(thisMon); nextSun.setDate(thisMon.getDate() + 13);
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return {
+      thisWeekStart: fmt(thisMon), thisWeekEnd: fmt(thisSun),
+      nextWeekStart: fmt(nextMon), nextWeekEnd: fmt(nextSun),
+      todayKey,
+    };
+  }
+  function dueThisWeek(dateKey, ranges){
+    if (!dateKey) return false;
+    return dateKey >= ranges.thisWeekStart && dateKey <= ranges.thisWeekEnd;
+  }
+  function dueNextWeek(dateKey, ranges){
+    if (!dateKey) return false;
+    return dateKey >= ranges.nextWeekStart && dateKey <= ranges.nextWeekEnd;
+  }
+
+  // Boards (jobs) loaded from goal-board-v2 — `{id, name, color}` per board.
+  // Used both for job-chip labels and for resolving a goal's pillar → job name.
+  function loadBoards(){
+    try {
+      const raw = localStorage.getItem('goal-board-v2');
+      if (!raw) return [];
+      const data = JSON.parse(raw) || {};
+      return Array.isArray(data.boards) ? data.boards : [];
+    } catch { return []; }
+  }
+  let allBoards = loadBoards();
+  function jobLabel(jobId){
+    if (!jobId) return '';
+    const b = allBoards.find(x => normalizeJobId(x.id) === jobId);
+    if (b) return (b.name || jobId).toUpperCase();
+    return jobId.toUpperCase();
+  }
+
   function loadSuggestions(){
+    allBoards = loadBoards();
     const seen = new Set();
     const out = [];
-    const push = (text, job, source) => {
+    const push = (text, source, dateKey, jobId) => {
       const t = (text || '').trim();
       if (!t) return;
       const k = t.toLowerCase();
       if (seen.has(k)) return;
       seen.add(k);
-      out.push({ text: t, job: (job || '').toUpperCase(), source });
+      const j = normalizeJobId(jobId || '');
+      out.push({
+        text: t,
+        source,
+        date: dateKey || '',
+        jobId: j,
+        jobLabel: jobLabel(j),
+      });
     };
 
     // 1. Personal todos cache (priority first, then regular)
@@ -698,12 +785,14 @@ body { display:flex; flex-direction:column; position:relative }
       if (raw) {
         const cache = JSON.parse(raw) || {};
         const items = Array.isArray(cache.items) ? cache.items : [];
-        items.filter(i => i.priority).forEach(i => push(i.text, '★ PERSONAL', 'priority'));
-        items.filter(i => !i.priority).forEach(i => push(i.text, 'PERSONAL', 'personal'));
+        items.filter(i => i.priority).forEach(i => push(i.text, 'priority', i.date, i.job));
+        items.filter(i => !i.priority).forEach(i => push(i.text, 'personal', i.date, i.job));
       }
     } catch {}
 
     // 2. Quarterly goals open action items (current quarter)
+    //    Action items have startDate and dueDate; goals have a targetDate fallback.
+    //    g.pillar is the board ID — that becomes the job.
     try {
       const raw = localStorage.getItem('quarterly-goals-v1');
       if (raw) {
@@ -715,45 +804,42 @@ body { display:flex; flex-direction:column; position:relative }
           .filter(g => (g.quarter || curQ) === curQ && g.status !== 'dn')
           .forEach(g => {
             (g.actionItems || []).forEach(ai => {
-              if (ai && !ai.done) push(ai.text, 'GOAL', 'goal');
+              if (!ai || ai.done) return;
+              const d = ai.dueDate || ai.startDate || g.targetDate || '';
+              push(ai.text, 'goal', d, g.pillar);
             });
           });
       }
     } catch {}
 
-    // 3. Board card open action items (open goals only)
-    try {
-      const raw = localStorage.getItem('goal-board-v2');
-      if (raw) {
-        const data = JSON.parse(raw) || {};
-        const boards = Array.isArray(data.boards) ? data.boards : [];
-        boards.forEach(b => {
-          (b.goals || []).forEach(g => {
-            if (g.status === 'dn') return;
-            (g.actionItems || []).forEach(ai => {
-              if (ai && !ai.done) push(ai.text, (b.name || 'BOARD').slice(0, 12), 'board');
-            });
-          });
+    // 3. Board card open action items (open goals only). Board id == job id.
+    allBoards.forEach(b => {
+      (b.goals || []).forEach(g => {
+        if (g.status === 'dn') return;
+        (g.actionItems || []).forEach(ai => {
+          if (!ai || ai.done) return;
+          const d = ai.dueDate || ai.startDate || g.targetDate || '';
+          push(ai.text, 'board', d, b.id);
         });
-      }
-    } catch {}
+      });
+    });
 
-    // 4. Today's plan
+    // 4. Today's plan (always today by definition). domain == job id.
     try {
       const raw = localStorage.getItem('daily-plan');
       if (raw) {
         const plan = JSON.parse(raw) || {};
-        const today = new Date().toLocaleDateString('en-CA', { timeZone:'America/Chicago' });
+        const today = todayKeyChi();
         const items = Array.isArray(plan[today]) ? plan[today] : [];
         items.forEach(it => {
           if (it.done) return;
-          push(it.text, (it.domain || 'PLAN'), 'plan');
+          push(it.text, 'plan', today, it.domain);
         });
       }
     } catch {}
 
-    // 5. Recent winning sprints
-    store.history.slice(-15).reverse().forEach(h => push(h.taskName, 'RECENT', 'recent'));
+    // 5. Recent winning sprints (no due-date or job semantics)
+    store.history.slice(-15).reverse().forEach(h => push(h.taskName, 'recent', '', ''));
 
     return out;
   }
@@ -764,48 +850,128 @@ body { display:flex; flex-direction:column; position:relative }
     renderFilterChips();
     renderSuggestions();
   }
+  function setJob(id){
+    activeJob = id;
+    try { localStorage.setItem('sprint-job', id); } catch {}
+    renderFilterChips();
+    renderSuggestions();
+  }
+
+  // Apply category filter (FILTERS) only.
+  function passesCategory(s, ranges){
+    if (activeFilter === 'all')      return true;
+    if (activeFilter === 'priority') return s.source === 'priority';
+    if (activeFilter === 'recent')   return s.source === 'recent';
+    if (activeFilter === 'due_week') return dueThisWeek(s.date, ranges);
+    if (activeFilter === 'due_next') return dueNextWeek(s.date, ranges);
+    return true;
+  }
+  function passesJob(s){
+    if (activeJob === 'all') return true;
+    if (activeJob === 'none') return !s.jobId; // suggestions with no job (e.g. recent)
+    return s.jobId === activeJob;
+  }
 
   function renderFilterChips(){
     const wrap = $('filterChips');
     if (!wrap) return;
-    const counts = {};
-    FILTERS.forEach(f => { counts[f.id] = 0; });
-    counts.all = allSuggestions.length;
-    allSuggestions.forEach(s => { counts[s.source] = (counts[s.source] || 0) + 1; });
-    wrap.innerHTML = FILTERS
-      .filter(f => f.id === 'all' || counts[f.id] > 0)
+    const ranges = weekRanges();
+
+    // Category counts respect the *job* filter so the numbers match what user sees.
+    const catCounts = { all: 0, due_week: 0, due_next: 0, priority: 0, recent: 0 };
+    allSuggestions.forEach(s => {
+      if (!passesJob(s)) return;
+      catCounts.all += 1;
+      if (dueThisWeek(s.date, ranges)) catCounts.due_week += 1;
+      if (dueNextWeek(s.date, ranges)) catCounts.due_next += 1;
+      if (s.source === 'priority') catCounts.priority += 1;
+      if (s.source === 'recent')   catCounts.recent += 1;
+    });
+    // Job counts respect the *category* filter for the same reason.
+    const jobCounts = { all: 0, none: 0 };
+    allSuggestions.forEach(s => {
+      if (!passesCategory(s, ranges)) return;
+      jobCounts.all += 1;
+      const k = s.jobId || 'none';
+      jobCounts[k] = (jobCounts[k] || 0) + 1;
+    });
+
+    // Top row — categories
+    const catRow = FILTERS
+      .filter(f => f.id === 'all' || catCounts[f.id] > 0)
       .map(f => `
-        <button class="filter-chip ${f.id===activeFilter?'active':''}" data-filter="${f.id}">
-          <span>${f.label}</span><span class="count">${counts[f.id]||0}</span>
+        <button class="filter-chip ${f.id===activeFilter?'active':''}" data-kind="cat" data-filter="${f.id}">
+          <span>${f.label}</span><span class="count">${catCounts[f.id]||0}</span>
         </button>
       `).join('');
+
+    // Job row — built from boards present in the data, plus any orphan job IDs.
+    const jobIdsInData = new Set();
+    allSuggestions.forEach(s => { if (s.jobId) jobIdsInData.add(s.jobId); });
+    const jobsForChips = [];
+    // Boards first (preserve user's board order)
+    allBoards.forEach(b => {
+      const id = normalizeJobId(b.id);
+      if (jobIdsInData.has(id)) jobsForChips.push({ id, label: (b.name || id).toUpperCase() });
+    });
+    // Any leftover job IDs (e.g. legacy 'work' before a board exists)
+    jobIdsInData.forEach(id => {
+      if (!jobsForChips.find(j => j.id === id)) jobsForChips.push({ id, label: id.toUpperCase() });
+    });
+    let jobRow = '';
+    if (jobsForChips.length >= 1) {
+      jobRow = `
+        <button class="filter-chip ${activeJob==='all'?'active':''}" data-kind="job" data-filter="all">
+          <span>All Jobs</span><span class="count">${jobCounts.all||0}</span>
+        </button>
+        ${jobsForChips.map(j => `
+          <button class="filter-chip ${activeJob===j.id?'active':''}" data-kind="job" data-filter="${escapeAttr(j.id)}">
+            <span>${escapeHtml(j.label)}</span><span class="count">${jobCounts[j.id]||0}</span>
+          </button>
+        `).join('')}
+      `;
+    }
+
+    wrap.innerHTML = `
+      <div class="filter-row-inner">${catRow}</div>
+      ${jobRow ? `<div class="filter-row-inner filter-row-jobs">${jobRow}</div>` : ''}
+    `;
     wrap.querySelectorAll('.filter-chip').forEach(el => {
-      el.addEventListener('click', () => setFilter(el.dataset.filter));
+      el.addEventListener('click', () => {
+        if (el.dataset.kind === 'cat') setFilter(el.dataset.filter);
+        else setJob(el.dataset.filter);
+      });
     });
   }
 
   function renderSuggestions(){
     allSuggestions = loadSuggestions();
     renderFilterChips();
-    // If the active filter has no items, fall back to 'all' so the user sees something.
-    let items = activeFilter === 'all'
-      ? allSuggestions
-      : allSuggestions.filter(s => s.source === activeFilter);
-    if (items.length === 0 && allSuggestions.length > 0 && activeFilter !== 'all') {
-      // Show empty hint instead of silently switching
+    const ranges = weekRanges();
+    const items = allSuggestions.filter(s => passesCategory(s, ranges) && passesJob(s));
+
+    if (items.length === 0 && allSuggestions.length > 0) {
       suggestions.style.display = '';
-      suggestions.innerHTML = `<div class="suggestions-empty">No ${activeFilter} tasks. Add one in the source page or pick a different filter.</div>`;
+      suggestions.innerHTML = `<div class="suggestions-empty">No matches. Pick a different filter or type a task above.</div>`;
       return;
     }
     if (items.length === 0) { suggestions.style.display = 'none'; return; }
     suggestions.style.display = '';
-    suggestions.innerHTML = items.slice(0, 60).map(it => `
-      <div class="suggestion" data-text="${escapeAttr(it.text)}" data-source="${escapeAttr(it.source)}">
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
-        <span class="job">${escapeHtml(it.job)}</span>
-        <span class="arr">→</span>
-      </div>
-    `).join('');
+    suggestions.innerHTML = items.slice(0, 60).map(it => {
+      // Badge: ★ for priority, otherwise the job label, otherwise the source
+      let badge;
+      if (it.source === 'priority') badge = '★ ' + (it.jobLabel || 'PERSONAL');
+      else if (it.jobLabel)         badge = it.jobLabel;
+      else if (it.source === 'recent') badge = 'RECENT';
+      else                          badge = it.source.toUpperCase();
+      return `
+        <div class="suggestion" data-text="${escapeAttr(it.text)}" data-source="${escapeAttr(it.source)}">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
+          <span class="job">${escapeHtml(badge)}</span>
+          <span class="arr">→</span>
+        </div>
+      `;
+    }).join('');
     suggestions.querySelectorAll('.suggestion').forEach(el => {
       el.addEventListener('click', () => {
         taskInput.value = el.dataset.text;
@@ -940,11 +1106,39 @@ body { display:flex; flex-direction:column; position:relative }
   if (resumeBtn) resumeBtn.addEventListener('click', resumeSprint);
   if (discardPauseBtn) discardPauseBtn.addEventListener('click', discardPaused);
 
+  // ============ MANUAL TASKS → PERSONAL TODOS ============
+  // When user types a fresh task that isn't already in their suggestion sources,
+  // queue it for personal-todos.html to pick up and create as a Firestore todo.
+  // This keeps Sprint and Personal in sync — anything you race here gets tracked there.
+  function maybeQueueAsPersonalTodo(text){
+    const t = (text || '').trim();
+    if (!t) return;
+    // If text already matches an existing suggestion (any source), don't re-create —
+    // just update the existing todo via personal-todos itself if needed.
+    const k = t.toLowerCase();
+    const hasMatch = (allSuggestions || []).some(s => s.text.toLowerCase() === k);
+    if (hasMatch) return;
+    try {
+      const QKEY = 'sprint-pending-personal-todos';
+      const raw = localStorage.getItem(QKEY);
+      const queue = raw ? (JSON.parse(raw) || []) : [];
+      queue.push({
+        text: t,
+        createdAt: Date.now(),
+        date: todayKeyChi(),
+        fromSprint: true,
+      });
+      localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50)));
+    } catch {}
+  }
+
   // ============ START ============
   startBtn.addEventListener('click', () => {
     const text = (taskInput.value || '').trim();
     if (!text) { taskInput.focus(); return; }
     if (targetSeconds <= 0) return;
+    // Record manual task to Personal todos (no-op if already a known task).
+    maybeQueueAsPersonalTodo(text);
     // If user starts a fresh sprint while one is paused, drop the pause silently —
     // they explicitly chose to start something new.
     clearPaused();

@@ -1735,8 +1735,49 @@ const VOICE = {
     if (isToday()) {
       try { await autoPushActiveGoalTasks(); } catch (e) { console.warn('auto-push failed', e); }
       try { await shiftStalePeriods(); } catch (e) { console.warn('period shift failed', e); }
+      try { await drainSprintQueue(); } catch (e) { console.warn('sprint queue drain failed', e); }
     }
     render();
+  }
+  // ============ SPRINT → PERSONAL HANDOFF ============
+  // Sprint page queues manually-typed tasks here. We drain the queue on each
+  // load (when viewing today), creating a personal todo for anything that
+  // doesn't already exist as a same-text task on today's list.
+  async function drainSprintQueue() {
+    const QKEY = 'sprint-pending-personal-todos';
+    let queue = [];
+    try {
+      const raw = localStorage.getItem(QKEY);
+      if (raw) queue = JSON.parse(raw) || [];
+    } catch { queue = []; }
+    if (!Array.isArray(queue) || queue.length === 0) return;
+    const todayKey = dkey(currentDate);
+    // Existing today-text set, lowercased
+    const existing = new Set(todos
+      .filter(t => t.date === todayKey)
+      .map(t => (t.text || '').trim().toLowerCase()));
+    const created = [];
+    for (const item of queue) {
+      const text = (item && item.text || '').trim();
+      if (!text) continue;
+      if (existing.has(text.toLowerCase())) continue;
+      try {
+        await addTodoItem(text, null, { period: getCurrentPeriod() });
+        existing.add(text.toLowerCase());
+        created.push(text);
+      } catch (e) { console.warn('addTodoItem (sprint) failed', e); }
+    }
+    // Always clear the queue after a drain attempt — even on failures, we
+    // don't want to keep retrying forever.
+    try { localStorage.removeItem(QKEY); } catch {}
+    if (created.length > 0) {
+      const notice = document.getElementById('carryoverNotice');
+      if (notice) {
+        notice.textContent = `${created.length} sprint task${created.length>1?'s':''} added`;
+        notice.style.display = 'block';
+        setTimeout(() => notice.style.display = 'none', 4000);
+      }
+    }
   }
   // ============ AUTO-SHIFT TIME-OF-DAY PERIODS ============
   // If a morning task isn't done by noon, bump it to afternoon (preserve original
@@ -2255,7 +2296,10 @@ const VOICE = {
             id: t.id,
             text: t.text || '',
             job: t.job || '',
-            priority: !!t.priority
+            priority: !!t.priority,
+            // Date the task is scheduled for. For range tasks we use endDate
+            // (or startDate if no end) as the effective due date.
+            date: t.date || t.endDate || t.startDate || ''
           }));
         localStorage.setItem('personal-todos-cache', JSON.stringify({
           updatedAt: Date.now(),
@@ -3207,6 +3251,14 @@ const VOICE = {
     if (!isToday()) return;
     shiftStalePeriods().then(() => render()).catch(() => {});
   }, 60000);
+  // Cross-iframe sync: when Sprint queues a manual task, drain it without
+  // requiring a page reload. The storage event fires for other documents on
+  // the same origin (Sprint iframe), so we pick it up here in real time.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'sprint-pending-personal-todos') return;
+    if (!isToday()) return;
+    drainSprintQueue().then(() => render()).catch(() => {});
+  });
 
   // ---- Inbound message bridge (from War Room shell) ----
   window.addEventListener('message', async (ev) => {
