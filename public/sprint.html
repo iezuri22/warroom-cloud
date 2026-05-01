@@ -2339,6 +2339,42 @@ body { display:flex; flex-direction:column; position:relative }
   renderStats();
   renderResumeBanner();
   renderSuggestions();
+
+  // Re-render when sync-client finishes pulling cloud state. Without this,
+  // Sprint's first render uses STALE localStorage (sync hasn't completed yet)
+  // and the user sees old data until they tap a filter chip (which re-reads).
+  document.addEventListener('warroom:cloud-ready', () => {
+    try { renderStats(); renderSuggestions(); } catch {}
+  });
+
+  // Cross-iframe cache changes (Personal todo added/checked off, goals edit,
+  // daily-plan tweak) — re-render Sprint immediately so it stays in sync
+  // without needing a manual refresh.
+  const SYNCED_CACHE_KEYS = new Set([
+    'personal-todos-cache',
+    'quarterly-goals-v1',
+    'goal-board-v2',
+    'daily-plan',
+    'sprint-history-v1',
+  ]);
+  window.addEventListener('storage', (e) => {
+    if (!e || !e.key) return;
+    if (SYNCED_CACHE_KEYS.has(e.key)) {
+      try { renderStats(); renderSuggestions(); } catch {}
+    }
+  });
+
+  // Also re-render when Sprint becomes visible again (parent shell switches
+  // to this tab, or user toggles fullscreen). The visibilitychange event
+  // fires for the iframe document on tab activation in many browsers.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      try { renderStats(); renderSuggestions(); } catch {}
+    }
+  });
+  window.addEventListener('focus', () => {
+    try { renderStats(); renderSuggestions(); } catch {}
+  });
   // Pre-fill task from URL ?task=...
   try {
     const sp = new URLSearchParams(location.search);
