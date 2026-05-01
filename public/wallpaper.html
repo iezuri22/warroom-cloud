@@ -870,10 +870,33 @@
     transition: transform .2s;
   }
   .music-toggle:checked::after { transform: translateX(20px); }
+  .music-toggle-label {
+    font-size: 13px; font-weight: 700; color: rgba(255,255,255,.85);
+  }
+  .music-vibes {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+  }
+  .music-vibe-chip {
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 99px; padding: 7px 13px; cursor: pointer; color: rgba(255,255,255,.78);
+    font-family: inherit; font-size: 12px; font-weight: 800; letter-spacing: .4px;
+    transition: all .12s; white-space: nowrap;
+  }
+  .music-vibe-chip:hover { color: #fff; border-color: rgba(255,255,255,.25); }
+  .music-vibe-chip.active {
+    background: rgba(255,138,61,.18); border-color: #FF8A3D; color: #FF8A3D;
+  }
   .music-input {
     flex: 1; padding: 8px 12px; border-radius: 8px;
     background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
     color: #fff; font-family: inherit; font-size: 13px;
+  }
+  .music-input-row {
+    display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  }
+  .music-input-row label {
+    font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+    color: rgba(255,255,255,.4); flex-shrink: 0;
   }
   .music-help {
     font-size: 11.5px; color: rgba(255,255,255,.4);
@@ -1000,9 +1023,14 @@
     <div class="settings-section-label">Background music</div>
     <div class="music-row">
       <input type="checkbox" class="music-toggle" id="musicToggle">
-      <input type="text" class="music-input" id="musicInput" placeholder="YouTube video ID">
+      <span class="music-toggle-label">Enable music</span>
     </div>
-    <div class="music-help">Default is the Lofi Girl stream (jfKfPfyJRdk). Paste any YouTube video ID for a different vibe. Music starts when you tap Start (browsers require a tap before audio plays).</div>
+    <div class="music-vibes" id="musicVibesPicker"></div>
+    <div class="music-input-row">
+      <label>Custom</label>
+      <input type="text" class="music-input" id="musicInput" placeholder="Override with YouTube video ID">
+    </div>
+    <div class="music-help">Pick a vibe or paste any YouTube video ID. Music starts at a random spot (1–25 min in) so it doesn't always replay the intro. Tap Start to begin — browsers require a tap before audio plays.</div>
 
     <div class="settings-actions">
       <button class="ghost-btn" onclick="closeSettings()">Cancel</button>
@@ -1014,6 +1042,18 @@
 <script>
   // ============ CONFIG ============
   const CFG_KEY = 'warroom-wallpaper-cfg-v1';
+
+  // Music vibes — kept in sync with sprint.html's VIBES list. Swap a videoId
+  // here if any goes offline; nothing else has to change.
+  const MUSIC_VIBES = [
+    { id:'hiphop',    label:'Hip-Hop',        videoId:'jfKfPfyJRdk' },
+    { id:'anime',     label:'Anime Openings', videoId:'leg3dJ4Xl_Q' },
+    { id:'ghibli',    label:'OPs Extended',   videoId:'GNWLILeztaI' },
+    { id:'animehits', label:'Frieren Lofi',   videoId:'eGCLSr2OyaM' },
+    { id:'chillhop',  label:'Chillhop',       videoId:'5yx6BWlEVcY' },
+    { id:'jazz',      label:'Jazz Lofi',      videoId:'Dx5qFachd3A' },
+    { id:'synthwave', label:'Synthwave',      videoId:'4xDzrJKXOOY' },
+  ];
   // Catalog of available panels. `render` types are inline custom panels with
   // TV-friendly typography; everything else is iframe-embedded.
   const PANEL_CATALOG = [
@@ -2072,11 +2112,20 @@
   function manualNext() { rotate(); }
 
   // ============ MUSIC ============
+  function resolveMusicVideoId() {
+    // Custom override beats the vibe choice if user pasted one
+    const custom = (cfg.musicVideoId || '').trim();
+    if (custom) return custom;
+    const vibe = MUSIC_VIBES.find(v => v.id === cfg.musicVibe) || MUSIC_VIBES[0];
+    return vibe.videoId;
+  }
   function startMusic() {
-    const id = (cfg.musicVideoId || 'jfKfPfyJRdk').trim();
+    const id = resolveMusicVideoId();
     const frame = document.getElementById('musicFrame');
-    // Use the youtube-nocookie embed for fewer trackers; loop=1 + playlist=ID makes loop work
-    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&loop=1&playlist=${id}&controls=0&showinfo=0&iv_load_policy=3&modestbranding=1`;
+    // Random start offset (60..1500s = 1..25 min in) so we don't always hear
+    // the same intro. loop=1 + playlist=ID is what makes loop work for embeds.
+    const startAt = 60 + Math.floor(Math.random() * 1440);
+    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&loop=1&playlist=${id}&controls=0&showinfo=0&iv_load_policy=3&modestbranding=1&start=${startAt}`;
     musicPlaying = true;
     document.getElementById('musicBtn').classList.add('active');
   }
@@ -2192,11 +2241,33 @@
     });
     document.getElementById('musicToggle').checked = !!_draftCfg.musicOn;
     document.getElementById('musicInput').value = _draftCfg.musicVideoId || '';
+    renderMusicVibePicker();
+  }
+
+  function renderMusicVibePicker() {
+    const wrap = document.getElementById('musicVibesPicker');
+    if (!wrap) return;
+    const sel = _draftCfg && _draftCfg.musicVibe;
+    wrap.innerHTML = MUSIC_VIBES.map(v => `
+      <button class="music-vibe-chip${sel===v.id?' active':''}" data-vibe="${v.id}">${v.label}</button>
+    `).join('');
+    wrap.querySelectorAll('.music-vibe-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        _draftCfg.musicVibe = el.dataset.vibe;
+        // Picking a vibe clears any custom override (custom would beat vibe).
+        _draftCfg.musicVideoId = '';
+        document.getElementById('musicInput').value = '';
+        renderMusicVibePicker();
+      });
+    });
   }
   function saveSettings() {
     if (!_draftCfg) return closeSettings();
     _draftCfg.musicOn = document.getElementById('musicToggle').checked;
-    _draftCfg.musicVideoId = document.getElementById('musicInput').value.trim() || 'jfKfPfyJRdk';
+    // Custom override (only if user pasted one). Empty = use the chosen vibe.
+    _draftCfg.musicVideoId = document.getElementById('musicInput').value.trim();
+    // Default vibe if none chosen yet.
+    if (!_draftCfg.musicVibe && !_draftCfg.musicVideoId) _draftCfg.musicVibe = 'hiphop';
     cfg = _draftCfg;
     saveCfg();
     closeSettings();
