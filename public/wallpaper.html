@@ -2122,13 +2122,48 @@
   function startMusic() {
     const id = resolveMusicVideoId();
     const frame = document.getElementById('musicFrame');
-    // Random start offset (60..1500s = 1..25 min in) so we don't always hear
-    // the same intro. loop=1 + playlist=ID is what makes loop work for embeds.
+    // Random start offset (60..1500s = 1..25 min in)
     const startAt = 60 + Math.floor(Math.random() * 1440);
-    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&loop=1&playlist=${id}&controls=0&showinfo=0&iv_load_policy=3&modestbranding=1&start=${startAt}`;
+    // enablejsapi=1 lets us listen for ENDED → rotate to next vibe
+    const origin = encodeURIComponent(window.location.origin);
+    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&controls=0&showinfo=0&iv_load_policy=3&modestbranding=1&start=${startAt}&enablejsapi=1&origin=${origin}`;
     musicPlaying = true;
     document.getElementById('musicBtn').classList.add('active');
   }
+  // Rotate to next vibe in the curated list (skipping past custom override on cycle).
+  function rotateToNextVibe() {
+    const cur = cfg.musicVibe || (MUSIC_VIBES.find(v => v.videoId === (cfg.musicVideoId||'').trim())||{}).id;
+    const i = MUSIC_VIBES.findIndex(v => v.id === cur);
+    const next = MUSIC_VIBES[(i + 1) % MUSIC_VIBES.length];
+    cfg.musicVibe = next.id;
+    cfg.musicVideoId = ''; // rotation always lands on a vibe, not custom
+    saveCfg();
+    startMusic();
+  }
+  // Listen for YT IFrame Player API "ended" events to auto-rotate.
+  window.addEventListener('message', (ev) => {
+    if (!musicPlaying) return;
+    if (!ev || !ev.data) return;
+    let payload = ev.data;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { return; }
+    }
+    if (!payload || payload.event !== 'onStateChange') return;
+    if (payload.info !== 0) return; // 0 = ENDED
+    rotateToNextVibe();
+  });
+  // Kick the API into "listening" mode after the iframe loads so events arrive.
+  document.getElementById('musicFrame').addEventListener('load', () => {
+    try {
+      const f = document.getElementById('musicFrame');
+      if (f.src && f.src !== 'about:blank' && f.contentWindow) {
+        f.contentWindow.postMessage(
+          JSON.stringify({ event:'listening', id:'tv-music' }),
+          '*'
+        );
+      }
+    } catch {}
+  });
   function stopMusic() {
     document.getElementById('musicFrame').src = '';
     musicPlaying = false;
