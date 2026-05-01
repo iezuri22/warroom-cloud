@@ -290,8 +290,28 @@ body{padding:16px 14px 120px}
 }
 .tv-today-view .tv-event-meta{
   font-size:clamp(12px,1.2vw,18px);font-weight:600;color:rgba(255,255,255,.5);
-  margin-top:4px;
+  margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;
 }
+.tv-today-view .tv-event-meta .sep{color:rgba(255,255,255,.25)}
+.tv-today-view .tv-event-meta .tv-event-until{color:rgba(255,255,255,.5)}
+.tv-today-view .tv-event-loc{
+  color:rgba(255,255,255,.7);text-decoration:none;
+  border-bottom:1px dashed rgba(255,255,255,.2);
+  transition:color .12s, border-color .12s;
+}
+.tv-today-view .tv-event-loc:hover{color:#fff;border-color:rgba(255,255,255,.4)}
+.tv-today-view .tv-event-loc.is-meeting{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:4px 10px;border-radius:999px;
+  background:rgba(255,138,61,.16);border:1px solid rgba(255,138,61,.45);
+  color:#FF8A3D;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  font-size:clamp(10px,1vw,13px);
+}
+.tv-today-view .tv-event-loc.is-meeting:hover{
+  background:rgba(255,138,61,.26);color:#FFB07F;
+}
+.tv-today-view .tv-event{cursor:pointer}
+.tv-today-view .tv-event:hover{background:rgba(255,255,255,.04)}
 .tv-today-view .tv-event-cal{
   font-size:clamp(10px,1vw,13px);font-weight:800;letter-spacing:.15em;text-transform:uppercase;
   padding:6px 12px;border-radius:999px;
@@ -500,6 +520,15 @@ body{padding:16px 14px 120px}
 .loc-maps-btn{flex:0 0 auto;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;height:auto}
 .event-loc{color:inherit;text-decoration:underline;text-decoration-color:var(--text-fade);text-underline-offset:2px;transition:color 0.15s}
 .event-loc:hover{color:var(--accent);text-decoration-color:var(--accent)}
+.event-loc.is-meeting{
+  text-decoration:none;
+  display:inline-flex;align-items:center;gap:4px;
+  padding:1px 8px;border-radius:999px;
+  background:rgba(255,138,61,.14);border:1px solid rgba(255,138,61,.4);
+  color:#FF8A3D;font-weight:800;letter-spacing:.3px;text-transform:uppercase;
+  font-size:10px;line-height:1.5;
+}
+.event-loc.is-meeting:hover{background:rgba(255,138,61,.22);color:#FFB07F}
 .detail-meta{display:flex;flex-wrap:wrap;gap:8px 12px;margin:-4px 0 14px;font-size:12px;font-weight:700;color:var(--text-mid)}
 .detail-meta .bit{display:inline-flex;align-items:center;gap:4px}
 .detail-loc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -974,6 +1003,22 @@ function saveGcalNotes(){
 function mapsUrlFor(location){
   if(!location) return '';
   return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(location);
+}
+// Smart location-link resolver. If the location string contains a video-meeting
+// URL (Zoom / Meet / Teams / etc.), return that URL so the click joins the
+// meeting. Otherwise fall back to Google Maps for an address.
+function smartLocationLink(location){
+  if(!location) return { url:'', label:'', kind:'' };
+  const m = location.match(MEETING_URL_REGEX);
+  if (m) {
+    return { url: m[0], label: meetingPlatform(m[0]) || 'Join', kind: 'meeting' };
+  }
+  // Catch any other http(s) URL embedded in the location
+  const anyUrl = location.match(/https?:\/\/[^\s<>"')]+/i);
+  if (anyUrl) {
+    return { url: anyUrl[0], label: 'Open link', kind: 'url' };
+  }
+  return { url: mapsUrlFor(location), label: location, kind: 'maps' };
 }
 function loadGcalCache(){
   try{
@@ -1642,13 +1687,31 @@ function renderTvToday(){
         } else { endTime = e.end; }
       }
     }
-    const meta = [e.location, e.allDay?'':(endTime?`until ${endTime}`:'')].filter(Boolean).join(' · ');
+    // Build meta — use smart location link so meeting URLs become Join buttons
+    // and addresses become Maps links. Other text bits (until X) stay plain.
+    const sl = e.location ? smartLocationLink(e.location) : null;
+    const meetingUrl = findMeetingUrl(e); // also picks up URLs from notes/title
+    const locDisplay = sl
+      ? (sl.kind === 'meeting' ? `Join ${sl.label}`
+        : sl.kind === 'url'     ? sl.label
+        : e.location)
+      : '';
+    const locHTML = sl
+      ? `<a class="tv-event-loc ${sl.kind==='meeting'?'is-meeting':''}" href="${escapeAttr(sl.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHTML(locDisplay)}</a>`
+      : '';
+    const untilBit = (!e.allDay && endTime) ? `<span class="tv-event-until">until ${escapeHTML(endTime)}</span>` : '';
+    // If the event has a meeting URL but no .location-derived link rendered
+    // (e.g., URL was in notes/title), still surface a Join button.
+    const meetingFallback = (!sl || sl.kind !== 'meeting') && meetingUrl
+      ? `<a class="tv-event-loc is-meeting" href="${escapeAttr(meetingUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Join ${escapeHTML(meetingPlatform(meetingUrl) || 'meeting')}</a>`
+      : '';
+    const metaParts = [locHTML, meetingFallback, untilBit].filter(Boolean);
     return `
-      <div class="${cls}">
+      <div class="${cls}" data-src="${escapeAttr(e.source)}" data-id="${escapeAttr(e.id)}" role="button" tabindex="0">
         <div class="tv-event-time">${escapeHTML(time)}</div>
         <div class="tv-event-body">
           <div class="tv-event-title">${escapeHTML(e.title || '(untitled)')}</div>
-          ${meta?`<div class="tv-event-meta">${escapeHTML(meta)}</div>`:''}
+          ${metaParts.length?`<div class="tv-event-meta">${metaParts.join(' <span class="sep">·</span> ')}</div>`:''}
         </div>
         ${cal?`<div class="tv-event-cal">${escapeHTML(cal)}</div>`:''}
       </div>
@@ -1665,6 +1728,20 @@ function renderTvToday(){
     </div>
     <div class="tv-events">${eventsHTML}</div>
   `;
+  // Wire row clicks → detail modal. Anchors inside (.tv-event-loc) stop
+  // propagation themselves so clicking "Join Zoom" doesn't also open the modal.
+  el.querySelectorAll('.tv-event').forEach(row => {
+    row.addEventListener('click', () => {
+      const src = row.dataset.src;
+      const id  = row.dataset.id;
+      if (!id) return;
+      if (src === 'manual') openModal(id);
+      else if (src === 'gcal') openDetailModal(id);
+    });
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
+    });
+  });
   // Re-render every 30s so the clock + now highlight stay current
   if(_tvTodayTicker) clearInterval(_tvTodayTicker);
   _tvTodayTicker = setInterval(()=>{
@@ -1756,7 +1833,17 @@ function renderEventPill(e){
     ? `<span class="time-edited-mark" title="Time manually overridden — click event to edit"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span>`
     : '';
   if(timeStr) metaBits.push(`<span class="event-time ${e.timeOverridden?'overridden':''}">${escapeHTML(timeStr)}${timeEditedMark}</span>`);
-  if(e.location) metaBits.push(`<span class="event-loc-wrap"><span class="sep">·</span><a class="event-loc" href="${escapeAttr(mapsUrlFor(e.location))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open in Maps">${escapeHTML(e.location)}</a></span>`);
+  if(e.location) {
+    const sl = smartLocationLink(e.location);
+    const tip = sl.kind === 'meeting' ? `Open ${sl.label} meeting`
+              : sl.kind === 'url'     ? 'Open link'
+              : 'Open in Maps';
+    // For meeting links, show the platform name instead of the unwieldy URL.
+    const display = sl.kind === 'meeting' ? `Join ${sl.label}`
+                  : sl.kind === 'url'     ? sl.label
+                  : e.location;
+    metaBits.push(`<span class="event-loc-wrap"><span class="sep">·</span><a class="event-loc ${sl.kind==='meeting'?'is-meeting':''}" href="${escapeAttr(sl.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeAttr(tip)}">${escapeHTML(display)}</a></span>`);
+  }
   if(e.cal && e.source==='gcal') metaBits.push(`<span class="event-cal-wrap"><span class="sep">·</span><span class="event-cal">${escapeHTML(e.cal)}</span></span>`);
   const srcBadge='';
   const hasUserNotes=!!(e.userNotes||'').trim();
