@@ -1619,36 +1619,59 @@ body { display:flex; flex-direction:column; position:relative }
   });
 
   // ============ TICK ============
+  // Past target time, the timer keeps running and counts UP — user can keep
+  // working and hit Done whenever they actually finish. Recorded actualSeconds
+  // will exceed targetSeconds, which marks it as a loss (or they can override).
   function tickGame(){
     const now = Date.now();
-    const remainingMs = endsAt - now;
     const elapsedMs = now - startedAt;
-    const elapsed = Math.max(0, elapsedMs / 1000);
+    const remainingMs = endsAt - now;
     const remaining = Math.max(0, remainingMs / 1000);
+    const overtimeSecs = remainingMs < 0 ? Math.floor(-remainingMs / 1000) : 0;
+    const isOvertime = overtimeSecs > 0;
+
+    // Display: countdown until target hit, then count-up "+OVER" once over.
+    if (isOvertime) {
+      timerTime.textContent = `+${fmtMMSS(overtimeSecs)}`;
+      document.title = `⏱ +${fmtMMSS(overtimeSecs)} OVER — Sprint`;
+    } else {
+      timerTime.textContent = fmtMMSS(remaining);
+      document.title = `⏱ ${fmtMMSS(remaining)} — Sprint`;
+    }
+
+    // Ring fills as time elapses, capped at 100% (no wrap-around on overtime).
     const pct = Math.min(1, elapsedMs / (targetSeconds * 1000));
-    timerTime.textContent = fmtMMSS(remaining);
-    document.title = `⏱ ${fmtMMSS(remaining)} — Sprint`;
-    // Ring fills as time elapses (stroke-dashoffset goes from 0 → -CIRC)
     ringFg.setAttribute('stroke-dashoffset', String(-RING_CIRC * pct));
-    // Runner moves from 0 → 100
     runnerFill.style.width = `${pct * 100}%`;
     runner.style.left = `${pct * 100}%`;
-    // Color phases
-    timerRing.classList.toggle('warn', remaining <= 30 && remaining > 10);
-    timerRing.classList.toggle('danger', remaining <= 10);
-    timerTime.classList.toggle('danger', remaining <= 10);
-    runner.classList.toggle('warn', remaining <= 30);
-    timerTime.classList.toggle('pulse', remaining > 10);
-    // Beep on each of the last 5 seconds
-    const wholeSecondsLeft = Math.ceil(remaining);
-    if (wholeSecondsLeft <= 5 && wholeSecondsLeft > 0 && !beepedAt.has(wholeSecondsLeft)) {
-      beepedAt.add(wholeSecondsLeft);
-      if (wholeSecondsLeft === 1) playLastSecond(); else playTickBeep();
+
+    // Color phases. Once overtime, lock to danger red and stop the pulse.
+    timerRing.classList.toggle('warn', !isOvertime && remaining <= 30 && remaining > 10);
+    timerRing.classList.toggle('danger', isOvertime || remaining <= 10);
+    timerTime.classList.toggle('danger', isOvertime || remaining <= 10);
+    runner.classList.toggle('warn', !isOvertime && remaining <= 30);
+    timerTime.classList.toggle('pulse', !isOvertime && remaining > 10);
+
+    // Beeps: last-5-second ticks before target, one final long tone at the
+    // moment we cross into overtime, then silence so the user isn't tortured.
+    if (!isOvertime) {
+      const wholeSecondsLeft = Math.ceil(remaining);
+      if (wholeSecondsLeft <= 5 && wholeSecondsLeft > 0 && !beepedAt.has(wholeSecondsLeft)) {
+        beepedAt.add(wholeSecondsLeft);
+        if (wholeSecondsLeft === 1) playLastSecond(); else playTickBeep();
+      }
+    } else if (!beepedAt.has('overtime')) {
+      // Cross-over moment — single low buzz, then quiet.
+      beepedAt.add('overtime');
+      try { beep(196, .35, .12); } catch {}
     }
-    // Time's up — auto-finish
-    if (remainingMs <= 0) {
-      finishSprint(false);
-    }
+
+    // Update the eyebrow tag once we cross into overtime so it reads
+    // "OVERTIME" instead of "Sprint in progress".
+    const eb = $('gameEyebrowText');
+    if (eb) eb.textContent = isOvertime ? `Overtime — keep going` : 'Sprint in progress';
+    // We deliberately do NOT auto-finish at remainingMs <= 0 anymore. The user
+    // hits Done when they actually finish, however far over they went.
   }
 
   // ============ SOURCE COMPLETION ============
