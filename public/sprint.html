@@ -681,11 +681,12 @@ body { display:flex; flex-direction:column; position:relative }
 
   // Top row: category filters
   const FILTERS = [
-    { id:'all',      label:'All' },
-    { id:'due_week', label:'Due This Week' },
-    { id:'due_next', label:'Due Next Week' },
-    { id:'priority', label:'★ Priority' },
-    { id:'recent',   label:'Recent' },
+    { id:'all',       label:'All' },
+    { id:'due_week',  label:'Due This Week' },
+    { id:'due_next',  label:'Due Next Week' },
+    { id:'due_2wks',  label:'Due in 2 Weeks' },
+    { id:'priority',  label:'★ Priority' },
+    { id:'recent',    label:'Recent' },
   ];
 
   // Domain → job ID normalization. Plan rows use domains like "work" / "vt" / "ezrk" / "personal".
@@ -725,10 +726,13 @@ body { display:flex; flex-direction:column; position:relative }
     const thisSun = new Date(thisMon); thisSun.setDate(thisMon.getDate() + 6);
     const nextMon = new Date(thisMon); nextMon.setDate(thisMon.getDate() + 7);
     const nextSun = new Date(thisMon); nextSun.setDate(thisMon.getDate() + 13);
+    const twoMon  = new Date(thisMon); twoMon.setDate(thisMon.getDate() + 14);
+    const twoSun  = new Date(thisMon); twoSun.setDate(thisMon.getDate() + 20);
     const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     return {
       thisWeekStart: fmt(thisMon), thisWeekEnd: fmt(thisSun),
       nextWeekStart: fmt(nextMon), nextWeekEnd: fmt(nextSun),
+      twoWeekStart:  fmt(twoMon),  twoWeekEnd:  fmt(twoSun),
       todayKey,
     };
   }
@@ -739,6 +743,10 @@ body { display:flex; flex-direction:column; position:relative }
   function dueNextWeek(dateKey, ranges){
     if (!dateKey) return false;
     return dateKey >= ranges.nextWeekStart && dateKey <= ranges.nextWeekEnd;
+  }
+  function dueTwoWeeks(dateKey, ranges){
+    if (!dateKey) return false;
+    return dateKey >= ranges.twoWeekStart && dateKey <= ranges.twoWeekEnd;
   }
 
   // Boards (jobs) loaded from goal-board-v2 — `{id, name, color}` per board.
@@ -864,6 +872,7 @@ body { display:flex; flex-direction:column; position:relative }
     if (activeFilter === 'recent')   return s.source === 'recent';
     if (activeFilter === 'due_week') return dueThisWeek(s.date, ranges);
     if (activeFilter === 'due_next') return dueNextWeek(s.date, ranges);
+    if (activeFilter === 'due_2wks') return dueTwoWeeks(s.date, ranges);
     return true;
   }
   function passesJob(s){
@@ -878,12 +887,13 @@ body { display:flex; flex-direction:column; position:relative }
     const ranges = weekRanges();
 
     // Category counts respect the *job* filter so the numbers match what user sees.
-    const catCounts = { all: 0, due_week: 0, due_next: 0, priority: 0, recent: 0 };
+    const catCounts = { all: 0, due_week: 0, due_next: 0, due_2wks: 0, priority: 0, recent: 0 };
     allSuggestions.forEach(s => {
       if (!passesJob(s)) return;
       catCounts.all += 1;
       if (dueThisWeek(s.date, ranges)) catCounts.due_week += 1;
       if (dueNextWeek(s.date, ranges)) catCounts.due_next += 1;
+      if (dueTwoWeeks(s.date, ranges)) catCounts.due_2wks += 1;
       if (s.source === 'priority') catCounts.priority += 1;
       if (s.source === 'recent')   catCounts.recent += 1;
     });
