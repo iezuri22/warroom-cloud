@@ -342,6 +342,74 @@ body { display:flex; flex-direction:column; position:relative }
 }
 .btn-pause:hover { background:rgba(255,138,61,.20) }
 
+/* ============ LOFI MUSIC BAR ============ */
+.music-bar {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 14px; margin:0 14px 8px; flex-shrink:0;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+}
+.music-bar.playing { border-color:rgba(255,138,61,.5); background:linear-gradient(135deg, rgba(255,138,61,.10), var(--surface-2)) }
+.music-eq {
+  display:inline-flex; align-items:flex-end; gap:2px; height:14px; flex-shrink:0;
+  opacity:.5;
+}
+.music-bar.playing .music-eq { opacity:1 }
+.music-eq span {
+  width:3px; background:var(--accent); border-radius:2px; height:30%;
+  animation:eqBounce .9s ease-in-out infinite;
+}
+.music-eq span:nth-child(2) { animation-delay:.18s; height:60% }
+.music-eq span:nth-child(3) { animation-delay:.36s; height:90% }
+.music-eq span:nth-child(4) { animation-delay:.54s; height:50% }
+@keyframes eqBounce { 0%,100% { transform:scaleY(.4) } 50% { transform:scaleY(1) } }
+.music-label {
+  font-size:10.5px; font-weight:900; letter-spacing:1.6px; text-transform:uppercase;
+  color:var(--text-fade); flex-shrink:0;
+}
+.music-vibes {
+  display:flex; gap:5px; flex-wrap:wrap; flex:1; min-width:0;
+}
+.vibe-chip {
+  background:transparent; border:1px solid var(--border); border-radius:99px;
+  padding:5px 11px; cursor:pointer; font-family:inherit; font-size:11px; font-weight:800;
+  letter-spacing:.4px; color:var(--text-mid); transition:all .12s; white-space:nowrap;
+}
+.vibe-chip:hover { color:var(--text); border-color:var(--border-2) }
+.vibe-chip.active {
+  background:var(--accent-bg); border-color:var(--accent); color:var(--accent);
+}
+.music-actions {
+  display:flex; gap:6px; flex-shrink:0;
+}
+.music-actions button {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  width:28px; height:28px; cursor:pointer; color:var(--text-mid);
+  display:inline-flex; align-items:center; justify-content:center; transition:all .12s;
+}
+.music-actions button:hover { color:var(--text); border-color:var(--border-2) }
+.music-actions button.active { color:var(--accent); border-color:var(--accent) }
+
+.music-frame-wrap {
+  position:relative; margin:0 14px 8px;
+  background:#000; border:1px solid var(--border); border-radius:12px; overflow:hidden;
+  display:none;
+}
+.music-frame-wrap.show { display:block }
+.music-frame-wrap iframe {
+  width:100%; aspect-ratio:16/9; border:0; display:block;
+}
+.music-frame-wrap.audio-only iframe { height:1px; aspect-ratio:auto }
+.music-frame-wrap.audio-only::before {
+  content:"audio only — video hidden"; display:block; padding:14px; text-align:center;
+  color:var(--text-fade); font-size:11px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase;
+}
+
+@media (max-width:560px) {
+  .music-bar { margin:0 8px 8px; padding:6px 10px; gap:6px }
+  .music-label { display:none }
+  .music-frame-wrap { margin:0 8px 8px }
+}
+
 /* ============ RESULT OVERLAY ============ */
 .result {
   position:fixed; inset:0; z-index:90; display:none;
@@ -476,6 +544,24 @@ body { display:flex; flex-direction:column; position:relative }
 
 <div class="stats-strip" id="statsStrip">
   <!-- Populated by JS -->
+</div>
+
+<!-- Lofi music bar — sits above the stage so it persists across landing/active/result views -->
+<div class="music-bar" id="musicBar">
+  <span class="music-eq" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+  <span class="music-label">Vibe</span>
+  <div class="music-vibes" id="musicVibes"></div>
+  <div class="music-actions">
+    <button id="musicVideoBtn" title="Toggle video" aria-label="Toggle video">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+    </button>
+    <button id="musicStopBtn" title="Stop music" aria-label="Stop music">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    </button>
+  </div>
+</div>
+<div class="music-frame-wrap" id="musicFrameWrap">
+  <iframe id="musicFrame" src="about:blank" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
 </div>
 
 <div class="stage" id="stage">
@@ -1676,6 +1762,94 @@ body { display:flex; flex-direction:column; position:relative }
       return '';
     }
   });
+
+  // ============ LOFI MUSIC ============
+  // Curated YouTube live streams. These are well-known long-running channels —
+  // if any goes offline, swap the `id` for a working video/playlist ID.
+  // Use list= for playlists, or a video id for live streams.
+  const VIBES = [
+    { id:'hiphop',    label:'Hip-Hop',    videoId:'jfKfPfyJRdk' }, // Lofi Girl - lofi hip hop radio (the iconic 24/7)
+    { id:'anime',     label:'Anime Lofi', videoId:'MCkb-WgaCNM' }, // Anime Vibes - lofi anime radio
+    { id:'chillhop',  label:'Chillhop',   videoId:'5yx6BWlEVcY' }, // Chillhop Music - jazzy & lofi
+    { id:'jazz',      label:'Jazz Lofi',  videoId:'Dx5qFachd3A' }, // Lofi Girl - jazz lofi
+    { id:'synthwave', label:'Synthwave',  videoId:'4xDzrJKXOOY' }, // Lofi Girl - synthwave radio
+  ];
+  const MUSIC_KEY = 'sprint-music-v1';
+  const musicState = (function(){
+    try {
+      const raw = localStorage.getItem(MUSIC_KEY);
+      if (!raw) return { vibe:null, showVideo:false };
+      const d = JSON.parse(raw) || {};
+      return {
+        vibe: d.vibe || null,
+        showVideo: !!d.showVideo,
+      };
+    } catch { return { vibe:null, showVideo:false }; }
+  })();
+  function saveMusicState(){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(musicState)); } catch {} }
+
+  const musicBar = $('musicBar');
+  const musicVibesEl = $('musicVibes');
+  const musicFrameWrap = $('musicFrameWrap');
+  const musicFrame = $('musicFrame');
+  const musicVideoBtn = $('musicVideoBtn');
+  const musicStopBtn = $('musicStopBtn');
+
+  function renderVibeChips(){
+    musicVibesEl.innerHTML = VIBES.map(v => `
+      <button class="vibe-chip ${musicState.vibe===v.id?'active':''}" data-vibe="${v.id}">${escapeHtml(v.label)}</button>
+    `).join('');
+    musicVibesEl.querySelectorAll('.vibe-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        const vid = el.dataset.vibe;
+        // Clicking the active chip again stops the music
+        if (musicState.vibe === vid) { stopMusic(); return; }
+        playVibe(vid);
+      });
+    });
+  }
+
+  function applyMusicUI(){
+    musicBar.classList.toggle('playing', !!musicState.vibe);
+    musicFrameWrap.classList.toggle('show', !!musicState.vibe);
+    musicFrameWrap.classList.toggle('audio-only', !musicState.showVideo);
+    if (musicVideoBtn) musicVideoBtn.classList.toggle('active', !!musicState.showVideo);
+    renderVibeChips();
+  }
+
+  function playVibe(vibeId){
+    const v = VIBES.find(x => x.id === vibeId);
+    if (!v) return;
+    musicState.vibe = vibeId;
+    saveMusicState();
+    // youtube-nocookie embed minimizes tracking; autoplay=1 starts it; modestbranding hides chrome
+    const src = `https://www.youtube-nocookie.com/embed/${v.videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
+    if (musicFrame.src !== src) musicFrame.src = src;
+    applyMusicUI();
+  }
+
+  function stopMusic(){
+    musicState.vibe = null;
+    saveMusicState();
+    musicFrame.src = 'about:blank'; // unload to actually stop audio
+    applyMusicUI();
+  }
+
+  function toggleMusicVideo(){
+    musicState.showVideo = !musicState.showVideo;
+    saveMusicState();
+    applyMusicUI();
+  }
+
+  if (musicVideoBtn) musicVideoBtn.addEventListener('click', toggleMusicVideo);
+  if (musicStopBtn)  musicStopBtn.addEventListener('click', stopMusic);
+
+  // On load, clear active vibe — browsers block autoplay-with-sound without a
+  // user gesture, so any "auto-resume" would silently fail and the active chip
+  // would lie about playback state. User must tap a chip to start. We keep the
+  // showVideo preference so video stays toggled the way they last left it.
+  musicState.vibe = null;
+  applyMusicUI();
 
   // ============ INIT ============
   renderStats();
