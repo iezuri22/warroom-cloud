@@ -530,6 +530,52 @@ body { display:flex; flex-direction:column; position:relative }
   display:flex; align-items:center; justify-content:center; gap:8px;
 }
 .result-streak.broken { background:rgba(248,113,113,.08); border-color:rgba(248,113,113,.2); color:var(--bad-bg) }
+
+/* Override section: "I finished on time, forgot to hit done" — visible on losses */
+.result-override { margin-bottom:14px }
+.result-override .override-btn {
+  width:100%; background:transparent; border:1px dashed rgba(255,255,255,.25);
+  color:var(--text-mid); padding:10px 14px; border-radius:10px;
+  font-family:inherit; font-size:12.5px; font-weight:700; letter-spacing:.4px;
+  cursor:pointer; transition:all .15s;
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+}
+.result-override .override-btn:hover { color:var(--text); border-color:var(--accent); background:var(--accent-bg) }
+.result-override .override-form {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px; margin-top:4px;
+}
+.override-label { font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--text-fade); flex-shrink:0 }
+.override-input {
+  width:60px; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:7px 10px; font-family:inherit; font-size:14px; font-weight:800; color:var(--text); outline:none;
+  text-align:center; -moz-appearance:textfield;
+}
+.override-input::-webkit-outer-spin-button, .override-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0 }
+.override-input:focus { border-color:var(--accent) }
+.override-sep { font-weight:800; color:var(--text-fade) }
+.override-confirm {
+  background:var(--accent); color:#050507; border:none; border-radius:8px;
+  padding:8px 14px; font-family:inherit; font-size:12px; font-weight:900; letter-spacing:.4px;
+  text-transform:uppercase; cursor:pointer; transition:opacity .12s;
+}
+.override-confirm:hover { opacity:.9 }
+.override-cancel {
+  background:transparent; border:1px solid var(--border-2); color:var(--text-mid);
+  border-radius:8px; padding:8px 12px; font-family:inherit; font-size:12px; font-weight:700;
+  cursor:pointer;
+}
+.override-cancel:hover { color:var(--text); background:var(--surface-3) }
+
+/* History row override link — turn a past loss into a win */
+.h-row .h-override-btn {
+  background:transparent; border:1px solid var(--border-2); color:var(--text-fade);
+  border-radius:8px; padding:5px 10px; font-family:inherit; font-size:10.5px; font-weight:800;
+  letter-spacing:.4px; text-transform:uppercase; cursor:pointer;
+  margin-left:6px;
+}
+.h-row .h-override-btn:hover { color:var(--accent); border-color:var(--accent) }
 .result-actions { display:flex; gap:10px }
 .result-actions button {
   flex:1; padding:14px; border-radius:12px; border:none; font-family:inherit;
@@ -754,6 +800,21 @@ body { display:flex; flex-direction:column; position:relative }
     <div class="result-sub" id="resultSub">—</div>
     <div class="result-stat-row" id="resultStats"></div>
     <div class="result-streak" id="resultStreak" style="display:none"></div>
+    <!-- Override (visible on losses) — "I actually finished on time, forgot to hit done" -->
+    <div class="result-override" id="resultOverride" style="display:none">
+      <button class="override-btn" id="overrideOpenBtn" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+        I finished on time
+      </button>
+      <div class="override-form" id="overrideForm" style="display:none">
+        <span class="override-label">Actual time:</span>
+        <input type="number" class="override-input" id="overrideMin" min="0" max="240" placeholder="min" inputmode="numeric">
+        <span class="override-sep">:</span>
+        <input type="number" class="override-input" id="overrideSec" min="0" max="59" placeholder="sec" inputmode="numeric">
+        <button class="override-confirm" id="overrideConfirmBtn" type="button">Save</button>
+        <button class="override-cancel" id="overrideCancelBtn" type="button">Cancel</button>
+      </div>
+    </div>
     <div class="result-actions">
       <button class="again" id="againBtn">Race again</button>
       <button class="home" id="homeBtn">Done</button>
@@ -1821,8 +1882,76 @@ body { display:flex; flex-direction:column; position:relative }
       }
       playLoseSound();
     }
+    // Show the override form on losses (so user can fix "I forgot to hit Done")
+    const ovr = $('resultOverride');
+    const ovrForm = $('overrideForm');
+    if (ovr) {
+      ovr.style.display = won ? 'none' : '';
+      // Stash the entry id so the override action knows which entry to update
+      ovr.dataset.entryId = entry.id;
+    }
+    if (ovrForm) ovrForm.style.display = 'none';
     resultOverlay.classList.add('show');
   }
+
+  // ============ OVERRIDE: convert a loss into a win retroactively ============
+  // User claims they actually finished by some time but forgot to hit Done.
+  // Validates that the claimed time is ≤ target, then patches the entry, fixes
+  // streak, and re-shows the result as a win (with confetti).
+  function applyOverrideToEntry(entry, newSeconds){
+    if (!entry || entry.won) return false;
+    if (!Number.isFinite(newSeconds) || newSeconds <= 0) return false;
+    if (newSeconds > entry.targetSeconds) {
+      alert(`That's still over the target (${fmtMMSS(entry.targetSeconds)}). Override needs to be ≤ target.`);
+      return false;
+    }
+    entry.actualSeconds = newSeconds;
+    entry.won = true;
+    entry.overridden = true;
+    entry.overriddenAt = new Date().toISOString();
+    // Recompute streak from full history (the simplest correct approach).
+    let cs = 0, best = store.bestStreak || 0;
+    store.history.forEach(h => {
+      if (h.won) { cs += 1; if (cs > best) best = cs; }
+      else cs = 0;
+    });
+    store.currentStreak = cs;
+    store.bestStreak = best;
+    saveStore(store);
+    return true;
+  }
+  function overrideMostRecentEntry(){
+    const ovr = $('resultOverride');
+    const id = ovr && ovr.dataset.entryId;
+    if (!id) return;
+    const entry = store.history.find(h => h.id === id);
+    if (!entry) return;
+    const minEl = $('overrideMin'), secEl = $('overrideSec');
+    const m = parseInt(minEl.value, 10) || 0;
+    const s = parseInt(secEl.value, 10) || 0;
+    const newSeconds = m * 60 + s;
+    if (!applyOverrideToEntry(entry, newSeconds)) return;
+    renderStats();
+    // Re-show as a win
+    showResult(entry);
+    fireConfetti();
+    playWinFanfare();
+  }
+  if ($('overrideOpenBtn')) $('overrideOpenBtn').addEventListener('click', () => {
+    const f = $('overrideForm');
+    if (f) f.style.display = '';
+    setTimeout(() => $('overrideMin')?.focus(), 30);
+  });
+  if ($('overrideCancelBtn')) $('overrideCancelBtn').addEventListener('click', () => {
+    const f = $('overrideForm');
+    if (f) f.style.display = 'none';
+  });
+  if ($('overrideConfirmBtn')) $('overrideConfirmBtn').addEventListener('click', overrideMostRecentEntry);
+  // Enter to confirm
+  ['overrideMin','overrideSec'].forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); overrideMostRecentEntry(); } });
+  });
   againBtn.addEventListener('click', () => {
     resultOverlay.classList.remove('show');
     // Clear selection so user can pick a new task; pre-fill input with last name
@@ -1917,19 +2046,50 @@ body { display:flex; flex-direction:column; position:relative }
       const pauseStr = h.pauseCount && h.pauseCount > 0
         ? ` · ${h.pauseCount} pause${h.pauseCount===1?'':'s'}`
         : '';
+      const overrideTag = h.overridden ? ` · <span style="color:var(--accent);font-weight:800">overridden</span>` : '';
+      // Loss rows get an "Override" button so users can flip a forgotten Done
+      const overrideBtn = !won
+        ? `<button class="h-override-btn" data-id="${escapeAttr(h.id)}" title="Mark as completed on time">Override</button>`
+        : '';
       return `
         <div class="h-row ${won?'win':'lose'}">
           <span class="h-icon">${won?'🏆':'⏰'}</span>
           <div class="h-body">
             <div class="h-task">${escapeHtml(h.taskName)}</div>
-            <div class="h-meta">${when} · target ${fmtFriendly(h.targetSeconds)} · ${deltaStr}${pauseStr}</div>
+            <div class="h-meta">${when} · target ${fmtFriendly(h.targetSeconds)} · ${deltaStr}${pauseStr}${overrideTag}</div>
           </div>
           <div class="h-time"><span class="actual">${fmtMMSS(h.actualSeconds)}</span></div>
           <span class="h-result ${won?'win':'lose'}">${won?'Win':'Loss'}</span>
+          ${overrideBtn}
         </div>
       `;
     }).join('');
     historyView.innerHTML = rows + `<div class="history-actions"><button class="btn-clear" id="clearBtn">Clear history</button></div>`;
+    // Wire Override buttons on loss rows
+    historyView.querySelectorAll('.h-override-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const entry = store.history.find(h => h.id === id);
+        if (!entry) return;
+        const target = fmtMMSS(entry.targetSeconds);
+        const ans = prompt(`Actual finish time for "${entry.taskName}"?\nTarget was ${target} (m:ss). Enter as MM:SS or just minutes.`, target);
+        if (ans == null) return;
+        // Parse MM:SS or plain minutes
+        let secs = 0;
+        const parts = String(ans).trim().split(':');
+        if (parts.length === 2) {
+          secs = (parseInt(parts[0],10) || 0) * 60 + (parseInt(parts[1],10) || 0);
+        } else {
+          secs = (parseFloat(parts[0]) || 0) * 60;
+          secs = Math.round(secs);
+        }
+        if (applyOverrideToEntry(entry, secs)) {
+          renderStats();
+          renderHistory();
+        }
+      });
+    });
     const cb = $('clearBtn');
     if (cb) cb.onclick = () => {
       if (!confirm("Clear all sprint history? This can't be undone.")) return;
