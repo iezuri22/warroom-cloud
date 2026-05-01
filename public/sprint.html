@@ -701,8 +701,35 @@ body { display:flex; flex-direction:column; position:relative }
   let currentTask = '';
   let beepedAt = new Set();
   let pauseCount = 0;
+  let parentFullscreen = false;        // tracked from parent shell messages
+  let sprintTookFullscreen = false;    // true if THIS sprint forced fullscreen
   const RING_CIRC = 565.48; // 2 * π * 90
   const PAUSE_KEY = 'sprint-paused-v1';
+
+  // ============ PARENT FULLSCREEN BRIDGE ============
+  // Sprint runs in an iframe inside daily-planner. To go fullscreen for a sprint
+  // we ask the parent shell to enter fullscreen — it owns the body class and
+  // the native fullscreen call (which has to come from a same-origin gesture).
+  function requestParentFullscreen(){
+    try { if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type:'warroom:enter-fullscreen' }, '*');
+    } } catch {}
+  }
+  function releaseParentFullscreen(){
+    try { if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type:'warroom:exit-fullscreen' }, '*');
+    } } catch {}
+  }
+  window.addEventListener('message', (ev) => {
+    const d = ev && ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'warroom:fullscreen') parentFullscreen = !!d.on;
+  });
+  // Ask the shell where it stands so we don't kick the user out of an existing
+  // manually-entered fullscreen when our sprint ends.
+  try { if (window.parent && window.parent !== window) {
+    window.parent.postMessage({ type:'warroom:request-fullscreen-state' }, '*');
+  } } catch {}
 
   // ============ ELEMENTS ============
   const $ = id => document.getElementById(id);
@@ -1260,6 +1287,12 @@ body { display:flex; flex-direction:column; position:relative }
       pausedAt: now,
     });
     renderResumeBanner();
+    // Drop fullscreen on pause so user can reach other War Room tabs.
+    // Re-enter on resume below.
+    if (sprintTookFullscreen) {
+      sprintTookFullscreen = false;
+      releaseParentFullscreen();
+    }
     showView('play');
   }
 
@@ -1280,6 +1313,13 @@ body { display:flex; flex-direction:column; position:relative }
     timerRing.classList.remove('warn','danger');
     timerTime.classList.remove('danger');
     runner.classList.remove('warn');
+    // Re-enter fullscreen on resume (unless user was already there)
+    if (!parentFullscreen) {
+      sprintTookFullscreen = true;
+      requestParentFullscreen();
+    } else {
+      sprintTookFullscreen = false;
+    }
     showView('game');
     tickGame();
     if (timerHandle) clearInterval(timerHandle);
@@ -1347,6 +1387,13 @@ body { display:flex; flex-direction:column; position:relative }
     clearPaused();
     pauseCount = 0;
     renderResumeBanner();
+    // Sprint = focus mode. Force shell fullscreen unless user was already there.
+    if (!parentFullscreen) {
+      sprintTookFullscreen = true;
+      requestParentFullscreen();
+    } else {
+      sprintTookFullscreen = false;
+    }
     currentTask = text;
     lastTaskName = text;
     startedAt = Date.now();
@@ -1548,6 +1595,11 @@ body { display:flex; flex-direction:column; position:relative }
     clearPaused();
     pauseCount = 0;
     renderResumeBanner();
+    // Release fullscreen if WE took it for this sprint.
+    if (sprintTookFullscreen) {
+      sprintTookFullscreen = false;
+      releaseParentFullscreen();
+    }
     renderStats();
     showResult(entry);
   }
@@ -1561,6 +1613,10 @@ body { display:flex; flex-direction:column; position:relative }
     clearPaused();
     pauseCount = 0;
     renderResumeBanner();
+    if (sprintTookFullscreen) {
+      sprintTookFullscreen = false;
+      releaseParentFullscreen();
+    }
     showView('play');
   });
 
