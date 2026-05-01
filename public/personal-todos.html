@@ -2043,20 +2043,46 @@ const VOICE = {
       if (raw) queue = JSON.parse(raw) || [];
     } catch { queue = []; }
     if (!Array.isArray(queue) || queue.length === 0) return;
-    const ids = Array.from(new Set(queue.map(q => q && q.todoId).filter(Boolean)));
-    for (const id of ids) {
-      const local = todos.find(t => t.id === id);
-      if (local) local.done = true;
+
+    // Build a list of {id, todo} pairs to mark done. Two queue shapes:
+    //   { todoId } — direct ID (linked Personal todo from Sprint suggestions)
+    //   { text }   — match by text (manual Sprint task that was queued at start)
+    const targets = []; // {id, local}
+    const seen = new Set();
+    const queueByText = (text) => {
+      const target = (text || '').trim().toLowerCase();
+      if (!target) return;
+      // Find an OPEN todo with that exact text. Prefer most recent (highest position).
+      const candidate = todos
+        .filter(t => !t.done && (t.text || '').trim().toLowerCase() === target)
+        .sort((a,b) => (b.position||0) - (a.position||0))[0];
+      if (candidate && !seen.has(candidate.id)) {
+        seen.add(candidate.id);
+        targets.push({ id: candidate.id, local: candidate });
+      }
+    };
+    for (const q of queue) {
+      if (!q) continue;
+      if (q.todoId) {
+        if (!seen.has(q.todoId)) {
+          seen.add(q.todoId);
+          targets.push({ id: q.todoId, local: todos.find(t => t.id === q.todoId) });
+        }
+      } else if (q.text) {
+        queueByText(q.text);
+      }
+    }
+    for (const t of targets) {
+      if (t.local) t.local.done = true;
       try {
-        await updateDoc(doc(db, 'tv_todos', id), { done: true });
-        // Mirror to analytics + linked plan task, same path as toggleTodo.
+        await updateDoc(doc(db, 'tv_todos', t.id), { done: true });
         if (window.parent && window.parent !== window) {
           window.parent.postMessage({
             type: 'warroom:personal-done',
-            taskId: id,
+            taskId: t.id,
             done: true,
-            taskName: (local && local.text) || '',
-            planTaskId: (local && local.planTaskId) || null,
+            taskName: (t.local && t.local.text) || '',
+            planTaskId: (t.local && t.local.planTaskId) || null,
           }, '*');
         }
       } catch (e) { console.warn('sprint completion update failed', e); }

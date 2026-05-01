@@ -1762,6 +1762,33 @@ body { display:flex; flex-direction:column; position:relative }
     } catch {}
   }
 
+  // Manual / free-text tasks don't have a stable ID — at start we created a
+  // personal todo via a queue; at finish we ask personal-todos to mark the
+  // matching todo done by text. Personal-todos drains both shapes.
+  function queuePersonalCompletionByText(text){
+    const t = (text || '').trim();
+    if (!t) return;
+    try {
+      const QKEY = 'sprint-pending-completions';
+      const queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || [];
+      queue.push({ text: t, completedAt: Date.now() });
+      localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50)));
+    } catch {}
+  }
+
+  // Wrapper used by finishSprint AND by the override flow. If the entry was
+  // linked to a source task, mark that source done; otherwise queue a
+  // completion-by-text for the manually-typed task.
+  function completeBeyondSprint(entry, sel){
+    if (!entry) return;
+    if (sel && sel.source && sel.source !== 'recent') {
+      try { completeSourceTask(sel); } catch (e) { console.warn('source completion failed', e); }
+    } else {
+      // Manual task — match by text on personal todos
+      try { queuePersonalCompletionByText(entry.taskName); } catch {}
+    }
+  }
+
   // ============ FINISH ============
   function finishSprint(hitDone){
     if (!timerHandle) return;
@@ -1770,13 +1797,8 @@ body { display:flex; flex-direction:column; position:relative }
     const now = Date.now();
     const actualSeconds = Math.round((now - startedAt) / 1000);
     const won = hitDone && actualSeconds <= targetSeconds;
-    // When user hits "I'm Done" on a sprint linked to a real task, mark the
-    // source done. We do this on hitDone (not just won) so a slow finish still
-    // counts as completing the task — the sprint just wasn't a "win" by time.
-    if (hitDone && selectedTask && selectedTask.source && selectedTask.source !== 'recent') {
-      try { completeSourceTask(selectedTask); } catch (e) { console.warn('source completion failed', e); }
-    }
-    // Record history
+    // Record history. Persist source IDs so a later override can re-fire the
+    // global completion (when the user retroactively marks a forgotten task).
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       taskName: currentTask,
@@ -1786,8 +1808,15 @@ body { display:flex; flex-direction:column; position:relative }
       pauseCount,
       sourceLinked: !!(selectedTask && selectedTask.source && selectedTask.source !== 'recent'),
       sourceType: (selectedTask && selectedTask.source) || '',
+      sourceIds: (selectedTask && selectedTask.ids) ? { ...selectedTask.ids } : null,
       completedAt: new Date().toISOString(),
     };
+    // When user hits "I'm Done", complete globally regardless of win/loss —
+    // a slow finish still counts as the task being done. Linked tasks → mark
+    // source done; manual tasks → queue a text-match completion for personal-todos.
+    if (hitDone) {
+      try { completeBeyondSprint(entry, selectedTask); } catch (e) { console.warn('completion failed', e); }
+    }
     store.history.push(entry);
     // Keep history under 500 entries to avoid localStorage bloat
     if (store.history.length > 500) store.history = store.history.slice(-500);
@@ -1918,6 +1947,13 @@ body { display:flex; flex-direction:column; position:relative }
     store.currentStreak = cs;
     store.bestStreak = best;
     saveStore(store);
+    // ALSO complete globally — this is what "I actually finished on time" means:
+    // the task was done, just not logged. Fire the same completion path the Done
+    // button would have fired at the original finish moment.
+    const sel = (entry.sourceType && entry.sourceType !== 'recent' && entry.sourceIds)
+      ? { source: entry.sourceType, ids: entry.sourceIds, text: entry.taskName }
+      : null;
+    try { completeBeyondSprint(entry, sel); } catch (e) { console.warn('override completion failed', e); }
     return true;
   }
   function overrideMostRecentEntry(){
