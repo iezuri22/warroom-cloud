@@ -387,27 +387,20 @@ body { display:flex; flex-direction:column; position:relative }
   display:inline-flex; align-items:center; justify-content:center; transition:all .12s;
 }
 .music-actions button:hover { color:var(--text); border-color:var(--border-2) }
-.music-actions button.active { color:var(--accent); border-color:var(--accent) }
 
-.music-frame-wrap {
-  position:relative; margin:0 14px 8px;
-  background:#000; border:1px solid var(--border); border-radius:12px; overflow:hidden;
-  display:none;
-}
-.music-frame-wrap.show { display:block }
-.music-frame-wrap iframe {
-  width:100%; aspect-ratio:16/9; border:0; display:block;
-}
-.music-frame-wrap.audio-only iframe { height:1px; aspect-ratio:auto }
-.music-frame-wrap.audio-only::before {
-  content:"audio only — video hidden"; display:block; padding:14px; text-align:center;
-  color:var(--text-fade); font-size:11px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase;
+/* Audio-only YouTube iframe. Browsers (esp. TV browsers) refuse to start
+   playback when the iframe is display:none or 1x1, so we keep it rendered at
+   real dimensions but pinned offscreen. Audio plays, video is invisible. */
+.music-audio-frame {
+  position:fixed; left:-9999px; top:0;
+  width:320px; height:180px;
+  border:0;
+  pointer-events:none;
 }
 
 @media (max-width:560px) {
   .music-bar { margin:0 8px 8px; padding:6px 10px; gap:6px }
   .music-label { display:none }
-  .music-frame-wrap { margin:0 8px 8px }
 }
 
 /* ============ RESULT OVERLAY ============ */
@@ -546,23 +539,20 @@ body { display:flex; flex-direction:column; position:relative }
   <!-- Populated by JS -->
 </div>
 
-<!-- Lofi music bar — sits above the stage so it persists across landing/active/result views -->
+<!-- Lofi music bar — sits above the stage so it persists across landing/active/result views.
+     Audio-only: the iframe below is positioned offscreen but rendered at real
+     dimensions so browsers (incl. TV browsers) actually start playback. -->
 <div class="music-bar" id="musicBar">
   <span class="music-eq" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
   <span class="music-label">Vibe</span>
   <div class="music-vibes" id="musicVibes"></div>
   <div class="music-actions">
-    <button id="musicVideoBtn" title="Toggle video" aria-label="Toggle video">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-    </button>
     <button id="musicStopBtn" title="Stop music" aria-label="Stop music">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
     </button>
   </div>
 </div>
-<div class="music-frame-wrap" id="musicFrameWrap">
-  <iframe id="musicFrame" src="about:blank" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-</div>
+<iframe id="musicFrame" class="music-audio-frame" src="about:blank" allow="autoplay; encrypted-media" title="Lofi music"></iframe>
 
 <div class="stage" id="stage">
   <!-- LANDING -->
@@ -707,18 +697,31 @@ body { display:flex; flex-direction:column; position:relative }
   const PAUSE_KEY = 'sprint-paused-v1';
 
   // ============ PARENT FULLSCREEN BRIDGE ============
-  // Sprint runs in an iframe inside daily-planner. To go fullscreen for a sprint
-  // we ask the parent shell to enter fullscreen — it owns the body class and
-  // the native fullscreen call (which has to come from a same-origin gesture).
+  // Sprint runs in an iframe inside daily-planner. We:
+  //   1. Ask the parent shell to enter fullscreen (adds body.fullscreen — hides
+  //      tabs/header, broadcasts to all iframes).
+  //   2. ALSO try native fullscreen on our own iframe document — works on
+  //      browsers that honor allowfullscreen, hides browser chrome too.
+  // Both are best-effort; doesn't matter if either fails so long as one lands.
   function requestParentFullscreen(){
     try { if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type:'warroom:enter-fullscreen' }, '*');
     } } catch {}
+    // Native fullscreen must be called from the user-gesture event handler.
+    try {
+      const el = document.documentElement;
+      const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (fn) fn.call(el);
+    } catch {}
   }
   function releaseParentFullscreen(){
     try { if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type:'warroom:exit-fullscreen' }, '*');
     } } catch {}
+    try {
+      const fn = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+      if (fn && (document.fullscreenElement || document.webkitFullscreenElement)) fn.call(document);
+    } catch {}
   }
   window.addEventListener('message', (ev) => {
     const d = ev && ev.data;
@@ -1834,21 +1837,16 @@ body { display:flex; flex-direction:column; position:relative }
   const musicState = (function(){
     try {
       const raw = localStorage.getItem(MUSIC_KEY);
-      if (!raw) return { vibe:null, showVideo:false };
+      if (!raw) return { vibe:null };
       const d = JSON.parse(raw) || {};
-      return {
-        vibe: d.vibe || null,
-        showVideo: !!d.showVideo,
-      };
-    } catch { return { vibe:null, showVideo:false }; }
+      return { vibe: d.vibe || null };
+    } catch { return { vibe:null }; }
   })();
   function saveMusicState(){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(musicState)); } catch {} }
 
   const musicBar = $('musicBar');
   const musicVibesEl = $('musicVibes');
-  const musicFrameWrap = $('musicFrameWrap');
   const musicFrame = $('musicFrame');
-  const musicVideoBtn = $('musicVideoBtn');
   const musicStopBtn = $('musicStopBtn');
 
   function renderVibeChips(){
@@ -1867,9 +1865,6 @@ body { display:flex; flex-direction:column; position:relative }
 
   function applyMusicUI(){
     musicBar.classList.toggle('playing', !!musicState.vibe);
-    musicFrameWrap.classList.toggle('show', !!musicState.vibe);
-    musicFrameWrap.classList.toggle('audio-only', !musicState.showVideo);
-    if (musicVideoBtn) musicVideoBtn.classList.toggle('active', !!musicState.showVideo);
     renderVibeChips();
   }
 
@@ -1878,8 +1873,10 @@ body { display:flex; flex-direction:column; position:relative }
     if (!v) return;
     musicState.vibe = vibeId;
     saveMusicState();
-    // youtube-nocookie embed minimizes tracking; autoplay=1 starts it; modestbranding hides chrome
-    const src = `https://www.youtube-nocookie.com/embed/${v.videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0`;
+    // Embed kept offscreen at real dimensions so audio actually plays on TV.
+    // mute=0, autoplay=1, playsinline=1. We poke the audio context too in case
+    // the browser is suspending it.
+    const src = `https://www.youtube-nocookie.com/embed/${v.videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0&mute=0`;
     if (musicFrame.src !== src) musicFrame.src = src;
     applyMusicUI();
   }
@@ -1891,19 +1888,11 @@ body { display:flex; flex-direction:column; position:relative }
     applyMusicUI();
   }
 
-  function toggleMusicVideo(){
-    musicState.showVideo = !musicState.showVideo;
-    saveMusicState();
-    applyMusicUI();
-  }
-
-  if (musicVideoBtn) musicVideoBtn.addEventListener('click', toggleMusicVideo);
-  if (musicStopBtn)  musicStopBtn.addEventListener('click', stopMusic);
+  if (musicStopBtn) musicStopBtn.addEventListener('click', stopMusic);
 
   // On load, clear active vibe — browsers block autoplay-with-sound without a
-  // user gesture, so any "auto-resume" would silently fail and the active chip
-  // would lie about playback state. User must tap a chip to start. We keep the
-  // showVideo preference so video stays toggled the way they last left it.
+  // user gesture. User must tap a chip to start. The persisted vibe is just
+  // used as a "last played" hint we ignore here.
   musicState.vibe = null;
   applyMusicUI();
 
