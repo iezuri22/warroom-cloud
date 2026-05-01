@@ -818,7 +818,12 @@ body { display:flex; flex-direction:column; position:relative }
     allBoards = loadBoards();
     const seen = new Set();
     const out = [];
-    const push = (text, source, dateKey, jobId) => {
+    // ids: extra source identifiers we need to mark done in the source.
+    //   personal: { todoId }
+    //   goal:     { goalId, taskId }
+    //   board:    { boardId, goalId, taskId }
+    //   plan:     { planId }
+    const push = (text, source, dateKey, jobId, ids) => {
       const t = (text || '').trim();
       if (!t) return;
       const k = t.toLowerCase();
@@ -831,6 +836,7 @@ body { display:flex; flex-direction:column; position:relative }
         date: dateKey || '',
         jobId: j,
         jobLabel: jobLabel(j),
+        ids: ids || {},
       });
     };
 
@@ -840,14 +846,12 @@ body { display:flex; flex-direction:column; position:relative }
       if (raw) {
         const cache = JSON.parse(raw) || {};
         const items = Array.isArray(cache.items) ? cache.items : [];
-        items.filter(i => i.priority).forEach(i => push(i.text, 'priority', i.date, i.job));
-        items.filter(i => !i.priority).forEach(i => push(i.text, 'personal', i.date, i.job));
+        items.filter(i => i.priority).forEach(i => push(i.text, 'priority', i.date, i.job, { todoId: i.id }));
+        items.filter(i => !i.priority).forEach(i => push(i.text, 'personal', i.date, i.job, { todoId: i.id }));
       }
     } catch {}
 
     // 2. Quarterly goals open action items (current quarter)
-    //    Action items have startDate and dueDate; goals have a targetDate fallback.
-    //    g.pillar is the board ID — that becomes the job.
     try {
       const raw = localStorage.getItem('quarterly-goals-v1');
       if (raw) {
@@ -861,7 +865,7 @@ body { display:flex; flex-direction:column; position:relative }
             (g.actionItems || []).forEach(ai => {
               if (!ai || ai.done) return;
               const d = ai.dueDate || ai.startDate || g.targetDate || '';
-              push(ai.text, 'goal', d, g.pillar);
+              push(ai.text, 'goal', d, g.pillar, { goalId: g.id, taskId: ai.id });
             });
           });
       }
@@ -874,7 +878,7 @@ body { display:flex; flex-direction:column; position:relative }
         (g.actionItems || []).forEach(ai => {
           if (!ai || ai.done) return;
           const d = ai.dueDate || ai.startDate || g.targetDate || '';
-          push(ai.text, 'board', d, b.id);
+          push(ai.text, 'board', d, b.id, { boardId: b.id, goalId: g.id, taskId: ai.id });
         });
       });
     });
@@ -888,13 +892,13 @@ body { display:flex; flex-direction:column; position:relative }
         const items = Array.isArray(plan[today]) ? plan[today] : [];
         items.forEach(it => {
           if (it.done) return;
-          push(it.text, 'plan', today, it.domain);
+          push(it.text, 'plan', today, it.domain, { planId: it.id });
         });
       }
     } catch {}
 
     // 5. Recent winning sprints (no due-date or job semantics)
-    store.history.slice(-15).reverse().forEach(h => push(h.taskName, 'recent', '', ''));
+    store.history.slice(-15).reverse().forEach(h => push(h.taskName, 'recent', '', '', {}));
 
     return out;
   }
@@ -1015,6 +1019,7 @@ body { display:flex; flex-direction:column; position:relative }
       jobId: it.jobId || '',
       jobLabel: it.jobLabel || '',
       date: it.date || '',
+      ids: it.ids || {},
     } : null;
     renderSelectedPill();
     // When something is selected, hide the free-text input. When nothing is
@@ -1052,10 +1057,13 @@ body { display:flex; flex-direction:column; position:relative }
     if (items.length === 0) { suggestions.style.display = 'none'; return; }
     suggestions.style.display = '';
     const selKey = selectedTask ? selectedTask.text.toLowerCase() : '';
-    suggestions.innerHTML = items.slice(0, 60).map(it => {
+    // Stash the live items by index so click handlers can read the full object
+    // (including ids) without round-tripping through data attributes.
+    suggestions._items = items;
+    suggestions.innerHTML = items.slice(0, 60).map((it, idx) => {
       const isSel = selKey && it.text.toLowerCase() === selKey;
       return `
-        <div class="suggestion${isSel ? ' is-selected' : ''}" data-text="${escapeAttr(it.text)}" data-source="${escapeAttr(it.source)}" data-jobid="${escapeAttr(it.jobId)}" data-joblabel="${escapeAttr(it.jobLabel)}" data-date="${escapeAttr(it.date)}">
+        <div class="suggestion${isSel ? ' is-selected' : ''}" data-idx="${idx}">
           <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
           <span class="job">${escapeHtml(badgeFor(it))}</span>
           <span class="arr">→</span>
@@ -1064,18 +1072,15 @@ body { display:flex; flex-direction:column; position:relative }
     }).join('');
     suggestions.querySelectorAll('.suggestion').forEach(el => {
       el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.idx, 10);
+        const it = suggestions._items[idx];
+        if (!it) return;
         // Toggle: clicking the already-selected item clears it
-        if (selectedTask && selectedTask.text.toLowerCase() === el.dataset.text.toLowerCase()) {
+        if (selectedTask && selectedTask.text.toLowerCase() === it.text.toLowerCase()) {
           setSelectedTask(null);
           return;
         }
-        setSelectedTask({
-          text:     el.dataset.text,
-          source:   el.dataset.source,
-          jobId:    el.dataset.jobid,
-          jobLabel: el.dataset.joblabel,
-          date:     el.dataset.date,
-        });
+        setSelectedTask(it);
       });
     });
   }
@@ -1306,6 +1311,117 @@ body { display:flex; flex-direction:column; position:relative }
     }
   }
 
+  // ============ SOURCE COMPLETION ============
+  // When a sprint linked to a real task is completed, mark the source done so
+  // the task disappears from Personal / Goals / Board / Plan and from the
+  // suggestion list on the next refresh.
+  function completeSourceTask(sel){
+    if (!sel || !sel.source) return;
+    try {
+      if (sel.source === 'personal' || sel.source === 'priority') {
+        completePersonalTodo(sel);
+      } else if (sel.source === 'goal') {
+        completeGoalActionItem(sel);
+      } else if (sel.source === 'board') {
+        completeBoardActionItem(sel);
+      } else if (sel.source === 'plan') {
+        completePlanItem(sel);
+      }
+      // 'recent' and free-text don't have a source to complete.
+    } catch (e) { console.warn('completeSourceTask failed', e); }
+  }
+
+  // Personal todos live in Firestore — sprint can't write directly. Queue the
+  // completion in localStorage; personal-todos.html drains the queue (on load
+  // and via a `storage` event listener it added). Locally drop the item from
+  // the cache so it disappears from suggestions immediately.
+  function completePersonalTodo(sel){
+    const id = sel.ids && sel.ids.todoId;
+    if (!id) return;
+    const QKEY = 'sprint-pending-completions';
+    let queue = [];
+    try { queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || []; } catch {}
+    queue.push({ todoId: id, completedAt: Date.now() });
+    try { localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50))); } catch {}
+    // Optimistically remove from local cache so the suggestion vanishes now.
+    try {
+      const raw = localStorage.getItem('personal-todos-cache');
+      if (raw) {
+        const cache = JSON.parse(raw) || {};
+        cache.items = (cache.items || []).filter(i => i.id !== id);
+        localStorage.setItem('personal-todos-cache', JSON.stringify(cache));
+      }
+    } catch {}
+  }
+
+  // Quarterly goals live in localStorage — write directly.
+  function completeGoalActionItem(sel){
+    const goalId = sel.ids && sel.ids.goalId;
+    const taskId = sel.ids && sel.ids.taskId;
+    if (!goalId || !taskId) return;
+    try {
+      const raw = localStorage.getItem('quarterly-goals-v1');
+      if (!raw) return;
+      const data = JSON.parse(raw) || {};
+      const goal = (data.goals || []).find(g => g.id === goalId);
+      if (!goal) return;
+      const ai = (goal.actionItems || []).find(x => x.id === taskId);
+      if (!ai) return;
+      ai.done = true;
+      ai.completedAt = new Date().toISOString();
+      goal.updatedAt = new Date().toISOString();
+      const s = JSON.stringify(data);
+      localStorage.setItem('quarterly-goals-v1', s);
+      // If the host page exposes a sync client, give it a nudge.
+      if (window.parent && window.parent.syncClient && typeof window.parent.syncClient.push === 'function') {
+        try { window.parent.syncClient.push('quarterly-goals-v1', s); } catch {}
+      }
+    } catch {}
+  }
+
+  // Board action items live in localStorage — same pattern.
+  function completeBoardActionItem(sel){
+    const { boardId, goalId, taskId } = sel.ids || {};
+    if (!boardId || !goalId || !taskId) return;
+    try {
+      const raw = localStorage.getItem('goal-board-v2');
+      if (!raw) return;
+      const data = JSON.parse(raw) || {};
+      const board = (data.boards || []).find(b => b.id === boardId);
+      if (!board) return;
+      const goal = (board.goals || []).find(g => g.id === goalId);
+      if (!goal) return;
+      const ai = (goal.actionItems || []).find(x => x.id === taskId);
+      if (!ai) return;
+      ai.done = true;
+      ai.completedAt = new Date().toISOString();
+      goal.updatedAt = new Date().toISOString();
+      const s = JSON.stringify(data);
+      localStorage.setItem('goal-board-v2', s);
+      if (window.parent && window.parent.syncClient && typeof window.parent.syncClient.push === 'function') {
+        try { window.parent.syncClient.push('goal-board-v2', s); } catch {}
+      }
+    } catch {}
+  }
+
+  // Today's plan in localStorage.
+  function completePlanItem(sel){
+    const id = sel.ids && sel.ids.planId;
+    if (!id) return;
+    try {
+      const raw = localStorage.getItem('daily-plan');
+      if (!raw) return;
+      const plan = JSON.parse(raw) || {};
+      const today = todayKeyChi();
+      const list = Array.isArray(plan[today]) ? plan[today] : [];
+      const it = list.find(x => x.id === id);
+      if (!it) return;
+      it.done = true;
+      it.completedAt = new Date().toISOString();
+      localStorage.setItem('daily-plan', JSON.stringify(plan));
+    } catch {}
+  }
+
   // ============ FINISH ============
   function finishSprint(hitDone){
     if (!timerHandle) return;
@@ -1314,6 +1430,12 @@ body { display:flex; flex-direction:column; position:relative }
     const now = Date.now();
     const actualSeconds = Math.round((now - startedAt) / 1000);
     const won = hitDone && actualSeconds <= targetSeconds;
+    // When user hits "I'm Done" on a sprint linked to a real task, mark the
+    // source done. We do this on hitDone (not just won) so a slow finish still
+    // counts as completing the task — the sprint just wasn't a "win" by time.
+    if (hitDone && selectedTask && selectedTask.source && selectedTask.source !== 'recent') {
+      try { completeSourceTask(selectedTask); } catch (e) { console.warn('source completion failed', e); }
+    }
     // Record history
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
@@ -1322,6 +1444,8 @@ body { display:flex; flex-direction:column; position:relative }
       actualSeconds,
       won,
       pauseCount,
+      sourceLinked: !!(selectedTask && selectedTask.source && selectedTask.source !== 'recent'),
+      sourceType: (selectedTask && selectedTask.source) || '',
       completedAt: new Date().toISOString(),
     };
     store.history.push(entry);

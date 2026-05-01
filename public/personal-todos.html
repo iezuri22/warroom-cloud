@@ -1737,7 +1737,43 @@ const VOICE = {
       try { await shiftStalePeriods(); } catch (e) { console.warn('period shift failed', e); }
       try { await drainSprintQueue(); } catch (e) { console.warn('sprint queue drain failed', e); }
     }
+    // Drain sprint completions on every load (not gated to today — completions
+    // can apply to any date the user is currently viewing).
+    try { await drainSprintCompletions(); } catch (e) { console.warn('sprint completions drain failed', e); }
     render();
+  }
+  // ============ SPRINT COMPLETIONS DRAIN ============
+  // When a user finishes a sprint linked to a personal todo, sprint.html drops
+  // an entry into `sprint-pending-completions`. We drain the queue here, marking
+  // each todo done in Firestore. Updates the in-memory `todos` so the next
+  // render reflects it without waiting for a Firestore round-trip.
+  async function drainSprintCompletions() {
+    const QKEY = 'sprint-pending-completions';
+    let queue = [];
+    try {
+      const raw = localStorage.getItem(QKEY);
+      if (raw) queue = JSON.parse(raw) || [];
+    } catch { queue = []; }
+    if (!Array.isArray(queue) || queue.length === 0) return;
+    const ids = Array.from(new Set(queue.map(q => q && q.todoId).filter(Boolean)));
+    for (const id of ids) {
+      const local = todos.find(t => t.id === id);
+      if (local) local.done = true;
+      try {
+        await updateDoc(doc(db, 'tv_todos', id), { done: true });
+        // Mirror to analytics + linked plan task, same path as toggleTodo.
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'warroom:personal-done',
+            taskId: id,
+            done: true,
+            taskName: (local && local.text) || '',
+            planTaskId: (local && local.planTaskId) || null,
+          }, '*');
+        }
+      } catch (e) { console.warn('sprint completion update failed', e); }
+    }
+    try { localStorage.removeItem(QKEY); } catch {}
   }
   // ============ SPRINT → PERSONAL HANDOFF ============
   // Sprint page queues manually-typed tasks here. We drain the queue on each
@@ -3255,9 +3291,12 @@ const VOICE = {
   // requiring a page reload. The storage event fires for other documents on
   // the same origin (Sprint iframe), so we pick it up here in real time.
   window.addEventListener('storage', (e) => {
-    if (e.key !== 'sprint-pending-personal-todos') return;
-    if (!isToday()) return;
-    drainSprintQueue().then(() => render()).catch(() => {});
+    if (e.key === 'sprint-pending-personal-todos') {
+      if (!isToday()) return;
+      drainSprintQueue().then(() => render()).catch(() => {});
+    } else if (e.key === 'sprint-pending-completions') {
+      drainSprintCompletions().then(() => render()).catch(() => {});
+    }
   });
 
   // ---- Inbound message bridge (from War Room shell) ----
