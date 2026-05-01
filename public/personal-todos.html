@@ -134,6 +134,15 @@
   .clear-btn:hover { color: #FF8A3D; }
   /* Main */
   .main { flex: 1; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  /* Header row above the scrolling list — never scrolls. The filter bar with
+     ☰ + Add + job chips renders in here so nothing in the list (active goals
+     section, tasks) can ever appear above or overlap the buttons. */
+  .main-head {
+    flex-shrink: 0;
+    padding: 14px 18px 0;
+    background: #050507;
+    z-index: 5;
+  }
   .list {
     flex: 1; overflow-y: auto; padding: 48px 48px 24px;
     display: flex; flex-direction: column; gap: 10px;
@@ -802,16 +811,12 @@
   .job-select:hover { background-color: rgba(255,255,255,.08); }
   .job-select.has-job { border-color: rgba(255,138,61,.3); }
   .job-filter-bar {
-    display: flex; gap: 8px; padding: 12px 4px 16px;
+    /* Lives in .main-head (outside the scrolling list). No stickiness needed —
+       it's already in a non-scrolling header above the list. */
+    display: flex; gap: 8px; padding: 0 0 14px;
     overflow-x: auto; -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    /* Pin to top of list scroll. Very high z-index + opaque bg + thicker bottom
-       border so nothing scrolls over or bleeds through. */
-    position: sticky; top: 0; z-index: 50;
-    background: #050507;
-    margin: 0 -14px 24px;
-    padding-left: 18px; padding-right: 18px;
-    border-bottom: 2px solid rgba(255,255,255,.10);
+    border-bottom: 1px solid rgba(255,255,255,.08);
   }
   .job-filter-bar::-webkit-scrollbar { display: none; }
   .job-chip {
@@ -1198,6 +1203,8 @@
     <button class="clear-btn" id="clearBtn">Clear completed</button>
   </div>
   <div class="main">
+    <!-- Header row outside the scroll: filter bar lives here, always visible -->
+    <div class="main-head" id="mainHead"></div>
     <div class="list" id="list"></div>
     <div class="freq-opts" id="freqOpts"></div>
   </div>
@@ -2544,12 +2551,16 @@ const VOICE = {
     } else { progressTrack.classList.remove('visible'); progressInfo.textContent = ''; }
     clearBtn.classList.toggle('visible', doneCount > 0);
     list.innerHTML = '';
-    // Pin active goals at the top (read from goals page localStorage). Falls
-    // back gracefully if no goals exist or storage is unparseable.
+    // Filter bar lives in .main-head (outside the scrolling list) so it's
+    // always visible and never gets covered by the active-goals pin or tasks.
+    const headEl = document.getElementById('mainHead');
+    if (headEl) {
+      headEl.innerHTML = '';
+      headEl.appendChild(buildJobFilterBar());
+    }
+    // Pin active goals at the top of the scrollable list (still scrolls with tasks).
     const activeGoalsEl = buildActiveGoalsSection();
     if (activeGoalsEl) list.appendChild(activeGoalsEl);
-    // Job filter chips — show counts of pending tasks per job
-    list.appendChild(buildJobFilterBar());
     if (total === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty';
