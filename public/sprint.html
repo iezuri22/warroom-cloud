@@ -81,6 +81,38 @@ body { display:flex; flex-direction:column; position:relative }
 .task-input::placeholder { color:var(--text-fade); font-weight:600 }
 .task-input:focus { border-color:var(--accent) }
 
+/* Selected-task pill — replaces the input when a suggestion is picked. Conveys
+   that the sprint is linked to a real task instead of a free-text string. */
+.selected-task {
+  display:flex; align-items:center; gap:14px;
+  width:100%; background:linear-gradient(135deg, rgba(255,138,61,.16), rgba(255,138,61,.05));
+  border:1.5px solid var(--accent); border-radius:12px;
+  padding:14px 16px;
+}
+.selected-task .badge {
+  font-size:10px; font-weight:900; letter-spacing:1.2px; text-transform:uppercase;
+  color:var(--accent); background:var(--accent-bg); border:1px solid rgba(255,138,61,.4);
+  border-radius:999px; padding:5px 10px; flex-shrink:0;
+}
+.selected-task .text {
+  flex:1; font-size:16px; font-weight:800; color:var(--text); letter-spacing:-.01em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.selected-task .clear {
+  background:transparent; border:1px solid var(--border-2); color:var(--text-mid);
+  width:30px; height:30px; border-radius:50%; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;
+  transition:all .12s;
+}
+.selected-task .clear:hover { color:var(--bad); border-color:var(--bad); background:rgba(248,113,113,.08) }
+.selected-task .linked-hint {
+  font-size:9.5px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase;
+  color:var(--text-fade); margin-top:2px;
+}
+.suggestion.is-selected {
+  background:var(--accent-bg); color:var(--text); border-color:var(--accent);
+}
+
 /* Filter chip strip above the suggestions — two rows: categories + jobs */
 .filter-row {
   display:flex; flex-direction:column; gap:6px;
@@ -465,6 +497,15 @@ body { display:flex; flex-direction:column; position:relative }
     <div class="field-block">
       <label>What are you racing?</label>
       <input type="text" class="task-input" id="taskInput" placeholder="Type a task or pick one below" autocomplete="off" maxlength="160">
+      <!-- Shown only when a suggestion has been picked. Locks the title so the
+           sprint stays linked to the source task. -->
+      <div class="selected-task" id="selectedTaskPill" style="display:none">
+        <span class="badge" id="selectedBadge">—</span>
+        <span class="text" id="selectedText">—</span>
+        <button class="clear" id="clearSelectedBtn" title="Pick a different task" aria-label="Clear selection">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
       <div class="filter-row" id="filterChips"></div>
       <div class="suggestions" id="suggestions" style="display:none"></div>
     </div>
@@ -613,6 +654,15 @@ body { display:flex; flex-direction:column; position:relative }
   const resumeMetaEl = $('resumeMeta');
   const resumeBtn = $('resumeBtn');
   const discardPauseBtn = $('discardPauseBtn');
+  const selectedTaskPill = $('selectedTaskPill');
+  const selectedBadge = $('selectedBadge');
+  const selectedText = $('selectedText');
+  const clearSelectedBtn = $('clearSelectedBtn');
+
+  // When a suggestion is clicked, we lock the choice in selectedTask so the user
+  // can't accidentally edit the title and break the link to the source. Clearing
+  // it (✕ on the pill, or Start) returns to free-text mode.
+  let selectedTask = null; // { text, source, jobId, jobLabel, date }
 
   // ============ AUDIO (Web Audio synthesized) ============
   let audioCtx;
@@ -951,9 +1001,46 @@ body { display:flex; flex-direction:column; position:relative }
     });
   }
 
-  function renderSuggestions(){
-    allSuggestions = loadSuggestions();
-    renderFilterChips();
+  function badgeFor(it){
+    if (it.source === 'priority') return '★ ' + (it.jobLabel || 'PERSONAL');
+    if (it.jobLabel)              return it.jobLabel;
+    if (it.source === 'recent')   return 'RECENT';
+    return (it.source || '').toUpperCase();
+  }
+
+  function setSelectedTask(it){
+    selectedTask = it ? {
+      text: it.text,
+      source: it.source,
+      jobId: it.jobId || '',
+      jobLabel: it.jobLabel || '',
+      date: it.date || '',
+    } : null;
+    renderSelectedPill();
+    // When something is selected, hide the free-text input. When nothing is
+    // selected, show the input and keep whatever the user had typed.
+    taskInput.style.display = selectedTask ? 'none' : '';
+    if (selectedTask) {
+      taskInput.value = selectedTask.text;
+    } else {
+      // Returning to free-text mode — leave input empty so the user starts fresh.
+      taskInput.value = '';
+      taskInput.focus();
+    }
+    // Re-render so the selected suggestion gets a highlight
+    renderSuggestionsList();
+  }
+
+  function renderSelectedPill(){
+    if (!selectedTask) { selectedTaskPill.style.display = 'none'; return; }
+    selectedTaskPill.style.display = '';
+    selectedBadge.textContent = badgeFor(selectedTask);
+    selectedText.textContent = selectedTask.text;
+  }
+
+  // Split out so setSelectedTask can refresh the list highlight without
+  // recomputing the suggestion list itself (which would re-fetch from storage).
+  function renderSuggestionsList(){
     const ranges = weekRanges();
     const items = allSuggestions.filter(s => passesCategory(s, ranges) && passesJob(s));
 
@@ -964,28 +1051,42 @@ body { display:flex; flex-direction:column; position:relative }
     }
     if (items.length === 0) { suggestions.style.display = 'none'; return; }
     suggestions.style.display = '';
+    const selKey = selectedTask ? selectedTask.text.toLowerCase() : '';
     suggestions.innerHTML = items.slice(0, 60).map(it => {
-      // Badge: ★ for priority, otherwise the job label, otherwise the source
-      let badge;
-      if (it.source === 'priority') badge = '★ ' + (it.jobLabel || 'PERSONAL');
-      else if (it.jobLabel)         badge = it.jobLabel;
-      else if (it.source === 'recent') badge = 'RECENT';
-      else                          badge = it.source.toUpperCase();
+      const isSel = selKey && it.text.toLowerCase() === selKey;
       return `
-        <div class="suggestion" data-text="${escapeAttr(it.text)}" data-source="${escapeAttr(it.source)}">
+        <div class="suggestion${isSel ? ' is-selected' : ''}" data-text="${escapeAttr(it.text)}" data-source="${escapeAttr(it.source)}" data-jobid="${escapeAttr(it.jobId)}" data-joblabel="${escapeAttr(it.jobLabel)}" data-date="${escapeAttr(it.date)}">
           <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
-          <span class="job">${escapeHtml(badge)}</span>
+          <span class="job">${escapeHtml(badgeFor(it))}</span>
           <span class="arr">→</span>
         </div>
       `;
     }).join('');
     suggestions.querySelectorAll('.suggestion').forEach(el => {
       el.addEventListener('click', () => {
-        taskInput.value = el.dataset.text;
-        taskInput.focus();
+        // Toggle: clicking the already-selected item clears it
+        if (selectedTask && selectedTask.text.toLowerCase() === el.dataset.text.toLowerCase()) {
+          setSelectedTask(null);
+          return;
+        }
+        setSelectedTask({
+          text:     el.dataset.text,
+          source:   el.dataset.source,
+          jobId:    el.dataset.jobid,
+          jobLabel: el.dataset.joblabel,
+          date:     el.dataset.date,
+        });
       });
     });
   }
+
+  function renderSuggestions(){
+    allSuggestions = loadSuggestions();
+    renderFilterChips();
+    renderSuggestionsList();
+  }
+
+  if (clearSelectedBtn) clearSelectedBtn.addEventListener('click', () => setSelectedTask(null));
   function escapeHtml(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
   function escapeAttr(s){ return escapeHtml(s).replace(/"/g, '&quot;'); }
 
@@ -1024,7 +1125,9 @@ body { display:flex; flex-direction:column; position:relative }
       renderHistory();
     } else if (v === 'game') {
       landingView.style.display = 'none';
-      gameView.style.display = '';
+      // Default CSS for .game is display:none; force flex inline so the
+      // active sprint actually renders.
+      gameView.style.display = 'flex';
       historyView.style.display = 'none';
       stage.style.overflowY = 'hidden';
     }
@@ -1141,11 +1244,13 @@ body { display:flex; flex-direction:column; position:relative }
 
   // ============ START ============
   startBtn.addEventListener('click', () => {
-    const text = (taskInput.value || '').trim();
+    // Picked-from-list takes precedence over whatever's in the input.
+    const text = (selectedTask ? selectedTask.text : (taskInput.value || '')).trim();
     if (!text) { taskInput.focus(); return; }
     if (targetSeconds <= 0) return;
-    // Record manual task to Personal todos (no-op if already a known task).
-    maybeQueueAsPersonalTodo(text);
+    // Only manual / free-text tasks get queued to Personal. Selected tasks
+    // are already tracked in their source (Personal, Goals, Board, etc.).
+    if (!selectedTask) maybeQueueAsPersonalTodo(text);
     // If user starts a fresh sprint while one is paused, drop the pause silently —
     // they explicitly chose to start something new.
     clearPaused();
@@ -1308,12 +1413,16 @@ body { display:flex; flex-direction:column; position:relative }
   }
   againBtn.addEventListener('click', () => {
     resultOverlay.classList.remove('show');
+    // Clear selection so user can pick a new task; pre-fill input with last name
+    // for quick re-race of free-text tasks.
+    setSelectedTask(null);
     showView('play');
     if (lastTaskName) taskInput.value = lastTaskName;
     setTimeout(() => taskInput.focus(), 100);
   });
   homeBtn.addEventListener('click', () => {
     resultOverlay.classList.remove('show');
+    setSelectedTask(null);
     showView('play');
   });
 
