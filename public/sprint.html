@@ -1122,10 +1122,21 @@ body { display:flex; flex-direction:column; position:relative }
     if (activeFilter === 'due_2wks') return dueTwoWeeks(s.date, ranges);
     return true;
   }
+  // Group label → set of jobIds. Built each render. Used so chips dedupe by
+  // display name (e.g. legacy 'personal' + the 'b-personal' board both labeled
+  // "Personal" collapse into one chip + one filter).
+  let jobLabelGroups = new Map();
+  function groupKeyForJob(jobId){
+    if (!jobId) return '';
+    const lbl = (jobLabel(jobId) || jobId).toUpperCase();
+    return lbl;
+  }
   function passesJob(s){
     if (activeJob === 'all') return true;
-    if (activeJob === 'none') return !s.jobId; // suggestions with no job (e.g. recent)
-    return s.jobId === activeJob;
+    if (activeJob === 'none') return !s.jobId;
+    // Match by label-group, not strict ID — so an item tagged 'personal' AND
+    // an item tagged 'b-personal' both pass the "Personal" chip.
+    return groupKeyForJob(s.jobId) === groupKeyForJob(activeJob);
   }
 
   function renderFilterChips(){
@@ -1162,32 +1173,59 @@ body { display:flex; flex-direction:column; position:relative }
         </button>
       `).join('');
 
-    // Job row — built from boards present in the data, plus any orphan job IDs.
+    // Job row — built from boards in the data, then deduped by display label
+    // so e.g. legacy 'personal' + 'b-personal' both labeled "Personal"
+    // collapse into a single chip.
     const jobIdsInData = new Set();
     allSuggestions.forEach(s => { if (s.jobId) jobIdsInData.add(s.jobId); });
-    const jobsForChips = [];
-    // Boards first (preserve user's board order)
+    // Build a label-keyed map: label → { ids:Set, count, primaryId }
+    const labelMap = new Map();
+    const orderedLabels = [];
+    const recordIntoLabelMap = (id) => {
+      const lbl = (jobLabel(id) || id).toUpperCase();
+      if (!labelMap.has(lbl)) {
+        labelMap.set(lbl, { ids: new Set(), primaryId: id });
+        orderedLabels.push(lbl);
+      }
+      labelMap.get(lbl).ids.add(id);
+    };
+    // Boards first (preserve user's board order so chip order is intentional)
     allBoards.forEach(b => {
       const id = normalizeJobId(b.id);
-      if (jobIdsInData.has(id)) jobsForChips.push({ id, label: (b.name || id).toUpperCase() });
+      if (jobIdsInData.has(id)) recordIntoLabelMap(id);
     });
-    // Any leftover job IDs (e.g. legacy 'work' before a board exists)
-    jobIdsInData.forEach(id => {
-      if (!jobsForChips.find(j => j.id === id)) jobsForChips.push({ id, label: id.toUpperCase() });
+    // Then any leftover job IDs (legacy ones not yet bound to a board)
+    jobIdsInData.forEach(id => recordIntoLabelMap(id));
+    // Recompute jobCounts grouped by label so dedupe shows the right number.
+    const jobCountsByLabel = {};
+    allSuggestions.forEach(s => {
+      if (!passesCategory(s, ranges)) return;
+      const lbl = s.jobId ? (jobLabel(s.jobId) || s.jobId).toUpperCase() : '';
+      if (!lbl) return;
+      jobCountsByLabel[lbl] = (jobCountsByLabel[lbl] || 0) + 1;
     });
+    // Active label = label of activeJob (so click-to-toggle still feels right)
+    const activeLabel = activeJob === 'all' ? 'all' :
+                       activeJob === 'none' ? 'none' :
+                       (jobLabel(activeJob) || activeJob).toUpperCase();
     let jobRow = '';
-    if (jobsForChips.length >= 1) {
+    if (orderedLabels.length >= 1) {
       jobRow = `
         <button class="filter-chip ${activeJob==='all'?'active':''}" data-kind="job" data-filter="all">
           <span>All Jobs</span><span class="count">${jobCounts.all||0}</span>
         </button>
-        ${jobsForChips.map(j => `
-          <button class="filter-chip ${activeJob===j.id?'active':''}" data-kind="job" data-filter="${escapeAttr(j.id)}">
-            <span>${escapeHtml(j.label)}</span><span class="count">${jobCounts[j.id]||0}</span>
-          </button>
-        `).join('')}
+        ${orderedLabels.map(lbl => {
+          const grp = labelMap.get(lbl);
+          return `
+            <button class="filter-chip ${activeLabel===lbl?'active':''}" data-kind="job" data-filter="${escapeAttr(grp.primaryId)}">
+              <span>${escapeHtml(lbl)}</span><span class="count">${jobCountsByLabel[lbl]||0}</span>
+            </button>
+          `;
+        }).join('')}
       `;
     }
+    // Cache for passesJob (next render will rebuild)
+    jobLabelGroups = labelMap;
 
     wrap.innerHTML = `
       <div class="filter-row-inner">${catRow}</div>
