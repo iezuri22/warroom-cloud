@@ -21,12 +21,10 @@
     background: radial-gradient(circle, rgba(255,107,26,.04) 0%, transparent 70%); pointer-events: none;
   }
   .layout { display: flex; height: 100vh; position: relative; z-index: 1; }
-  /* Sidebar */
-  .sidebar {
-    width: 280px; min-width: 280px; padding: 56px 36px;
-    display: flex; flex-direction: column;
-    border-right: 1px solid rgba(255,255,255,.04);
-  }
+  /* Sidebar — hidden by default; daily-planner tabs handle navigation now.
+     Pages: tasks/recurring/archive are still reachable via JS APIs if ever
+     needed, but the visual chrome would compete with the shell. */
+  .sidebar { display: none !important; }
   .day-name {
     font-size: 48px; font-weight: 800; letter-spacing: -2px; line-height: 1.1;
     background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,.7) 100%);
@@ -459,7 +457,75 @@
     font-family: 'Plus Jakarta Sans', sans-serif; transition: all .2s;
   }
   .add-recurring button:hover { background: linear-gradient(135deg, #FF9B57, #FF8A3D); }
-  /* Input */
+  /* Period UI hidden — user requested no morning/afternoon/evening filtering. */
+  .period-pill { display: none !important; }
+  .todo-period-row { display: none !important; }
+
+  /* ============ FAB + ADD-TASK SHEET ============
+     A small floating "+" button replaces the always-visible bottom add bar.
+     Tap to expand a sheet with the input + job + frequency + Add. */
+  .add-fab {
+    position: fixed; right: 24px; bottom: 24px; z-index: 60;
+    width: 56px; height: 56px; border-radius: 50%; border: none;
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A); color: #050507;
+    font-family: inherit; font-size: 32px; font-weight: 800; line-height: 1;
+    cursor: pointer; box-shadow: 0 10px 26px rgba(255,138,61,.45), 0 0 0 1px rgba(255,138,61,.5);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: transform .18s cubic-bezier(.2,1.6,.4,1), box-shadow .18s;
+  }
+  .add-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 14px 32px rgba(255,138,61,.55); }
+  .add-fab:active { transform: translateY(0) scale(.97); }
+  .add-fab svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 3; stroke-linecap: round; }
+
+  /* Backdrop + sheet */
+  .add-sheet-backdrop {
+    position: fixed; inset: 0; z-index: 70;
+    background: rgba(5,5,7,.65); backdrop-filter: blur(6px);
+    display: none; opacity: 0; transition: opacity .18s;
+  }
+  .add-sheet-backdrop.show { display: block; opacity: 1; }
+  .add-sheet {
+    position: fixed; left: 50%; bottom: 0; transform: translate(-50%, 100%);
+    width: min(560px, calc(100vw - 24px));
+    margin-bottom: 12px; padding: 18px;
+    background: var(--surface, #15151B); border: 1px solid rgba(255,255,255,.10);
+    border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,.6);
+    z-index: 71; transition: transform .22s cubic-bezier(.2,1.6,.4,1);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .add-sheet-backdrop.show + .add-sheet { transform: translate(-50%, 0); }
+  .add-sheet input[type="text"]#todoInput {
+    width: 100%; padding: 16px 18px; font-size: 17px; font-weight: 600;
+    color: #fff; background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.1); border-radius: 12px;
+    outline: none; font-family: inherit;
+  }
+  .add-sheet input[type="text"]#todoInput:focus { border-color: rgba(255,138,61,.4); }
+  .add-sheet-row {
+    display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap;
+  }
+  .add-sheet-row > .job-select,
+  .add-sheet-row > .freq-select {
+    flex: 1; min-width: 130px; height: 48px; min-height: 48px;
+  }
+  .add-sheet-row > .add-btn {
+    flex-shrink: 0; padding: 12px 22px; font-size: 14px;
+  }
+  .add-sheet-close {
+    position: absolute; top: 10px; right: 10px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.6); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .add-sheet-close:hover { color: #fff; background: rgba(255,255,255,.10); }
+
+  @media (max-width: 560px) {
+    .add-fab { right: 18px; bottom: 18px; width: 52px; height: 52px; }
+    .add-sheet { width: calc(100vw - 16px); padding: 14px; }
+  }
+
+  /* Input — kept for inline rendering when not in the sheet (legacy fallback) */
   .input-area {
     display: flex; gap: 14px; align-items: center;
     padding: 20px 48px 40px;
@@ -1072,8 +1138,23 @@
   <div class="main">
     <div class="list" id="list"></div>
     <div class="freq-opts" id="freqOpts"></div>
-    <div class="input-area" id="inputArea">
-      <input type="text" id="todoInput" placeholder="Add a task...">
+  </div>
+</div>
+
+<!-- Floating Action Button — opens the add-task sheet. Replaces the persistent bottom bar. -->
+<button class="add-fab" id="addFab" type="button" aria-label="Add task">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+</button>
+
+<!-- Add-task sheet (hidden until FAB tapped) -->
+<div class="add-sheet-backdrop" id="addSheetBackdrop"></div>
+<div class="add-sheet" id="addSheet" role="dialog" aria-label="Add task">
+  <button class="add-sheet-close" id="addSheetClose" aria-label="Close">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <div class="input-area" id="inputArea" style="padding:0;background:none;display:contents">
+    <input type="text" id="todoInput" placeholder="Add a task..." autocomplete="off">
+    <div class="add-sheet-row">
       <select class="job-select" id="jobSelect" title="Job"></select>
       <select class="freq-select" id="freqSelect" title="Repeat">
         <option value="once">None</option>
@@ -3327,6 +3408,31 @@ const VOICE = {
     }
     input.value = ''; input.focus();
   }
+  // ---- FAB / Add-task sheet ----
+  function openAddSheet(){
+    const bd = document.getElementById('addSheetBackdrop');
+    if (bd) bd.classList.add('show');
+    setTimeout(() => {
+      const inp = document.getElementById('todoInput');
+      if (inp) inp.focus();
+    }, 60);
+  }
+  function closeAddSheet(){
+    const bd = document.getElementById('addSheetBackdrop');
+    if (bd) bd.classList.remove('show');
+  }
+  (function wireAddFab(){
+    const fab = document.getElementById('addFab');
+    const bd = document.getElementById('addSheetBackdrop');
+    const closeBtn = document.getElementById('addSheetClose');
+    if (fab) fab.addEventListener('click', openAddSheet);
+    if (bd) bd.addEventListener('click', closeAddSheet);
+    if (closeBtn) closeBtn.addEventListener('click', closeAddSheet);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeAddSheet();
+    });
+  })();
+
   // ---- Init ----
   populateJobSelect();
   updateClock(); updateHeader(); loadTodos();
@@ -3413,8 +3519,8 @@ const VOICE = {
   window.addEventListener('focus', maybeRolloverToToday);
   // Periodic safety net: check every 5 minutes
   setInterval(maybeRolloverToToday, 5 * 60 * 1000);
-  document.getElementById('addBtn').addEventListener('click', handleAdd);
-  document.getElementById('todoInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAdd(); });
+  document.getElementById('addBtn').addEventListener('click', () => { handleAdd(); closeAddSheet(); });
+  document.getElementById('todoInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { handleAdd(); closeAddSheet(); } });
   // Frequency selector — picker is rendered on demand by syncFreqUI
   const _freqSel = document.getElementById('freqSelect');
   if (_freqSel) _freqSel.addEventListener('change', syncFreqUI);
