@@ -312,6 +312,38 @@ body{padding:16px 14px 120px}
 }
 .tv-today-view .tv-event{cursor:pointer}
 .tv-today-view .tv-event:hover{background:rgba(255,255,255,.04)}
+
+/* "Earlier today" collapsible group (events that have already ended) */
+.tv-today-view .tv-past-group{
+  margin-bottom:14px;
+  border:1px solid rgba(255,255,255,.06); border-radius:14px;
+  background:rgba(255,255,255,.02);
+}
+.tv-today-view .tv-past-summary{
+  list-style:none; cursor:pointer;
+  display:flex; align-items:center; gap:10px;
+  padding:12px 18px;
+  font-size:clamp(11px,1vw,14px);font-weight:800;letter-spacing:2px;text-transform:uppercase;
+  color:rgba(255,255,255,.5); user-select:none;
+}
+.tv-today-view .tv-past-summary::-webkit-details-marker{display:none}
+.tv-today-view .tv-past-summary:hover{color:rgba(255,255,255,.8)}
+.tv-today-view .tv-past-chev{
+  display:inline-block; transition:transform .15s; transform:rotate(0deg);
+  font-size:18px; line-height:1; color:rgba(255,255,255,.4);
+}
+.tv-today-view .tv-past-group[open] .tv-past-chev{ transform:rotate(90deg) }
+.tv-today-view .tv-past-label{flex:1}
+.tv-today-view .tv-past-count{
+  font-size:11px; padding:3px 9px; border-radius:999px;
+  background:rgba(255,255,255,.06); color:rgba(255,255,255,.6);
+  letter-spacing:.4px;
+}
+.tv-today-view .tv-past-list{
+  display:flex; flex-direction:column; gap:8px;
+  padding:0 8px 12px;
+}
+.tv-today-view .tv-past-list .tv-event{ background:rgba(255,255,255,.02) }
 .tv-today-view .tv-event-cal{
   font-size:clamp(10px,1vw,13px);font-weight:800;letter-spacing:.15em;text-transform:uppercase;
   padding:6px 12px;border-radius:999px;
@@ -1624,6 +1656,9 @@ function setView(view){
 }
 // Refresh ticker — keeps the clock and now-highlight current
 let _tvTodayTicker = null;
+// "Earlier today" past-events group: collapsed by default; user expand state
+// persists across the 30s re-renders so it doesn't keep snapping shut on you.
+let _tvPastOpen = false;
 function renderTvToday(){
   const el = document.getElementById('tvTodayView');
   if(!el) return;
@@ -1649,7 +1684,9 @@ function renderTvToday(){
     weekday:get('weekday'), month:get('month'), day:get('day')
   };
   const nowMs = Date.now();
-  const eventsHTML = events.length ? events.map(e=>{
+  // Build the row HTML for one event. Used for both the past-collapsed group
+  // and the current+upcoming group.
+  function renderRow(e){
     const startMs = e.startISO ? new Date(e.startISO).getTime() : null;
     const endMs   = e.endISO   ? new Date(e.endISO).getTime()   : null;
     const isPast  = endMs && endMs < nowMs;
@@ -1716,18 +1753,47 @@ function renderTvToday(){
         ${cal?`<div class="tv-event-cal">${escapeHTML(cal)}</div>`:''}
       </div>
     `;
-  }).join('') : `<div class="tv-empty"><div class="lbl">Today</div><div>Clear horizon — nothing on the books.</div></div>`;
+  }
+  // Partition: events fully ended go to "Earlier today" (collapsed by default).
+  // Anything still in progress (now) or upcoming stays in the main, visible list.
+  // All-day events stay in the visible list — they're not "past" until end-of-day.
+  const isFullyPast = (e) => {
+    if (e.allDay) return false;
+    const endMs = e.endISO ? new Date(e.endISO).getTime() : null;
+    return endMs && endMs < nowMs;
+  };
+  const pastEvents    = events.filter(isFullyPast);
+  const currentUpcoming = events.filter(e => !isFullyPast(e));
+  const pastHTML = pastEvents.length
+    ? `<details class="tv-past-group" ${_tvPastOpen ? 'open' : ''}>
+         <summary class="tv-past-summary">
+           <span class="tv-past-chev">›</span>
+           <span class="tv-past-label">Earlier today</span>
+           <span class="tv-past-count">${pastEvents.length}</span>
+         </summary>
+         <div class="tv-past-list">${pastEvents.map(renderRow).join('')}</div>
+       </details>`
+    : '';
+  const liveHTML = currentUpcoming.map(renderRow).join('');
+  const eventsHTML = events.length
+    ? (pastHTML + liveHTML)
+    : `<div class="tv-empty"><div class="lbl">Today</div><div>Clear horizon — nothing on the books.</div></div>`;
   el.innerHTML = `
     <div class="tv-today-head">
       <div>
         <div class="tv-today-eyebrow">${escapeHTML(np.weekday)}</div>
         <div class="tv-today-title">${escapeHTML(np.month)} ${escapeHTML(np.day)}</div>
-        <div class="tv-today-sub">${events.length===0?'Clear day':`${events.length} event${events.length===1?'':'s'}`}</div>
+        <div class="tv-today-sub">${events.length===0?'Clear day':`${currentUpcoming.length} active${pastEvents.length?` · ${pastEvents.length} earlier`:''}`}</div>
       </div>
       <div class="tv-clock">${escapeHTML(np.hour)}:${escapeHTML(np.minute)}<span class="tv-clock-meridiem">${escapeHTML(np.ap)}</span></div>
     </div>
     <div class="tv-events">${eventsHTML}</div>
   `;
+  // Persist expand/collapse state so the 30s re-render doesn't keep snapping closed
+  const detailsEl = el.querySelector('details.tv-past-group');
+  if (detailsEl) {
+    detailsEl.addEventListener('toggle', () => { _tvPastOpen = detailsEl.open; });
+  }
   // Wire row clicks → detail modal. Anchors inside (.tv-event-loc) stop
   // propagation themselves so clicking "Join Zoom" doesn't also open the modal.
   el.querySelectorAll('.tv-event').forEach(row => {
