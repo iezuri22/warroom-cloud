@@ -2400,16 +2400,29 @@ body { display:flex; flex-direction:column; position:relative }
     if (e.key === 'Enter') { e.preventDefault(); playCustom(); }
   });
 
-  // On load, clear active state — browsers block autoplay-with-sound without a
-  // user gesture. User must tap a chip (or hit Play in custom) to start. We
-  // pre-fill the custom input with the last custom ID for convenience, then
-  // wipe vibe/customId so nothing shows as "playing".
+  // On load, KEEP the saved vibe/customId so the chip stays visually active —
+  // user expects "the music I had on" to come back after refresh. We can't
+  // actually play audio yet (browsers require a user gesture), so we attach
+  // a one-time listener to resume playback on the first interaction with the
+  // page (any click/tap/keypress). Until then, the chip glows but is silent.
   if (musicState.customId && musicCustomInput) {
     musicCustomInput.value = musicState.customId;
   }
-  musicState.vibe = null;
-  musicState.customId = '';
   applyMusicUI();
+  if (musicState.vibe || musicState.customId) {
+    const resumeMusic = () => {
+      try {
+        if (musicState.customId) playVideoId(musicState.customId, null);
+        else if (musicState.vibe) playVibe(musicState.vibe);
+      } catch {}
+      document.removeEventListener('pointerdown', resumeMusic, true);
+      document.removeEventListener('keydown', resumeMusic, true);
+      document.removeEventListener('touchstart', resumeMusic, true);
+    };
+    document.addEventListener('pointerdown', resumeMusic, true);
+    document.addEventListener('keydown', resumeMusic, true);
+    document.addEventListener('touchstart', resumeMusic, true);
+  }
 
   // ============ INIT ============
   renderStats();
