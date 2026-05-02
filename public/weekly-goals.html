@@ -577,6 +577,26 @@ body{padding:16px 14px 120px}
   font-size:12px;
 }
 .bwg-task-wrap.expanded > .bwg-task-dates{display:flex}
+/* Notes/details textarea — hidden until expanded */
+.bwg-task-notes{
+  display:none;flex-direction:column;gap:4px;
+  margin-left:25px;padding:2px 0 6px;
+}
+.bwg-task-wrap.expanded > .bwg-task-notes{display:flex}
+.bwg-task-notes-input{
+  width:100%;min-height:54px;resize:vertical;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+  color:rgba(255,255,255,.92);border-radius:8px;
+  padding:8px 10px;font-family:inherit;font-size:12.5px;font-weight:500;line-height:1.4;
+  outline:none;box-sizing:border-box;
+}
+.bwg-task-notes-input:focus{border-color:rgba(255,138,61,.4)}
+.bwg-task-notes-input::placeholder{color:rgba(255,255,255,.25);font-style:italic}
+.bwg-task-details-dot{
+  display:inline-block;margin-left:6px;
+  width:6px;height:6px;border-radius:50%;background:rgba(255,138,61,.65);
+  vertical-align:middle;
+}
 .bwg-task-dates-lbl{
   font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
   color:var(--text-fade);
@@ -1430,6 +1450,7 @@ function renderGoalTasksHTML(g){
       onCheck: `toggleGoalTask('${g.id}','${it.id}')`,
       onPlan: `addGoalTaskToToday('${g.id}','${it.id}')`,
       onSetDate: (field) => `setGoalTaskDate('${g.id}','${it.id}','${field}',this.value)`,
+      onSetNotes: `setGoalTaskNotes('${g.id}','${it.id}',this.value)`,
     })).join('')}
     <form class="bwg-add-task" onsubmit="return addGoalTask(event,'${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
@@ -1483,10 +1504,13 @@ function renderTaskRow(it, key, handlers){
     else { label = `${d}d`; }
     duePill = `<span class="bwg-task-due-pill ${cls}" title="Due ${escapeHtml(it.dueDate)}">${label}</span>`;
   }
+  // Indicator dot if details exist — visible on the collapsed row.
+  const detailsDot = (it.details || '').trim()
+    ? `<span class="bwg-task-details-dot" title="Has details — tap to view"></span>` : '';
   return `<div class="bwg-task-wrap${it.done?' done':''}${expanded}">
     <div class="bwg-task" onclick="toggleTaskExpand('${key}')">
       <input type="checkbox" ${it.done?'checked':''} onclick="event.stopPropagation()" onchange="${handlers.onCheck}">
-      <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}</span>
+      <span class="bwg-task-txt">${escapeHtml(it.text||it.title||'')}${detailsDot}</span>
       ${duePill}
       ${pushed}
       <button class="bwg-task-plan" type="button" onclick="event.stopPropagation();event.preventDefault();${handlers.onPlan}" title="Add to Personal now">+ Personal</button>
@@ -1501,6 +1525,12 @@ function renderTaskRow(it, key, handlers){
              onclick="event.stopPropagation();this.showPicker&&this.showPicker()"
              onchange="this.classList.toggle('not-set', !this.value);${handlers.onSetDate('dueDate')}">
       ${it.startDate ? `<span class="bwg-task-auto-hint">auto-pushes when start hits</span>` : ''}
+    </div>
+    <div class="bwg-task-notes" onclick="event.stopPropagation()">
+      <span class="bwg-task-dates-lbl">Details</span>
+      <textarea class="bwg-task-notes-input" placeholder="Notes, links, context for this task…"
+        onclick="event.stopPropagation()"
+        onblur="${handlers.onSetNotes}">${escapeHtml(it.details || '')}</textarea>
     </div>
   </div>`;
 }
@@ -1520,6 +1550,7 @@ function renderBoardTasksHTML(b,g){
       onCheck: `toggleBoardTask('${b.id}','${g.id}','${it.id}')`,
       onPlan: `addBoardTaskToToday('${b.id}','${g.id}','${it.id}')`,
       onSetDate: (field) => `setBoardTaskDate('${b.id}','${g.id}','${it.id}','${field}',this.value)`,
+      onSetNotes: `setBoardTaskNotes('${b.id}','${g.id}','${it.id}',this.value)`,
     })).join('')}
     <form class="bwg-add-task" onsubmit="return addBoardTask(event,'${b.id}','${g.id}')" onclick="event.stopPropagation()">
       <input type="text" placeholder="+ Add a task" maxlength="200" />
@@ -1533,6 +1564,25 @@ function setBoardTaskDate(boardId, goalId, taskId, field, val){
   it[field]=val||'';
   r.g.updatedAt=new Date().toISOString();
   saveBoardData(bd); renderList();
+}
+// Free-text notes/details on a goal action item — save on textarea blur.
+function setGoalTaskNotes(gid, tid, val){
+  const g=data.goals.find(x=>x.id===gid); if(!g) return;
+  // Quarterly goals use either `tasks` or `actionItems` depending on age. Try both.
+  const list = g.actionItems || g.tasks || [];
+  const it = list.find(t=>t.id===tid); if(!it) return;
+  if ((it.details||'') === (val||'')) return;
+  it.details = val || '';
+  g.updatedAt=new Date().toISOString();
+  save(); /* don't re-render — would steal focus */
+}
+function setBoardTaskNotes(boardId, goalId, taskId, val){
+  const bd=loadBoard(); const r=findBoardGoal(bd, boardId, goalId); if(!r) return;
+  const it=(r.g.actionItems||[]).find(x=>x.id===taskId); if(!it) return;
+  if ((it.details||'') === (val||'')) return;
+  it.details = val || '';
+  r.g.updatedAt=new Date().toISOString();
+  saveBoardData(bd);
 }
 
 function renderCard(g){

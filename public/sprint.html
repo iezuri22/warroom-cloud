@@ -188,7 +188,31 @@ body { display:flex; flex-direction:column; position:relative }
 .suggestion:hover .arr { opacity:1 }
 .suggestion[data-source="priority"] { border-left:3px solid var(--accent); padding-left:11px }
 .suggestion[data-source="priority"] .job { color:var(--accent); opacity:1 }
+.suggestion .details-dot {
+  display:inline-block; width:6px; height:6px; border-radius:50%;
+  background:rgba(255,138,61,.65); flex-shrink:0; margin-right:2px;
+}
 .suggestions-empty { padding:14px; text-align:center; font-size:12px; color:var(--text-fade); font-style:italic }
+
+/* Selected-task details panel — appears below the pill when source has notes */
+.selected-task-details {
+  background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+  margin-top:-2px;
+}
+.selected-task-details .details-toggle {
+  width:100%; background:transparent; border:none; cursor:pointer; color:var(--text-mid);
+  padding:8px 14px; font-family:inherit; font-size:11.5px; font-weight:800;
+  letter-spacing:1px; text-transform:uppercase;
+  display:flex; align-items:center; gap:8px; text-align:left;
+}
+.selected-task-details .details-toggle:hover { color:var(--text) }
+.selected-task-details .details-toggle .chev { font-size:14px; color:var(--accent) }
+.selected-task-details .details-body {
+  display:none; padding:0 14px 12px;
+  font-size:13.5px; font-weight:500; line-height:1.45; color:var(--text-mid);
+  white-space:pre-wrap; word-wrap:break-word;
+}
+.selected-task-details .details-body.open { display:block }
 
 /* Resume banner */
 .resume-banner {
@@ -1102,7 +1126,7 @@ body { display:flex; flex-direction:column; position:relative }
     //   goal:     { goalId, taskId }
     //   board:    { boardId, goalId, taskId }
     //   plan:     { planId }
-    const push = (text, source, dateKey, jobId, ids) => {
+    const push = (text, source, dateKey, jobId, ids, details) => {
       const t = (text || '').trim();
       if (!t) return;
       const k = t.toLowerCase();
@@ -1116,6 +1140,7 @@ body { display:flex; flex-direction:column; position:relative }
         jobId: j,
         jobLabel: jobLabel(j),
         ids: ids || {},
+        details: (details || '').trim(),
       });
     };
 
@@ -1127,8 +1152,8 @@ body { display:flex; flex-direction:column; position:relative }
       if (raw) {
         const cache = JSON.parse(raw) || {};
         const items = Array.isArray(cache.items) ? cache.items : [];
-        items.filter(i => i.priority).forEach(i => push(i.text, 'priority', i.date, i.job || 'personal', { todoId: i.id }));
-        items.filter(i => !i.priority).forEach(i => push(i.text, 'personal', i.date, i.job || 'personal', { todoId: i.id }));
+        items.filter(i => i.priority).forEach(i => push(i.text, 'priority', i.date, i.job || 'personal', { todoId: i.id }, i.details));
+        items.filter(i => !i.priority).forEach(i => push(i.text, 'personal', i.date, i.job || 'personal', { todoId: i.id }, i.details));
       }
     } catch {}
 
@@ -1146,7 +1171,7 @@ body { display:flex; flex-direction:column; position:relative }
             (g.actionItems || []).forEach(ai => {
               if (!ai || ai.done) return;
               const d = ai.dueDate || ai.startDate || g.targetDate || '';
-              push(ai.text, 'goal', d, g.pillar, { goalId: g.id, taskId: ai.id });
+              push(ai.text, 'goal', d, g.pillar, { goalId: g.id, taskId: ai.id }, ai.details);
             });
           });
       }
@@ -1159,7 +1184,7 @@ body { display:flex; flex-direction:column; position:relative }
         (g.actionItems || []).forEach(ai => {
           if (!ai || ai.done) return;
           const d = ai.dueDate || ai.startDate || g.targetDate || '';
-          push(ai.text, 'board', d, b.id, { boardId: b.id, goalId: g.id, taskId: ai.id });
+          push(ai.text, 'board', d, b.id, { boardId: b.id, goalId: g.id, taskId: ai.id }, ai.details);
         });
       });
     });
@@ -1339,6 +1364,7 @@ body { display:flex; flex-direction:column; position:relative }
       jobLabel: it.jobLabel || '',
       date: it.date || '',
       ids: it.ids || {},
+      details: it.details || '',
     } : null;
     renderSelectedPill();
     // When something is selected, hide the free-text input. When nothing is
@@ -1360,6 +1386,32 @@ body { display:flex; flex-direction:column; position:relative }
     selectedTaskPill.style.display = '';
     selectedBadge.textContent = badgeFor(selectedTask);
     selectedText.textContent = selectedTask.text;
+    // Details panel: show a "Details" toggle on the pill if the source task
+    // has notes attached. Click to expand a panel under the pill.
+    let detailsEl = document.getElementById('selectedDetails');
+    if (selectedTask.details) {
+      if (!detailsEl) {
+        detailsEl = document.createElement('div');
+        detailsEl.id = 'selectedDetails';
+        detailsEl.className = 'selected-task-details';
+        selectedTaskPill.parentNode.insertBefore(detailsEl, selectedTaskPill.nextSibling);
+      }
+      detailsEl.innerHTML = `
+        <button class="details-toggle" type="button">
+          <span class="chev">▸</span><span class="lbl">Details</span>
+        </button>
+        <div class="details-body">${escapeHtml(selectedTask.details)}</div>
+      `;
+      const toggle = detailsEl.querySelector('.details-toggle');
+      const body = detailsEl.querySelector('.details-body');
+      const chev = detailsEl.querySelector('.chev');
+      toggle.addEventListener('click', () => {
+        const open = body.classList.toggle('open');
+        chev.textContent = open ? '▾' : '▸';
+      });
+    } else if (detailsEl) {
+      detailsEl.remove();
+    }
   }
 
   // Split out so setSelectedTask can refresh the list highlight without
@@ -1381,9 +1433,10 @@ body { display:flex; flex-direction:column; position:relative }
     suggestions._items = items;
     suggestions.innerHTML = items.slice(0, 60).map((it, idx) => {
       const isSel = selKey && it.text.toLowerCase() === selKey;
+      const dot = it.details ? `<span class="details-dot" title="Has details"></span>` : '';
       return `
         <div class="suggestion${isSel ? ' is-selected' : ''}" data-idx="${idx}">
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
+          ${dot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(it.text)}</span>
           <span class="job">${escapeHtml(badgeFor(it))}</span>
           <span class="arr">→</span>
         </div>
