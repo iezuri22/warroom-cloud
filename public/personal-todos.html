@@ -944,6 +944,22 @@
   .focus5-tab.complete .ct {
     background: rgba(74,222,128,.18); color: #4ADE80;
   }
+  /* Inline reorder buttons on the active tab — visible always, no edit mode needed */
+  .focus5-tab-mv {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px;
+    margin-left: 2px;
+    border-radius: 6px;
+    background: rgba(255,138,61,.14);
+    border: 1px solid rgba(255,138,61,.32);
+    color: #FF8A3D;
+    cursor: pointer; padding: 0;
+    transition: background .15s, border-color .15s, transform .12s;
+  }
+  .focus5-tab-mv:hover { background: rgba(255,138,61,.28); border-color: #FF8A3D }
+  .focus5-tab-mv:active { transform: scale(.92) }
+  .focus5-tab-mv:disabled { opacity: .3; cursor: not-allowed; }
+  .focus5-tab-mv:disabled:hover { background: rgba(255,138,61,.14); border-color: rgba(255,138,61,.32) }
   .focus5-add-tab {
     flex-shrink: 0;
     display: inline-flex; align-items: center; gap: 6px;
@@ -4915,6 +4931,10 @@ const VOICE = {
   let _focus5PickerListId = null;     // null = creating new list, else editing this list
   let _focus5PickerRoutine = 'none';  // ephemeral routine flag while picker is open
   let _focus5EditMode = false;        // in-place edit on the focus view
+  // Auto-select-by-time runs once per page load. After that, user's manual
+  // taps stick — otherwise every render would yank them back to the
+  // time-appropriate list (which feels broken when you just clicked away).
+  let _focus5AutoSelected = false;
   // Time-of-day → routine flag. Chicago hours.
   function focus5CurrentRoutine(){
     try {
@@ -4965,12 +4985,15 @@ const VOICE = {
       let activeId = typeof d.activeListId === 'string' ? d.activeListId : '';
       if (!lists.some(l => l.id === activeId)) activeId = lists[0]?.id || '';
       // Time-of-day auto-select: if there's a list flagged for the CURRENT
-      // routine slot (morning/night), default to it on load. Override only
-      // happens once per page load — manual switches stick afterwards.
-      const cur = focus5CurrentRoutine();
-      if (cur) {
-        const match = lists.find(l => l.routine === cur);
-        if (match) activeId = match.id;
+      // routine slot (morning/night), default to it. ONLY runs once per page
+      // load — after that, manual taps stick.
+      if (!_focus5AutoSelected) {
+        const cur = focus5CurrentRoutine();
+        if (cur) {
+          const match = lists.find(l => l.routine === cur);
+          if (match) activeId = match.id;
+        }
+        _focus5AutoSelected = true;
       }
       focus5State = {
         active: !!d.active && lists.length > 0,
@@ -5348,18 +5371,39 @@ const VOICE = {
     // ---- LIST STRIP — switch between named lists, add new ----
     const strip = document.createElement('div');
     strip.className = 'focus5-strip';
-    focus5State.lists.forEach(l => {
-      const lTasks = l.taskIds.map(id => todos.find(t => t.id === id)).filter(Boolean);
+    focus5State.lists.forEach((l, i) => {
+      const lTasks = l.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
       const lDone = lTasks.filter(t => t.done).length;
       const total = lTasks.length;
       const isActive = l.id === focus5State.activeListId;
       const isComplete = total > 0 && lDone === total;
-      const tab = document.createElement('button');
-      tab.type = 'button';
+      // <div role="button"> so we can nest the reorder <button>s inside.
+      const tab = document.createElement('div');
+      tab.setAttribute('role', 'button');
+      tab.tabIndex = 0;
       tab.className = `focus5-tab ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`;
       tab.dataset.listId = l.id;
-      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span><span class="ct">${lDone}/${total || 5}</span>`;
-      tab.addEventListener('click', () => focus5SwitchList(l.id));
+      // Inline reorder controls on the ACTIVE tab — only when more than 1 list.
+      const showReorder = isActive && focus5State.lists.length > 1;
+      const reorderHTML = showReorder ? `
+        <button class="focus5-tab-mv" data-mv="left" type="button" aria-label="Move list left" ${i === 0 ? 'disabled' : ''}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button class="focus5-tab-mv" data-mv="right" type="button" aria-label="Move list right" ${i === focus5State.lists.length - 1 ? 'disabled' : ''}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      ` : '';
+      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span><span class="ct">${lDone}/${total || 5}</span>${reorderHTML}`;
+      tab.addEventListener('click', (e) => {
+        const mv = e.target && e.target.closest && e.target.closest('[data-mv]');
+        if (mv) {
+          e.stopPropagation();
+          if (mv.dataset.mv === 'left') focus5MoveListLeft(l.id);
+          else focus5MoveListRight(l.id);
+          return;
+        }
+        focus5SwitchList(l.id);
+      });
       strip.appendChild(tab);
     });
     const addTab = document.createElement('button');
