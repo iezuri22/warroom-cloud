@@ -328,11 +328,16 @@
     .pt-goal-val { font-size: 13px }
   }
 
-  /* When focus mode is engaged, hide chrome that doesn't belong: filter bar
-     and the goals row collapse so the 5 cards have full attention. */
+  /* When focus mode is engaged, the chrome above the cards collapses so
+     attention stays on what's up next. Music keeps playing in the background;
+     exit focus mode to switch vibes. */
   body.focus5-active #filterBarSlot,
-  body.focus5-active #ptGoalsRow { display: none }
-  body.focus5-active .pt-music-bar { margin-bottom: 8px }
+  body.focus5-active #ptGoalsRow,
+  body.focus5-active #ptMusicBar { display: none }
+  /* Tighter mainHead in focus mode — just the pill, no surrounding air */
+  body.focus5-active #mainHead { padding: 6px 18px 0 }
+  /* Tighten the scrolling list so the focus cards have less top air */
+  body.focus5-active .list { padding: 12px 24px 24px }
 
   /* ============ FOCUS 5 — pick five tasks, see only those, game-feel ============ */
   /* Compact toggle pill above the filter bar. Shows current state at a glance. */
@@ -447,12 +452,12 @@
 
   /* ============ FOCUS 5 VIEW — replaces .list contents in focus mode ============ */
   .focus5-view {
-    display: flex; flex-direction: column; gap: 16px;
-    padding: 8px 4px 80px;
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 4px 4px 80px;
   }
   .focus5-progress {
-    display: flex; align-items: center; gap: 14px; padding: 8px 4px;
-    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px; padding: 2px 4px;
+    margin-bottom: 0;
   }
   .focus5-progress-track {
     flex: 1; height: 8px; border-radius: 99px;
@@ -3580,15 +3585,8 @@ const VOICE = {
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
     // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
-    // ALWAYS park the music bar in mainHead first — this guarantees the
-    // element survives renderTasks() wiping #list with innerHTML=''. Without
-    // this, if the bar was inside the previous focus view, the wipe would
-    // destroy it. focus5MoveMusicBar is a no-op when bar is already there.
-    try { focus5MoveMusicBar(false); } catch {}
     if (focus5State.active && focus5State.lists.length > 0) {
-      try { renderFocus5View(); } catch (e) { console.error('focus5 render', e); }
-      // renderFocus5View moves the bar into the new .focus5-view at its tail.
-      return;
+      try { renderFocus5View(); return; } catch (e) { console.error('focus5 render', e); }
     }
     renderTasks();
   }
@@ -5131,24 +5129,9 @@ const VOICE = {
     document.body.classList.toggle('focus5-editing', _focus5EditMode);
     render();
   }
-  // Move the lofi bar between mainHead (regular view) and the focus view's
-  // top so it's always visible to the user wherever they are. The audio
-  // iframe lives at body level and doesn't move — only the chips/controls do.
-  function focus5MoveMusicBar(intoFocus){
-    const bar = document.getElementById('ptMusicBar');
-    if (!bar) return;
-    if (intoFocus) {
-      const view = document.querySelector('.focus5-view');
-      if (view && bar.parentNode !== view) {
-        view.insertBefore(bar, view.firstChild);
-      }
-    } else {
-      const head = document.getElementById('mainHead');
-      if (head && bar.parentNode !== head) {
-        head.insertBefore(bar, head.firstChild);
-      }
-    }
-  }
+  // (Removed: focus5MoveMusicBar. Music bar stays in mainHead. In focus mode
+  // it's hidden via body.focus5-active CSS so the focus view stays distraction-
+  // free; audio keeps playing in the background regardless.)
 
   // -------- TOGGLE PILL --------
   function updateFocus5Toggle(){
@@ -5385,14 +5368,6 @@ const VOICE = {
 
   // -------- VIEW (renders inside .list when focus mode is active) --------
   function renderFocus5View(){
-    try { return _renderFocus5ViewInner(); }
-    finally {
-      // No matter which branch returned, pull the music bar into the freshly-
-      // built focus view so it's always visible at the top.
-      try { focus5MoveMusicBar(true); } catch {}
-    }
-  }
-  function _renderFocus5ViewInner(){
     const list = document.getElementById('list');
     if (!list) return;
     list.innerHTML = '';
