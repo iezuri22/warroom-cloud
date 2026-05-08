@@ -1789,20 +1789,20 @@
   .job-select:hover { background-color: rgba(255,255,255,.08); }
   .job-select.has-job { border-color: rgba(255,138,61,.3); }
   .job-filter-bar {
-    /* Lives in .main-head (outside the scrolling list). No stickiness needed —
-       it's already in a non-scrolling header above the list. */
-    display: flex; gap: 8px; padding: 0 0 14px;
+    /* Lives in .main-head (outside the scrolling list). Single compact row —
+       view-filter dropdown sits inline at the right end. */
+    display: flex; align-items: center; gap: 6px; padding: 0 0 8px;
     overflow-x: auto; -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     border-bottom: 1px solid rgba(255,255,255,.08);
   }
   .job-filter-bar::-webkit-scrollbar { display: none; }
   .job-chip {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 7px 12px; border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 99px;
     background: rgba(255,255,255,.04); color: rgba(255,255,255,.55);
     border: 1px solid rgba(255,255,255,.06);
-    font-size: 12.5px; font-weight: 600; letter-spacing: .2px;
+    font-size: 12px; font-weight: 600; letter-spacing: .15px;
     cursor: pointer; user-select: none; flex-shrink: 0;
     font-family: inherit; transition: all .15s;
   }
@@ -1940,7 +1940,31 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: rgba(255,138,61,.6); vertical-align: middle;
   }
-  /* View filter — recency/urgency chips. Single row, single-select. */
+  /* View filter dropdown — compact inline select sitting in the job-filter row */
+  .view-filter-select {
+    padding: 5px 26px 5px 10px;
+    border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.65);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    letter-spacing: .15px;
+    outline: none; cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    margin-left: auto;
+  }
+  .view-filter-select:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .view-filter-select.active {
+    background-color: rgba(255,138,61,.14);
+    border-color: rgba(255,138,61,.5);
+    color: #FF8A3D;
+  }
+  .view-filter-select option { background: #15151B; color: #fff }
+
+  /* (Legacy view filter chip styling retained in case other code paths use it) */
   .view-filter-bar {
     display: flex; gap: 5px; flex-wrap: wrap;
     padding: 4px 0 2px;
@@ -1986,18 +2010,23 @@
     background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.25);
   }
 
-  /* ECM status sub-filter — appears below job-filter when ECM chip is active */
+  /* ECM status sub-filter — horizontally scrollable strip below job filter */
   .ecm-status-bar {
-    display: flex; gap: 5px; flex-wrap: wrap;
-    padding: 4px 0 2px;
+    display: flex; gap: 4px;
+    padding: 2px 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  .ecm-status-bar::-webkit-scrollbar { display: none }
   .ecm-status-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 99px;
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 99px;
     background: transparent;
     border: 1px solid rgba(74,158,255,.20);
     color: rgba(107,168,255,.7);
-    font-family: inherit; font-size: 11px; font-weight: 700;
+    font-family: inherit; font-size: 10.5px; font-weight: 700;
     cursor: pointer;
     transition: background .15s, color .15s, border-color .15s;
   }
@@ -4057,9 +4086,8 @@ const VOICE = {
     });
     wrap.appendChild(bar);
 
-    // View filter — recency / urgency narrowing. Stays one row, single-select.
-    const vBar = document.createElement('div');
-    vBar.className = 'view-filter-bar';
+    // View filter as a compact inline dropdown — appended to the right end
+    // of the job filter bar so it doesn't take its own row.
     const pendingAll = todos.filter(t => !t.done);
     const todayK = todayKey();
     const wkStart = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return dkey(d); })();
@@ -4071,28 +4099,26 @@ const VOICE = {
       'due-soon': pendingAll.filter(t => { if (!t.dueDate) return false; const d = daysFromTodayTo(t.dueDate); return d >= 0 && d <= 7; }).length,
       overdue: pendingAll.filter(t => { if (!t.dueDate) return false; return daysFromTodayTo(t.dueDate) < 0; }).length
     };
-    const vChips = [
-      { id: 'all', label: 'All', kind: 'meta' },
-      { id: 'created-today', label: 'Created today', kind: 'recency' },
-      { id: 'created-week', label: 'Created this week', kind: 'recency' },
-      { id: 'priority', label: 'Priority', kind: 'urgent' },
-      { id: 'due-soon', label: 'Due soon', kind: 'urgent' },
-      { id: 'overdue', label: 'Overdue', kind: 'overdue' }
+    const vOptions = [
+      { id: 'all', label: 'View: All' },
+      { id: 'created-today', label: `Today (${vCounts['created-today']})` },
+      { id: 'created-week', label: `This week (${vCounts['created-week']})` },
+      { id: 'priority', label: `Priority (${vCounts.priority})` },
+      { id: 'due-soon', label: `Due soon (${vCounts['due-soon']})` },
+      { id: 'overdue', label: `Overdue (${vCounts.overdue})` }
     ];
-    vBar.innerHTML = vChips.map(c => {
-      const active = viewFilter === c.id ? 'active' : '';
-      const muted = (vCounts[c.id] === 0 && c.id !== 'all') ? 'muted' : '';
-      return `<button class="view-chip ${c.kind} ${active} ${muted}" data-view="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${vCounts[c.id]}</span></button>`;
-    }).join('');
-    vBar.querySelectorAll('.view-chip').forEach(ch => {
-      ch.addEventListener('click', (e) => {
-        e.stopPropagation();
-        viewFilter = ch.dataset.view;
-        try { localStorage.setItem('personal-view-filter', viewFilter); } catch {}
-        render();
-      });
+    const viewSel = document.createElement('select');
+    viewSel.className = 'view-filter-select';
+    if (viewFilter !== 'all') viewSel.classList.add('active');
+    viewSel.innerHTML = vOptions.map(o =>
+      `<option value="${escHtml(o.id)}" ${viewFilter === o.id ? 'selected' : ''}>${escHtml(o.label)}</option>`
+    ).join('');
+    viewSel.addEventListener('change', (e) => {
+      viewFilter = e.target.value || 'all';
+      try { localStorage.setItem('personal-view-filter', viewFilter); } catch {}
+      render();
     });
-    wrap.appendChild(vBar);
+    bar.appendChild(viewSel);
 
     // Status sub-filter — only renders when the ECM chip is active.
     // Mirrors ecm.html: all 13 statuses always visible, short labels, muted
