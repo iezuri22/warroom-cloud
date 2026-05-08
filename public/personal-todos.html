@@ -1882,6 +1882,53 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: rgba(255,138,61,.6); vertical-align: middle;
   }
+  /* Smartsheets-synced section — only renders when todo.smartsheetRowId exists */
+  .todo-ss-section {
+    flex-basis: 100%;
+    margin: 8px 0 4px;
+    padding: 12px 14px;
+    background: rgba(74,158,255,.06);
+    border: 1px solid rgba(74,158,255,.20);
+    border-radius: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .todo-ss-head {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .todo-ss-tag {
+    font-size: 9px; font-weight: 900; letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px;
+    background: rgba(74,158,255,.18); color: #6BA8FF;
+    border: 1px solid rgba(74,158,255,.32);
+  }
+  .todo-ss-ticket {
+    font-size: 11px; font-weight: 800; letter-spacing: .3px;
+    color: rgba(255,255,255,.85);
+    font-variant-numeric: tabular-nums;
+  }
+  .todo-ss-status {
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    padding: 2px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.08); color: rgba(255,255,255,.65);
+  }
+  .todo-ss-ticket-input {
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.92); border-radius: 10px;
+    padding: 10px 12px; font-family: inherit; font-size: 13px; font-weight: 600;
+    outline: none; box-sizing: border-box; width: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+  .todo-ss-ticket-input:focus { border-color: rgba(74,158,255,.5); }
+  .todo-ss-outcome-input {
+    width: 100%; min-height: 70px; resize: vertical;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.92); border-radius: 10px;
+    padding: 10px 12px; font-family: inherit; font-size: 13px; font-weight: 500;
+    line-height: 1.45; outline: none; box-sizing: border-box;
+  }
+  .todo-ss-outcome-input:focus { border-color: rgba(74,158,255,.5); }
+  .todo-ss-outcome-input::placeholder { color: rgba(255,255,255,.25); font-style: italic }
 
   /* Job picker row in expanded drawer — same layout pattern as period row.
      Each job button shows the job's color dot so it's visually obvious. */
@@ -4269,9 +4316,25 @@ const VOICE = {
           `).join('')}
           <button class="job-pick-btn ${!todo.job?'active':''}" data-job="">None</button>
         </div>
+        ${todo.smartsheetRowId ? `
+        <div class="todo-ss-section">
+          <div class="todo-ss-head">
+            <span class="todo-ss-tag">ECM · Smartsheets</span>
+            ${todo.smartsheetTicket ? `<span class="todo-ss-ticket">#${escHtml(String(todo.smartsheetTicket))}</span>` : ''}
+            ${todo.smartsheetStatus ? `<span class="todo-ss-status">${escHtml(todo.smartsheetStatus)}</span>` : ''}
+          </div>
+          <div class="todo-details-row">
+            <span class="lbl">Ticket #</span>
+            <input type="text" class="todo-ss-ticket-input" placeholder="e.g. 119123" value="${escHtml(String(todo.smartsheetTicket || ''))}">
+          </div>
+          <div class="todo-details-row">
+            <span class="lbl">Outcome</span>
+            <textarea class="todo-ss-outcome-input" placeholder="What was the outcome? Resolution notes, next steps, links…">${escHtml(todo.smartsheetOutcome || '')}</textarea>
+          </div>
+        </div>` : ''}
         <div class="todo-details-row">
-          <span class="lbl">Details</span>
-          <textarea class="todo-details-input" placeholder="Notes, context, links — anything useful for this task…">${escHtml(todo.details || '')}</textarea>
+          <span class="lbl">${todo.smartsheetRowId ? 'Description' : 'Details'}</span>
+          <textarea class="todo-details-input" placeholder="${todo.smartsheetRowId ? 'Context for this task — pulled from Smartsheets. Edit to push back.' : 'Notes, context, links — anything useful for this task…'}">${escHtml(todo.details || '')}</textarea>
         </div>`;
       wrapper.appendChild(drawer);
 
@@ -4357,7 +4420,7 @@ const VOICE = {
           render();
         });
       });
-      // ---- Details textarea — save on blur, don't re-render mid-typing ----
+      // ---- Details / Description textarea — save on blur, don't re-render mid-typing ----
       const detailsEl = drawer.querySelector('.todo-details-input');
       if (detailsEl) {
         detailsEl.addEventListener('click', (e) => e.stopPropagation());
@@ -4365,6 +4428,32 @@ const VOICE = {
           const v = detailsEl.value;
           if ((todo.details || '') === (v || '')) return;
           await updateTodoFields(todo.id, { details: v });
+          // Synced ECM rows push the description back to Smartsheets too
+          if (todo.smartsheetRowId) { try { ssPushFields(todo, { 'Details': v }); } catch {} }
+        });
+      }
+      // ---- Smartsheets ticket # — save on blur, push back ----
+      const ticketEl = drawer.querySelector('.todo-ss-ticket-input');
+      if (ticketEl) {
+        ticketEl.addEventListener('click', (e) => e.stopPropagation());
+        ticketEl.addEventListener('blur', async () => {
+          const v = (ticketEl.value || '').trim();
+          if ((todo.smartsheetTicket || '') === v) return;
+          todo.smartsheetTicket = v;
+          await updateTodoFields(todo.id, { smartsheetTicket: v });
+          try { ssPushFields(todo, { 'Ticket #': v }); } catch {}
+        });
+      }
+      // ---- Smartsheets outcome details — save on blur, push back ----
+      const outcomeEl = drawer.querySelector('.todo-ss-outcome-input');
+      if (outcomeEl) {
+        outcomeEl.addEventListener('click', (e) => e.stopPropagation());
+        outcomeEl.addEventListener('blur', async () => {
+          const v = outcomeEl.value;
+          if ((todo.smartsheetOutcome || '') === (v || '')) return;
+          todo.smartsheetOutcome = v;
+          await updateTodoFields(todo.id, { smartsheetOutcome: v });
+          try { ssPushFields(todo, { 'Outcome Details': v }); } catch {}
         });
       }
     }
@@ -4879,6 +4968,7 @@ const VOICE = {
       const colStatus = ssColumnByTitle(sheet, 'Status');
       const colTicket = ssColumnByTitle(sheet, 'Ticket #');
       const colDetails = ssColumnByTitle(sheet, 'Details');
+      const colOutcome = ssColumnByTitle(sheet, 'Outcome Details');
       if (!colTask || !colOwner || !colStatus) {
         throw new Error('Required columns not found (Task Name, Owner, Status).');
       }
@@ -4898,15 +4988,17 @@ const VOICE = {
         if (!text) continue;
         const ticket = colTicket ? (ssCellValue(row, colTicket.id) || '') : '';
         const details = colDetails ? (ssCellValue(row, colDetails.id) || '') : '';
+        const outcome = colOutcome ? (ssCellValue(row, colOutcome.id) || '') : '';
         const status = (ssCellValue(row, colStatus.id) || '').toString();
         const existing = byRowId.get(String(row.id));
         if (existing) {
-          // Update if text/details/status drifted
+          // Update if anything drifted on the Smartsheets side
           const patch = {};
           if (existing.text !== text) patch.text = text;
           if ((existing.details || '') !== (details || '')) patch.details = details;
           if ((existing.smartsheetStatus || '') !== status) patch.smartsheetStatus = status;
           if ((existing.smartsheetTicket || '') !== String(ticket || '')) patch.smartsheetTicket = String(ticket || '');
+          if ((existing.smartsheetOutcome || '') !== (outcome || '')) patch.smartsheetOutcome = outcome;
           if (Object.keys(patch).length) {
             Object.assign(existing, patch);
             try { await updateDoc(doc(db, 'tv_todos', existing.id), patch); } catch {}
@@ -4924,7 +5016,8 @@ const VOICE = {
           smartsheetRowId: String(row.id),
           smartsheetSheetId: String(sheet.id),
           smartsheetTicket: String(ticket || ''),
-          smartsheetStatus: status
+          smartsheetStatus: status,
+          smartsheetOutcome: outcome || ''
         };
         try {
           const ref = await addDoc(todosCol, payload);
@@ -4956,23 +5049,25 @@ const VOICE = {
       if (btn) btn.classList.remove('syncing');
     }
   }
-  // Push completion back. Called from toggleTodo when a synced todo flips done=true.
-  async function ssPushCompletion(todo){
+  // Generic push: write a partial set of column→value pairs back to the synced
+  // Smartsheets row. Caller passes { 'Status': 'Completed', 'Ticket #': '12345', ... }.
+  // Silently no-ops if the todo isn't a synced one or the column doesn't exist.
+  async function ssPushFields(todo, fieldsByTitle){
     if (!todo || !todo.smartsheetRowId || !todo.smartsheetSheetId) return;
     const c = ssGetConfig();
     if (!c.token) return;
+    if (!fieldsByTitle || !Object.keys(fieldsByTitle).length) return;
     try {
-      // Need to know the column ids for Status + Completion Date — pull a tiny
-      // metadata fetch (could cache, but sheet structure rarely changes).
       const sheet = await ssFetchSheet();
-      const colStatus = ssColumnByTitle(sheet, 'Status');
-      const colCompletion = ssColumnByTitle(sheet, 'Completion Date');
       const cells = [];
-      if (colStatus) cells.push({ columnId: colStatus.id, value: 'Completed' });
-      if (colCompletion) cells.push({ columnId: colCompletion.id, value: dkey(new Date()) });
+      for (const [title, value] of Object.entries(fieldsByTitle)) {
+        const col = ssColumnByTitle(sheet, title);
+        if (!col) continue;
+        cells.push({ columnId: col.id, value: value === '' ? null : value, strict: false });
+      }
       if (!cells.length) return;
       const body = [{ id: Number(todo.smartsheetRowId), cells }];
-      await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(todo.smartsheetSheetId)}/rows`, {
+      const res = await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(todo.smartsheetSheetId)}/rows`, {
         method: 'PUT',
         headers: {
           'Authorization': 'Bearer ' + c.token,
@@ -4981,10 +5076,20 @@ const VOICE = {
         },
         body: JSON.stringify(body)
       });
-      // Mirror the local cache so the next pull doesn't try to update it
-      todo.smartsheetStatus = 'Completed';
-      try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'Completed' }); } catch {}
-    } catch (e) { console.error('ssPushCompletion error:', e); }
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        console.error('ssPushFields failed:', res.status, t.slice(0, 200));
+      }
+    } catch (e) { console.error('ssPushFields error:', e); }
+  }
+  // Push completion back. Called from toggleTodo when a synced todo flips done=true.
+  async function ssPushCompletion(todo){
+    await ssPushFields(todo, {
+      'Status': 'Completed',
+      'Completion Date': dkey(new Date())
+    });
+    todo.smartsheetStatus = 'Completed';
+    try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'Completed' }); } catch {}
   }
   // Wire button + auto-sync once a day when the config opts in.
   (function wireSs(){
