@@ -1882,6 +1882,36 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: rgba(255,138,61,.6); vertical-align: middle;
   }
+  /* ECM status sub-filter — appears below job-filter when ECM chip is active */
+  .ecm-status-bar {
+    display: flex; gap: 5px; flex-wrap: wrap;
+    padding: 4px 0 2px;
+  }
+  .ecm-status-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(74,158,255,.20);
+    color: rgba(107,168,255,.7);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .ecm-status-chip:hover { color: #6BA8FF; border-color: rgba(74,158,255,.4) }
+  .ecm-status-chip.active {
+    background: rgba(74,158,255,.16); color: #6BA8FF;
+    border-color: #6BA8FF;
+  }
+  .ecm-status-chip .ct {
+    font-size: 9px; font-weight: 800;
+    padding: 1px 5px; border-radius: 99px;
+    background: rgba(107,168,255,.16);
+    color: rgba(107,168,255,.85);
+  }
+  .ecm-status-chip.active .ct {
+    background: rgba(107,168,255,.3); color: #fff;
+  }
+
   /* Inline Smartsheets ticket # — visible on the task row, no expansion needed */
   .todo-ticket-pill {
     display: inline-block; margin-left: 6px;
@@ -1943,6 +1973,20 @@
   }
   .todo-ss-outcome-input:focus { border-color: rgba(74,158,255,.5); }
   .todo-ss-outcome-input::placeholder { color: rgba(255,255,255,.25); font-style: italic }
+  .todo-ss-status-select {
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.92); border-radius: 10px;
+    padding: 10px 36px 10px 12px;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    outline: none; box-sizing: border-box; width: 100%;
+    cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(107,168,255,0.85)' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  .todo-ss-status-select:focus { border-color: rgba(74,158,255,.5); }
+  .todo-ss-status-select option { background: #15151B; color: #fff }
 
   /* Job picker row in expanded drawer — same layout pattern as period row.
      Each job button shows the job's color dot so it's visually obvious. */
@@ -2482,6 +2526,7 @@
   // Last-used job for the add bar (sticks per device). Filter applied to the list.
   let selectedJob = (function(){ try { return localStorage.getItem('personal-add-job') || ''; } catch { return ''; } })();
   let jobFilter   = (function(){ try { return localStorage.getItem('personal-job-filter') || 'all'; } catch { return 'all'; } })();
+  let ecmStatusFilter = (function(){ try { return localStorage.getItem('personal-ecm-status-filter') || 'all'; } catch { return 'all'; } })();
   // ---- Voice with beep fallback ----
   let speechSupported = false;
   try {
@@ -3389,10 +3434,17 @@ const VOICE = {
         }, '*');
       }
     } catch {}
-    // Push completion back to Smartsheets if this todo originated there.
+    // Push completion state back to Smartsheets if this todo originated there.
+    // done=true → Status=Completed + today's date in Completion Date
+    // done=false → revert Status to To-Do + clear Completion Date (so the
+    //   row's no longer marked done in Smartsheets either)
     // Fire-and-forget so the UI never waits on the network.
-    if (todo.done && todo.smartsheetRowId) {
-      try { ssPushCompletion(todo); } catch {}
+    if (todo.smartsheetRowId) {
+      if (todo.done) {
+        try { ssPushCompletion(todo); } catch {}
+      } else {
+        try { ssPushUncompletion(todo); } catch {}
+      }
     }
   }
   async function removeTodo(id) {
@@ -3738,6 +3790,16 @@ const VOICE = {
     // can still see what they wrapped up today regardless of filter).
     if (jobFilter && jobFilter !== 'all') {
       pending = pending.filter(t => (t.job || '') === jobFilter);
+    } else {
+      // Default "All" view hides ECM (job=work) — those tasks live behind the
+      // ECM chip so the daily Personal list doesn't drown in 30+ Smartsheets
+      // imports. Tap the ECM chip to see them.
+      pending = pending.filter(t => (t.job || '') !== 'work');
+    }
+    // ECM-specific status sub-filter: when viewing the ECM chip, allow
+    // narrowing by Smartsheets status (To-Do, In Progress, Pending IR, etc.)
+    if (jobFilter === 'work' && ecmStatusFilter && ecmStatusFilter !== 'all') {
+      pending = pending.filter(t => (t.smartsheetStatus || '') === ecmStatusFilter);
     }
     // Priority items sort above non-priority. Within each group, sort purely by
     // stored position so manual Move to Top / drag-drop is honored.
@@ -3769,15 +3831,20 @@ const VOICE = {
   }
   // ============ JOB FILTER BAR ============
   function buildJobFilterBar() {
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.gap = '6px';
     const bar = document.createElement('div');
     bar.className = 'job-filter-bar';
-    // Counts (pending only — done tasks stay visible regardless of filter)
+    // Counts (pending only — done tasks stay visible regardless of filter).
+    // "All" excludes ECM (job=work) since those live behind the ECM chip.
     const counts = { all: 0 };
     JOBS.forEach(j => { counts[j.id] = 0; });
     todos.forEach(t => {
       if (t.done) return;
-      counts.all++;
       const j = t.job || '';
+      if (j !== 'work') counts.all++;
       if (counts[j] !== undefined) counts[j]++;
     });
     const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
@@ -3834,7 +3901,38 @@ const VOICE = {
       } catch {}
       window.location.href = '/goal-board.html';
     });
-    return bar;
+    wrap.appendChild(bar);
+    // Status sub-filter — only renders when ECM (job=work) chip is active
+    if (jobFilter === 'work') {
+      const ecmTodos = todos.filter(t => !t.done && (t.job || '') === 'work');
+      // Build status counts for what we currently have
+      const statusCounts = { all: ecmTodos.length };
+      SS_STATUSES.forEach(s => { statusCounts[s] = 0; });
+      ecmTodos.forEach(t => {
+        const s = t.smartsheetStatus || '';
+        if (statusCounts[s] !== undefined) statusCounts[s]++;
+      });
+      // Only render statuses that have at least one task — avoids 13 empty chips
+      const visibleStatuses = SS_STATUSES.filter(s => statusCounts[s] > 0);
+      const sub = document.createElement('div');
+      sub.className = 'ecm-status-bar';
+      const statusChips = [{ id: 'all', label: 'All', count: statusCounts.all }]
+        .concat(visibleStatuses.map(s => ({ id: s, label: s, count: statusCounts[s] })));
+      sub.innerHTML = statusChips.map(c => {
+        const active = ecmStatusFilter === c.id ? 'active' : '';
+        return `<button class="ecm-status-chip ${active}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+      }).join('');
+      sub.querySelectorAll('.ecm-status-chip').forEach(ch => {
+        ch.addEventListener('click', (e) => {
+          e.stopPropagation();
+          ecmStatusFilter = ch.dataset.status;
+          try { localStorage.setItem('personal-ecm-status-filter', ecmStatusFilter); } catch {}
+          render();
+        });
+      });
+      wrap.appendChild(sub);
+    }
+    return wrap;
   }
   // ============ MANAGE JOBS MODAL ============
   // Drafts editing into a temp array, commits on Save.
@@ -4335,7 +4433,12 @@ const VOICE = {
           <div class="todo-ss-head">
             <span class="todo-ss-tag">ECM · Smartsheets</span>
             ${todo.smartsheetTicket ? `<span class="todo-ss-ticket">#${escHtml(String(todo.smartsheetTicket))}</span>` : ''}
-            ${todo.smartsheetStatus ? `<span class="todo-ss-status">${escHtml(todo.smartsheetStatus)}</span>` : ''}
+          </div>
+          <div class="todo-details-row">
+            <span class="lbl">Status</span>
+            <select class="todo-ss-status-select">
+              ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${(todo.smartsheetStatus || '') === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
+            </select>
           </div>
           <div class="todo-details-row">
             <span class="lbl">Ticket #</span>
@@ -4444,6 +4547,32 @@ const VOICE = {
           await updateTodoFields(todo.id, { details: v });
           // Synced ECM rows push the description back to Smartsheets too
           if (todo.smartsheetRowId) { try { ssPushFields(todo, { 'Details': v }); } catch {} }
+        });
+      }
+      // ---- Smartsheets status dropdown — change fires immediately, push back ----
+      const statusEl = drawer.querySelector('.todo-ss-status-select');
+      if (statusEl) {
+        statusEl.addEventListener('click', (e) => e.stopPropagation());
+        statusEl.addEventListener('change', async () => {
+          const v = statusEl.value;
+          if ((todo.smartsheetStatus || '') === v) return;
+          todo.smartsheetStatus = v;
+          // Mirror local done state to match the chosen status:
+          //   Completed → done=true (and set Completion Date today)
+          //   anything else → done=false (and clear Completion Date)
+          const wantsDone = (v === 'Completed');
+          const patch = { smartsheetStatus: v };
+          if (todo.done !== wantsDone) {
+            todo.done = wantsDone;
+            patch.done = wantsDone;
+          }
+          await updateTodoFields(todo.id, patch);
+          // Push to Smartsheets — include Completion Date alignment
+          const fields = { 'Status': v };
+          if (wantsDone) fields['Completion Date'] = dkey(new Date());
+          else fields['Completion Date'] = null;
+          try { ssPushFields(todo, fields); } catch {}
+          render();
         });
       }
       // ---- Smartsheets ticket # — save on blur, push back ----
@@ -5131,6 +5260,9 @@ const VOICE = {
     }
     return pushed;
   }
+  // Full list of Smartsheets statuses, in the order they appear in the picklist.
+  // Used for the dropdown in the drawer + the un-complete revert default.
+  const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Not feasible - close ticket','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT','Completed'];
   // Push completion back. Called from toggleTodo when a synced todo flips done=true.
   async function ssPushCompletion(todo){
     await ssPushFields(todo, {
@@ -5139,6 +5271,17 @@ const VOICE = {
     });
     todo.smartsheetStatus = 'Completed';
     try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'Completed' }); } catch {}
+  }
+  // Push un-completion back. Reverts Status to To-Do (sensible "open" default,
+  // user can pick a different status from the dropdown afterwards) and clears
+  // the Completion Date.
+  async function ssPushUncompletion(todo){
+    await ssPushFields(todo, {
+      'Status': 'To-Do',
+      'Completion Date': null
+    });
+    todo.smartsheetStatus = 'To-Do';
+    try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'To-Do' }); } catch {}
   }
   // Wire button + auto-sync once a day when the config opts in.
   (function wireSs(){
