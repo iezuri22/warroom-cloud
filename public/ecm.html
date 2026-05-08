@@ -130,6 +130,8 @@
   .status-chip.active .ct {
     background: rgba(74,158,255,.25); color: #6BA8FF;
   }
+  .status-chip.muted { opacity: .35 }
+  .status-chip.muted:hover { opacity: .7 }
 
   /* ============ ROW LIST ============ */
   .list { flex: 1; overflow-y: auto; padding: 12px 20px 80px; display: flex; flex-direction: column; gap: 6px; }
@@ -188,6 +190,14 @@
     padding: 2px 7px; border-radius: 99px;
     background: rgba(74,158,255,.10);
     border: 1px solid rgba(74,158,255,.22);
+  }
+  .row-program {
+    font-size: 10px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase;
+    padding: 2px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.06);
+    color: rgba(255,255,255,.6);
+    border: 1px solid rgba(255,255,255,.10);
   }
 
   /* ============ EXPAND DRAWER ============ */
@@ -293,6 +303,9 @@
     <select class="owner-pick" id="ownerSelect" title="Filter by owner">
       <option value="">All owners</option>
     </select>
+    <select class="owner-pick" id="programSelect" title="Filter by program">
+      <option value="">All programs</option>
+    </select>
   </div>
   <div class="status-bar" id="statusBar"></div>
 </div>
@@ -304,6 +317,23 @@
 <script>
 const SS_KEY = 'smartsheets-config';
 const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Not feasible - close ticket','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT','Completed'];
+// Shorter labels for the horizontally-scrolling chip strip; the drawer
+// dropdown still shows the full names so picking is unambiguous.
+const SS_STATUS_SHORT = {
+  'Requested': 'Requested',
+  'To-Do': 'To-Do',
+  'Pending IR': 'Pending IR',
+  'Ticket Sent': 'Ticket Sent',
+  'On Hold': 'On Hold',
+  'Waitlisted': 'Waitlisted',
+  'Further discussion': 'Discuss',
+  'Not feasible - close ticket': 'Not feasible',
+  'Discussed with Dev': 'With Dev',
+  'In Progress': 'In Progress',
+  'Verified on PRE': 'V on PRE',
+  'Verified on UAT': 'V on UAT',
+  'Completed': 'Completed'
+};
 function statusClass(s){
   if (s === 'Completed' || s === 'Verified on PRE' || s === 'Verified on UAT') return 's-done';
   if (s === 'In Progress' || s === 'Discussed with Dev') return 's-progress';
@@ -322,6 +352,7 @@ let columns = {};          // title → column object
 let filterStatus = 'all';
 let filterSearch = '';
 let filterOwner = '';
+let filterProgram = '';
 let expandedId = null;
 
 function setExpanded(id){
@@ -375,6 +406,7 @@ async function loadSheet(){
     const colTicket = columns['Ticket #'];
     const colStatus = columns['Status'];
     const colOwner = columns['Owner'];
+    const colProgram = columns['Program'];
     const colDetails = columns['Details'];
     const colOutcome = columns['Outcome Details'];
     const colSubType = columns['Sub-Type'];
@@ -385,6 +417,7 @@ async function loadSheet(){
       ticket: colTicket ? cellValue(r, colTicket.id) : '',
       status: colStatus ? cellValue(r, colStatus.id) : '',
       owner: colOwner ? cellValue(r, colOwner.id) : '',
+      program: colProgram ? cellValue(r, colProgram.id) : '',
       details: colDetails ? cellValue(r, colDetails.id) : '',
       outcome: colOutcome ? cellValue(r, colOutcome.id) : '',
       subType: colSubType ? cellValue(r, colSubType.id) : '',
@@ -392,6 +425,7 @@ async function loadSheet(){
       modifiedAt: r.modifiedAt || ''
     }));
     populateOwnerSelect();
+    populateProgramSelect();
     render();
   } catch (e) {
     console.error(e);
@@ -409,10 +443,26 @@ function populateOwnerSelect(){
   if (!filterOwner && c.owner && owners.includes(c.owner)) filterOwner = c.owner;
   sel.innerHTML = `<option value="">All owners</option>` + owners.map(o => `<option value="${escHtml(o)}" ${o === filterOwner ? 'selected' : ''}>${escHtml(o)}</option>`).join('');
 }
+function populateProgramSelect(){
+  const sel = document.getElementById('programSelect');
+  if (!sel) return;
+  // Use the column's defined options if available (covers programs that aren't
+  // currently in any visible row), else fall back to discovered values.
+  const colProgram = columns['Program'];
+  let programs = [];
+  if (colProgram && Array.isArray(colProgram.options) && colProgram.options.length) {
+    programs = colProgram.options.slice();
+  } else {
+    programs = Array.from(new Set(rows.map(r => r.program).filter(Boolean)));
+  }
+  programs.sort();
+  sel.innerHTML = `<option value="">All programs</option>` + programs.map(p => `<option value="${escHtml(p)}" ${p === filterProgram ? 'selected' : ''}>${escHtml(p)}</option>`).join('');
+}
 
 function applyFilters(){
   let pool = rows.slice();
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
+  if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
   if (filterStatus !== 'all') {
     if (filterStatus === '__open__') {
       pool = pool.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket');
@@ -440,23 +490,29 @@ function applyFilters(){
 
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
-  // Count statuses across all rows (after owner filter, before status filter)
-  const ownerScoped = filterOwner ? rows.filter(r => r.owner === filterOwner) : rows;
+  // Count statuses across rows that match owner + program (the "scope") so
+  // status-chip counts always reflect what you're looking at.
+  let scoped = rows;
+  if (filterOwner) scoped = scoped.filter(r => r.owner === filterOwner);
+  if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
   const counts = {
-    all: ownerScoped.length,
-    __open__: ownerScoped.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length
+    all: scoped.length,
+    __open__: scoped.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length
   };
-  SS_STATUSES.forEach(s => { counts[s] = ownerScoped.filter(r => r.status === s).length; });
+  SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   const chips = [
     { id: 'all', label: 'All', count: counts.all },
     { id: '__open__', label: 'Open', count: counts.__open__ }
   ];
+  // Always show every status — even empty — so the user can switch to one
+  // they expect to populate later. Empty ones get a "muted" class.
   SS_STATUSES.forEach(s => {
-    if (counts[s] > 0) chips.push({ id: s, label: s, count: counts[s] });
+    chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: counts[s] || 0 });
   });
-  bar.innerHTML = chips.map(c => `
-    <button class="status-chip ${filterStatus === c.id ? 'active' : ''}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>
-  `).join('');
+  bar.innerHTML = chips.map(c => {
+    const muted = c.count === 0 && c.id !== 'all' && c.id !== '__open__' ? 'muted' : '';
+    return `<button class="status-chip ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+  }).join('');
   bar.querySelectorAll('.status-chip').forEach(b => {
     b.addEventListener('click', () => {
       filterStatus = b.dataset.status;
@@ -482,11 +538,12 @@ function render(){
     const sCls = statusClass(r.status);
     const ticketHTML = r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '';
     const statusHTML = r.status ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>` : '';
+    const programHTML = r.program ? `<span class="row-program">${escHtml(r.program)}</span>` : '';
     row.innerHTML = `
       <div class="row-head">
         ${statusHTML}
         <span class="row-text">${escHtml(r.task)}</span>
-        <span class="row-meta">${ticketHTML}${r.subType ? `<span>${escHtml(r.subType)}</span>` : ''}</span>
+        <span class="row-meta">${programHTML}${ticketHTML}${r.subType ? `<span>${escHtml(r.subType)}</span>` : ''}</span>
       </div>
       <div class="drawer">
         <div class="field">
@@ -601,6 +658,10 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
 });
 document.getElementById('ownerSelect').addEventListener('change', (e) => {
   filterOwner = e.target.value || '';
+  render();
+});
+document.getElementById('programSelect').addEventListener('change', (e) => {
+  filterProgram = e.target.value || '';
   render();
 });
 
