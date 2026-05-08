@@ -336,6 +336,36 @@
   body.focus5-active #ptMusicBar { display: none }
   /* Manual hide via shell button — persists across refreshes (PT_MUSIC_HIDE) */
   body.music-hidden #ptMusicBar { display: none }
+
+  /* ============ SMARTSHEETS SYNC BUTTON ============ */
+  .pt-ss-sync {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 99px;
+    background: rgba(74,158,255,.10);
+    border: 1px solid rgba(74,158,255,.32);
+    color: #6BA8FF;
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .2px; cursor: pointer;
+    margin-bottom: 8px;
+    transition: background .15s, border-color .15s, transform .12s;
+  }
+  .pt-ss-sync:hover { background: rgba(74,158,255,.18); border-color: #6BA8FF }
+  .pt-ss-sync:active { transform: scale(.97) }
+  .pt-ss-sync.syncing svg { animation: pt-ss-spin 1s linear infinite }
+  .pt-ss-sync.syncing { pointer-events: none; opacity: .7 }
+  @keyframes pt-ss-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+  .pt-ss-sync .ct {
+    font-size: 10px; font-weight: 800;
+    padding: 1px 6px; border-radius: 99px;
+    background: rgba(74,158,255,.22);
+    color: #6BA8FF;
+  }
+  .pt-ss-sync.error {
+    background: rgba(248,113,113,.10);
+    border-color: rgba(248,113,113,.4);
+    color: #F87171;
+  }
+  body.focus5-active .pt-ss-sync { display: none !important }
   /* Tighter mainHead in focus mode — just the pill, no surrounding air */
   body.focus5-active #mainHead { padding: 6px 18px 0 }
   /* Tighten the scrolling list so the focus cards have less top air */
@@ -2166,6 +2196,11 @@
           </button>
         </div>
       </div>
+      <button class="pt-ss-sync" id="ptSsSyncBtn" type="button" title="Sync from Smartsheets" style="display:none">
+        <svg id="ptSsSyncIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        <span id="ptSsSyncLabel">Sync ECM</span>
+        <span id="ptSsSyncCount" class="ct" style="display:none"></span>
+      </button>
       <div class="pt-goals-row" id="ptGoalsRow"></div>
       <div class="pt-focus-toggle" id="ptFocusToggle" role="button" tabindex="0">
         <span class="pt-focus-tag">Focus 5</span>
@@ -3293,6 +3328,11 @@ const VOICE = {
         }, '*');
       }
     } catch {}
+    // Push completion back to Smartsheets if this todo originated there.
+    // Fire-and-forget so the UI never waits on the network.
+    if (todo.done && todo.smartsheetRowId) {
+      try { ssPushCompletion(todo); } catch {}
+    }
   }
   async function removeTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
@@ -4777,6 +4817,195 @@ const VOICE = {
   window.addEventListener('storage', (ev) => {
     if (ev && ev.key === PT_MUSIC_HIDE_KEY) ptApplyHideClass();
   });
+
+  // ============ SMARTSHEETS SYNC ============
+  // Pulls incomplete rows from configured ECM sheet, dedupes by smartsheetRowId,
+  // creates Personal todos tagged with job=work. Pushes Status=Completed back
+  // when a synced todo is marked done. Token + sheet id come from War Room
+  // Settings panel; stored in localStorage on the user's device only.
+  const SS_KEY = 'smartsheets-config';
+  const SS_INCOMPLETE_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT'];
+  function ssGetConfig(){
+    try { return JSON.parse(localStorage.getItem(SS_KEY) || '{}'); } catch { return {}; }
+  }
+  function ssSaveConfig(patch){
+    const cur = ssGetConfig();
+    const next = Object.assign({}, cur, patch);
+    try { localStorage.setItem(SS_KEY, JSON.stringify(next)); } catch {}
+  }
+  function ssIsConfigured(){
+    const c = ssGetConfig();
+    return !!(c.token && c.sheetId && c.owner);
+  }
+  function ssShowSyncBtn(){
+    const btn = document.getElementById('ptSsSyncBtn');
+    if (btn) btn.style.display = ssIsConfigured() ? '' : 'none';
+  }
+  async function ssFetchSheet(){
+    const c = ssGetConfig();
+    const res = await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(c.sheetId)}`, {
+      headers: { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/json' }
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Smartsheets ${res.status}: ${txt.slice(0, 200)}`);
+    }
+    return await res.json();
+  }
+  function ssColumnByTitle(sheet, title){
+    return (sheet.columns || []).find(c => c.title === title) || null;
+  }
+  function ssCellValue(row, colId){
+    const cell = (row.cells || []).find(c => c.columnId === colId);
+    return cell ? (cell.displayValue ?? cell.value ?? null) : null;
+  }
+  // Pull and merge. Returns { added, updated, skipped }.
+  async function ssSync(){
+    if (!ssIsConfigured()) {
+      alert('Open Settings (gear icon) and add your Smartsheets API token, sheet ID, and owner name first.');
+      return null;
+    }
+    const btn = document.getElementById('ptSsSyncBtn');
+    const label = document.getElementById('ptSsSyncLabel');
+    const count = document.getElementById('ptSsSyncCount');
+    if (btn) { btn.classList.add('syncing'); btn.classList.remove('error'); }
+    if (label) label.textContent = 'Syncing…';
+    if (count) count.style.display = 'none';
+    try {
+      const sheet = await ssFetchSheet();
+      const c = ssGetConfig();
+      const colTask = ssColumnByTitle(sheet, 'Task Name');
+      const colOwner = ssColumnByTitle(sheet, 'Owner');
+      const colStatus = ssColumnByTitle(sheet, 'Status');
+      const colTicket = ssColumnByTitle(sheet, 'Ticket #');
+      const colDetails = ssColumnByTitle(sheet, 'Details');
+      if (!colTask || !colOwner || !colStatus) {
+        throw new Error('Required columns not found (Task Name, Owner, Status).');
+      }
+      const ownerName = (c.owner || '').toLowerCase();
+      const incomplete = (sheet.rows || []).filter(r => {
+        const o = (ssCellValue(r, colOwner.id) || '').toString().toLowerCase();
+        const s = (ssCellValue(r, colStatus.id) || '').toString();
+        if (o !== ownerName) return false;
+        return SS_INCOMPLETE_STATUSES.includes(s);
+      });
+      // Dedupe map: smartsheetRowId → existing todo
+      const byRowId = new Map();
+      todos.forEach(t => { if (t.smartsheetRowId) byRowId.set(String(t.smartsheetRowId), t); });
+      let added = 0, updated = 0;
+      for (const row of incomplete) {
+        const text = (ssCellValue(row, colTask.id) || '').toString().trim();
+        if (!text) continue;
+        const ticket = colTicket ? (ssCellValue(row, colTicket.id) || '') : '';
+        const details = colDetails ? (ssCellValue(row, colDetails.id) || '') : '';
+        const status = (ssCellValue(row, colStatus.id) || '').toString();
+        const existing = byRowId.get(String(row.id));
+        if (existing) {
+          // Update if text/details/status drifted
+          const patch = {};
+          if (existing.text !== text) patch.text = text;
+          if ((existing.details || '') !== (details || '')) patch.details = details;
+          if ((existing.smartsheetStatus || '') !== status) patch.smartsheetStatus = status;
+          if ((existing.smartsheetTicket || '') !== String(ticket || '')) patch.smartsheetTicket = String(ticket || '');
+          if (Object.keys(patch).length) {
+            Object.assign(existing, patch);
+            try { await updateDoc(doc(db, 'tv_todos', existing.id), patch); } catch {}
+            updated++;
+          }
+          continue;
+        }
+        // Create new
+        const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position || 0)) + 1 : 0;
+        const payload = {
+          text, done: false, date: dkey(currentDate), position: maxPos,
+          timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
+          job: 'work',
+          details: details || '',
+          smartsheetRowId: String(row.id),
+          smartsheetSheetId: String(sheet.id),
+          smartsheetTicket: String(ticket || ''),
+          smartsheetStatus: status
+        };
+        try {
+          const ref = await addDoc(todosCol, payload);
+          todos.push(Object.assign({ id: ref.id }, payload));
+          added++;
+        } catch (e) { console.error('ss add error:', e); }
+      }
+      ssSaveConfig({ lastSyncAt: Date.now() });
+      try { render(); } catch {}
+      if (label) label.textContent = `Synced · ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;
+      if (count) {
+        if (added || updated) {
+          count.textContent = `+${added}${updated ? ` · ~${updated}` : ''}`;
+          count.style.display = '';
+        } else {
+          count.textContent = 'no change';
+          count.style.display = '';
+        }
+      }
+      setTimeout(() => { if (label) label.textContent = 'Sync ECM'; if (count) count.style.display = 'none'; }, 4000);
+      return { added, updated, total: incomplete.length };
+    } catch (e) {
+      console.error('ssSync error:', e);
+      if (btn) btn.classList.add('error');
+      if (label) label.textContent = 'Sync failed';
+      setTimeout(() => { if (btn) btn.classList.remove('error'); if (label) label.textContent = 'Sync ECM'; }, 4000);
+      return null;
+    } finally {
+      if (btn) btn.classList.remove('syncing');
+    }
+  }
+  // Push completion back. Called from toggleTodo when a synced todo flips done=true.
+  async function ssPushCompletion(todo){
+    if (!todo || !todo.smartsheetRowId || !todo.smartsheetSheetId) return;
+    const c = ssGetConfig();
+    if (!c.token) return;
+    try {
+      // Need to know the column ids for Status + Completion Date — pull a tiny
+      // metadata fetch (could cache, but sheet structure rarely changes).
+      const sheet = await ssFetchSheet();
+      const colStatus = ssColumnByTitle(sheet, 'Status');
+      const colCompletion = ssColumnByTitle(sheet, 'Completion Date');
+      const cells = [];
+      if (colStatus) cells.push({ columnId: colStatus.id, value: 'Completed' });
+      if (colCompletion) cells.push({ columnId: colCompletion.id, value: dkey(new Date()) });
+      if (!cells.length) return;
+      const body = [{ id: Number(todo.smartsheetRowId), cells }];
+      await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(todo.smartsheetSheetId)}/rows`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': 'Bearer ' + c.token,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      // Mirror the local cache so the next pull doesn't try to update it
+      todo.smartsheetStatus = 'Completed';
+      try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'Completed' }); } catch {}
+    } catch (e) { console.error('ssPushCompletion error:', e); }
+  }
+  // Wire button + auto-sync once a day when the config opts in.
+  (function wireSs(){
+    const btn = document.getElementById('ptSsSyncBtn');
+    if (btn) btn.addEventListener('click', () => ssSync());
+    ssShowSyncBtn();
+    // Listen for settings changes from the shell
+    window.addEventListener('message', (ev) => {
+      const d = ev && ev.data;
+      if (d && d.type === 'warroom:smartsheets-config-changed') ssShowSyncBtn();
+    });
+    // Daily auto-sync — runs once per Chicago day on first load if opted in
+    setTimeout(() => {
+      const c = ssGetConfig();
+      if (!c.autoSync || !ssIsConfigured()) return;
+      const last = c.lastSyncAt ? new Date(c.lastSyncAt) : null;
+      const today = todayKey();
+      const lastDay = last ? dkey(last) : '';
+      if (lastDay !== today) ssSync();
+    }, 1500); // small delay so the page settles + todos load first
+  })();
 
   // Initial render. If state has a saved vibe, attach a one-shot listener that
   // resumes audio on the first user interaction (browsers block autoplay).

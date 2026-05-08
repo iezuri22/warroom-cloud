@@ -2319,6 +2319,20 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
       <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Sync button pulls live events from your calendars</div>
     </div>
     <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+      <span style="font-size:13px;font-weight:700">Smartsheets (ECM sync)</span>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;margin-bottom:8px">Pulls incomplete rows assigned to you. When you mark one done in Personal, pushes Status=Completed back. Token stored on this device only.</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <input type="password" id="ssApiTokenInput" placeholder="Smartsheets API token" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
+        <input type="text" id="ssSheetIdInput" placeholder="Sheet ID (e.g. 4520190898294660)" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
+        <input type="text" id="ssOwnerInput" placeholder="Owner name to filter (e.g. Ifeanyi)" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer"><input type="checkbox" id="ssAutoSyncInput" style="margin:0"> Auto-sync once a day</label>
+          <button onclick="saveSmartsheetsSettings()" style="margin-left:auto;font-family:var(--ios-font);font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:none;background:var(--text);color:var(--bg);cursor:pointer">Save</button>
+        </div>
+        <div id="ssStatus" style="font-size:11px;color:var(--text-dim)"></div>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
       <span style="font-size:13px;font-weight:700">Account</span>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button onclick="if(confirm('Sign out of War Room?'))window.warroomLogout()" style="font-family:var(--ios-font);font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:1px solid rgba(220,38,38,.3);background:var(--surface);color:var(--overdue);cursor:pointer;display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Log Out</button>
@@ -4715,7 +4729,43 @@ function toggleApiKeyPanel(){
     const key=getApiKey();
     document.getElementById('apiKeyInput').value=key;
     document.getElementById('apiKeyStatus').textContent=key?'Key is set.':'No key saved yet.';
+    // Smartsheets — pre-fill from saved settings
+    try {
+      const ss = JSON.parse(localStorage.getItem('smartsheets-config') || '{}');
+      const tokenInp = document.getElementById('ssApiTokenInput');
+      const sheetInp = document.getElementById('ssSheetIdInput');
+      const ownerInp = document.getElementById('ssOwnerInput');
+      const autoInp = document.getElementById('ssAutoSyncInput');
+      const status = document.getElementById('ssStatus');
+      if (tokenInp) tokenInp.value = ss.token || '';
+      if (sheetInp) sheetInp.value = ss.sheetId || '';
+      if (ownerInp) ownerInp.value = ss.owner || '';
+      if (autoInp) autoInp.checked = !!ss.autoSync;
+      if (status) {
+        const lastSync = ss.lastSyncAt ? new Date(ss.lastSyncAt).toLocaleString() : '';
+        status.textContent = ss.token ? `Configured. ${lastSync ? 'Last sync: ' + lastSync : 'Not synced yet.'}` : 'Not configured.';
+      }
+    } catch {}
   }
+}
+function saveSmartsheetsSettings(){
+  const cur = (function(){ try { return JSON.parse(localStorage.getItem('smartsheets-config') || '{}'); } catch { return {}; } })();
+  const next = {
+    token: (document.getElementById('ssApiTokenInput')?.value || '').trim(),
+    sheetId: (document.getElementById('ssSheetIdInput')?.value || '').trim(),
+    owner: (document.getElementById('ssOwnerInput')?.value || '').trim(),
+    autoSync: !!document.getElementById('ssAutoSyncInput')?.checked,
+    lastSyncAt: cur.lastSyncAt || null
+  };
+  try { localStorage.setItem('smartsheets-config', JSON.stringify(next)); } catch {}
+  const status = document.getElementById('ssStatus');
+  if (status) status.textContent = 'Saved. Open Personal and tap the Smartsheets sync button to pull.';
+  // Tell personal-todos iframe to refresh its config
+  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame'];
+  frames.forEach(id => {
+    const f = document.getElementById(id);
+    try { f && f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:smartsheets-config-changed' }, '*'); } catch {}
+  });
 }
 function saveApiKey(){
   const key=document.getElementById('apiKeyInput').value.trim();
