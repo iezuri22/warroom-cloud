@@ -334,8 +334,9 @@
   body.focus5-active #filterBarSlot,
   body.focus5-active #ptGoalsRow,
   body.focus5-active #ptMusicBar { display: none }
-  /* Manual hide via shell button — persists across refreshes (PT_MUSIC_HIDE) */
-  body.music-hidden #ptMusicBar { display: none }
+  /* Music bar is now permanently hidden — UI lives in a popover on the shell.
+     Engine + audio iframe stay here so race overlay flow keeps working. */
+  #ptMusicBar { display: none !important }
 
   /* ============ SMARTSHEETS SYNC BUTTON ============ */
   .pt-ss-sync {
@@ -5034,30 +5035,19 @@ const VOICE = {
     } catch {}
   });
 
-  // Music bar visibility is owned by the War Room shell (single source of
-  // truth in localStorage). We just read + apply. Audio keeps playing either
-  // way — hiding only collapses the chips/controls.
-  const PT_MUSIC_HIDE_KEY = 'pt-music-bar-hidden-v1';
-  function ptApplyHideClass(){
-    let hidden = false;
-    try { hidden = localStorage.getItem(PT_MUSIC_HIDE_KEY) === '1'; } catch {}
-    document.body.classList.toggle('music-hidden', hidden);
-  }
-  ptApplyHideClass();
-  // Shell broadcasts via postMessage immediately after writing localStorage.
+  // Music bar UI now lives in a popover on the shell. The engine + audio
+  // iframe stay here (so race overlay can still hand off to sprint), but the
+  // shell drives them via postMessage:
+  //   warroom:play-vibe  { vibe: 'hiphop' }
+  //   warroom:stop-music
   window.addEventListener('message', (ev) => {
     const d = ev && ev.data;
     if (!d || typeof d !== 'object') return;
-    if (d.type === 'warroom:music-hidden') {
-      document.body.classList.toggle('music-hidden', !!d.hidden);
-    } else if (d.type === 'warroom:toggle-music-bar') {
-      // Legacy compat — still works if older shell version is loaded
-      ptApplyHideClass();
+    if (d.type === 'warroom:play-vibe' && typeof d.vibe === 'string') {
+      try { ptPlayVibe(d.vibe); } catch (e) { console.warn('play-vibe', e); }
+    } else if (d.type === 'warroom:stop-music') {
+      try { ptStopMusic(); } catch (e) { console.warn('stop-music', e); }
     }
-  });
-  // Cross-document storage event (fires in iframes when SHELL writes localStorage).
-  window.addEventListener('storage', (ev) => {
-    if (ev && ev.key === PT_MUSIC_HIDE_KEY) ptApplyHideClass();
   });
 
   // ============ SMARTSHEETS SYNC ============
