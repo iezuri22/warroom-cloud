@@ -4707,8 +4707,12 @@ const VOICE = {
 
   // -------- PICKER --------
   function openFocus5Picker(){
-    // Seed selection with current saved picks (so user can edit instead of restart)
-    _focus5PickerSel = focus5State.taskIds.slice();
+    // Seed selection with current saved picks so the user can ADJUST instead
+    // of starting from zero — but skip already-done tasks (they live in the
+    // pool as completed and the user picking them again would be confusing).
+    // If the user hits Cancel, focus5State stays untouched so nothing is lost.
+    const doneIds = new Set(todos.filter(t => t.done).map(t => t.id));
+    _focus5PickerSel = focus5State.taskIds.filter(id => !doneIds.has(id));
     renderFocus5Picker();
     const bd = document.getElementById('focus5PickerBackdrop');
     if (bd) { bd.classList.add('show'); bd.setAttribute('aria-hidden','false'); }
@@ -4888,29 +4892,20 @@ const VOICE = {
       tasks.forEach((t, i) => {
         view.appendChild(buildFocus5Card(t, i, /*isActive*/ false, /*isDone*/ !!t.done, i + 1, /*editing*/ true, /*total*/ tasks.length));
       });
-      // Foot row: add more (if room) + repick all
+      // Foot row: open picker (it pre-loads current picks so editing is
+      // non-destructive — Cancel keeps everything as it was).
       const foot = document.createElement('div');
       foot.className = 'focus5-edit-foot';
       const slotsLeft = 5 - tasks.length;
+      const addLabel = slotsLeft > 0
+        ? `Add or swap (${slotsLeft} slot${slotsLeft === 1 ? '' : 's'} open)`
+        : `Swap a pick`;
       foot.innerHTML = `
-        ${slotsLeft > 0
-          ? `<button class="focus5-btn" id="focus5AddBtn" type="button">+ Add ${slotsLeft === 1 ? '1 more' : slotsLeft + ' more'}</button>`
-          : ''}
-        <button class="focus5-btn" id="focus5RepickAllBtn" type="button">Repick all 5</button>
+        <button class="focus5-btn" id="focus5AddBtn" type="button">${addLabel}</button>
       `;
       view.appendChild(foot);
       const addBtn = foot.querySelector('#focus5AddBtn');
-      const repickAllBtn = foot.querySelector('#focus5RepickAllBtn');
-      if (addBtn) addBtn.addEventListener('click', () => {
-        // Open picker pre-loaded with current picks; user can add up to 5 total
-        openFocus5Picker();
-      });
-      if (repickAllBtn) repickAllBtn.addEventListener('click', () => {
-        focus5State.taskIds = []; saveFocus5();
-        _focus5EditMode = false;
-        document.body.classList.remove('focus5-editing');
-        openFocus5Picker();
-      });
+      if (addBtn) addBtn.addEventListener('click', () => openFocus5Picker());
       list.appendChild(view);
       return;
     }
@@ -4930,10 +4925,10 @@ const VOICE = {
       list.appendChild(view);
       const repick = celebrate.querySelector('#focus5RepickBtn');
       const exit = celebrate.querySelector('#focus5ExitBtn');
-      if (repick) repick.addEventListener('click', () => {
-        focus5State.taskIds = []; saveFocus5();
-        openFocus5Picker();
-      });
+      // Don't wipe taskIds — openFocus5Picker filters out already-done tasks
+      // from the pre-loaded selection, so the picker effectively starts fresh
+      // here, but Cancel is non-destructive.
+      if (repick) repick.addEventListener('click', () => openFocus5Picker());
       if (exit) exit.addEventListener('click', () => {
         focus5State.active = false; saveFocus5(); render();
       });
