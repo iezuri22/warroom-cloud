@@ -273,14 +273,20 @@
     width: 100%; height: 100%; border: 0; display: block;
   }
   .race-close {
-    position: fixed; top: 12px; right: 14px; z-index: 260;
-    width: 38px; height: 38px; border-radius: 50%;
-    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
-    color: rgba(255,255,255,.85); cursor: pointer;
-    display: none; align-items: center; justify-content: center;
+    position: fixed; top: 12px; left: 14px; z-index: 260;
+    height: 38px; padding: 0 16px 0 12px; border-radius: 99px;
+    background: rgba(5,5,7,.78); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.16);
+    color: rgba(255,255,255,.92); cursor: pointer;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    letter-spacing: .2px;
+    display: none; align-items: center; gap: 6px;
+    transition: background .15s, border-color .15s, transform .12s;
   }
   .race-overlay.show + .race-close { display: inline-flex }
-  .race-close:hover { color: #fff; background: rgba(255,255,255,.10) }
+  .race-close:hover { color: #fff; background: rgba(5,5,7,.92); border-color: rgba(255,255,255,.28) }
+  .race-close:active { transform: scale(.97) }
+  .race-close svg { flex-shrink: 0 }
 
   /* ============ HOUR GOALS ============ */
   .pt-goals-row {
@@ -321,6 +327,333 @@
     .pt-goal { padding: 8px 12px }
     .pt-goal-val { font-size: 13px }
   }
+
+  /* When focus mode is engaged, hide chrome that doesn't belong: filter bar
+     and the goals row collapse so the 5 cards have full attention. */
+  body.focus5-active #filterBarSlot,
+  body.focus5-active #ptGoalsRow { display: none }
+  body.focus5-active .pt-music-bar { margin-bottom: 8px }
+
+  /* ============ FOCUS 5 — pick five tasks, see only those, game-feel ============ */
+  /* Compact toggle pill above the filter bar. Shows current state at a glance. */
+  .pt-focus-toggle {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; margin-bottom: 10px;
+    background: linear-gradient(135deg, rgba(255,138,61,.12), rgba(255,107,26,.06));
+    border: 1px solid rgba(255,138,61,.28);
+    border-radius: 14px; padding: 12px 16px; cursor: pointer;
+    color: #fff; font-family: inherit;
+    transition: border-color .15s, transform .12s, background .2s;
+  }
+  .pt-focus-toggle:hover { border-color: #FF8A3D; transform: translateY(-1px) }
+  .pt-focus-toggle:active { transform: translateY(0) }
+  .pt-focus-toggle .pt-focus-tag {
+    font-size: 9px; font-weight: 900; letter-spacing: 2px;
+    text-transform: uppercase; color: #FF8A3D;
+    padding: 4px 8px; border-radius: 6px;
+    background: rgba(255,138,61,.14); border: 1px solid rgba(255,138,61,.32);
+    flex-shrink: 0;
+  }
+  .pt-focus-toggle .pt-focus-line {
+    flex: 1; min-width: 0; overflow: hidden;
+    font-size: 14px; font-weight: 700; letter-spacing: -.005em;
+    color: rgba(255,255,255,.92);
+    white-space: nowrap; text-overflow: ellipsis;
+  }
+  .pt-focus-toggle .pt-focus-line .dim {
+    color: rgba(255,255,255,.5); font-weight: 600;
+  }
+  .pt-focus-toggle .pt-focus-dots {
+    display: flex; gap: 5px; flex-shrink: 0;
+  }
+  .pt-focus-toggle .pt-focus-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.16);
+    transition: background .2s, border-color .2s, transform .2s;
+  }
+  .pt-focus-toggle .pt-focus-dot.done {
+    background: #FF8A3D; border-color: #FF8A3D;
+    box-shadow: 0 0 12px rgba(255,138,61,.5);
+  }
+  .pt-focus-toggle .pt-focus-arrow {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(255,138,61,.18);
+    color: #FF8A3D;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  /* "Active" — Focus mode currently engaged; toggle becomes the exit */
+  .pt-focus-toggle.active {
+    background: linear-gradient(135deg, rgba(255,138,61,.22), rgba(255,107,26,.10));
+    border-color: #FF8A3D;
+  }
+
+  /* ============ FOCUS 5 VIEW — replaces .list contents in focus mode ============ */
+  .focus5-view {
+    display: flex; flex-direction: column; gap: 16px;
+    padding: 8px 4px 80px;
+  }
+  .focus5-progress {
+    display: flex; align-items: center; gap: 14px; padding: 8px 4px;
+    margin-bottom: 8px;
+  }
+  .focus5-progress-track {
+    flex: 1; height: 8px; border-radius: 99px;
+    background: rgba(255,255,255,.06); overflow: hidden;
+    display: flex; gap: 4px; padding: 0;
+  }
+  .focus5-progress-seg {
+    flex: 1; background: rgba(255,255,255,.08);
+    border-radius: 99px;
+    transition: background .35s ease;
+  }
+  .focus5-progress-seg.done {
+    background: linear-gradient(90deg, #FF8A3D, #FFB07F);
+  }
+  .focus5-progress-count {
+    font-size: 13px; font-weight: 800; letter-spacing: .8px;
+    color: rgba(255,255,255,.7);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .focus5-progress-count strong {
+    color: #FF8A3D; font-size: 16px;
+  }
+  /* Each card. The first non-done card is "active" — biggest. */
+  .focus5-card {
+    position: relative;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 22px;
+    padding: 28px 24px;
+    transition: background .2s, border-color .2s, opacity .25s, transform .2s;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .focus5-card-num {
+    font-size: 11px; font-weight: 900; letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.35);
+  }
+  .focus5-card-text {
+    font-size: 24px; font-weight: 800; letter-spacing: -.02em;
+    line-height: 1.18;
+    color: rgba(255,255,255,.95);
+    word-break: break-word;
+    max-width: 760px;
+  }
+  .focus5-card-actions {
+    display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    margin-top: 4px;
+  }
+  .focus5-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 20px; border-radius: 99px;
+    font-family: inherit; font-size: 14px; font-weight: 700;
+    letter-spacing: .2px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.04); color: rgba(255,255,255,.85);
+    transition: background .15s, border-color .15s, transform .12s;
+  }
+  .focus5-btn:hover { background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2) }
+  .focus5-btn:active { transform: scale(.97) }
+  .focus5-btn.primary {
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
+    color: #fff; border-color: transparent;
+    box-shadow: 0 8px 26px rgba(255,138,61,.32);
+  }
+  .focus5-btn.primary:hover { transform: translateY(-1px) }
+  .focus5-btn.race {
+    background: rgba(255,138,61,.10); color: #FF8A3D;
+    border-color: rgba(255,138,61,.4);
+  }
+  .focus5-btn.race:hover { background: rgba(255,138,61,.18); border-color: #FF8A3D; color: #FF8A3D }
+
+  /* The "up next" — biggest card */
+  .focus5-card.active {
+    background: linear-gradient(160deg, rgba(255,138,61,.10), rgba(255,138,61,.02));
+    border-color: rgba(255,138,61,.38);
+    padding: 44px 28px;
+    box-shadow: 0 18px 60px rgba(255,138,61,.18);
+  }
+  .focus5-card.active .focus5-card-num {
+    color: #FF8A3D;
+  }
+  .focus5-card.active .focus5-card-text {
+    font-size: 38px;
+  }
+  /* Queued — dimmer, smaller */
+  .focus5-card.queued {
+    opacity: .55; padding: 18px 20px;
+  }
+  .focus5-card.queued .focus5-card-text {
+    font-size: 18px;
+  }
+  /* Done — dim color (NOT strikethrough), keep readable */
+  .focus5-card.done {
+    background: rgba(74,222,128,.04);
+    border-color: rgba(74,222,128,.18);
+    opacity: .68;
+    padding: 18px 20px;
+  }
+  .focus5-card.done .focus5-card-num { color: rgba(74,222,128,.7) }
+  .focus5-card.done .focus5-card-text {
+    font-size: 18px; color: rgba(255,255,255,.5);
+  }
+  .focus5-card.done .focus5-card-text::before {
+    content: ''; display: inline-block;
+    width: 14px; height: 14px; margin-right: 8px; vertical-align: middle;
+    border-radius: 50%; background: #4ADE80;
+    box-shadow: 0 0 0 3px rgba(74,222,128,.18);
+  }
+  /* Celebration — all 5 done */
+  .focus5-celebrate {
+    text-align: center; padding: 60px 24px 40px;
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+  }
+  .focus5-celebrate-title {
+    font-size: 56px; font-weight: 900; letter-spacing: -.03em;
+    background: linear-gradient(135deg, #FF8A3D, #FFB07F);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+  }
+  .focus5-celebrate-sub {
+    font-size: 18px; color: rgba(255,255,255,.6); font-weight: 600;
+    max-width: 480px; line-height: 1.4;
+  }
+  .focus5-celebrate-actions {
+    display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+    margin-top: 12px;
+  }
+
+  @media (max-width: 560px) {
+    .focus5-card { padding: 22px 18px }
+    .focus5-card.active { padding: 32px 20px }
+    .focus5-card-text { font-size: 20px }
+    .focus5-card.active .focus5-card-text { font-size: 28px }
+    .focus5-card.queued .focus5-card-text { font-size: 16px }
+    .focus5-card.done .focus5-card-text { font-size: 16px }
+    .focus5-celebrate-title { font-size: 40px }
+    .focus5-celebrate-sub { font-size: 16px }
+  }
+
+  /* ============ FOCUS 5 PICKER ============ */
+  .focus5-picker-backdrop {
+    position: fixed; inset: 0; z-index: 320;
+    background: rgba(5,5,7,.85); backdrop-filter: blur(8px);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .focus5-picker-backdrop.show { display: flex }
+  .focus5-picker {
+    width: 100%; max-width: 560px;
+    max-height: 88vh; display: flex; flex-direction: column;
+    background: #15151B;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 22px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  }
+  .focus5-picker-head {
+    padding: 22px 24px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .focus5-picker-title {
+    font-size: 24px; font-weight: 900; letter-spacing: -.02em;
+    color: #fff; margin-bottom: 4px;
+  }
+  .focus5-picker-sub {
+    font-size: 13px; color: rgba(255,255,255,.5); font-weight: 600;
+  }
+  .focus5-picker-sub strong { color: #FF8A3D }
+  .focus5-picker-body {
+    flex: 1; overflow-y: auto; padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .focus5-picker-body::-webkit-scrollbar { width: 6px }
+  .focus5-picker-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 3px }
+  .focus5-picker-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; border-radius: 12px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.06);
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .focus5-picker-row:hover { border-color: rgba(255,138,61,.25); background: rgba(255,255,255,.05) }
+  .focus5-picker-row.selected {
+    background: rgba(255,138,61,.12);
+    border-color: #FF8A3D;
+  }
+  .focus5-picker-row.disabled {
+    opacity: .35; cursor: not-allowed;
+  }
+  .focus5-picker-row.disabled:hover { border-color: rgba(255,255,255,.06); background: rgba(255,255,255,.03) }
+  .focus5-picker-check {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.2);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .15s, background .15s;
+    font-size: 11px; font-weight: 900;
+    color: transparent;
+  }
+  .focus5-picker-row.selected .focus5-picker-check {
+    background: #FF8A3D; border-color: #FF8A3D; color: #fff;
+  }
+  .focus5-picker-text {
+    flex: 1; min-width: 0;
+    font-size: 15px; font-weight: 600; color: rgba(255,255,255,.92);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .focus5-picker-job {
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 3px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.06);
+    color: rgba(255,255,255,.55);
+    flex-shrink: 0;
+  }
+  .focus5-picker-foot {
+    padding: 16px 24px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  }
+  .focus5-picker-foot .count {
+    font-size: 12px; font-weight: 800; letter-spacing: 1.2px;
+    text-transform: uppercase; color: rgba(255,255,255,.5);
+  }
+  .focus5-picker-foot .count strong {
+    color: #FF8A3D; font-size: 14px;
+  }
+  .focus5-picker-actions {
+    display: flex; gap: 8px;
+  }
+  .focus5-picker-cancel {
+    padding: 10px 16px; border-radius: 99px;
+    background: transparent; border: 1px solid rgba(255,255,255,.12);
+    color: rgba(255,255,255,.7); font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer;
+  }
+  .focus5-picker-cancel:hover { color: #fff; border-color: rgba(255,255,255,.25) }
+  .focus5-picker-start {
+    padding: 10px 22px; border-radius: 99px;
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
+    color: #fff; border: none;
+    font-family: inherit; font-size: 13px; font-weight: 800; letter-spacing: .3px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(255,138,61,.32);
+  }
+  .focus5-picker-start:disabled {
+    background: rgba(255,255,255,.06); color: rgba(255,255,255,.3);
+    box-shadow: none; cursor: not-allowed;
+  }
+  .focus5-picker-empty {
+    padding: 40px 20px; text-align: center;
+    color: rgba(255,255,255,.4);
+    font-size: 15px; font-weight: 600;
+  }
+
   .list {
     flex: 1; overflow-y: auto; padding: 48px 48px 24px;
     display: flex; flex-direction: column; gap: 10px;
@@ -1465,6 +1798,16 @@
         </div>
       </div>
       <div class="pt-goals-row" id="ptGoalsRow"></div>
+      <button class="pt-focus-toggle" id="ptFocusToggle" type="button">
+        <span class="pt-focus-tag">Focus 5</span>
+        <span class="pt-focus-line" id="ptFocusLine">Pick 5 to focus on today</span>
+        <span class="pt-focus-dots" id="ptFocusDots" aria-hidden="true">
+          <span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span>
+        </span>
+        <span class="pt-focus-arrow" id="ptFocusArrow">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </span>
+      </button>
       <div id="filterBarSlot"></div>
     </div>
     <div class="list" id="list"></div>
@@ -1476,9 +1819,28 @@
 <div class="race-overlay" id="raceOverlay" aria-hidden="true">
   <iframe id="raceFrame" src="about:blank" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Race timer"></iframe>
 </div>
-<button class="race-close" id="raceCloseBtn" type="button" aria-label="Close race">
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+<button class="race-close" id="raceCloseBtn" type="button" aria-label="Back to Personal">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+  Back to Personal
 </button>
+</div>
+
+<!-- Focus 5 picker modal — pick up to 5 tasks for the focus list -->
+<div class="focus5-picker-backdrop" id="focus5PickerBackdrop" aria-hidden="true">
+  <div class="focus5-picker" role="dialog" aria-modal="true" aria-labelledby="focus5PickerTitle">
+    <div class="focus5-picker-head">
+      <div class="focus5-picker-title" id="focus5PickerTitle">Pick today's 5</div>
+      <div class="focus5-picker-sub">Tap up to <strong>5</strong> tasks. When you finish them, you can pick 5 more.</div>
+    </div>
+    <div class="focus5-picker-body" id="focus5PickerBody"></div>
+    <div class="focus5-picker-foot">
+      <div class="count" id="focus5PickerCount"><strong>0</strong> / 5 selected</div>
+      <div class="focus5-picker-actions">
+        <button class="focus5-picker-cancel" id="focus5PickerCancel" type="button">Cancel</button>
+        <button class="focus5-picker-start" id="focus5PickerStart" type="button" disabled>Start</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Floating Action Button — opens the add-task sheet. Replaces the persistent bottom bar. -->
@@ -2830,8 +3192,14 @@ const VOICE = {
     // Refresh hour-goal progress bars on every render (tasks check off,
     // timeSpent updates, etc.). Cheap — just a sum across todos.
     try { ptRenderGoals(); } catch {}
+    // Refresh Focus 5 toggle pill (date may have changed, picks may be stale)
+    try { loadFocus5(); updateFocus5Toggle(); } catch {}
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
+    // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
+    if (focus5State.active && focus5State.taskIds.length > 0) {
+      try { renderFocus5View(); return; } catch (e) { console.error('focus5 render', e); }
+    }
     renderTasks();
   }
   function renderTasks() {
@@ -4099,15 +4467,27 @@ const VOICE = {
   // Opens sprint.html in a fullscreen iframe with task pre-filled. Sprint has
   // ?race=1 (so it sends warroom:race-done on completion) + ?nomusic=1 (so
   // its own music doesn't fight Personal's lofi bar).
+  // Track the vibe Personal was playing before race opened so we can resume it
+  // when the overlay closes. Race owns audio while open (sprint iframe plays).
+  let _priorRaceVibe = null;
   function openRaceOverlay(todo){
     const overlay = document.getElementById('raceOverlay');
     const frame = document.getElementById('raceFrame');
     if (!overlay || !frame) return;
+    // Pause Personal's audio. Sprint iframe will pick up the same vibe via
+    // shared localStorage and play it inside the overlay (with its own UI).
+    _priorRaceVibe = ptMusicState.vibe || null;
+    if (_priorRaceVibe) {
+      // Stop without wiping persisted state — sprint reads it back to auto-resume
+      try { if (ptMusicFrame) ptMusicFrame.src = 'about:blank'; } catch {}
+      if (ptMusicBar) ptMusicBar.classList.remove('playing');
+    }
     const text = encodeURIComponent(todo.text || '');
-    // Default 25 min for fresh races; respect user's last sprint target if any
     let lastMin = 25;
     try { const lt = parseInt(localStorage.getItem('sprint-last-target-min') || '', 10); if (Number.isFinite(lt) && lt > 0) lastMin = lt; } catch {}
-    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&nomusic=1&todoId=${encodeURIComponent(todo.id)}`;
+    // Note: NO nomusic param — sprint shows its own music bar in race mode
+    // so the user can switch vibes mid-race.
+    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&todoId=${encodeURIComponent(todo.id)}`;
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
   }
@@ -4118,6 +4498,21 @@ const VOICE = {
     overlay.classList.remove('show');
     overlay.setAttribute('aria-hidden', 'true');
     if (frame) frame.src = 'about:blank'; // unload sprint so audio/timer stops
+    // Resume Personal's prior music if there was any. Read latest state from
+    // localStorage in case user switched vibes inside the race overlay.
+    try {
+      const raw = localStorage.getItem(PT_MUSIC_KEY);
+      if (raw) {
+        const d = JSON.parse(raw) || {};
+        ptMusicState.vibe = d.vibe || null;
+        ptMusicState.customId = d.customId || '';
+      }
+    } catch {}
+    if (_priorRaceVibe || ptMusicState.vibe) {
+      const v = ptMusicState.vibe || _priorRaceVibe;
+      try { ptPlayVibe(v); } catch {}
+    }
+    _priorRaceVibe = null;
   }
   (function wireRaceClose(){
     const btn = document.getElementById('raceCloseBtn');
@@ -4140,6 +4535,297 @@ const VOICE = {
       try { loadTodos(); } catch {}
     }
   });
+
+  // ============ FOCUS 5 — pick five tasks, only see those, finish them, pick more ============
+  // Storage shape: { date: 'YYYY-MM-DD', taskIds: ['id', ...], active: bool }
+  // - `date` resets the picks at midnight (today's 5, not yesterday's)
+  // - `taskIds` are the chosen 5 (or fewer if user picked less)
+  // - `active` is whether Focus mode is the current view (toggle survives refresh)
+  const FOCUS5_KEY = 'personal-focus-5-v1';
+  let focus5State = { date: '', taskIds: [], active: false };
+  let _focus5PickerSel = []; // ephemeral selection while picker is open
+  function focus5TodayKey(){
+    // Same Chicago-day logic the rest of the app uses
+    try { return todayKey(); } catch { return new Date().toISOString().slice(0,10); }
+  }
+  function loadFocus5(){
+    try {
+      const raw = localStorage.getItem(FOCUS5_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) || {};
+      const today = focus5TodayKey();
+      // Reset if stored date isn't today — fresh start each day
+      if (d.date !== today) {
+        focus5State = { date: today, taskIds: [], active: false };
+        saveFocus5();
+        return;
+      }
+      focus5State = {
+        date: d.date,
+        taskIds: Array.isArray(d.taskIds) ? d.taskIds.slice(0, 5) : [],
+        active: !!d.active
+      };
+    } catch {}
+  }
+  function saveFocus5(){
+    try { localStorage.setItem(FOCUS5_KEY, JSON.stringify(focus5State)); } catch {}
+  }
+  function focus5Tasks(){
+    // Map stored IDs to live todo objects, preserving the order the user picked.
+    return focus5State.taskIds
+      .map(id => todos.find(t => t.id === id))
+      .filter(Boolean);
+  }
+  function focus5DoneCount(){
+    return focus5Tasks().filter(t => t.done).length;
+  }
+  function updateFocus5Toggle(){
+    // Compact pill at top reflects current state at a glance.
+    const btn = document.getElementById('ptFocusToggle');
+    const line = document.getElementById('ptFocusLine');
+    const dotsWrap = document.getElementById('ptFocusDots');
+    if (!btn || !line || !dotsWrap) return;
+    const picked = focus5State.taskIds.length;
+    const tasks = focus5Tasks();
+    const done = tasks.filter(t => t.done).length;
+    btn.classList.toggle('active', !!focus5State.active);
+    document.body.classList.toggle('focus5-active', !!focus5State.active && tasks.length > 0);
+    if (focus5State.active) {
+      line.innerHTML = `Focus mode on — <span class="dim">${done}/${tasks.length} done · tap to exit</span>`;
+    } else if (picked === 0) {
+      line.innerHTML = `Pick 5 to focus on today`;
+    } else if (done >= picked && picked > 0) {
+      line.innerHTML = `<strong>All ${picked} done.</strong> <span class="dim">Pick 5 more →</span>`;
+    } else {
+      line.innerHTML = `${done}/${picked} done · <span class="dim">tap to enter focus</span>`;
+    }
+    // Five dots — fill ones that are done, mark queued vs empty
+    const dots = dotsWrap.querySelectorAll('.pt-focus-dot');
+    dots.forEach((dot, i) => {
+      dot.classList.toggle('done', i < done);
+      dot.style.opacity = i < picked ? '1' : '.35';
+    });
+  }
+
+  // -------- PICKER --------
+  function openFocus5Picker(){
+    // Seed selection with current saved picks (so user can edit instead of restart)
+    _focus5PickerSel = focus5State.taskIds.slice();
+    renderFocus5Picker();
+    const bd = document.getElementById('focus5PickerBackdrop');
+    if (bd) { bd.classList.add('show'); bd.setAttribute('aria-hidden','false'); }
+  }
+  function closeFocus5Picker(){
+    const bd = document.getElementById('focus5PickerBackdrop');
+    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden','true'); }
+    _focus5PickerSel = [];
+  }
+  function renderFocus5Picker(){
+    const body = document.getElementById('focus5PickerBody');
+    const startBtn = document.getElementById('focus5PickerStart');
+    const countEl = document.getElementById('focus5PickerCount');
+    if (!body) return;
+    body.innerHTML = '';
+    // Pool: pending todos (not done). Honor current job filter so the picker
+    // matches the user's mental model of "what's on my plate right now".
+    let pool = todos.filter(t => !t.done);
+    if (jobFilter && jobFilter !== 'all') {
+      pool = pool.filter(t => (t.job || '') === jobFilter);
+    }
+    // Priority first, then position
+    pool.sort((a, b) => {
+      if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
+      return (a.position || 0) - (b.position || 0);
+    });
+    if (pool.length === 0) {
+      body.innerHTML = `<div class="focus5-picker-empty">No open tasks to pick. Add some first.</div>`;
+    } else {
+      pool.forEach(t => {
+        const isSel = _focus5PickerSel.includes(t.id);
+        const atCap = _focus5PickerSel.length >= 5 && !isSel;
+        const row = document.createElement('div');
+        row.className = `focus5-picker-row ${isSel ? 'selected' : ''} ${atCap ? 'disabled' : ''}`;
+        row.dataset.id = t.id;
+        const job = t.job ? jobMeta(t.job) : null;
+        const jobBadge = job ? `<span class="focus5-picker-job" style="background:${job.color}22;color:${job.color}">${escHtml(job.label)}</span>` : '';
+        row.innerHTML = `
+          <span class="focus5-picker-check">${isSel ? '✓' : ''}</span>
+          <span class="focus5-picker-text">${escHtml(t.text || '')}</span>
+          ${jobBadge}
+        `;
+        row.addEventListener('click', () => {
+          if (atCap) return;
+          if (isSel) {
+            _focus5PickerSel = _focus5PickerSel.filter(id => id !== t.id);
+          } else {
+            _focus5PickerSel.push(t.id);
+          }
+          renderFocus5Picker();
+        });
+        body.appendChild(row);
+      });
+    }
+    if (countEl) countEl.innerHTML = `<strong>${_focus5PickerSel.length}</strong> / 5 selected`;
+    if (startBtn) startBtn.disabled = _focus5PickerSel.length === 0;
+  }
+  function commitFocus5Picker(){
+    focus5State.taskIds = _focus5PickerSel.slice(0, 5);
+    focus5State.date = focus5TodayKey();
+    focus5State.active = true;
+    saveFocus5();
+    closeFocus5Picker();
+    render();
+  }
+
+  // -------- TOGGLE --------
+  function focus5ToggleClick(){
+    // First-time or all-done → reopen picker. Otherwise toggle the view.
+    const tasks = focus5Tasks();
+    const allDone = tasks.length > 0 && tasks.every(t => t.done);
+    if (focus5State.taskIds.length === 0 || allDone) {
+      // Clear stale picks if everyone is done — start fresh
+      if (allDone) {
+        focus5State.taskIds = [];
+        focus5State.active = false;
+        saveFocus5();
+      }
+      openFocus5Picker();
+      return;
+    }
+    focus5State.active = !focus5State.active;
+    saveFocus5();
+    render();
+  }
+
+  // -------- VIEW (renders inside .list when focus mode is active) --------
+  function renderFocus5View(){
+    const list = document.getElementById('list');
+    if (!list) return;
+    list.innerHTML = '';
+    // Strip any leftover sticky goals row (we want the focus view to feel uncluttered)
+    const tasks = focus5Tasks();
+    const view = document.createElement('div');
+    view.className = 'focus5-view';
+    if (tasks.length === 0) {
+      // Picks were lost (tasks deleted, etc.) — nudge to repick
+      view.innerHTML = `
+        <div class="focus5-celebrate">
+          <div class="focus5-celebrate-title">Pick 5</div>
+          <div class="focus5-celebrate-sub">Your focus list is empty. Pick five to lock in.</div>
+          <div class="focus5-celebrate-actions">
+            <button class="focus5-btn primary" id="focus5RepickBtn" type="button">Pick 5 tasks</button>
+            <button class="focus5-btn" id="focus5ExitBtn" type="button">Back to all tasks</button>
+          </div>
+        </div>`;
+      list.appendChild(view);
+      const repick = view.querySelector('#focus5RepickBtn');
+      const exit = view.querySelector('#focus5ExitBtn');
+      if (repick) repick.addEventListener('click', openFocus5Picker);
+      if (exit) exit.addEventListener('click', () => {
+        focus5State.active = false; saveFocus5(); render();
+      });
+      return;
+    }
+    const done = tasks.filter(t => t.done).length;
+    const total = tasks.length;
+    // Progress bar — five segments, one per pick
+    const segs = Array.from({ length: total }, (_, i) =>
+      `<span class="focus5-progress-seg ${i < done ? 'done' : ''}"></span>`
+    ).join('');
+    const progress = document.createElement('div');
+    progress.className = 'focus5-progress';
+    progress.innerHTML = `
+      <div class="focus5-progress-track">${segs}</div>
+      <div class="focus5-progress-count"><strong>${done}</strong>/${total}</div>
+    `;
+    view.appendChild(progress);
+    // All done — celebrate + offer to pick 5 more
+    if (done === total) {
+      const celebrate = document.createElement('div');
+      celebrate.className = 'focus5-celebrate';
+      celebrate.innerHTML = `
+        <div class="focus5-celebrate-title">${total === 5 ? '5 done.' : `${total} done.`}</div>
+        <div class="focus5-celebrate-sub">Lock in another batch, or step back to your full list.</div>
+        <div class="focus5-celebrate-actions">
+          <button class="focus5-btn primary" id="focus5RepickBtn" type="button">Pick 5 more</button>
+          <button class="focus5-btn" id="focus5ExitBtn" type="button">Back to all tasks</button>
+        </div>`;
+      view.appendChild(celebrate);
+      list.appendChild(view);
+      const repick = celebrate.querySelector('#focus5RepickBtn');
+      const exit = celebrate.querySelector('#focus5ExitBtn');
+      if (repick) repick.addEventListener('click', () => {
+        // Wipe the current picks so the picker starts fresh
+        focus5State.taskIds = []; saveFocus5();
+        openFocus5Picker();
+      });
+      if (exit) exit.addEventListener('click', () => {
+        focus5State.active = false; saveFocus5(); render();
+      });
+      return;
+    }
+    // Order: not-done first (active = first one), then done
+    const pending = tasks.filter(t => !t.done);
+    const completed = tasks.filter(t => t.done);
+    pending.forEach((t, i) => {
+      view.appendChild(buildFocus5Card(t, i, /*isActive*/ i === 0, /*isDone*/ false, tasks.indexOf(t) + 1));
+    });
+    completed.forEach(t => {
+      view.appendChild(buildFocus5Card(t, -1, false, true, tasks.indexOf(t) + 1));
+    });
+    list.appendChild(view);
+  }
+  function buildFocus5Card(todo, idx, isActive, isDone, taskNumber){
+    const card = document.createElement('div');
+    card.className = `focus5-card ${isActive ? 'active' : isDone ? 'done' : 'queued'}`;
+    card.dataset.id = todo.id;
+    const numLabel = isDone ? `Done` : (isActive ? `Up next` : `Queued`);
+    card.innerHTML = `
+      <div class="focus5-card-num">${numLabel} · #${taskNumber}</div>
+      <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
+      ${isDone ? '' : `
+        <div class="focus5-card-actions">
+          <button class="focus5-btn primary" data-act="done" type="button">Mark done</button>
+          <button class="focus5-btn race" data-act="race" type="button">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
+            Race timer
+          </button>
+        </div>
+      `}
+    `;
+    if (!isDone) {
+      const doneBtn = card.querySelector('[data-act="done"]');
+      const raceBtn = card.querySelector('[data-act="race"]');
+      if (doneBtn) doneBtn.addEventListener('click', (e) => {
+        e.stopPropagation(); toggleTodo(todo.id);
+      });
+      if (raceBtn) raceBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { openRaceOverlay(todo); } catch {}
+      });
+    }
+    return card;
+  }
+
+  // Wire toggle button + picker controls
+  (function wireFocus5(){
+    loadFocus5();
+    const btn = document.getElementById('ptFocusToggle');
+    if (btn) btn.addEventListener('click', focus5ToggleClick);
+    const cancel = document.getElementById('focus5PickerCancel');
+    const start = document.getElementById('focus5PickerStart');
+    const bd = document.getElementById('focus5PickerBackdrop');
+    if (cancel) cancel.addEventListener('click', closeFocus5Picker);
+    if (start) start.addEventListener('click', commitFocus5Picker);
+    if (bd) bd.addEventListener('click', (e) => {
+      if (e.target === bd) closeFocus5Picker();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const open = document.getElementById('focus5PickerBackdrop');
+      if (open && open.classList.contains('show')) closeFocus5Picker();
+    });
+  })();
 
   // ---- Init ----
   populateJobSelect();
