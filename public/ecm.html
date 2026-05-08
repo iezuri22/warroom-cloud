@@ -132,6 +132,24 @@
   }
   .status-chip.muted { opacity: .35 }
   .status-chip.muted:hover { opacity: .7 }
+  /* Issue chips — data-quality filters. Amber when populated, dimmed when empty. */
+  .status-chip.issue {
+    border-color: rgba(255,200,77,.32);
+    color: rgba(255,200,77,.85);
+  }
+  .status-chip.issue:hover { color: #FFC84D; border-color: #FFC84D }
+  .status-chip.issue.active {
+    background: rgba(255,200,77,.16);
+    color: #FFC84D; border-color: #FFC84D;
+  }
+  .status-chip.issue .ct {
+    background: rgba(255,200,77,.16);
+    color: #FFC84D;
+  }
+  .status-chip.issue.active .ct {
+    background: rgba(255,200,77,.28);
+    color: #fff;
+  }
 
   /* ============ ROW LIST ============ */
   .list { flex: 1; overflow-y: auto; padding: 12px 20px 80px; display: flex; flex-direction: column; gap: 6px; }
@@ -411,6 +429,7 @@ async function loadSheet(){
     const colOutcome = columns['Outcome Details'];
     const colSubType = columns['Sub-Type'];
     const colCreated = columns['Created Date'];
+    const colCompletion = columns['Completion Date'];
     rows = (sheet.rows || []).map(r => ({
       id: r.id,
       task: colTask ? cellValue(r, colTask.id) : '',
@@ -422,6 +441,7 @@ async function loadSheet(){
       outcome: colOutcome ? cellValue(r, colOutcome.id) : '',
       subType: colSubType ? cellValue(r, colSubType.id) : '',
       createdDate: colCreated ? cellValue(r, colCreated.id) : '',
+      completionDate: colCompletion ? cellValue(r, colCompletion.id) : '',
       modifiedAt: r.modifiedAt || ''
     }));
     populateOwnerSelect();
@@ -459,6 +479,16 @@ function populateProgramSelect(){
   sel.innerHTML = `<option value="">All programs</option>` + programs.map(p => `<option value="${escHtml(p)}" ${p === filterProgram ? 'selected' : ''}>${escHtml(p)}</option>`).join('');
 }
 
+// Issue filter predicates — keep these named so we can reuse in counts + filter
+function isMissingTicket(r){
+  const t = (r.ticket == null ? '' : String(r.ticket)).trim();
+  return !t;
+}
+function isMissingCompletionDate(r){
+  const closed = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
+  const cd = (r.completionDate == null ? '' : String(r.completionDate)).trim();
+  return closed && !cd;
+}
 function applyFilters(){
   let pool = rows.slice();
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
@@ -466,6 +496,10 @@ function applyFilters(){
   if (filterStatus !== 'all') {
     if (filterStatus === '__open__') {
       pool = pool.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket');
+    } else if (filterStatus === '__no_ticket__') {
+      pool = pool.filter(isMissingTicket);
+    } else if (filterStatus === '__no_completion_date__') {
+      pool = pool.filter(isMissingCompletionDate);
     } else {
       pool = pool.filter(r => r.status === filterStatus);
     }
@@ -497,21 +531,28 @@ function renderStatusBar(){
   if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
   const counts = {
     all: scoped.length,
-    __open__: scoped.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length
+    __open__: scoped.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length,
+    __no_ticket__: scoped.filter(isMissingTicket).length,
+    __no_completion_date__: scoped.filter(isMissingCompletionDate).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   const chips = [
-    { id: 'all', label: 'All', count: counts.all },
-    { id: '__open__', label: 'Open', count: counts.__open__ }
+    { id: 'all', label: 'All', count: counts.all, kind: 'meta' },
+    { id: '__open__', label: 'Open', count: counts.__open__, kind: 'meta' }
   ];
   // Always show every status — even empty — so the user can switch to one
   // they expect to populate later. Empty ones get a "muted" class.
   SS_STATUSES.forEach(s => {
-    chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: counts[s] || 0 });
+    chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: counts[s] || 0, kind: 'status' });
   });
+  // Issue chips — data-quality filters at the end of the strip. Styled
+  // amber/red so they stand out as "things to fix" rather than statuses.
+  chips.push({ id: '__no_ticket__', label: 'No ticket', count: counts.__no_ticket__, kind: 'issue' });
+  chips.push({ id: '__no_completion_date__', label: 'Missing date', count: counts.__no_completion_date__, kind: 'issue' });
   bar.innerHTML = chips.map(c => {
-    const muted = c.count === 0 && c.id !== 'all' && c.id !== '__open__' ? 'muted' : '';
-    return `<button class="status-chip ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+    const muted = c.count === 0 && c.kind === 'status' ? 'muted' : '';
+    const kindCls = c.kind === 'issue' ? 'issue' : '';
+    return `<button class="status-chip ${kindCls} ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
   }).join('');
   bar.querySelectorAll('.status-chip').forEach(b => {
     b.addEventListener('click', () => {
