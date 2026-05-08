@@ -3580,15 +3580,16 @@ const VOICE = {
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
     // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
+    // ALWAYS park the music bar in mainHead first — this guarantees the
+    // element survives renderTasks() wiping #list with innerHTML=''. Without
+    // this, if the bar was inside the previous focus view, the wipe would
+    // destroy it. focus5MoveMusicBar is a no-op when bar is already there.
+    try { focus5MoveMusicBar(false); } catch {}
     if (focus5State.active && focus5State.lists.length > 0) {
       try { renderFocus5View(); } catch (e) { console.error('focus5 render', e); }
-      // Pull the music bar into the focus view so it's pinned at the top of
-      // what the user is looking at. Deferred so the .focus5-view is in DOM.
-      setTimeout(() => { try { focus5MoveMusicBar(true); } catch {} }, 0);
+      // renderFocus5View moves the bar into the new .focus5-view at its tail.
       return;
     }
-    // Not in focus mode — make sure the music bar is back in its mainHead spot
-    setTimeout(() => { try { focus5MoveMusicBar(false); } catch {} }, 0);
     renderTasks();
   }
   function renderTasks() {
@@ -5384,6 +5385,14 @@ const VOICE = {
 
   // -------- VIEW (renders inside .list when focus mode is active) --------
   function renderFocus5View(){
+    try { return _renderFocus5ViewInner(); }
+    finally {
+      // No matter which branch returned, pull the music bar into the freshly-
+      // built focus view so it's always visible at the top.
+      try { focus5MoveMusicBar(true); } catch {}
+    }
+  }
+  function _renderFocus5ViewInner(){
     const list = document.getElementById('list');
     if (!list) return;
     list.innerHTML = '';
