@@ -268,9 +268,37 @@
     background: #050507;
     display: none;
   }
-  .race-overlay.show { display: block }
+  .race-overlay.show { display: flex }
   .race-overlay iframe {
     width: 100%; height: 100%; border: 0; display: block;
+  }
+  /* Race slots — when only one is open, takes full screen.
+     When both open, split horizontally on desktop, vertically on mobile. */
+  .race-slot {
+    position: relative;
+    flex: 1; min-width: 0; min-height: 0;
+    display: flex;
+  }
+  .race-slot[hidden] { display: none }
+  .race-overlay.dual .race-slot {
+    border-right: 1px solid rgba(255,255,255,.06);
+  }
+  .race-overlay.dual .race-slot:last-child { border-right: none }
+  .race-slot-close {
+    position: absolute; top: 10px; right: 10px; z-index: 5;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(5,5,7,.78); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.85); cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    transition: background .15s, border-color .15s;
+  }
+  .race-overlay.dual .race-slot-close { display: inline-flex }
+  .race-slot-close:hover { color: #fff; background: rgba(5,5,7,.92); border-color: rgba(255,255,255,.3) }
+  @media (max-width: 760px) {
+    .race-overlay.dual { flex-direction: column }
+    .race-overlay.dual .race-slot { border-right: none }
+    .race-overlay.dual .race-slot:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,.06) }
   }
   .race-close {
     position: fixed; top: 12px; left: 14px; z-index: 260;
@@ -2548,7 +2576,18 @@
 
 <!-- Race overlay — loads sprint.html in fullscreen with race=1 + nomusic=1 -->
 <div class="race-overlay" id="raceOverlay" aria-hidden="true">
-  <iframe id="raceFrame" src="about:blank" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Race timer"></iframe>
+  <div class="race-slot" data-slot="1">
+    <iframe id="raceFrame" src="about:blank" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Race 1"></iframe>
+    <button class="race-slot-close" data-close-slot="1" type="button" aria-label="Close race 1">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="race-slot" id="raceSlot2" data-slot="2" hidden>
+    <iframe id="raceFrame2" src="about:blank" allow="autoplay; encrypted-media; fullscreen" allowfullscreen title="Race 2"></iframe>
+    <button class="race-slot-close" data-close-slot="2" type="button" aria-label="Close race 2">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
 </div>
 <button class="race-close" id="raceCloseBtn" type="button" aria-label="Back to Personal">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -5790,43 +5829,74 @@ const VOICE = {
     });
   }
 
-  // ============ RACE OVERLAY ============
-  // Opens sprint.html in a fullscreen iframe with task pre-filled. Sprint has
-  // ?race=1 (so it sends warroom:race-done on completion) + ?nomusic=1 (so
-  // its own music doesn't fight Personal's lofi bar).
-  // Track the vibe Personal was playing before race opened so we can resume it
-  // when the overlay closes. Race owns audio while open (sprint iframe plays).
+  // ============ RACE OVERLAY (supports 1 or 2 simultaneous sprints) ============
+  // Two iframe slots: raceFrame (slot 1) + raceFrame2 (slot 2). When a single
+  // race is active the open slot fills the screen. When both are active they
+  // split horizontally (or vertically on phones). Each slot has its own
+  // sprint.html instance so timers/audio/state are independent.
   let _priorRaceVibe = null;
-  function openRaceOverlay(todo){
-    const overlay = document.getElementById('raceOverlay');
-    const frame = document.getElementById('raceFrame');
-    if (!overlay || !frame) return;
-    // Pause Personal's audio. Sprint iframe will pick up the same vibe via
-    // shared localStorage and play it inside the overlay (with its own UI).
-    _priorRaceVibe = ptMusicState.vibe || null;
+  // Track which task is in each slot so we know what to do on close
+  const _raceSlots = { 1: null, 2: null };
+  function ensureMusicPaused(){
+    _priorRaceVibe = _priorRaceVibe || ptMusicState.vibe || null;
     if (_priorRaceVibe) {
-      // Stop without wiping persisted state — sprint reads it back to auto-resume
       try { if (ptMusicFrame) ptMusicFrame.src = 'about:blank'; } catch {}
       if (ptMusicBar) ptMusicBar.classList.remove('playing');
     }
+  }
+  function openRaceOverlay(todo){
+    const overlay = document.getElementById('raceOverlay');
+    if (!overlay) return;
+    // Pick the next empty slot. If both are full, replace slot 1 (oldest).
+    let slot;
+    if (!_raceSlots[1]) slot = 1;
+    else if (!_raceSlots[2]) slot = 2;
+    else slot = 1; // both occupied → cycle back to slot 1
+    _raceSlots[slot] = todo.id;
+    const frame = document.getElementById(slot === 1 ? 'raceFrame' : 'raceFrame2');
+    const slotEl = overlay.querySelector(`.race-slot[data-slot="${slot}"]`);
+    if (!frame) return;
+    ensureMusicPaused();
     const text = encodeURIComponent(todo.text || '');
     let lastMin = 25;
     try { const lt = parseInt(localStorage.getItem('sprint-last-target-min') || '', 10); if (Number.isFinite(lt) && lt > 0) lastMin = lt; } catch {}
-    // Note: NO nomusic param — sprint shows its own music bar in race mode
-    // so the user can switch vibes mid-race.
-    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&todoId=${encodeURIComponent(todo.id)}`;
+    // Slot 2 races don't show their own music bar — only slot 1 does, otherwise
+    // two music players would fight over playback.
+    const noMusic = slot === 2 ? '&nomusic=1' : '';
+    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&todoId=${encodeURIComponent(todo.id)}${noMusic}&slot=${slot}`;
+    if (slotEl) slotEl.removeAttribute('hidden');
     overlay.classList.add('show');
+    // Mark dual class when both slots are loaded so split-screen CSS kicks in
+    overlay.classList.toggle('dual', !!(_raceSlots[1] && _raceSlots[2]));
     overlay.setAttribute('aria-hidden', 'false');
+  }
+  function closeRaceSlot(slot){
+    const overlay = document.getElementById('raceOverlay');
+    const frame = document.getElementById(slot === 1 ? 'raceFrame' : 'raceFrame2');
+    const slotEl = overlay && overlay.querySelector(`.race-slot[data-slot="${slot}"]`);
+    if (frame) frame.src = 'about:blank';
+    _raceSlots[slot] = null;
+    // Slot 2 hides when empty; slot 1 stays visible (it's the "primary" frame
+    // and CSS shows it full-screen when slot 2 is hidden).
+    if (slot === 2 && slotEl) slotEl.setAttribute('hidden', '');
+    if (overlay) overlay.classList.toggle('dual', !!(_raceSlots[1] && _raceSlots[2]));
+    // If both slots empty, close everything
+    if (!_raceSlots[1] && !_raceSlots[2]) closeRaceOverlay();
   }
   function closeRaceOverlay(){
     const overlay = document.getElementById('raceOverlay');
-    const frame = document.getElementById('raceFrame');
     if (!overlay) return;
-    overlay.classList.remove('show');
+    overlay.classList.remove('show', 'dual');
     overlay.setAttribute('aria-hidden', 'true');
-    if (frame) frame.src = 'about:blank'; // unload sprint so audio/timer stops
-    // Resume Personal's prior music if there was any. Read latest state from
-    // localStorage in case user switched vibes inside the race overlay.
+    // Unload both frames so audio + timers stop
+    [1, 2].forEach(s => {
+      const f = document.getElementById(s === 1 ? 'raceFrame' : 'raceFrame2');
+      if (f) f.src = 'about:blank';
+      _raceSlots[s] = null;
+    });
+    const slot2 = document.getElementById('raceSlot2');
+    if (slot2) slot2.setAttribute('hidden', '');
+    // Resume Personal's prior music
     try {
       const raw = localStorage.getItem(PT_MUSIC_KEY);
       if (raw) {
@@ -5844,21 +5914,30 @@ const VOICE = {
   (function wireRaceClose(){
     const btn = document.getElementById('raceCloseBtn');
     if (btn) btn.addEventListener('click', closeRaceOverlay);
+    // Per-slot X buttons (only visible in dual mode)
+    document.querySelectorAll('.race-slot-close').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const s = parseInt(b.dataset.closeSlot || '0', 10);
+        if (s === 1 || s === 2) closeRaceSlot(s);
+      });
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       const ov = document.getElementById('raceOverlay');
       if (ov && ov.classList.contains('show')) closeRaceOverlay();
     });
   })();
-  // Listen for race-done message from sprint.html. Sprint already updates
-  // the source todo via the completion queue (drainSprintCompletions). Here we
-  // also close the overlay automatically once a race finishes successfully.
+  // Listen for race-done / race-close from either sprint iframe. Each sprint
+  // sends its slot id (we passed ?slot=1 or 2 in the URL) so we can close
+  // just that one. Falls back to closing all if slot is missing.
   window.addEventListener('message', (ev) => {
     const d = ev && ev.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'warroom:race-done' || d.type === 'warroom:race-close') {
-      closeRaceOverlay();
-      // Refresh todos so the just-completed task moves to Done immediately.
+      const slot = parseInt(d.slot, 10);
+      if (slot === 1 || slot === 2) closeRaceSlot(slot);
+      else closeRaceOverlay();
       try { loadTodos(); } catch {}
     }
   });
