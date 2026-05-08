@@ -1963,6 +1963,22 @@
     color: #FF8A3D;
   }
   .view-filter-select option { background: #15151B; color: #fff }
+  /* Sort select sits next to view filter — no auto-margin so they stay paired */
+  .view-filter-select.sort-select { margin-left: 4px }
+  /* Direction toggle button */
+  .sort-dir-btn-personal {
+    flex-shrink: 0;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.65);
+    cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s, border-color .15s, transform .12s;
+  }
+  .sort-dir-btn-personal:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .sort-dir-btn-personal:active { transform: scale(.92) }
+  .sort-dir-btn-personal.desc svg { transform: rotate(180deg) scaleX(-1) }
 
   /* (Legacy view filter chip styling retained in case other code paths use it) */
   .view-filter-bar {
@@ -2673,6 +2689,9 @@
   let ecmStatusFilter = (function(){ try { return localStorage.getItem('personal-ecm-status-filter') || 'all'; } catch { return 'all'; } })();
   // View filter — narrows pending list by recency / urgency. Single-select.
   let viewFilter = (function(){ try { return localStorage.getItem('personal-view-filter') || 'all'; } catch { return 'all'; } })();
+  // Sort controls — default to manual position so existing flow stays the same.
+  let personalSortBy = (function(){ try { return localStorage.getItem('personal-sort-by') || 'position'; } catch { return 'position'; } })();
+  let personalSortDir = (function(){ try { return localStorage.getItem('personal-sort-dir') || 'asc'; } catch { return 'asc'; } })();
   // Short labels for ECM status chips (matches ecm.html SS_STATUS_SHORT)
   const SS_STATUS_SHORT = {
     'Requested':'Requested', 'To-Do':'To-Do', 'Pending IR':'Pending IR',
@@ -3983,11 +4002,24 @@ const VOICE = {
         return true;
       });
     }
-    // Priority items sort above non-priority. Within each group, sort purely by
-    // stored position so manual Move to Top / drag-drop is honored.
+    // Sort: priority always floats to the top regardless of sort key. Within
+    // each group (priority / non-priority) apply the user's chosen sort.
+    const _dir = personalSortDir === 'desc' ? -1 : 1;
+    const _cmpStr  = (a, b) => (a || '').toString().localeCompare((b || '').toString());
+    const _cmpNum  = (a, b) => (a || 0) - (b || 0);
+    const _cmpDate = (a, b) => {
+      const ta = a ? Date.parse(a) : 0;
+      const tb = b ? Date.parse(b) : 0;
+      return (ta || 0) - (tb || 0);
+    };
     pending.sort((a, b) => {
       if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
-      return (a.position || 0) - (b.position || 0);
+      let r = 0;
+      if (personalSortBy === 'name')      r = _cmpStr(a.text, b.text);
+      else if (personalSortBy === 'created')  r = _cmpDate(a.createdAt, b.createdAt);
+      else if (personalSortBy === 'due')      r = _cmpDate(a.dueDate || '9999-12-31', b.dueDate || '9999-12-31');
+      else                                    r = _cmpNum(a.position, b.position);
+      return r * _dir || _cmpNum(a.position, b.position);
     });
     if (pending.length === 0 && jobFilter !== 'all') {
       const empty = document.createElement('div');
@@ -4119,6 +4151,40 @@ const VOICE = {
       render();
     });
     bar.appendChild(viewSel);
+
+    // Sort dropdown — sits next to the view filter at the right end of the
+    // filter bar. Direction toggle is a small button alongside.
+    const sortSel = document.createElement('select');
+    sortSel.className = 'view-filter-select sort-select';
+    if (personalSortBy !== 'position') sortSel.classList.add('active');
+    const sortOpts = [
+      { id: 'position', label: 'Sort: Manual' },
+      { id: 'name',     label: 'Sort: Name' },
+      { id: 'created',  label: 'Sort: Created' },
+      { id: 'due',      label: 'Sort: Due date' }
+    ];
+    sortSel.innerHTML = sortOpts.map(o =>
+      `<option value="${escHtml(o.id)}" ${personalSortBy === o.id ? 'selected' : ''}>${escHtml(o.label)}</option>`
+    ).join('');
+    sortSel.addEventListener('change', (e) => {
+      personalSortBy = e.target.value || 'position';
+      try { localStorage.setItem('personal-sort-by', personalSortBy); } catch {}
+      render();
+    });
+    bar.appendChild(sortSel);
+
+    const sortDirBtn = document.createElement('button');
+    sortDirBtn.type = 'button';
+    sortDirBtn.className = `sort-dir-btn-personal ${personalSortDir === 'desc' ? 'desc' : ''}`;
+    sortDirBtn.title = personalSortDir === 'desc' ? 'Descending — tap for ascending' : 'Ascending — tap for descending';
+    sortDirBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M17 9l4-4 4 4M21 5v14"/></svg>`;
+    sortDirBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      personalSortDir = personalSortDir === 'asc' ? 'desc' : 'asc';
+      try { localStorage.setItem('personal-sort-dir', personalSortDir); } catch {}
+      render();
+    });
+    bar.appendChild(sortDirBtn);
 
     // Status sub-filter — only renders when the ECM chip is active.
     // Mirrors ecm.html: all 13 statuses always visible, short labels, muted
