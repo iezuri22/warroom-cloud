@@ -337,6 +337,11 @@
   /* Music bar is now permanently hidden — UI lives in a popover on the shell.
      Engine + audio iframe stay here so race overlay flow keeps working. */
   #ptMusicBar { display: none !important }
+  /* Hour-goal cards moved to the shell nav bar; Sync ECM moved to Settings.
+     Hidden permanently in the page — calculation still runs and posts the
+     numbers up so the shell can render them in its header. */
+  #ptGoalsRow { display: none !important }
+  #ptSsSyncBtn { display: none !important }
 
   /* ============ SMARTSHEETS SYNC BUTTON ============ */
   .pt-ss-sync {
@@ -5100,6 +5105,24 @@ const VOICE = {
       try { ptPlayVibe(d.vibe); } catch (e) { console.warn('play-vibe', e); }
     } else if (d.type === 'warroom:stop-music') {
       try { ptStopMusic(); } catch (e) { console.warn('stop-music', e); }
+    } else if (d.type === 'warroom:smartsheets-sync') {
+      // Shell's "Sync ECM" button triggers a pull
+      try { ssSync(); } catch (e) { console.warn('ss sync', e); }
+    } else if (d.type === 'warroom:request-hour-goals') {
+      // Shell asks for the latest numbers (e.g., on tab change)
+      try { ptRenderGoals(); } catch {}
+    } else if (d.type === 'warroom:edit-hour-goal' && (d.which === 'daily' || d.which === 'weekly')) {
+      // Shell pill tapped → open the edit prompt for the target
+      try {
+        const cur = ptLoadGoals();
+        const ans = prompt(`${d.which === 'daily' ? 'Daily' : 'Weekly'} hours target?`, String(cur[d.which]));
+        if (ans == null) return;
+        const v = parseFloat(ans);
+        if (!Number.isFinite(v) || v <= 0) return;
+        cur[d.which] = v;
+        ptSaveGoals(cur);
+        ptRenderGoals();
+      } catch {}
     }
   });
 
@@ -5427,13 +5450,24 @@ const VOICE = {
   }
   function ptRenderGoals(){
     const row = document.getElementById('ptGoalsRow');
-    if (!row) return;
     const goals = ptLoadGoals();
     const { dailySecs, weeklySecs } = ptHoursDone();
     const dailyPct = Math.min(100, (dailySecs / (goals.daily * 3600)) * 100);
     const weeklyPct = Math.min(100, (weeklySecs / (goals.weekly * 3600)) * 100);
     const dailyDone = dailySecs >= goals.daily * 3600;
     const weeklyDone = weeklySecs >= goals.weekly * 3600;
+    // Tell the shell so it can render Today/This-week in the nav bar.
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'warroom:hour-goals',
+          dailySecs, weeklySecs,
+          dailyTargetH: goals.daily, weeklyTargetH: goals.weekly,
+          dailyPct, weeklyPct, dailyDone, weeklyDone
+        }, '*');
+      }
+    } catch {}
+    if (!row) return;
     row.innerHTML = `
       <div class="pt-goal ${dailyDone?'done':''}" data-period="daily">
         <div class="pt-goal-head">

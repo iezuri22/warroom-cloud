@@ -1651,6 +1651,39 @@ body.focus-big-min .focus-big{cursor:pointer}
   background:currentColor;transform:rotate(-22deg);transform-origin:center;
   border-radius:1px;pointer-events:none;
 }
+/* Hour-goal pills in nav bar — Today / Week from personal-todos */
+.hour-goal-row{
+  display:inline-flex; align-items:center; gap:4px;
+  padding-right:6px; margin-right:2px;
+  border-right:1px solid var(--border);
+}
+.hour-goal-row[hidden]{display:none}
+.hour-goal-pill{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 9px; border-radius:99px;
+  background:transparent; border:1px solid var(--border);
+  color:var(--text-mid);
+  font-family:inherit; font-size:11px; font-weight:700;
+  cursor:pointer;
+  transition:all .15s;
+}
+.hour-goal-pill:hover{color:var(--text); border-color:var(--text-mid)}
+.hour-goal-pill .lbl{
+  font-size:9px; font-weight:800; letter-spacing:.7px;
+  text-transform:uppercase; opacity:.55;
+}
+.hour-goal-pill .val{
+  font-variant-numeric:tabular-nums; font-weight:800;
+  letter-spacing:.2px;
+}
+.hour-goal-pill.done{
+  border-color:rgba(74,222,128,.45);
+  color:#4ADE80;
+}
+.hour-goal-pill.done .lbl{opacity:.7}
+@media (max-width: 640px) {
+  .hour-goal-row{display:none}
+}
 /* Lofi popover — fixed-positioned dropdown anchored to the music nav button */
 .lofi-popover{
   position:fixed; z-index:120;
@@ -1995,6 +2028,10 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="tab" data-tab="board" onclick="switchTab('board')">Board</div>
   <div class="tab" data-tab="ecm" onclick="switchTab('ecm')">ECM</div>
   <div class="header-right" id="headerRight">
+    <div class="hour-goal-row" id="hourGoalRow" hidden>
+      <button class="hour-goal-pill" id="hgToday" type="button" title="Today's hours — tap to edit target"><span class="lbl">Today</span><span class="val" id="hgTodayVal">—</span></button>
+      <button class="hour-goal-pill" id="hgWeek" type="button" title="Week hours — tap to edit target"><span class="lbl">Week</span><span class="val" id="hgWeekVal">—</span></button>
+    </div>
     <button class="header-btn" onclick="toggleCalPanel()" id="calToggleBtn" title="Calendar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       <span class="cal-badge" id="calBadge" style="display:none">0</span>
@@ -2400,8 +2437,9 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
         <input type="password" id="ssApiTokenInput" placeholder="Smartsheets API token" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
         <input type="text" id="ssSheetIdInput" placeholder="Sheet ID (e.g. 4520190898294660)" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
         <input type="text" id="ssOwnerInput" placeholder="Owner name to filter (e.g. Ifeanyi)" style="font-family:var(--ios-font);font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
-        <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer"><input type="checkbox" id="ssAutoSyncInput" style="margin:0"> Auto-sync once a day</label>
+          <button onclick="ssRunSyncFromShell()" style="font-family:var(--ios-font);font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:1px solid rgba(74,158,255,.4);background:rgba(74,158,255,.08);color:#6BA8FF;cursor:pointer">Sync now</button>
           <button onclick="saveSmartsheetsSettings()" style="margin-left:auto;font-family:var(--ios-font);font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:none;background:var(--text);color:var(--bg);cursor:pointer">Save</button>
         </div>
         <div id="ssStatus" style="font-size:11px;color:var(--text-dim)"></div>
@@ -4007,6 +4045,53 @@ document.addEventListener('DOMContentLoaded', () => {
   const stopBtn = document.getElementById('lofiPopStop');
   if (stopBtn) stopBtn.addEventListener('click', (e) => { e.stopPropagation(); lofiStop(); });
 });
+
+// ---- Hour goals in nav bar (sourced from personal-todos via postMessage) ----
+function fmtHM(secs){
+  const s = Math.max(0, Math.floor(secs || 0));
+  const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h${m ? ' ' + m + 'm' : ''}` : `${m}m`;
+}
+function applyHourGoals(d){
+  const row = document.getElementById('hourGoalRow');
+  const todayPill = document.getElementById('hgToday');
+  const weekPill = document.getElementById('hgWeek');
+  const todayVal = document.getElementById('hgTodayVal');
+  const weekVal = document.getElementById('hgWeekVal');
+  if (!row || !todayVal || !weekVal) return;
+  todayVal.textContent = `${fmtHM(d.dailySecs)} / ${d.dailyTargetH}h`;
+  weekVal.textContent = `${fmtHM(d.weeklySecs)} / ${d.weeklyTargetH}h`;
+  todayPill.classList.toggle('done', !!d.dailyDone);
+  weekPill.classList.toggle('done', !!d.weeklyDone);
+  row.removeAttribute('hidden');
+}
+window.addEventListener('message', (ev) => {
+  const d = ev && ev.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'warroom:hour-goals') applyHourGoals(d);
+});
+// Tapping a pill asks personal-todos to open the edit prompt
+document.addEventListener('DOMContentLoaded', () => {
+  const fwd = (which) => () => {
+    const f = document.getElementById('todosFrame');
+    try { f && f.contentWindow && f.contentWindow.postMessage({ type:'warroom:edit-hour-goal', which }, '*'); } catch {}
+    if (currentTab !== 'todos') switchTab('todos');
+  };
+  const tBtn = document.getElementById('hgToday');
+  const wBtn = document.getElementById('hgWeek');
+  if (tBtn) tBtn.addEventListener('click', fwd('daily'));
+  if (wBtn) wBtn.addEventListener('click', fwd('weekly'));
+});
+
+// ---- Sync ECM (in Settings panel) ----
+function ssRunSyncFromShell(){
+  const f = document.getElementById('todosFrame');
+  try { f && f.contentWindow && f.contentWindow.postMessage({ type:'warroom:smartsheets-sync' }, '*'); } catch {}
+  // Make sure personal-todos is loaded so the sync actually runs
+  if (currentTab !== 'todos') switchTab('todos');
+  const status = document.getElementById('ssStatus');
+  if (status) status.textContent = 'Sync started in Personal — watch for the count to update.';
+}
 
 // --- Focus immersion (merged Focus into Today's Plan) ---
 // When a focus session is active, tap the focus-bar (or the expand button) to
