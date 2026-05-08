@@ -1751,13 +1751,13 @@ body { display:flex; flex-direction:column; position:relative }
   // completion in localStorage; personal-todos.html drains the queue (on load
   // and via a `storage` event listener it added). Locally drop the item from
   // the cache so it disappears from suggestions immediately.
-  function completePersonalTodo(sel){
+  function completePersonalTodo(sel, addSeconds){
     const id = sel.ids && sel.ids.todoId;
     if (!id) return;
     const QKEY = 'sprint-pending-completions';
     let queue = [];
     try { queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || []; } catch {}
-    queue.push({ todoId: id, completedAt: Date.now() });
+    queue.push({ todoId: id, completedAt: Date.now(), addTimeSpent: Number(addSeconds) || 0 });
     try { localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50))); } catch {}
     // Optimistically remove from local cache so the suggestion vanishes now.
     try {
@@ -1841,13 +1841,13 @@ body { display:flex; flex-direction:column; position:relative }
   // Manual / free-text tasks don't have a stable ID — at start we created a
   // personal todo via a queue; at finish we ask personal-todos to mark the
   // matching todo done by text. Personal-todos drains both shapes.
-  function queuePersonalCompletionByText(text){
+  function queuePersonalCompletionByText(text, addSeconds){
     const t = (text || '').trim();
     if (!t) return;
     try {
       const QKEY = 'sprint-pending-completions';
       const queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || [];
-      queue.push({ text: t, completedAt: Date.now() });
+      queue.push({ text: t, completedAt: Date.now(), addTimeSpent: Number(addSeconds) || 0 });
       localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50)));
     } catch {}
   }
@@ -1857,11 +1857,22 @@ body { display:flex; flex-direction:column; position:relative }
   // completion-by-text for the manually-typed task.
   function completeBeyondSprint(entry, sel){
     if (!entry) return;
+    const addSecs = Number(entry && entry.actualSeconds) || 0;
     if (sel && sel.source && sel.source !== 'recent') {
-      try { completeSourceTask(sel); } catch (e) { console.warn('source completion failed', e); }
+      try {
+        // Personal-todo path uses the queue with addTimeSpent; goal/board/plan
+        // use synchronous localStorage and don't track time the same way, so
+        // pass through but completePersonalTodo extracts addSecs only.
+        if (sel.source === 'personal' || sel.source === 'priority') {
+          completePersonalTodo(sel, addSecs);
+        } else {
+          completeSourceTask(sel);
+        }
+      } catch (e) { console.warn('source completion failed', e); }
     } else {
-      // Manual task — match by text on personal todos
-      try { queuePersonalCompletionByText(entry.taskName); } catch {}
+      // Manual task — match by text on personal todos. Pass actualSeconds so
+      // personal-todos can bump the matched todo's timeSpent.
+      try { queuePersonalCompletionByText(entry.taskName, addSecs); } catch {}
     }
   }
 
@@ -2479,6 +2490,50 @@ body { display:flex; flex-direction:column; position:relative }
       if (!targetChips.querySelector('.target-chip.active')) {
         targetCustom.value = tgt;
       }
+    }
+    // Race mode: this Sprint instance is running as a fullscreen overlay
+    // launched from Personal. Hide its music bar (Personal owns the music)
+    // and post warroom:race-done to the parent when the user finishes,
+    // so the overlay can close itself.
+    const isRaceMode = sp.get('race') === '1';
+    const noMusic = sp.get('nomusic') === '1';
+    const todoIdParam = sp.get('todoId') || '';
+    if (noMusic) {
+      const mb = document.getElementById('musicBar'); if (mb) mb.style.display = 'none';
+      const mfw = document.getElementById('musicFrame'); if (mfw) mfw.src = 'about:blank';
+    }
+    if (isRaceMode) {
+      // Persist the last target so re-races default sensibly
+      if (Number.isFinite(tgt) && tgt > 0) {
+        try { localStorage.setItem('sprint-last-target-min', String(tgt)); } catch {}
+      }
+      // Auto-select the URL task as a "personal" linked task so the completion
+      // path bumps timeSpent on the right todo. We piggyback on selectedTask.
+      if (t && todoIdParam) {
+        try {
+          setSelectedTask({
+            text: t, source: 'personal', jobId: '', jobLabel: 'PERSONAL',
+            date: '', ids: { todoId: todoIdParam }, details: ''
+          });
+        } catch {}
+      }
+      // Tell parent to close the overlay when the sprint finishes (any path).
+      // Hook into the result overlay being shown — that's the universal "done" signal.
+      const ro = document.getElementById('resultOverlay');
+      if (ro) {
+        const obs = new MutationObserver(() => {
+          if (ro.classList.contains('show')) {
+            try { window.parent && window.parent.postMessage({ type:'warroom:race-done' }, '*'); } catch {}
+          }
+        });
+        obs.observe(ro, { attributes: true, attributeFilter: ['class'] });
+      }
+      // Esc inside race overlay → also signal close
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          try { window.parent && window.parent.postMessage({ type:'warroom:race-close' }, '*'); } catch {}
+        }
+      });
     }
   } catch {}
 })();
