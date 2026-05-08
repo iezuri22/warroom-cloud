@@ -1882,6 +1882,20 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: rgba(255,138,61,.6); vertical-align: middle;
   }
+  /* Inline Smartsheets ticket # — visible on the task row, no expansion needed */
+  .todo-ticket-pill {
+    display: inline-block; margin-left: 6px;
+    padding: 2px 8px; border-radius: 99px;
+    font-size: 11px; font-weight: 800; letter-spacing: .3px;
+    background: rgba(74,158,255,.16); color: #6BA8FF;
+    border: 1px solid rgba(74,158,255,.32);
+    vertical-align: middle;
+    font-variant-numeric: tabular-nums;
+  }
+  .todo-ticket-pill.empty {
+    background: rgba(74,158,255,.08); color: rgba(107,168,255,.7);
+    font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  }
   /* Smartsheets-synced section — only renders when todo.smartsheetRowId exists */
   .todo-ss-section {
     flex-basis: 100%;
@@ -4263,7 +4277,7 @@ const VOICE = {
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       </div>
-      <span class="todo-text">${escHtml(todo.text)}${duePillHTML}${startsPillHTML}${periodPillHTML}${jobBadgeHTML}${todo.details ? ` <span class="todo-details-dot" title="Has details — tap to view"></span>` : ''}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
+      <span class="todo-text">${escHtml(todo.text)}${duePillHTML}${startsPillHTML}${periodPillHTML}${jobBadgeHTML}${todo.smartsheetTicket ? ` <span class="todo-ticket-pill" title="Smartsheets ticket — tap to expand for details">#${escHtml(String(todo.smartsheetTicket))}</span>` : (todo.smartsheetRowId ? ` <span class="todo-ticket-pill empty" title="Synced from Smartsheets — no ticket # yet">ECM</span>` : '')}${todo.details ? ` <span class="todo-details-dot" title="Has details — tap to view"></span>` : ''}${todo.fromTemplate ? ` <span class="recur-badge" title="Recurring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>Recur</span>` : ''}</span>
       ${mainTimerHTML}
       ${!todo.done ? `<button class="race-btn" data-race-id="${todo.id}" title="Race this task" aria-label="Race this task"><svg width="14" height="14" viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg></button>` : ''}
       ${chevronHTML}`;
@@ -5026,19 +5040,20 @@ const VOICE = {
         } catch (e) { console.error('ss add error:', e); }
       }
       ssSaveConfig({ lastSyncAt: Date.now() });
+      // Drain any queued edits that failed to push earlier
+      const flushed = await ssDrainPending();
       try { render(); } catch {}
       if (label) label.textContent = `Synced · ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;
       if (count) {
-        if (added || updated) {
-          count.textContent = `+${added}${updated ? ` · ~${updated}` : ''}`;
-          count.style.display = '';
-        } else {
-          count.textContent = 'no change';
-          count.style.display = '';
-        }
+        const parts = [];
+        if (added) parts.push(`+${added}`);
+        if (updated) parts.push(`~${updated}`);
+        if (flushed) parts.push(`↑${flushed}`);
+        count.textContent = parts.length ? parts.join(' · ') : 'no change';
+        count.style.display = '';
       }
       setTimeout(() => { if (label) label.textContent = 'Sync ECM'; if (count) count.style.display = 'none'; }, 4000);
-      return { added, updated, total: incomplete.length };
+      return { added, updated, flushed, total: incomplete.length };
     } catch (e) {
       console.error('ssSync error:', e);
       if (btn) btn.classList.add('error');
@@ -5051,12 +5066,17 @@ const VOICE = {
   }
   // Generic push: write a partial set of column→value pairs back to the synced
   // Smartsheets row. Caller passes { 'Status': 'Completed', 'Ticket #': '12345', ... }.
-  // Silently no-ops if the todo isn't a synced one or the column doesn't exist.
-  async function ssPushFields(todo, fieldsByTitle){
-    if (!todo || !todo.smartsheetRowId || !todo.smartsheetSheetId) return;
+  // On failure (no network, expired token, etc.) the change is queued in the
+  // todo's smartsheetPending field, then drained on the next ssSync.
+  async function ssPushFields(todo, fieldsByTitle, opts){
+    if (!todo || !todo.smartsheetRowId || !todo.smartsheetSheetId) return false;
+    if (!fieldsByTitle || !Object.keys(fieldsByTitle).length) return false;
     const c = ssGetConfig();
-    if (!c.token) return;
-    if (!fieldsByTitle || !Object.keys(fieldsByTitle).length) return;
+    if (!c.token) {
+      // No token yet — stash the change and drain when configured
+      ssQueuePending(todo, fieldsByTitle);
+      return false;
+    }
     try {
       const sheet = await ssFetchSheet();
       const cells = [];
@@ -5065,7 +5085,7 @@ const VOICE = {
         if (!col) continue;
         cells.push({ columnId: col.id, value: value === '' ? null : value, strict: false });
       }
-      if (!cells.length) return;
+      if (!cells.length) return false;
       const body = [{ id: Number(todo.smartsheetRowId), cells }];
       const res = await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(todo.smartsheetSheetId)}/rows`, {
         method: 'PUT',
@@ -5079,8 +5099,37 @@ const VOICE = {
       if (!res.ok) {
         const t = await res.text().catch(() => '');
         console.error('ssPushFields failed:', res.status, t.slice(0, 200));
+        if (!opts || !opts.skipQueue) ssQueuePending(todo, fieldsByTitle);
+        return false;
       }
-    } catch (e) { console.error('ssPushFields error:', e); }
+      return true;
+    } catch (e) {
+      console.error('ssPushFields error:', e);
+      if (!opts || !opts.skipQueue) ssQueuePending(todo, fieldsByTitle);
+      return false;
+    }
+  }
+  // Stash unsynced edits on the todo so the next ssSync can retry them.
+  // Merges later edits on top of earlier ones for the same field.
+  async function ssQueuePending(todo, fieldsByTitle){
+    const merged = Object.assign({}, todo.smartsheetPending || {}, fieldsByTitle);
+    todo.smartsheetPending = merged;
+    try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetPending: merged }); } catch {}
+  }
+  async function ssClearPending(todo){
+    todo.smartsheetPending = null;
+    try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetPending: null }); } catch {}
+  }
+  // Drain queue — called from ssSync after pulling fresh data.
+  async function ssDrainPending(){
+    const pendingTodos = todos.filter(t => t.smartsheetPending && Object.keys(t.smartsheetPending).length);
+    if (!pendingTodos.length) return 0;
+    let pushed = 0;
+    for (const t of pendingTodos) {
+      const ok = await ssPushFields(t, t.smartsheetPending, { skipQueue: true });
+      if (ok) { await ssClearPending(t); pushed++; }
+    }
+    return pushed;
   }
   // Push completion back. Called from toggleTodo when a synced todo flips done=true.
   async function ssPushCompletion(todo){
