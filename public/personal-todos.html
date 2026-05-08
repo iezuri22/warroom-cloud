@@ -5083,11 +5083,27 @@ const VOICE = {
     const btn = document.getElementById('ptSsSyncBtn');
     if (btn) btn.style.display = ssIsConfigured() ? '' : 'none';
   }
+  // All Smartsheets calls go through the /api/smartsheets Vercel proxy because
+  // Smartsheets doesn't return CORS headers for direct browser fetches. The
+  // proxy enforces War Room auth (so the endpoint isn't an open relay) and
+  // forwards the user's Smartsheets bearer token.
+  async function ssProxy(path, method, body){
+    const c = ssGetConfig();
+    if (!c.token) throw new Error('Missing Smartsheets token');
+    const url = `/api/smartsheets?path=${encodeURIComponent(path)}&method=${encodeURIComponent(method)}`;
+    const init = {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/json' },
+    };
+    if (body !== undefined && method !== 'GET' && method !== 'DELETE') {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    return await fetch(url, init);
+  }
   async function ssFetchSheet(){
     const c = ssGetConfig();
-    const res = await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(c.sheetId)}`, {
-      headers: { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/json' }
-    });
+    const res = await ssProxy(`/sheets/${c.sheetId}`, 'GET');
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
       throw new Error(`Smartsheets ${res.status}: ${txt.slice(0, 200)}`);
@@ -5226,15 +5242,7 @@ const VOICE = {
       }
       if (!cells.length) return false;
       const body = [{ id: Number(todo.smartsheetRowId), cells }];
-      const res = await fetch(`https://api.smartsheet.com/2.0/sheets/${encodeURIComponent(todo.smartsheetSheetId)}/rows`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': 'Bearer ' + c.token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
+      const res = await ssProxy(`/sheets/${todo.smartsheetSheetId}/rows`, 'PUT', body);
       if (!res.ok) {
         const t = await res.text().catch(() => '');
         console.error('ssPushFields failed:', res.status, t.slice(0, 200));
