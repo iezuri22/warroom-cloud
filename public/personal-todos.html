@@ -5932,6 +5932,24 @@ const VOICE = {
     const isRoutineList = _focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night';
     let basePool = todos.filter(t => !t.done);
     basePool = isRoutineList ? basePool.filter(t => !!t.fromTemplate) : basePool.filter(t => !t.fromTemplate);
+    // Dedupe: recurring tasks materialize daily, so the same template can have
+    // multiple pending instances across days. Dedupe by templateId so each
+    // routine task shows up once. Also dedupe by text (case/space-insensitive)
+    // for the rare one-off duplicate.
+    const seenTpl = new Set();
+    const seenText = new Set();
+    basePool = basePool.filter(t => {
+      if (t.fromTemplate) {
+        if (seenTpl.has(t.fromTemplate)) return false;
+        seenTpl.add(t.fromTemplate);
+      }
+      const txt = (t.text || '').trim().toLowerCase();
+      if (txt) {
+        if (seenText.has(txt)) return false;
+        seenText.add(txt);
+      }
+      return true;
+    });
 
     // Render job-filter chip strip — uses base pool counts so user sees how
     // many tasks each job has after the routine filter is applied.
@@ -6313,7 +6331,9 @@ const VOICE = {
         </button>
       </div>
     ` : '';
-    const recurBadge = todo.fromTemplate
+    // Recur badge clutters the cramped edit-mode num column (36px wide). Skip
+    // it in editing — the list-level routine flag conveys it already.
+    const recurBadge = (!editing && todo.fromTemplate)
       ? `<span class="focus5-recur-badge" title="Auto-binds to today's instance every day">↻ Routine</span>`
       : '';
     card.innerHTML = `
