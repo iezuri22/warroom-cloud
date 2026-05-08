@@ -1940,6 +1940,52 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: rgba(255,138,61,.6); vertical-align: middle;
   }
+  /* View filter — recency/urgency chips. Single row, single-select. */
+  .view-filter-bar {
+    display: flex; gap: 5px; flex-wrap: wrap;
+    padding: 4px 0 2px;
+  }
+  .view-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.6);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .view-chip:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .view-chip.muted { opacity: .35 }
+  .view-chip.muted:hover { opacity: .7 }
+  .view-chip .ct {
+    font-size: 9px; font-weight: 800;
+    padding: 1px 5px; border-radius: 99px;
+    background: rgba(255,255,255,.08); color: rgba(255,255,255,.55);
+  }
+  /* meta = neutral; recency = blue-ish; urgent = orange; overdue = red */
+  .view-chip.recency.active {
+    background: rgba(74,158,255,.16); color: #6BA8FF; border-color: #6BA8FF;
+  }
+  .view-chip.recency.active .ct { background: rgba(74,158,255,.28); color: #fff }
+  .view-chip.urgent { color: rgba(255,138,61,.85); border-color: rgba(255,138,61,.32) }
+  .view-chip.urgent:hover { color: #FF8A3D; border-color: #FF8A3D }
+  .view-chip.urgent.active {
+    background: rgba(255,138,61,.16); color: #FF8A3D; border-color: #FF8A3D;
+  }
+  .view-chip.urgent .ct { background: rgba(255,138,61,.16); color: #FF8A3D }
+  .view-chip.urgent.active .ct { background: rgba(255,138,61,.28); color: #fff }
+  .view-chip.overdue { color: rgba(248,113,113,.85); border-color: rgba(248,113,113,.32) }
+  .view-chip.overdue:hover { color: #F87171; border-color: #F87171 }
+  .view-chip.overdue.active {
+    background: rgba(248,113,113,.16); color: #F87171; border-color: #F87171;
+  }
+  .view-chip.overdue .ct { background: rgba(248,113,113,.16); color: #F87171 }
+  .view-chip.overdue.active .ct { background: rgba(248,113,113,.28); color: #fff }
+  .view-chip.meta.active {
+    background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.25);
+  }
+
   /* ECM status sub-filter — appears below job-filter when ECM chip is active */
   .ecm-status-bar {
     display: flex; gap: 5px; flex-wrap: wrap;
@@ -1969,6 +2015,8 @@
   .ecm-status-chip.active .ct {
     background: rgba(107,168,255,.3); color: #fff;
   }
+  .ecm-status-chip.muted { opacity: .35 }
+  .ecm-status-chip.muted:hover { opacity: .7 }
 
   /* Inline Smartsheets ticket # — visible on the task row, no expansion needed */
   .todo-ticket-pill {
@@ -2594,6 +2642,16 @@
   let selectedJob = (function(){ try { return localStorage.getItem('personal-add-job') || ''; } catch { return ''; } })();
   let jobFilter   = (function(){ try { return localStorage.getItem('personal-job-filter') || 'all'; } catch { return 'all'; } })();
   let ecmStatusFilter = (function(){ try { return localStorage.getItem('personal-ecm-status-filter') || 'all'; } catch { return 'all'; } })();
+  // View filter — narrows pending list by recency / urgency. Single-select.
+  let viewFilter = (function(){ try { return localStorage.getItem('personal-view-filter') || 'all'; } catch { return 'all'; } })();
+  // Short labels for ECM status chips (matches ecm.html SS_STATUS_SHORT)
+  const SS_STATUS_SHORT = {
+    'Requested':'Requested', 'To-Do':'To-Do', 'Pending IR':'Pending IR',
+    'Ticket Sent':'Ticket Sent', 'On Hold':'On Hold', 'Waitlisted':'Waitlisted',
+    'Further discussion':'Discuss', 'Not feasible - close ticket':'Not feasible',
+    'Discussed with Dev':'With Dev', 'In Progress':'In Progress',
+    'Verified on PRE':'V on PRE', 'Verified on UAT':'V on UAT', 'Completed':'Completed'
+  };
   // ---- Voice with beep fallback ----
   let speechSupported = false;
   try {
@@ -3868,6 +3926,34 @@ const VOICE = {
     if (jobFilter === ecmJobId() && ecmStatusFilter && ecmStatusFilter !== 'all') {
       pending = pending.filter(t => (t.smartsheetStatus || '') === ecmStatusFilter);
     }
+    // View filter — recency / urgency narrowing on top of job filter
+    if (viewFilter && viewFilter !== 'all') {
+      const todayK = todayKey();
+      const wk = (() => {
+        const d = new Date(); d.setDate(d.getDate() - 7); return dkey(d);
+      })();
+      pending = pending.filter(t => {
+        if (viewFilter === 'created-today') {
+          const c = (t.createdAt || '').slice(0, 10);
+          return c && c === todayK;
+        }
+        if (viewFilter === 'created-week') {
+          const c = (t.createdAt || '').slice(0, 10);
+          return c && c >= wk;
+        }
+        if (viewFilter === 'priority') return !!t.priority;
+        if (viewFilter === 'due-soon') {
+          if (!t.dueDate) return false;
+          const d = daysFromTodayTo(t.dueDate);
+          return d >= 0 && d <= 7;
+        }
+        if (viewFilter === 'overdue') {
+          if (!t.dueDate) return false;
+          return daysFromTodayTo(t.dueDate) < 0;
+        }
+        return true;
+      });
+    }
     // Priority items sort above non-priority. Within each group, sort purely by
     // stored position so manual Move to Top / drag-drop is honored.
     pending.sort((a, b) => {
@@ -3970,26 +4056,64 @@ const VOICE = {
       window.location.href = '/goal-board.html';
     });
     wrap.appendChild(bar);
-    // Status sub-filter — only renders when the ECM chip is active
+
+    // View filter — recency / urgency narrowing. Stays one row, single-select.
+    const vBar = document.createElement('div');
+    vBar.className = 'view-filter-bar';
+    const pendingAll = todos.filter(t => !t.done);
+    const todayK = todayKey();
+    const wkStart = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return dkey(d); })();
+    const vCounts = {
+      all: pendingAll.length,
+      'created-today': pendingAll.filter(t => (t.createdAt || '').slice(0, 10) === todayK).length,
+      'created-week': pendingAll.filter(t => { const c = (t.createdAt || '').slice(0, 10); return c && c >= wkStart; }).length,
+      priority: pendingAll.filter(t => !!t.priority).length,
+      'due-soon': pendingAll.filter(t => { if (!t.dueDate) return false; const d = daysFromTodayTo(t.dueDate); return d >= 0 && d <= 7; }).length,
+      overdue: pendingAll.filter(t => { if (!t.dueDate) return false; return daysFromTodayTo(t.dueDate) < 0; }).length
+    };
+    const vChips = [
+      { id: 'all', label: 'All', kind: 'meta' },
+      { id: 'created-today', label: 'Created today', kind: 'recency' },
+      { id: 'created-week', label: 'Created this week', kind: 'recency' },
+      { id: 'priority', label: 'Priority', kind: 'urgent' },
+      { id: 'due-soon', label: 'Due soon', kind: 'urgent' },
+      { id: 'overdue', label: 'Overdue', kind: 'overdue' }
+    ];
+    vBar.innerHTML = vChips.map(c => {
+      const active = viewFilter === c.id ? 'active' : '';
+      const muted = (vCounts[c.id] === 0 && c.id !== 'all') ? 'muted' : '';
+      return `<button class="view-chip ${c.kind} ${active} ${muted}" data-view="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${vCounts[c.id]}</span></button>`;
+    }).join('');
+    vBar.querySelectorAll('.view-chip').forEach(ch => {
+      ch.addEventListener('click', (e) => {
+        e.stopPropagation();
+        viewFilter = ch.dataset.view;
+        try { localStorage.setItem('personal-view-filter', viewFilter); } catch {}
+        render();
+      });
+    });
+    wrap.appendChild(vBar);
+
+    // Status sub-filter — only renders when the ECM chip is active.
+    // Mirrors ecm.html: all 13 statuses always visible, short labels, muted
+    // when count is 0 so user can switch to one they expect to populate.
     if (jobFilter === ecmJobId()) {
       const ecmId = ecmJobId();
       const ecmTodos = todos.filter(t => !t.done && (t.job || '') === ecmId);
-      // Build status counts for what we currently have
       const statusCounts = { all: ecmTodos.length };
       SS_STATUSES.forEach(s => { statusCounts[s] = 0; });
       ecmTodos.forEach(t => {
         const s = t.smartsheetStatus || '';
         if (statusCounts[s] !== undefined) statusCounts[s]++;
       });
-      // Only render statuses that have at least one task — avoids 13 empty chips
-      const visibleStatuses = SS_STATUSES.filter(s => statusCounts[s] > 0);
       const sub = document.createElement('div');
       sub.className = 'ecm-status-bar';
       const statusChips = [{ id: 'all', label: 'All', count: statusCounts.all }]
-        .concat(visibleStatuses.map(s => ({ id: s, label: s, count: statusCounts[s] })));
+        .concat(SS_STATUSES.map(s => ({ id: s, label: SS_STATUS_SHORT[s] || s, count: statusCounts[s] || 0 })));
       sub.innerHTML = statusChips.map(c => {
         const active = ecmStatusFilter === c.id ? 'active' : '';
-        return `<button class="ecm-status-chip ${active}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+        const muted = (c.id !== 'all' && c.count === 0) ? 'muted' : '';
+        return `<button class="ecm-status-chip ${active} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
       }).join('');
       sub.querySelectorAll('.ecm-status-chip').forEach(ch => {
         ch.addEventListener('click', (e) => {
