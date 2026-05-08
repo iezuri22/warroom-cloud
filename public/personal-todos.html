@@ -4752,21 +4752,30 @@ const VOICE = {
     } catch {}
   });
 
-  // Show / hide the music bar via a postMessage from the War Room shell.
-  // Persisted so the choice survives reloads. Audio keeps playing either way.
+  // Music bar visibility is owned by the War Room shell (single source of
+  // truth in localStorage). We just read + apply. Audio keeps playing either
+  // way — hiding only collapses the chips/controls.
   const PT_MUSIC_HIDE_KEY = 'pt-music-bar-hidden-v1';
   function ptApplyHideClass(){
-    const hidden = (function(){ try { return localStorage.getItem(PT_MUSIC_HIDE_KEY) === '1'; } catch { return false; } })();
+    let hidden = false;
+    try { hidden = localStorage.getItem(PT_MUSIC_HIDE_KEY) === '1'; } catch {}
     document.body.classList.toggle('music-hidden', hidden);
   }
   ptApplyHideClass();
+  // Shell broadcasts via postMessage immediately after writing localStorage.
   window.addEventListener('message', (ev) => {
     const d = ev && ev.data;
     if (!d || typeof d !== 'object') return;
-    if (d.type !== 'warroom:toggle-music-bar') return;
-    const next = !document.body.classList.contains('music-hidden');
-    try { localStorage.setItem(PT_MUSIC_HIDE_KEY, next ? '1' : '0'); } catch {}
-    document.body.classList.toggle('music-hidden', next);
+    if (d.type === 'warroom:music-hidden') {
+      document.body.classList.toggle('music-hidden', !!d.hidden);
+    } else if (d.type === 'warroom:toggle-music-bar') {
+      // Legacy compat — still works if older shell version is loaded
+      ptApplyHideClass();
+    }
+  });
+  // Cross-document storage event (fires in iframes when SHELL writes localStorage).
+  window.addEventListener('storage', (ev) => {
+    if (ev && ev.key === PT_MUSIC_HIDE_KEY) ptApplyHideClass();
   });
 
   // Initial render. If state has a saved vibe, attach a one-shot listener that

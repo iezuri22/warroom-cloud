@@ -1641,6 +1641,16 @@ body.focus-big-min .focus-big{cursor:pointer}
 .header-btn.active{
   background:var(--ios-accent);color:#0B0B0E;border-color:var(--ios-accent);
 }
+/* "Off" state for toggleable buttons — dimmed + slash overlay so user knows the thing is hidden */
+.header-btn.is-off{
+  color:var(--text-dim);border-color:var(--ios-fill);background:var(--ios-fill-2);
+  position:relative;
+}
+.header-btn.is-off::after{
+  content:'';position:absolute;top:50%;left:14%;right:14%;height:1.5px;
+  background:currentColor;transform:rotate(-22deg);transform-origin:center;
+  border-radius:1px;pointer-events:none;
+}
 
 /* Inline utility icons in the tab strip */
 .tabs .header-right{
@@ -2697,6 +2707,8 @@ function init(){
   // Default tab is 'todos' (Personal). Always call switchTab so view display + iframe src get set correctly.
   const __initialTab = ui.tab || 'todos';
   try { switchTab(__initialTab); } catch(e){}
+  // Reflect saved music-bar visibility on the shell button so user can see it
+  try { syncMusicToggleBtn(); } catch(e){}
   // Restore fullscreen body class (native fullscreen requires a user gesture so we just restyle)
   if(ui.fullscreen){
     document.body.classList.add('fullscreen');
@@ -3786,15 +3798,33 @@ function toggleFullscreen(){
   if (document.body.classList.contains('fullscreen')) exitFullscreen();
   else enterFullscreen();
 }
-// Tell the personal-todos iframe to flip its music-bar visibility. It owns
-// the bar + audio iframe; the shell just sends a postMessage. State is
-// persisted there so it survives refreshes.
-function toggleMusicBar(){
+// Toggle the music bar visibility. The bar lives in personal-todos; we drive
+// it two ways for resilience:
+//   1. localStorage write — personal-todos listens via 'storage' event
+//      (works across iframes since they share origin)
+//   2. postMessage broadcast — cheap belt-and-suspenders fallback
+// Shell button reflects the current state so you can see it flip.
+const MUSIC_HIDE_KEY = 'pt-music-bar-hidden-v1';
+function isMusicHidden(){
+  try { return localStorage.getItem(MUSIC_HIDE_KEY) === '1'; } catch { return false; }
+}
+function setMusicHidden(hidden){
+  try { localStorage.setItem(MUSIC_HIDE_KEY, hidden ? '1' : '0'); } catch {}
+  // Storage events don't fire in the SAME tab — bump same-origin iframes via postMessage too
   const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
-    try { f && f.contentWindow && f.contentWindow.postMessage({ type:'warroom:toggle-music-bar' }, '*'); } catch {}
+    try { f && f.contentWindow && f.contentWindow.postMessage({ type:'warroom:music-hidden', hidden }, '*'); } catch {}
   });
+  syncMusicToggleBtn();
+}
+function toggleMusicBar(){ setMusicHidden(!isMusicHidden()); }
+function syncMusicToggleBtn(){
+  const btn = document.getElementById('musicToggleBtn');
+  if (!btn) return;
+  const hidden = isMusicHidden();
+  btn.classList.toggle('is-off', hidden);
+  btn.title = hidden ? 'Lofi bar hidden — tap to show' : 'Lofi bar showing — tap to hide';
 }
 
 // --- Focus immersion (merged Focus into Today's Plan) ---
