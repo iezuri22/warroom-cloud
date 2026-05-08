@@ -388,6 +388,62 @@
     background: linear-gradient(135deg, rgba(255,138,61,.22), rgba(255,107,26,.10));
     border-color: #FF8A3D;
   }
+  /* "+ list" mini-button on the pill — always visible so users can make a
+     second list without first entering focus mode */
+  .pt-focus-plus {
+    width: 24px; height: 24px; border-radius: 50%;
+    flex-shrink: 0;
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.85); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    transition: background .15s, border-color .15s, transform .12s;
+  }
+  .pt-focus-plus:hover {
+    background: rgba(255,138,61,.2); border-color: #FF8A3D; color: #FF8A3D;
+  }
+  .pt-focus-plus:active { transform: scale(.92) }
+
+  /* Mini list-strip below the pill — only shown when not in focus mode AND
+     there's more than 1 list. Lets user switch lists without entering. */
+  .pt-focus-mini-strip {
+    display: none;
+    gap: 6px; flex-wrap: wrap;
+    margin-top: 6px; margin-bottom: 10px;
+    padding: 0 2px;
+  }
+  .pt-focus-mini-strip.show { display: flex }
+  body.focus5-active .pt-focus-mini-strip { display: none }
+  .pt-focus-mini-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.65);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    letter-spacing: .15px; cursor: pointer;
+    max-width: 200px;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .pt-focus-mini-tab:hover { color: #fff; border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.06) }
+  .pt-focus-mini-tab.active {
+    background: rgba(255,138,61,.14); border-color: rgba(255,138,61,.45); color: #FF8A3D;
+  }
+  .pt-focus-mini-tab .name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 140px;
+  }
+  .pt-focus-mini-tab .ct {
+    font-size: 10px; font-weight: 800;
+    padding: 1px 5px; border-radius: 99px;
+    background: rgba(255,255,255,.08); color: rgba(255,255,255,.55);
+  }
+  .pt-focus-mini-tab.active .ct {
+    background: rgba(255,138,61,.22); color: #FF8A3D;
+  }
+  .pt-focus-mini-tab.complete { border-color: rgba(74,222,128,.32) }
+  .pt-focus-mini-tab.complete .ct { background: rgba(74,222,128,.16); color: #4ADE80 }
 
   /* ============ FOCUS 5 VIEW — replaces .list contents in focus mode ============ */
   .focus5-view {
@@ -2013,16 +2069,21 @@
         </div>
       </div>
       <div class="pt-goals-row" id="ptGoalsRow"></div>
-      <button class="pt-focus-toggle" id="ptFocusToggle" type="button">
+      <div class="pt-focus-toggle" id="ptFocusToggle" role="button" tabindex="0">
         <span class="pt-focus-tag">Focus 5</span>
         <span class="pt-focus-line" id="ptFocusLine">Pick 5 to focus on today</span>
         <span class="pt-focus-dots" id="ptFocusDots" aria-hidden="true">
           <span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span>
         </span>
+        <button class="pt-focus-plus" id="ptFocusNewListBtn" type="button" title="New focus list" aria-label="New focus list">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
         <span class="pt-focus-arrow" id="ptFocusArrow">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
         </span>
-      </button>
+      </div>
+      <!-- Mini list-strip — visible when there's more than 1 list and user is NOT in focus mode -->
+      <div class="pt-focus-mini-strip" id="ptFocusMiniStrip"></div>
       <div id="filterBarSlot"></div>
     </div>
     <div class="list" id="list"></div>
@@ -4917,6 +4978,33 @@ const VOICE = {
       dot.classList.toggle('done', i < done);
       dot.style.opacity = i < picked ? '1' : '.35';
     });
+    // Mini list-strip — only show if there are 2+ lists AND we're not in focus mode
+    // (in focus mode, the full strip in the focus view handles switching).
+    const strip = document.getElementById('ptFocusMiniStrip');
+    if (strip) {
+      strip.innerHTML = '';
+      const showStrip = focus5State.lists.length > 1 && !focus5State.active;
+      strip.classList.toggle('show', showStrip);
+      if (showStrip) {
+        focus5State.lists.forEach(l => {
+          const lTasks = l.taskIds.map(id => todos.find(t => t.id === id)).filter(Boolean);
+          const lDone = lTasks.filter(t => t.done).length;
+          const total = lTasks.length;
+          const isActive = l.id === focus5State.activeListId;
+          const isComplete = total > 0 && lDone === total;
+          const tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = `pt-focus-mini-tab ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`;
+          tab.innerHTML = `<span class="name">${escHtml(l.name)}</span><span class="ct">${lDone}/${total || 5}</span>`;
+          tab.addEventListener('click', () => {
+            focus5State.activeListId = l.id;
+            saveFocus5();
+            updateFocus5Toggle();
+          });
+          strip.appendChild(tab);
+        });
+      }
+    }
   }
 
   // -------- PICKER (also doubles as new-list creator) --------
@@ -5301,7 +5389,21 @@ const VOICE = {
   (function wireFocus5(){
     loadFocus5();
     const btn = document.getElementById('ptFocusToggle');
-    if (btn) btn.addEventListener('click', focus5ToggleClick);
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        // Prevent stray clicks on inner buttons (the +) from also firing the
+        // toggle. The + button stops its own propagation; this is a fallback.
+        if (e.target && e.target.closest && e.target.closest('.pt-focus-plus')) return;
+        focus5ToggleClick();
+      });
+      btn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focus5ToggleClick(); }
+      });
+    }
+    const newListBtn = document.getElementById('ptFocusNewListBtn');
+    if (newListBtn) newListBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); openFocus5Picker(null);
+    });
     const cancel = document.getElementById('focus5PickerCancel');
     const start = document.getElementById('focus5PickerStart');
     const bd = document.getElementById('focus5PickerBackdrop');
