@@ -3581,8 +3581,14 @@ const VOICE = {
     if (currentView === 'archive') return renderArchive();
     // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
     if (focus5State.active && focus5State.lists.length > 0) {
-      try { renderFocus5View(); return; } catch (e) { console.error('focus5 render', e); }
+      try { renderFocus5View(); } catch (e) { console.error('focus5 render', e); }
+      // Pull the music bar into the focus view so it's pinned at the top of
+      // what the user is looking at. Deferred so the .focus5-view is in DOM.
+      setTimeout(() => { try { focus5MoveMusicBar(true); } catch {} }, 0);
+      return;
     }
+    // Not in focus mode — make sure the music bar is back in its mainHead spot
+    setTimeout(() => { try { focus5MoveMusicBar(false); } catch {} }, 0);
     renderTasks();
   }
   function renderTasks() {
@@ -5123,6 +5129,24 @@ const VOICE = {
     _focus5EditMode = !!on;
     document.body.classList.toggle('focus5-editing', _focus5EditMode);
     render();
+  }
+  // Move the lofi bar between mainHead (regular view) and the focus view's
+  // top so it's always visible to the user wherever they are. The audio
+  // iframe lives at body level and doesn't move — only the chips/controls do.
+  function focus5MoveMusicBar(intoFocus){
+    const bar = document.getElementById('ptMusicBar');
+    if (!bar) return;
+    if (intoFocus) {
+      const view = document.querySelector('.focus5-view');
+      if (view && bar.parentNode !== view) {
+        view.insertBefore(bar, view.firstChild);
+      }
+    } else {
+      const head = document.getElementById('mainHead');
+      if (head && bar.parentNode !== head) {
+        head.insertBefore(bar, head.firstChild);
+      }
+    }
   }
 
   // -------- TOGGLE PILL --------
