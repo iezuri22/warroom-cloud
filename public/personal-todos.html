@@ -931,6 +931,71 @@
   .focus5-picker-jobs button.active .ct {
     background: rgba(255,138,61,.22); color: #FF8A3D;
   }
+  /* Sort row inside picker — sort dropdown + direction toggle */
+  .focus5-picker-sort {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+  .focus5-picker-sort-sel {
+    padding: 5px 26px 5px 10px;
+    border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.75);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    outline: none; cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+  }
+  .focus5-picker-sort-sel option { background: #15151B; color: #fff }
+  .focus5-picker-sort-dir {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.7); cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .focus5-picker-sort-dir:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .focus5-picker-sort-dir.desc svg { transform: rotate(180deg) scaleX(-1) }
+  /* Status chip row inside picker — only when ECM is the job filter */
+  .focus5-picker-status {
+    display: flex; gap: 4px;
+    margin-top: 6px;
+    padding: 2px 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .focus5-picker-status::-webkit-scrollbar { display: none }
+  .focus5-picker-status button {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(74,158,255,.20);
+    color: rgba(107,168,255,.7);
+    font-family: inherit; font-size: 10.5px; font-weight: 700;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .focus5-picker-status button:hover { color: #6BA8FF; border-color: rgba(74,158,255,.4) }
+  .focus5-picker-status button.active {
+    background: rgba(74,158,255,.16); color: #6BA8FF; border-color: #6BA8FF;
+  }
+  .focus5-picker-status button .ct {
+    font-size: 9px; font-weight: 800;
+    padding: 1px 5px; border-radius: 99px;
+    background: rgba(107,168,255,.16); color: rgba(107,168,255,.85);
+  }
+  .focus5-picker-status button.active .ct {
+    background: rgba(107,168,255,.3); color: #fff;
+  }
+  .focus5-picker-status button.muted { opacity: .35 }
+  .focus5-picker-status button.muted:hover { opacity: .7 }
   /* "Already in <list>" indicator — strikes through the row visually so user
      knows it's spoken for in another focus list */
   .focus5-picker-row.in-other-list {
@@ -5810,6 +5875,9 @@ const VOICE = {
   let _focus5PickerListId = null;     // null = creating new list, else editing this list
   let _focus5PickerRoutine = 'none';  // ephemeral routine flag while picker is open
   let _focus5PickerJobFilter = 'all'; // ephemeral job filter inside picker
+  let _focus5PickerStatusFilter = 'all'; // only used when job filter = ECM
+  let _focus5PickerSortBy = 'name';
+  let _focus5PickerSortDir = 'asc';
   let _focus5EditMode = false;        // in-place edit on the focus view
   // Auto-select-by-time runs once per page load. After that, user's manual
   // taps stick — otherwise every render would yank them back to the
@@ -6090,6 +6158,9 @@ const VOICE = {
     // listId === existing → editing that list (pre-load name + selection)
     _focus5PickerListId = listId || null;
     _focus5PickerJobFilter = 'all'; // start with no job filter every open
+    _focus5PickerStatusFilter = 'all';
+    _focus5PickerSortBy = 'name';
+    _focus5PickerSortDir = 'asc';
     if (_focus5PickerListId) {
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
       _focus5PickerName = list ? list.name : '';
@@ -6192,9 +6263,93 @@ const VOICE = {
     if (_focus5PickerJobFilter && _focus5PickerJobFilter !== 'all') {
       pool = pool.filter(t => (t.job || '') === _focus5PickerJobFilter);
     }
+    // Status sub-filter — only meaningful when ECM is the active job
+    const ecmActive = _focus5PickerJobFilter === ecmJobId();
+    if (ecmActive && _focus5PickerStatusFilter && _focus5PickerStatusFilter !== 'all') {
+      pool = pool.filter(t => (t.smartsheetStatus || '') === _focus5PickerStatusFilter);
+    }
+    // Build the status chip row (only for ECM); render below the job chips.
+    const jobsWrap2 = document.getElementById('focus5PickerJobs');
+    if (jobsWrap2) {
+      // Remove any prior status row so re-renders don't stack them
+      const oldStatus = document.getElementById('focus5PickerStatusRow');
+      if (oldStatus) oldStatus.remove();
+      const oldSort = document.getElementById('focus5PickerSortRow');
+      if (oldSort) oldSort.remove();
+      // Sort row — small dropdown + direction toggle, sits below jobs
+      const sortRow = document.createElement('div');
+      sortRow.id = 'focus5PickerSortRow';
+      sortRow.className = 'focus5-picker-sort';
+      const sortOpts = [
+        { id: 'name',     label: 'Sort: Name' },
+        { id: 'priority', label: 'Sort: Priority' },
+        { id: 'created',  label: 'Sort: Created' },
+        { id: 'due',      label: 'Sort: Due date' }
+      ];
+      sortRow.innerHTML = `
+        <select class="focus5-picker-sort-sel">
+          ${sortOpts.map(o => `<option value="${o.id}" ${_focus5PickerSortBy === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
+        </select>
+        <button type="button" class="focus5-picker-sort-dir ${_focus5PickerSortDir === 'desc' ? 'desc' : ''}" title="Toggle direction">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M17 9l4-4 4 4M21 5v14"/></svg>
+        </button>
+      `;
+      sortRow.querySelector('.focus5-picker-sort-sel').addEventListener('change', (e) => {
+        e.stopPropagation();
+        _focus5PickerSortBy = e.target.value || 'name';
+        renderFocus5Picker();
+      });
+      sortRow.querySelector('.focus5-picker-sort-dir').addEventListener('click', (e) => {
+        e.stopPropagation();
+        _focus5PickerSortDir = _focus5PickerSortDir === 'asc' ? 'desc' : 'asc';
+        renderFocus5Picker();
+      });
+      jobsWrap2.parentNode.insertBefore(sortRow, jobsWrap2.nextSibling);
+      // Status chips — only when ECM is the active job filter
+      if (ecmActive) {
+        const ecmTodos = basePool.filter(t => (t.job || '') === ecmJobId());
+        const sCounts = { all: ecmTodos.length };
+        SS_STATUSES.forEach(s => { sCounts[s] = ecmTodos.filter(t => (t.smartsheetStatus || '') === s).length; });
+        const sChips = [{ id: 'all', label: 'All', count: sCounts.all }]
+          .concat(SS_STATUSES.map(s => ({ id: s, label: SS_STATUS_SHORT[s] || s, count: sCounts[s] || 0 })));
+        const statusRow = document.createElement('div');
+        statusRow.id = 'focus5PickerStatusRow';
+        statusRow.className = 'focus5-picker-status';
+        statusRow.innerHTML = sChips.map(c => {
+          const active = _focus5PickerStatusFilter === c.id ? 'active' : '';
+          const muted = (c.id !== 'all' && c.count === 0) ? 'muted' : '';
+          return `<button type="button" class="${active} ${muted}" data-st="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+        }).join('');
+        statusRow.querySelectorAll('button').forEach(b => {
+          b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _focus5PickerStatusFilter = b.dataset.st || 'all';
+            renderFocus5Picker();
+          });
+        });
+        sortRow.parentNode.insertBefore(statusRow, sortRow.nextSibling);
+      }
+    }
+    // Apply sort
+    const dirMul = _focus5PickerSortDir === 'desc' ? -1 : 1;
+    const cmpStr = (a, b) => (a || '').toString().localeCompare((b || '').toString());
+    const cmpDate = (a, b) => {
+      const ta = a ? Date.parse(a) : 0;
+      const tb = b ? Date.parse(b) : 0;
+      return (ta || 0) - (tb || 0);
+    };
     pool.sort((a, b) => {
-      if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
-      return (a.position || 0) - (b.position || 0);
+      let r = 0;
+      if (_focus5PickerSortBy === 'priority') {
+        r = (b.priority ? 1 : 0) - (a.priority ? 1 : 0);
+      } else if (_focus5PickerSortBy === 'created') {
+        r = cmpDate(a.createdAt, b.createdAt);
+      } else if (_focus5PickerSortBy === 'due') {
+        r = cmpDate(a.dueDate || '9999-12-31', b.dueDate || '9999-12-31');
+      } else {
+        r = cmpStr(a.text, b.text);
+      }
+      return r * dirMul || cmpStr(a.text, b.text);
     });
 
     // Build "task is already in another list" map (excluding the list we're
