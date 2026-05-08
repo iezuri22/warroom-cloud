@@ -420,6 +420,103 @@
   .focus5-progress-count strong {
     color: #FF8A3D; font-size: 16px;
   }
+  /* Edit pill — top-right of progress row, toggles in-place edit mode */
+  .focus5-edit-toggle {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .3px; cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .focus5-edit-toggle:hover { color: #fff; border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.08) }
+  .focus5-edit-toggle.on {
+    background: rgba(255,138,61,.16);
+    border-color: #FF8A3D;
+    color: #FF8A3D;
+  }
+  /* In edit mode the cards collapse to a uniform compact shape — list-feel,
+     not stage-feel. Easier to grok ordering at a glance. */
+  body.focus5-editing .focus5-card {
+    padding: 14px 16px;
+    flex-direction: row; align-items: center; gap: 12px;
+    text-align: left;
+    background: rgba(255,255,255,.04);
+    border-color: rgba(255,255,255,.10);
+    box-shadow: none;
+    opacity: 1;
+  }
+  body.focus5-editing .focus5-card.active,
+  body.focus5-editing .focus5-card.queued,
+  body.focus5-editing .focus5-card.done {
+    background: rgba(255,255,255,.04);
+    border-color: rgba(255,255,255,.10);
+    padding: 14px 16px;
+    opacity: 1;
+  }
+  body.focus5-editing .focus5-card-num {
+    font-size: 11px; font-weight: 900; letter-spacing: 1.4px;
+    color: rgba(255,255,255,.4);
+    flex-shrink: 0; width: 36px; text-align: center;
+  }
+  body.focus5-editing .focus5-card.done .focus5-card-num {
+    color: rgba(74,222,128,.85);
+  }
+  body.focus5-editing .focus5-card-text {
+    font-size: 16px; flex: 1; min-width: 0; color: rgba(255,255,255,.92);
+    text-align: left;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  body.focus5-editing .focus5-card.done .focus5-card-text {
+    font-size: 16px; color: rgba(255,255,255,.55);
+  }
+  body.focus5-editing .focus5-card.done .focus5-card-text::before {
+    width: 10px; height: 10px; margin-right: 6px;
+    box-shadow: 0 0 0 2px rgba(74,222,128,.18);
+  }
+  body.focus5-editing .focus5-card-actions { display: none }
+  /* Edit-mode controls — up/down/remove on each card */
+  .focus5-edit-controls {
+    display: none;
+    align-items: center; gap: 4px;
+    flex-shrink: 0;
+  }
+  body.focus5-editing .focus5-edit-controls { display: inline-flex }
+  .focus5-edit-btn {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.7); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s, border-color .15s;
+    padding: 0;
+  }
+  .focus5-edit-btn:hover {
+    background: rgba(255,138,61,.14); color: #FF8A3D;
+    border-color: rgba(255,138,61,.35);
+  }
+  .focus5-edit-btn:disabled {
+    opacity: .25; cursor: not-allowed;
+  }
+  .focus5-edit-btn:disabled:hover {
+    background: rgba(255,255,255,.05); color: rgba(255,255,255,.7);
+    border-color: rgba(255,255,255,.10);
+  }
+  .focus5-edit-btn.danger:hover {
+    background: rgba(248,113,113,.14); color: #F87171;
+    border-color: rgba(248,113,113,.35);
+  }
+  /* Bottom action row in edit mode — Add more / Repick all */
+  .focus5-edit-foot {
+    display: none;
+    gap: 10px; flex-wrap: wrap; justify-content: center;
+    margin-top: 4px;
+  }
+  body.focus5-editing .focus5-edit-foot { display: flex }
+  body.focus5-editing .focus5-celebrate { display: none }
   /* Each card. The first non-done card is "active" — biggest. */
   .focus5-card {
     position: relative;
@@ -4544,6 +4641,7 @@ const VOICE = {
   const FOCUS5_KEY = 'personal-focus-5-v1';
   let focus5State = { date: '', taskIds: [], active: false };
   let _focus5PickerSel = []; // ephemeral selection while picker is open
+  let _focus5EditMode = false; // in-place edit (reorder / remove / add) on the focus view
   function focus5TodayKey(){
     // Same Chicago-day logic the rest of the app uses
     try { return todayKey(); } catch { return new Date().toISOString().slice(0,10); }
@@ -4693,7 +4791,45 @@ const VOICE = {
       return;
     }
     focus5State.active = !focus5State.active;
+    // Leaving the focus view also leaves edit mode — would be confusing to
+    // come back later still in edit mode without realizing.
+    if (!focus5State.active) {
+      _focus5EditMode = false;
+      document.body.classList.remove('focus5-editing');
+    }
     saveFocus5();
+    render();
+  }
+
+  // -------- EDIT MODE — reorder, remove, add (operates directly on focus5State.taskIds) --------
+  function focus5MoveUp(taskId){
+    const idx = focus5State.taskIds.indexOf(taskId);
+    if (idx <= 0) return;
+    const arr = focus5State.taskIds.slice();
+    [arr[idx-1], arr[idx]] = [arr[idx], arr[idx-1]];
+    focus5State.taskIds = arr; saveFocus5(); render();
+  }
+  function focus5MoveDown(taskId){
+    const idx = focus5State.taskIds.indexOf(taskId);
+    if (idx < 0 || idx >= focus5State.taskIds.length - 1) return;
+    const arr = focus5State.taskIds.slice();
+    [arr[idx+1], arr[idx]] = [arr[idx], arr[idx+1]];
+    focus5State.taskIds = arr; saveFocus5(); render();
+  }
+  function focus5Remove(taskId){
+    focus5State.taskIds = focus5State.taskIds.filter(id => id !== taskId);
+    saveFocus5();
+    // If we just emptied the list, drop edit mode + active so the user
+    // sees the empty-pick prompt cleanly.
+    if (focus5State.taskIds.length === 0) {
+      _focus5EditMode = false;
+      document.body.classList.remove('focus5-editing');
+    }
+    render();
+  }
+  function focus5SetEditMode(on){
+    _focus5EditMode = !!on;
+    document.body.classList.toggle('focus5-editing', _focus5EditMode);
     render();
   }
 
@@ -4702,7 +4838,6 @@ const VOICE = {
     const list = document.getElementById('list');
     if (!list) return;
     list.innerHTML = '';
-    // Strip any leftover sticky goals row (we want the focus view to feel uncluttered)
     const tasks = focus5Tasks();
     const view = document.createElement('div');
     view.className = 'focus5-view';
@@ -4728,7 +4863,7 @@ const VOICE = {
     }
     const done = tasks.filter(t => t.done).length;
     const total = tasks.length;
-    // Progress bar — five segments, one per pick
+    // Progress row — segments + count + Edit pill on the right
     const segs = Array.from({ length: total }, (_, i) =>
       `<span class="focus5-progress-seg ${i < done ? 'done' : ''}"></span>`
     ).join('');
@@ -4737,9 +4872,50 @@ const VOICE = {
     progress.innerHTML = `
       <div class="focus5-progress-track">${segs}</div>
       <div class="focus5-progress-count"><strong>${done}</strong>/${total}</div>
+      <button class="focus5-edit-toggle ${_focus5EditMode ? 'on' : ''}" id="focus5EditToggle" type="button">
+        ${_focus5EditMode
+          ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Done`
+          : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Edit`}
+      </button>
     `;
     view.appendChild(progress);
-    // All done — celebrate + offer to pick 5 more
+    const editToggleBtn = progress.querySelector('#focus5EditToggle');
+    if (editToggleBtn) editToggleBtn.addEventListener('click', () => focus5SetEditMode(!_focus5EditMode));
+
+    // Edit mode: render in stored order so the user can rearrange explicitly.
+    // Ignore the done/pending split — that visual would fight the reorder UX.
+    if (_focus5EditMode) {
+      tasks.forEach((t, i) => {
+        view.appendChild(buildFocus5Card(t, i, /*isActive*/ false, /*isDone*/ !!t.done, i + 1, /*editing*/ true, /*total*/ tasks.length));
+      });
+      // Foot row: add more (if room) + repick all
+      const foot = document.createElement('div');
+      foot.className = 'focus5-edit-foot';
+      const slotsLeft = 5 - tasks.length;
+      foot.innerHTML = `
+        ${slotsLeft > 0
+          ? `<button class="focus5-btn" id="focus5AddBtn" type="button">+ Add ${slotsLeft === 1 ? '1 more' : slotsLeft + ' more'}</button>`
+          : ''}
+        <button class="focus5-btn" id="focus5RepickAllBtn" type="button">Repick all 5</button>
+      `;
+      view.appendChild(foot);
+      const addBtn = foot.querySelector('#focus5AddBtn');
+      const repickAllBtn = foot.querySelector('#focus5RepickAllBtn');
+      if (addBtn) addBtn.addEventListener('click', () => {
+        // Open picker pre-loaded with current picks; user can add up to 5 total
+        openFocus5Picker();
+      });
+      if (repickAllBtn) repickAllBtn.addEventListener('click', () => {
+        focus5State.taskIds = []; saveFocus5();
+        _focus5EditMode = false;
+        document.body.classList.remove('focus5-editing');
+        openFocus5Picker();
+      });
+      list.appendChild(view);
+      return;
+    }
+
+    // All done (and not editing) — celebrate + offer to pick 5 more
     if (done === total) {
       const celebrate = document.createElement('div');
       celebrate.className = 'focus5-celebrate';
@@ -4755,7 +4931,6 @@ const VOICE = {
       const repick = celebrate.querySelector('#focus5RepickBtn');
       const exit = celebrate.querySelector('#focus5ExitBtn');
       if (repick) repick.addEventListener('click', () => {
-        // Wipe the current picks so the picker starts fresh
         focus5State.taskIds = []; saveFocus5();
         openFocus5Picker();
       });
@@ -4764,36 +4939,59 @@ const VOICE = {
       });
       return;
     }
-    // Order: not-done first (active = first one), then done
+    // Default: stage view — pending first (top is "Up next"), then done
     const pending = tasks.filter(t => !t.done);
     const completed = tasks.filter(t => t.done);
     pending.forEach((t, i) => {
-      view.appendChild(buildFocus5Card(t, i, /*isActive*/ i === 0, /*isDone*/ false, tasks.indexOf(t) + 1));
+      view.appendChild(buildFocus5Card(t, i, /*isActive*/ i === 0, /*isDone*/ false, tasks.indexOf(t) + 1, false, tasks.length));
     });
     completed.forEach(t => {
-      view.appendChild(buildFocus5Card(t, -1, false, true, tasks.indexOf(t) + 1));
+      view.appendChild(buildFocus5Card(t, -1, false, true, tasks.indexOf(t) + 1, false, tasks.length));
     });
     list.appendChild(view);
   }
-  function buildFocus5Card(todo, idx, isActive, isDone, taskNumber){
+  function buildFocus5Card(todo, idx, isActive, isDone, taskNumber, editing, totalCount){
     const card = document.createElement('div');
     card.className = `focus5-card ${isActive ? 'active' : isDone ? 'done' : 'queued'}`;
     card.dataset.id = todo.id;
-    const numLabel = isDone ? `Done` : (isActive ? `Up next` : `Queued`);
+    const numLabel = editing ? `#${taskNumber}` : (isDone ? `Done` : (isActive ? `Up next` : `Queued`));
+    const editControlsHTML = editing ? `
+      <div class="focus5-edit-controls">
+        <button class="focus5-edit-btn" data-act="up" type="button" aria-label="Move up" ${taskNumber <= 1 ? 'disabled' : ''}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button class="focus5-edit-btn" data-act="down" type="button" aria-label="Move down" ${taskNumber >= (totalCount || 5) ? 'disabled' : ''}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="focus5-edit-btn danger" data-act="remove" type="button" aria-label="Remove from list">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    ` : '';
+    const standardActions = (!isDone && !editing) ? `
+      <div class="focus5-card-actions">
+        <button class="focus5-btn primary" data-act="done" type="button">Mark done</button>
+        <button class="focus5-btn race" data-act="race" type="button">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
+          Race timer
+        </button>
+      </div>
+    ` : '';
     card.innerHTML = `
-      <div class="focus5-card-num">${numLabel} · #${taskNumber}</div>
+      <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}</div>
       <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
-      ${isDone ? '' : `
-        <div class="focus5-card-actions">
-          <button class="focus5-btn primary" data-act="done" type="button">Mark done</button>
-          <button class="focus5-btn race" data-act="race" type="button">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
-            Race timer
-          </button>
-        </div>
-      `}
+      ${standardActions}
+      ${editControlsHTML}
     `;
-    if (!isDone) {
+    // Wire actions
+    if (editing) {
+      const up = card.querySelector('[data-act="up"]');
+      const down = card.querySelector('[data-act="down"]');
+      const rm = card.querySelector('[data-act="remove"]');
+      if (up) up.addEventListener('click', (e) => { e.stopPropagation(); focus5MoveUp(todo.id); });
+      if (down) down.addEventListener('click', (e) => { e.stopPropagation(); focus5MoveDown(todo.id); });
+      if (rm) rm.addEventListener('click', (e) => { e.stopPropagation(); focus5Remove(todo.id); });
+    } else if (!isDone) {
       const doneBtn = card.querySelector('[data-act="done"]');
       const raceBtn = card.querySelector('[data-act="race"]');
       if (doneBtn) doneBtn.addEventListener('click', (e) => {
