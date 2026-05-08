@@ -334,6 +334,8 @@
   body.focus5-active #filterBarSlot,
   body.focus5-active #ptGoalsRow,
   body.focus5-active #ptMusicBar { display: none }
+  /* Manual hide via shell button — persists across refreshes (PT_MUSIC_HIDE) */
+  body.music-hidden #ptMusicBar { display: none }
   /* Tighter mainHead in focus mode — just the pill, no surrounding air */
   body.focus5-active #mainHead { padding: 6px 18px 0 }
   /* Tighten the scrolling list so the focus cards have less top air */
@@ -4748,6 +4750,23 @@ const VOICE = {
         ptMusicFrame.contentWindow.postMessage(JSON.stringify({ event:'listening', id:'pt-music' }), '*');
       }
     } catch {}
+  });
+
+  // Show / hide the music bar via a postMessage from the War Room shell.
+  // Persisted so the choice survives reloads. Audio keeps playing either way.
+  const PT_MUSIC_HIDE_KEY = 'pt-music-bar-hidden-v1';
+  function ptApplyHideClass(){
+    const hidden = (function(){ try { return localStorage.getItem(PT_MUSIC_HIDE_KEY) === '1'; } catch { return false; } })();
+    document.body.classList.toggle('music-hidden', hidden);
+  }
+  ptApplyHideClass();
+  window.addEventListener('message', (ev) => {
+    const d = ev && ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type !== 'warroom:toggle-music-bar') return;
+    const next = !document.body.classList.contains('music-hidden');
+    try { localStorage.setItem(PT_MUSIC_HIDE_KEY, next ? '1' : '0'); } catch {}
+    document.body.classList.toggle('music-hidden', next);
   });
 
   // Initial render. If state has a saved vibe, attach a one-shot listener that
