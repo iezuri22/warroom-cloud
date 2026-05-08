@@ -894,6 +894,58 @@
   .focus5-picker-routine button.active[data-routine="none"] {
     background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.25);
   }
+  /* Job-filter chip strip inside picker — narrows the visible task pool */
+  .focus5-picker-jobs {
+    display: flex; gap: 5px; flex-wrap: wrap;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+  .focus5-picker-jobs button {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 11px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.65);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .focus5-picker-jobs button:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .focus5-picker-jobs button.active {
+    background: rgba(255,138,61,.16); color: #FF8A3D; border-color: #FF8A3D;
+  }
+  .focus5-picker-jobs button .dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  }
+  .focus5-picker-jobs button .ct {
+    font-size: 9px; font-weight: 800;
+    padding: 1px 5px; border-radius: 99px;
+    background: rgba(255,255,255,.08); color: rgba(255,255,255,.55);
+  }
+  .focus5-picker-jobs button.active .ct {
+    background: rgba(255,138,61,.22); color: #FF8A3D;
+  }
+  /* "Already in <list>" indicator — strikes through the row visually so user
+     knows it's spoken for in another focus list */
+  .focus5-picker-row.in-other-list {
+    opacity: .45;
+  }
+  .focus5-picker-row.in-other-list .focus5-picker-text {
+    text-decoration: line-through;
+    text-decoration-color: rgba(255,255,255,.35);
+  }
+  .focus5-picker-row .focus5-picker-in-list {
+    flex-shrink: 0;
+    font-size: 9px; font-weight: 800; letter-spacing: .8px;
+    text-transform: uppercase;
+    padding: 2px 7px; border-radius: 99px;
+    background: rgba(255,138,61,.12);
+    color: #FF8A3D;
+    border: 1px solid rgba(255,138,61,.3);
+    max-width: 120px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   /* Routine badges — sun or moon next to list name in tabs and on pill */
   .focus5-routine-badge {
     display: inline-flex; align-items: center;
@@ -2362,6 +2414,7 @@
           Night
         </button>
       </div>
+      <div class="focus5-picker-jobs" id="focus5PickerJobs"></div>
     </div>
     <div class="focus5-picker-body" id="focus5PickerBody"></div>
     <div class="focus5-picker-foot">
@@ -5497,6 +5550,7 @@ const VOICE = {
   let _focus5PickerName = '';         // ephemeral name input value
   let _focus5PickerListId = null;     // null = creating new list, else editing this list
   let _focus5PickerRoutine = 'none';  // ephemeral routine flag while picker is open
+  let _focus5PickerJobFilter = 'all'; // ephemeral job filter inside picker
   let _focus5EditMode = false;        // in-place edit on the focus view
   // Auto-select-by-time runs once per page load. After that, user's manual
   // taps stick — otherwise every render would yank them back to the
@@ -5776,6 +5830,7 @@ const VOICE = {
     // listId === undefined/null → creating a new list
     // listId === existing → editing that list (pre-load name + selection)
     _focus5PickerListId = listId || null;
+    _focus5PickerJobFilter = 'all'; // start with no job filter every open
     if (_focus5PickerListId) {
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
       _focus5PickerName = list ? list.name : '';
@@ -5827,40 +5882,78 @@ const VOICE = {
       });
     }
     body.innerHTML = '';
-    let pool = todos.filter(t => !t.done);
-    if (jobFilter && jobFilter !== 'all') pool = pool.filter(t => (t.job || '') === jobFilter);
     // Routine-aware filter:
     //   Morning/Night list → ONLY recurring tasks (the daily things that make
-    //     a routine work). Hides one-offs that would clutter the choice.
-    //   Anytime list → HIDES recurring tasks so they don't drown out one-offs
-    //     in your regular focus picks.
+    //     a routine work).
+    //   Anytime list → HIDES recurring tasks.
     const isRoutineList = _focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night';
-    if (isRoutineList) {
-      pool = pool.filter(t => !!t.fromTemplate);
-    } else {
-      pool = pool.filter(t => !t.fromTemplate);
+    let basePool = todos.filter(t => !t.done);
+    basePool = isRoutineList ? basePool.filter(t => !!t.fromTemplate) : basePool.filter(t => !t.fromTemplate);
+
+    // Render job-filter chip strip — uses base pool counts so user sees how
+    // many tasks each job has after the routine filter is applied.
+    const jobsWrap = document.getElementById('focus5PickerJobs');
+    if (jobsWrap) {
+      const counts = { all: basePool.length };
+      JOBS.forEach(j => { counts[j.id] = basePool.filter(t => (t.job || '') === j.id).length; });
+      const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
+      JOBS.forEach(j => chips.push({ id: j.id, label: j.label, color: j.color, count: counts[j.id] || 0 }));
+      jobsWrap.innerHTML = chips.map(c => {
+        const dot = c.color ? `<span class="dot" style="background:${c.color}"></span>` : '';
+        return `<button type="button" class="${_focus5PickerJobFilter === c.id ? 'active' : ''}" data-job="${escHtml(c.id)}">${dot}${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
+      }).join('');
+      jobsWrap.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _focus5PickerJobFilter = b.dataset.job || 'all';
+          renderFocus5Picker();
+        });
+      });
+    }
+
+    let pool = basePool.slice();
+    if (_focus5PickerJobFilter && _focus5PickerJobFilter !== 'all') {
+      pool = pool.filter(t => (t.job || '') === _focus5PickerJobFilter);
     }
     pool.sort((a, b) => {
       if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
       return (a.position || 0) - (b.position || 0);
     });
+
+    // Build "task is already in another list" map (excluding the list we're
+    // currently editing — re-using its own picks is fine).
+    const inOtherList = new Map(); // taskId → list name
+    focus5State.lists.forEach(l => {
+      if (l.id === _focus5PickerListId) return;
+      l.taskIds.forEach(id => {
+        // taskIds may be 'tpl:xxx' so resolve to instance id for matching
+        const t = resolveFocus5TaskId(id);
+        if (t) inOtherList.set(t.id, l.name);
+      });
+    });
+
     if (pool.length === 0) {
       const msg = isRoutineList
-        ? `No recurring tasks yet. Set a task to repeat (Daily, Weekdays, etc.) and it'll show up here.`
-        : `No open one-off tasks to pick. Add some first.`;
+        ? `No recurring tasks${_focus5PickerJobFilter !== 'all' ? ' in this job' : ''} yet. Set tasks to repeat (Daily, Weekdays) and they'll show up here.`
+        : `No open tasks${_focus5PickerJobFilter !== 'all' ? ' in this job' : ''} to pick.`;
       body.innerHTML = `<div class="focus5-picker-empty">${msg}</div>`;
     } else {
       pool.forEach(t => {
         const isSel = _focus5PickerSel.includes(t.id);
         const atCap = _focus5PickerSel.length >= 5 && !isSel;
+        const inOther = inOtherList.get(t.id);
+        // Tasks already in ANOTHER list: dim + strikethrough, but still
+        // selectable (user might want to move it). At-cap rows are hard-disabled.
         const row = document.createElement('div');
-        row.className = `focus5-picker-row ${isSel ? 'selected' : ''} ${atCap ? 'disabled' : ''}`;
+        row.className = `focus5-picker-row ${isSel ? 'selected' : ''} ${atCap ? 'disabled' : ''} ${inOther && !isSel ? 'in-other-list' : ''}`;
         row.dataset.id = t.id;
         const job = t.job ? jobMeta(t.job) : null;
         const jobBadge = job ? `<span class="focus5-picker-job" style="background:${job.color}22;color:${job.color}">${escHtml(job.label)}</span>` : '';
+        const inListBadge = inOther ? `<span class="focus5-picker-in-list" title="Already in: ${escHtml(inOther)}">in ${escHtml(inOther)}</span>` : '';
         row.innerHTML = `
           <span class="focus5-picker-check">${isSel ? '✓' : ''}</span>
           <span class="focus5-picker-text">${escHtml(t.text || '')}</span>
+          ${inListBadge}
           ${jobBadge}
         `;
         row.addEventListener('click', () => {
