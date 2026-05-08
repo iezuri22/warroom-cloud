@@ -589,6 +589,15 @@
     text-transform: uppercase;
     color: rgba(255,255,255,.35);
   }
+  .focus5-recur-badge {
+    display: inline-block; margin-left: 8px;
+    font-size: 9px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 2px 7px; border-radius: 99px;
+    background: rgba(74,158,255,.14); color: #6BA8FF;
+    border: 1px solid rgba(74,158,255,.32);
+    vertical-align: middle;
+  }
   .focus5-card-text {
     font-size: 24px; font-weight: 800; letter-spacing: -.02em;
     line-height: 1.18;
@@ -3474,7 +3483,7 @@ const VOICE = {
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
     // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
-    if (focus5State.active && focus5State.taskIds.length > 0) {
+    if (focus5State.active && focus5State.lists.length > 0) {
       try { renderFocus5View(); return; } catch (e) { console.error('focus5 render', e); }
     }
     renderTasks();
@@ -4912,15 +4921,51 @@ const VOICE = {
     focus5State.lists = arr; saveFocus5(); render();
   }
   // -------- TASK helpers (operate on active list) --------
+  // taskIds can hold one of two forms:
+  //   'plain_task_id'  → a one-off task; resolved by direct id lookup
+  //   'tpl:<tplId>'    → a recurring task template; auto-resolves to today's instance
+  // The 'tpl:' form is what makes a "Morning routine" list keep working day after
+  // day even though instance ids rotate.
+  function resolveFocus5TaskId(id){
+    if (typeof id !== 'string') return null;
+    if (id.startsWith('tpl:')) {
+      const tplId = id.slice(4);
+      const today = (function(){ try { return todayKey(); } catch { return ''; } })();
+      // Find today's instance — prefer one anchored to today, fall back to undated
+      let inst = todos.find(t => t.fromTemplate === tplId && t.date === today);
+      if (!inst) inst = todos.find(t => t.fromTemplate === tplId && !t.date);
+      if (inst) return inst;
+      // Not yet materialized — kick off materialization, render again next tick
+      try {
+        if (typeof materializeRecurringForDay === 'function' && today) {
+          setTimeout(() => {
+            materializeRecurringForDay(today).then(n => { if (n) render(); }).catch(() => {});
+          }, 0);
+        }
+      } catch {}
+      return null;
+    }
+    return todos.find(t => t.id === id) || null;
+  }
   function focus5Tasks(){
     const list = focus5ActiveList();
     if (!list) return [];
-    return list.taskIds.map(id => todos.find(t => t.id === id)).filter(Boolean);
+    return list.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
   }
   function focus5DoneCount(){ return focus5Tasks().filter(t => t.done).length; }
+  // Map an instance id (the kind embedded in card buttons) back to the position
+  // in list.taskIds — the entry might be 'tpl:xxx' but resolve to that instance.
+  function focus5IndexForInstanceId(list, instanceId){
+    let idx = list.taskIds.indexOf(instanceId);
+    if (idx >= 0) return idx;
+    return list.taskIds.findIndex(id => {
+      const t = resolveFocus5TaskId(id);
+      return t && t.id === instanceId;
+    });
+  }
   function focus5MoveUp(taskId){
     const list = focus5ActiveList(); if (!list) return;
-    const idx = list.taskIds.indexOf(taskId);
+    const idx = focus5IndexForInstanceId(list, taskId);
     if (idx <= 0) return;
     const arr = list.taskIds.slice();
     [arr[idx-1], arr[idx]] = [arr[idx], arr[idx-1]];
@@ -4928,7 +4973,7 @@ const VOICE = {
   }
   function focus5MoveDown(taskId){
     const list = focus5ActiveList(); if (!list) return;
-    const idx = list.taskIds.indexOf(taskId);
+    const idx = focus5IndexForInstanceId(list, taskId);
     if (idx < 0 || idx >= list.taskIds.length - 1) return;
     const arr = list.taskIds.slice();
     [arr[idx+1], arr[idx]] = [arr[idx], arr[idx+1]];
@@ -4936,7 +4981,8 @@ const VOICE = {
   }
   function focus5Remove(taskId){
     const list = focus5ActiveList(); if (!list) return;
-    list.taskIds = list.taskIds.filter(id => id !== taskId);
+    const idx = focus5IndexForInstanceId(list, taskId);
+    if (idx >= 0) list.taskIds.splice(idx, 1);
     saveFocus5();
     render();
   }
@@ -4987,7 +5033,7 @@ const VOICE = {
       strip.classList.toggle('show', showStrip);
       if (showStrip) {
         focus5State.lists.forEach(l => {
-          const lTasks = l.taskIds.map(id => todos.find(t => t.id === id)).filter(Boolean);
+          const lTasks = l.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
           const lDone = lTasks.filter(t => t.done).length;
           const total = lTasks.length;
           const isActive = l.id === focus5State.activeListId;
@@ -5015,8 +5061,14 @@ const VOICE = {
     if (_focus5PickerListId) {
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
       _focus5PickerName = list ? list.name : '';
+      // Resolve stored ids ('tpl:xxx' or instance ids) to today's instance ids
+      // for the picker — picker UI works with live instance ids only.
       const doneIds = new Set(todos.filter(t => t.done).map(t => t.id));
-      _focus5PickerSel = list ? list.taskIds.filter(id => !doneIds.has(id)) : [];
+      _focus5PickerSel = list
+        ? list.taskIds
+            .map(id => { const t = resolveFocus5TaskId(id); return t ? t.id : null; })
+            .filter(id => id && !doneIds.has(id))
+        : [];
     } else {
       _focus5PickerName = '';
       _focus5PickerSel = [];
@@ -5093,16 +5145,21 @@ const VOICE = {
   function commitFocus5Picker(){
     const name = (_focus5PickerName || '').trim();
     if (!name) return;
+    // Convert recurring task instances → 'tpl:<templateId>' refs so the list
+    // auto-rebinds to tomorrow's instance instead of pointing at a stale done one.
+    const refs = _focus5PickerSel.slice(0, 5).map(id => {
+      const t = todos.find(tt => tt.id === id);
+      if (t && t.fromTemplate) return 'tpl:' + t.fromTemplate;
+      return id;
+    });
     if (_focus5PickerListId) {
-      // Update existing
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
       if (list) {
         list.name = name;
-        list.taskIds = _focus5PickerSel.slice(0, 5);
+        list.taskIds = refs;
       }
     } else {
-      // Create new
-      const list = { id: focus5MakeId(), name, taskIds: _focus5PickerSel.slice(0, 5) };
+      const list = { id: focus5MakeId(), name, taskIds: refs };
       focus5State.lists.push(list);
       focus5State.activeListId = list.id;
     }
@@ -5357,8 +5414,11 @@ const VOICE = {
         </button>
       </div>
     ` : '';
+    const recurBadge = todo.fromTemplate
+      ? `<span class="focus5-recur-badge" title="Auto-binds to today's instance every day">↻ Routine</span>`
+      : '';
     card.innerHTML = `
-      <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}</div>
+      <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}${recurBadge}</div>
       <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
       ${standardActions}
       ${editControlsHTML}
