@@ -1684,6 +1684,22 @@ body.focus-big-min .focus-big{cursor:pointer}
 @media (max-width: 640px) {
   .hour-goal-row{display:none}
 }
+/* ECM sync status dot — appears on the ECM tab. Color = state.
+   green=fresh, amber=stale, red=last sync failed */
+.ecm-sync-dot{
+  display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-left:6px; vertical-align:middle;
+  background:rgba(255,255,255,.2);
+  flex-shrink:0;
+}
+.ecm-sync-dot[hidden]{display:none}
+.ecm-sync-dot.fresh{background:#4ADE80; box-shadow:0 0 8px rgba(74,222,128,.5)}
+.ecm-sync-dot.stale{background:#FFC84D; box-shadow:0 0 8px rgba(255,200,77,.4)}
+.ecm-sync-dot.error{background:#F87171; box-shadow:0 0 0 0 rgba(248,113,113,.6); animation:ecmDotPulse 1.6s ease-in-out infinite}
+@keyframes ecmDotPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.6)}
+  50%{box-shadow:0 0 0 6px rgba(248,113,113,0)}
+}
 /* Lofi popover — fixed-positioned dropdown anchored to the music nav button */
 .lofi-popover{
   position:fixed; z-index:120;
@@ -2026,7 +2042,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="tab" data-tab="plan" onclick="switchTab('plan')" style="display:none">Today's Plan</div>
   <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab" data-tab="board" onclick="switchTab('board')">Board</div>
-  <div class="tab" data-tab="ecm" onclick="switchTab('ecm')">ECM</div>
+  <div class="tab" data-tab="ecm" onclick="switchTab('ecm')">ECM<span class="ecm-sync-dot" id="ecmSyncDot" title="" hidden></span></div>
   <div class="header-right" id="headerRight">
     <div class="hour-goal-row" id="hourGoalRow" hidden>
       <button class="hour-goal-pill" id="hgToday" type="button" title="Today's hours — tap to edit target"><span class="lbl">Today</span><span class="val" id="hgTodayVal">—</span></button>
@@ -4093,6 +4109,61 @@ function ssRunSyncFromShell(){
   if (status) status.textContent = 'Sync started in Personal — watch for the count to update.';
 }
 
+// ---- ECM sync health indicator (dot on ECM tab) ----
+function ssHealthState(){
+  let cfg = {};
+  try { cfg = JSON.parse(localStorage.getItem('smartsheets-config') || '{}'); } catch {}
+  if (!cfg.token || !cfg.sheetId) return { state: 'none', tip: '' };
+  const now = Date.now();
+  const last = cfg.lastSyncAt ? new Date(cfg.lastSyncAt) : null;
+  const ageMs = last ? (now - last.getTime()) : Infinity;
+  // Last sync errored — red
+  if (last && cfg.lastSyncOk === false) {
+    return {
+      state: 'error',
+      tip: `Last sync failed ${last.toLocaleString()} — ${cfg.lastSyncError || 'unknown error'}`
+    };
+  }
+  // Push errored more recently than last successful sync — red too
+  if (cfg.lastPushErrorAt && (!last || cfg.lastPushErrorAt > last.getTime())) {
+    return {
+      state: 'error',
+      tip: `Last push failed ${new Date(cfg.lastPushErrorAt).toLocaleString()} — ${cfg.lastPushError || 'push error'}`
+    };
+  }
+  // No sync in 36h with auto-sync on — amber (probably silently broken)
+  if (cfg.autoSync && ageMs > 36 * 3600 * 1000) {
+    return {
+      state: 'stale',
+      tip: last ? `No sync since ${last.toLocaleString()} — auto-sync may have stopped` : 'Never synced'
+    };
+  }
+  // No sync ever
+  if (!last) return { state: 'stale', tip: 'Never synced — tap Sync now in Settings' };
+  // Healthy
+  return { state: 'fresh', tip: `Synced ${last.toLocaleString()}` };
+}
+function applySsHealth(){
+  const dot = document.getElementById('ecmSyncDot');
+  if (!dot) return;
+  const h = ssHealthState();
+  dot.classList.remove('fresh','stale','error');
+  if (h.state === 'none') {
+    dot.setAttribute('hidden', '');
+    dot.title = '';
+  } else {
+    dot.removeAttribute('hidden');
+    dot.classList.add(h.state);
+    dot.title = h.tip || '';
+  }
+}
+// Refresh the dot whenever localStorage changes (sync result lands)
+window.addEventListener('storage', (ev) => {
+  if (ev && ev.key === 'smartsheets-config') applySsHealth();
+});
+// Run on load + every minute (catches stale state crossing the 36h threshold)
+document.addEventListener('DOMContentLoaded', () => { applySsHealth(); setInterval(applySsHealth, 60 * 1000); });
+
 // --- Focus immersion (merged Focus into Today's Plan) ---
 // When a focus session is active, tap the focus-bar (or the expand button) to
 // blow the focus-session UI up to full screen. Exit restores the planner.
@@ -5003,7 +5074,21 @@ function toggleApiKeyPanel(){
       if (autoInp) autoInp.checked = !!ss.autoSync;
       if (status) {
         const lastSync = ss.lastSyncAt ? new Date(ss.lastSyncAt).toLocaleString() : '';
-        status.textContent = ss.token ? `Configured. ${lastSync ? 'Last sync: ' + lastSync : 'Not synced yet.'}` : 'Not configured.';
+        let line = '';
+        if (!ss.token) {
+          line = 'Not configured.';
+        } else if (ss.lastSyncOk === false) {
+          line = `Last sync FAILED at ${lastSync} — ${ss.lastSyncError || 'unknown error'}`;
+        } else if (ss.lastPushErrorAt && (!ss.lastSyncAt || ss.lastPushErrorAt > ss.lastSyncAt)) {
+          line = `Last push failed at ${new Date(ss.lastPushErrorAt).toLocaleString()} — ${ss.lastPushError || 'push error'}`;
+        } else if (lastSync) {
+          line = `Configured. Last sync: ${lastSync}`;
+        } else {
+          line = 'Configured. Not synced yet.';
+        }
+        status.textContent = line;
+        status.style.color = (ss.lastSyncOk === false || (ss.lastPushErrorAt && (!ss.lastSyncAt || ss.lastPushErrorAt > ss.lastSyncAt)))
+          ? '#F87171' : 'var(--text-dim)';
       }
     } catch {}
   }

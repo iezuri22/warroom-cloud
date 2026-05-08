@@ -5260,7 +5260,7 @@ const VOICE = {
           added++;
         } catch (e) { console.error('ss add error:', e); }
       }
-      ssSaveConfig({ lastSyncAt: Date.now() });
+      ssSaveConfig({ lastSyncAt: Date.now(), lastSyncOk: true, lastSyncError: '' });
       // Drain any queued edits that failed to push earlier
       const flushed = await ssDrainPending();
       try { render(); } catch {}
@@ -5277,6 +5277,8 @@ const VOICE = {
       return { added, updated, flushed, total: incomplete.length };
     } catch (e) {
       console.error('ssSync error:', e);
+      // Persist failure so the shell can show a red dot + message
+      ssSaveConfig({ lastSyncAt: Date.now(), lastSyncOk: false, lastSyncError: (e && e.message) ? e.message.slice(0, 240) : 'Sync failed' });
       if (btn) btn.classList.add('error');
       if (label) label.textContent = 'Sync failed';
       setTimeout(() => { if (btn) btn.classList.remove('error'); if (label) label.textContent = 'Sync ECM'; }, 4000);
@@ -5311,13 +5313,20 @@ const VOICE = {
       const res = await ssProxy(`/sheets/${todo.smartsheetSheetId}/rows`, 'PUT', body);
       if (!res.ok) {
         const t = await res.text().catch(() => '');
-        console.error('ssPushFields failed:', res.status, t.slice(0, 200));
+        const msg = `Push ${res.status}: ${t.slice(0, 160)}`;
+        console.error('ssPushFields failed:', msg);
+        ssSaveConfig({ lastPushError: msg, lastPushErrorAt: Date.now() });
         if (!opts || !opts.skipQueue) ssQueuePending(todo, fieldsByTitle);
         return false;
       }
+      // Successful push — clear stored push error if any
+      const c2 = ssGetConfig();
+      if (c2.lastPushError) ssSaveConfig({ lastPushError: '', lastPushErrorAt: null });
       return true;
     } catch (e) {
+      const msg = (e && e.message) ? e.message.slice(0, 200) : 'Push failed';
       console.error('ssPushFields error:', e);
+      ssSaveConfig({ lastPushError: msg, lastPushErrorAt: Date.now() });
       if (!opts || !opts.skipQueue) ssQueuePending(todo, fieldsByTitle);
       return false;
     }
