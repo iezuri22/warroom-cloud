@@ -2516,6 +2516,14 @@
   }
   function migrateJobId(id) { return JOB_ID_MIGRATE[id] || id; }
   let JOBS = loadJobsList();
+  // Find which job id maps to "ECM" — user's boards probably has it under a
+  // custom id (e.g. 'ecm'), but legacy installs used 'work' (GovTech). Match
+  // by label first so we follow whatever the user actually named their ECM
+  // board, fall back to 'work' for legacy compatibility.
+  function ecmJobId(){
+    const m = (JOBS || []).find(j => /\becm\b/i.test(j.label || ''));
+    return m ? m.id : 'work';
+  }
   function jobMeta(id) {
     if (!id) return null;
     const m = migrateJobId(id);
@@ -3791,14 +3799,14 @@ const VOICE = {
     if (jobFilter && jobFilter !== 'all') {
       pending = pending.filter(t => (t.job || '') === jobFilter);
     } else {
-      // Default "All" view hides ECM (job=work) — those tasks live behind the
-      // ECM chip so the daily Personal list doesn't drown in 30+ Smartsheets
-      // imports. Tap the ECM chip to see them.
-      pending = pending.filter(t => (t.job || '') !== 'work');
+      // Default "All" view hides ECM tasks — they live behind the ECM chip so
+      // the daily Personal list doesn't drown in 30+ Smartsheets imports.
+      const ecmId = ecmJobId();
+      pending = pending.filter(t => (t.job || '') !== ecmId);
     }
     // ECM-specific status sub-filter: when viewing the ECM chip, allow
     // narrowing by Smartsheets status (To-Do, In Progress, Pending IR, etc.)
-    if (jobFilter === 'work' && ecmStatusFilter && ecmStatusFilter !== 'all') {
+    if (jobFilter === ecmJobId() && ecmStatusFilter && ecmStatusFilter !== 'all') {
       pending = pending.filter(t => (t.smartsheetStatus || '') === ecmStatusFilter);
     }
     // Priority items sort above non-priority. Within each group, sort purely by
@@ -3838,13 +3846,14 @@ const VOICE = {
     const bar = document.createElement('div');
     bar.className = 'job-filter-bar';
     // Counts (pending only — done tasks stay visible regardless of filter).
-    // "All" excludes ECM (job=work) since those live behind the ECM chip.
+    // "All" excludes ECM tasks since those live behind the ECM chip.
     const counts = { all: 0 };
     JOBS.forEach(j => { counts[j.id] = 0; });
+    const ecmId = ecmJobId();
     todos.forEach(t => {
       if (t.done) return;
       const j = t.job || '';
-      if (j !== 'work') counts.all++;
+      if (j !== ecmId) counts.all++;
       if (counts[j] !== undefined) counts[j]++;
     });
     const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
@@ -3902,9 +3911,10 @@ const VOICE = {
       window.location.href = '/goal-board.html';
     });
     wrap.appendChild(bar);
-    // Status sub-filter — only renders when ECM (job=work) chip is active
-    if (jobFilter === 'work') {
-      const ecmTodos = todos.filter(t => !t.done && (t.job || '') === 'work');
+    // Status sub-filter — only renders when the ECM chip is active
+    if (jobFilter === ecmJobId()) {
+      const ecmId = ecmJobId();
+      const ecmTodos = todos.filter(t => !t.done && (t.job || '') === ecmId);
       // Build status counts for what we currently have
       const statusCounts = { all: ecmTodos.length };
       SS_STATUSES.forEach(s => { statusCounts[s] = 0; });
@@ -5154,7 +5164,7 @@ const VOICE = {
         const payload = {
           text, done: false, date: dkey(currentDate), position: maxPos,
           timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
-          job: 'work',
+          job: ecmJobId(),
           details: details || '',
           smartsheetRowId: String(row.id),
           smartsheetSheetId: String(sheet.id),
