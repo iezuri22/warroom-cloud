@@ -1230,6 +1230,89 @@
     letter-spacing: 2px; color: rgba(255,255,255,.2); margin-bottom: 2px;
     margin-top: 16px; padding-left: 4px;
   }
+  /* ============ DAILY GOAL REMINDER MODAL ============ */
+  .goal-reminder-backdrop {
+    position: fixed; inset: 0; z-index: 350;
+    background: rgba(5,5,7,.86); backdrop-filter: blur(10px);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .goal-reminder-backdrop.show { display: flex }
+  .goal-reminder {
+    width: 100%; max-width: 540px;
+    max-height: 85vh; display: flex; flex-direction: column;
+    background: #15151B;
+    border: 1px solid rgba(255,138,61,.3);
+    border-radius: 22px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  }
+  .gr-head {
+    padding: 22px 24px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .gr-title {
+    font-size: 24px; font-weight: 900; letter-spacing: -.02em;
+    background: linear-gradient(135deg, #fff, rgba(255,255,255,.7));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 4px;
+  }
+  .gr-sub {
+    font-size: 13px; color: rgba(255,255,255,.55); font-weight: 600;
+  }
+  .gr-body {
+    flex: 1; overflow-y: auto; padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .gr-board {
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 14px; padding: 12px 14px;
+  }
+  .gr-board-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px; font-weight: 900; letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .gr-board-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .gr-goal {
+    font-size: 14px; font-weight: 600; line-height: 1.4;
+    color: rgba(255,255,255,.88);
+    padding: 6px 0;
+    border-top: 1px solid rgba(255,255,255,.05);
+  }
+  .gr-goal:first-of-type { border-top: none }
+  .gr-empty {
+    padding: 40px 20px; text-align: center;
+    font-size: 14px; color: rgba(255,255,255,.4); font-weight: 600;
+  }
+  .gr-foot {
+    padding: 14px 20px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .gr-snooze {
+    padding: 10px 16px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.12);
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer;
+  }
+  .gr-snooze:hover { color: #fff; border-color: rgba(255,255,255,.25) }
+  .gr-ok {
+    padding: 10px 22px; border-radius: 99px;
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
+    color: #fff; border: none;
+    font-family: inherit; font-size: 13px; font-weight: 800; letter-spacing: .3px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(255,138,61,.32);
+  }
+  .gr-ok:hover { transform: translateY(-1px) }
+
   /* Routines section — collapsible header for recurring tasks */
   .routines-header {
     display: flex; align-items: center; gap: 10px;
@@ -2728,6 +2811,21 @@
   </div>
 </div>
 
+<!-- Daily Goals Reminder — auto-pops once a day on Personal load -->
+<div class="goal-reminder-backdrop" id="goalReminderBackdrop" aria-hidden="true">
+  <div class="goal-reminder" role="dialog" aria-modal="true" aria-labelledby="grTitle">
+    <div class="gr-head">
+      <div class="gr-title" id="grTitle">Today's reminder</div>
+      <div class="gr-sub">Your goals — where the focus should land.</div>
+    </div>
+    <div class="gr-body" id="grBody"></div>
+    <div class="gr-foot">
+      <button class="gr-snooze" id="grSnooze" type="button">Remind me again later</button>
+      <button class="gr-ok" id="grOk" type="button">Got it</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
   import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
@@ -2817,21 +2915,30 @@
   }
   // Write JOBS back to BOARDS_KEY — preserves card data the Board page owns,
   // only updates name/color/hideFromAll and applies adds/deletes/reorders.
+  // Also records deletedBoardIds so the Board page's ensureDomainBoards()
+  // doesn't auto-resurrect a domain board the user explicitly removed.
   function saveJobsList(jobs) {
     try {
       const raw = localStorage.getItem(BOARDS_KEY);
       const d = raw ? (JSON.parse(raw) || {}) : {};
       const existing = Array.isArray(d.boards) ? d.boards : [];
+      const newIds = new Set(jobs.map(j => j.id));
+      const oldIds = existing.map(b => b.id);
+      const removed = oldIds.filter(id => !newIds.has(id));
+      const prevDeleted = Array.isArray(d.deletedBoardIds) ? d.deletedBoardIds : [];
+      // Merge prior deletions + new ones; if a previously-deleted board got
+      // re-added (by id match) we remove it from the tombstone list.
+      const tombstones = Array.from(new Set([...prevDeleted, ...removed])).filter(id => !newIds.has(id));
       const byId = new Map(existing.map(b => [b.id, b]));
       const next = jobs.map(j => {
         const cur = byId.get(j.id);
         if (cur) {
-          // Preserve cards + any other Board-owned fields, update mutable bits
           return { ...cur, name: j.label, color: j.color, hideFromAll: !!j.hideFromAll };
         }
-        return { id: j.id, name: j.label, color: j.color, hideFromAll: !!j.hideFromAll, cards: [] };
+        return { id: j.id, name: j.label, color: j.color, hideFromAll: !!j.hideFromAll, cards: [], goals: [], columns: (d.boards && d.boards[0] && d.boards[0].columns) || [] };
       });
       d.boards = next;
+      d.deletedBoardIds = tombstones;
       localStorage.setItem(BOARDS_KEY, JSON.stringify(d));
     } catch (e) { console.error('saveJobsList', e); }
   }
@@ -7015,6 +7122,80 @@ const VOICE = {
       const open = document.getElementById('focus5PickerBackdrop');
       if (open && open.classList.contains('show')) closeFocus5Picker();
     });
+  })();
+
+  // ============ DAILY GOAL REMINDER ============
+  // Once per Chicago day, on first Personal load, pop a modal showing the
+  // user's goals across boards. State key: `personal-goal-reminder-shown-on`.
+  // Snooze = 2 hours; Got it = until tomorrow.
+  function loadBoardGoals(){
+    // Read from BOARDS_KEY (same store the Goal Board page uses) and pull
+    // each board's `goals` array if present.
+    try {
+      const raw = localStorage.getItem(BOARDS_KEY);
+      if (!raw) return [];
+      const d = JSON.parse(raw) || {};
+      const boards = Array.isArray(d.boards) ? d.boards : [];
+      const tombstones = new Set(Array.isArray(d.deletedBoardIds) ? d.deletedBoardIds : []);
+      return boards
+        .filter(b => !tombstones.has(b.id))
+        .map(b => ({
+          id: b.id,
+          name: b.name || '',
+          color: b.color || '#888',
+          goals: Array.isArray(b.goals) ? b.goals : []
+        }))
+        .filter(b => b.goals.length > 0);
+    } catch { return []; }
+  }
+  function maybeShowGoalReminder(){
+    const todayK = todayKey();
+    let lastShown = '';
+    let snoozedUntil = 0;
+    try {
+      lastShown = localStorage.getItem('personal-goal-reminder-shown-on') || '';
+      snoozedUntil = parseInt(localStorage.getItem('personal-goal-reminder-snoozed-until') || '0', 10) || 0;
+    } catch {}
+    if (lastShown === todayK) return;
+    if (snoozedUntil && Date.now() < snoozedUntil) return;
+    const boards = loadBoardGoals();
+    if (boards.length === 0) return; // nothing to remind about
+    const bd = document.getElementById('goalReminderBackdrop');
+    const body = document.getElementById('grBody');
+    if (!bd || !body) return;
+    body.innerHTML = boards.map(b => `
+      <div class="gr-board">
+        <div class="gr-board-head">
+          <span class="gr-board-dot" style="background:${b.color}"></span>
+          <span>${escHtml(b.name)}</span>
+        </div>
+        ${b.goals.slice(0, 6).map(g => {
+          const txt = (typeof g === 'string') ? g : (g && (g.text || g.name || g.title || ''));
+          if (!txt) return '';
+          return `<div class="gr-goal">${escHtml(txt)}</div>`;
+        }).join('')}
+      </div>
+    `).join('');
+    bd.classList.add('show');
+    bd.setAttribute('aria-hidden', 'false');
+  }
+  (function wireGoalReminder(){
+    const bd = document.getElementById('goalReminderBackdrop');
+    const okBtn = document.getElementById('grOk');
+    const snoozeBtn = document.getElementById('grSnooze');
+    function close(){ if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); } }
+    if (okBtn) okBtn.addEventListener('click', () => {
+      try { localStorage.setItem('personal-goal-reminder-shown-on', todayKey()); } catch {}
+      close();
+    });
+    if (snoozeBtn) snoozeBtn.addEventListener('click', () => {
+      // Snooze 2 hours
+      try { localStorage.setItem('personal-goal-reminder-snoozed-until', String(Date.now() + 2 * 3600 * 1000)); } catch {}
+      close();
+    });
+    if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+    // Show ~1.5s after load so the page settles first
+    setTimeout(() => { try { maybeShowGoalReminder(); } catch {} }, 1500);
   })();
 
   // ---- Init ----
