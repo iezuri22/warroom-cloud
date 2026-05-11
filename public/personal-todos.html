@@ -2351,6 +2351,15 @@
   }
   .jobs-row-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
   .jobs-row-btn.danger:hover { color: #FF6B6B; background: rgba(255,80,80,.14); border-color: rgba(255,80,80,.3); }
+  .jobs-show-all {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.5); cursor: pointer;
+    flex-shrink: 0; white-space: nowrap;
+  }
+  .jobs-show-all input { margin: 0; cursor: pointer }
+  .jobs-show-all:hover { color: rgba(255,255,255,.85) }
   .jobs-add-btn {
     background: rgba(255,138,61,.1); border: 1px dashed rgba(255,138,61,.4);
     color: #FF8A3D; padding: 10px; border-radius: 10px;
@@ -2795,11 +2804,36 @@
       if (raw) {
         const d = JSON.parse(raw);
         if (Array.isArray(d?.boards) && d.boards.length) {
-          return d.boards.map(b => ({ id: b.id, label: b.name || '(unnamed)', color: b.color || '#888' }));
+          return d.boards.map(b => ({
+            id: b.id,
+            label: b.name || '(unnamed)',
+            color: b.color || '#888',
+            hideFromAll: !!b.hideFromAll
+          }));
         }
       }
     } catch {}
     return LEGACY_JOBS.slice();
+  }
+  // Write JOBS back to BOARDS_KEY — preserves card data the Board page owns,
+  // only updates name/color/hideFromAll and applies adds/deletes/reorders.
+  function saveJobsList(jobs) {
+    try {
+      const raw = localStorage.getItem(BOARDS_KEY);
+      const d = raw ? (JSON.parse(raw) || {}) : {};
+      const existing = Array.isArray(d.boards) ? d.boards : [];
+      const byId = new Map(existing.map(b => [b.id, b]));
+      const next = jobs.map(j => {
+        const cur = byId.get(j.id);
+        if (cur) {
+          // Preserve cards + any other Board-owned fields, update mutable bits
+          return { ...cur, name: j.label, color: j.color, hideFromAll: !!j.hideFromAll };
+        }
+        return { id: j.id, name: j.label, color: j.color, hideFromAll: !!j.hideFromAll, cards: [] };
+      });
+      d.boards = next;
+      localStorage.setItem(BOARDS_KEY, JSON.stringify(d));
+    } catch (e) { console.error('saveJobsList', e); }
   }
   function migrateJobId(id) { return JOB_ID_MIGRATE[id] || id; }
   let JOBS = loadJobsList();
@@ -4099,10 +4133,10 @@ const VOICE = {
     if (jobFilter && jobFilter !== 'all') {
       pending = pending.filter(t => (t.job || '') === jobFilter);
     } else {
-      // Default "All" view hides ECM tasks — they live behind the ECM chip so
-      // the daily Personal list doesn't drown in 30+ Smartsheets imports.
-      const ecmId = ecmJobId();
-      pending = pending.filter(t => (t.job || '') !== ecmId);
+      // Default "All" view hides any job marked hideFromAll. ECM is hidden
+      // by default for new users; user can toggle this per job in Manage Jobs.
+      const hiddenIds = new Set(JOBS.filter(j => j.hideFromAll).map(j => j.id));
+      pending = pending.filter(t => !hiddenIds.has(t.job || ''));
     }
     // ECM-specific status sub-filter: when viewing the ECM chip, allow
     // narrowing by Smartsheets status (To-Do, In Progress, Pending IR, etc.)
@@ -4242,14 +4276,14 @@ const VOICE = {
     const bar = document.createElement('div');
     bar.className = 'job-filter-bar';
     // Counts (pending only — done tasks stay visible regardless of filter).
-    // "All" excludes ECM tasks since those live behind the ECM chip.
+    // "All" excludes any job marked hideFromAll in Manage Jobs.
     const counts = { all: 0 };
     JOBS.forEach(j => { counts[j.id] = 0; });
-    const ecmId = ecmJobId();
+    const hiddenFromAllIds = new Set(JOBS.filter(j => j.hideFromAll).map(j => j.id));
     todos.forEach(t => {
       if (t.done) return;
       const j = t.job || '';
-      if (j !== ecmId) counts.all++;
+      if (!hiddenFromAllIds.has(j)) counts.all++;
       if (counts[j] !== undefined) counts[j]++;
     });
     const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
@@ -4296,15 +4330,7 @@ const VOICE = {
     const editBtn = bar.querySelector('#jobsEditBtn');
     if (editBtn) editBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Jobs are derived from Board page — open Board to manage.
-      // If we're embedded in War Room, navigate the top window to the Board tab.
-      try {
-        if (window.parent && window.parent !== window) {
-          window.parent.postMessage({ type: 'warroom:switch-tab', tab: 'board' }, '*');
-          return;
-        }
-      } catch {}
-      window.location.href = '/goal-board.html';
+      try { openJobsModal(); } catch (err) { console.error('openJobsModal', err); }
     });
     wrap.appendChild(bar);
 
@@ -4428,6 +4454,10 @@ const VOICE = {
       <div class="jobs-row" data-i="${i}">
         <input type="color" class="jobs-color" value="${j.color || '#FF8A3D'}" title="Color">
         <input type="text" class="jobs-label" value="${escHtml(j.label)}" placeholder="Job name" maxlength="40">
+        <label class="jobs-show-all" title="Include this job's tasks in the All filter view">
+          <input type="checkbox" class="jobs-show-in-all" ${j.hideFromAll ? '' : 'checked'}>
+          <span>Show in All</span>
+        </label>
         <div class="jobs-row-actions">
           ${i > 0 ? `<button class="jobs-row-btn" data-act="up" title="Move up">&#9650;</button>` : '<span style="width:28px"></span>'}
           ${i < _jobsDraft.length - 1 ? `<button class="jobs-row-btn" data-act="down" title="Move down">&#9660;</button>` : '<span style="width:28px"></span>'}
@@ -4439,8 +4469,12 @@ const VOICE = {
       const i = parseInt(rowEl.dataset.i, 10);
       const colorInp = rowEl.querySelector('.jobs-color');
       const labelInp = rowEl.querySelector('.jobs-label');
+      const showAllCb = rowEl.querySelector('.jobs-show-in-all');
       colorInp.addEventListener('input', () => { _jobsDraft[i].color = colorInp.value; });
       labelInp.addEventListener('input', () => { _jobsDraft[i].label = labelInp.value; });
+      if (showAllCb) showAllCb.addEventListener('change', () => {
+        _jobsDraft[i].hideFromAll = !showAllCb.checked;
+      });
       rowEl.querySelectorAll('.jobs-row-btn').forEach(b => {
         b.addEventListener('click', () => {
           const act = b.dataset.act;
@@ -4450,6 +4484,15 @@ const VOICE = {
             const tmp = _jobsDraft[i+1]; _jobsDraft[i+1] = _jobsDraft[i]; _jobsDraft[i] = tmp;
           } else if (act === 'del') {
             if (_jobsDraft.length <= 1) { alert('Need at least one job.'); return; }
+            // Warn if there are tasks under this job — they won't disappear
+            // from Firestore, but they won't have a chip to surface under.
+            const taskCount = todos.filter(t => (t.job || '') === _jobsDraft[i].id).length;
+            const name = _jobsDraft[i].label || 'this job';
+            if (taskCount > 0) {
+              if (!confirm(`Delete "${name}"? ${taskCount} task${taskCount === 1 ? '' : 's'} will be left untagged.`)) return;
+            } else {
+              if (!confirm(`Delete "${name}"?`)) return;
+            }
             _jobsDraft.splice(i, 1);
           }
           renderJobsModal();
