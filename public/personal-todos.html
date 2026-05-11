@@ -1011,6 +1011,27 @@
   }
   .focus5-picker-sort-dir:hover { color: #fff; border-color: rgba(255,255,255,.22) }
   .focus5-picker-sort-dir.desc svg { transform: rotate(180deg) scaleX(-1) }
+  /* "+ Routines" shortcut inside the picker sort row — opens the routine picker */
+  .focus5-picker-routines-btn {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 99px;
+    background: rgba(255,138,61,.12);
+    border: 1px solid rgba(255,138,61,.35);
+    color: #FF8A3D;
+    font-family: inherit; font-size: 11px; font-weight: 800; letter-spacing: .3px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: background .12s, border-color .12s, transform .08s;
+  }
+  .focus5-picker-routines-btn:hover {
+    background: rgba(255,138,61,.2); transform: translateY(-1px);
+  }
+  .focus5-picker-routines-btn .ct {
+    background: rgba(255,138,61,.2); color: #FF8A3D;
+    padding: 1px 6px; border-radius: 99px;
+    font-size: 10px; font-weight: 900;
+  }
   /* Status chip row inside picker — only when ECM is the job filter */
   .focus5-picker-status {
     display: flex; gap: 4px;
@@ -7292,6 +7313,16 @@ const VOICE = {
         { id: 'created',  label: 'Sort: Created' },
         { id: 'due',      label: 'Sort: Due date' }
       ];
+      // Undone routine count (today) — used to label the routines shortcut button.
+      const undoneRoutineCt = (typeof _getUndoneRoutinesToday === 'function')
+        ? _getUndoneRoutinesToday().length
+        : 0;
+      const routineBtnHTML = (_focus5PickerListId && undoneRoutineCt > 0)
+        ? `<button type="button" class="focus5-picker-routines-btn" title="Pull recurring routines into this list">
+             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+             + Routines<span class="ct">${undoneRoutineCt}</span>
+           </button>`
+        : '';
       sortRow.innerHTML = `
         <select class="focus5-picker-sort-sel">
           ${sortOpts.map(o => `<option value="${o.id}" ${_focus5PickerSortBy === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
@@ -7299,6 +7330,7 @@ const VOICE = {
         <button type="button" class="focus5-picker-sort-dir ${_focus5PickerSortDir === 'desc' ? 'desc' : ''}" title="Toggle direction">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M17 9l4-4 4 4M21 5v14"/></svg>
         </button>
+        ${routineBtnHTML}
       `;
       sortRow.querySelector('.focus5-picker-sort-sel').addEventListener('change', (e) => {
         e.stopPropagation();
@@ -7310,6 +7342,27 @@ const VOICE = {
         _focus5PickerSortDir = _focus5PickerSortDir === 'asc' ? 'desc' : 'asc';
         renderFocus5Picker();
       });
+      const routineBtnEl = sortRow.querySelector('.focus5-picker-routines-btn');
+      if (routineBtnEl) {
+        routineBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!_focus5PickerListId) return;
+          // Commit the picker's in-progress selection to the list first so
+          // cascade-adds from the routine picker don't get clobbered when the
+          // user later clicks Save. We do this in-place (no close + reopen).
+          const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
+          if (list) {
+            const refs = _focus5PickerSel.slice(0, 5).map(id => {
+              const tt = todos.find(t => t.id === id);
+              if (tt && tt.fromTemplate) return 'tpl:' + tt.fromTemplate;
+              return id;
+            });
+            list.taskIds = refs;
+            saveFocus5();
+          }
+          openRoutinePicker(_focus5PickerListId);
+        });
+      }
       jobsWrap2.parentNode.insertBefore(sortRow, jobsWrap2.nextSibling);
       // Status chips — only when ECM is the active job filter
       if (ecmActive) {
@@ -8336,6 +8389,25 @@ const VOICE = {
   function closeRoutinePicker(){
     const bd = document.getElementById('routinePickerBackdrop');
     if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+    // If Focus 5 picker is still open for the same list, re-sync its
+    // ephemeral selection from the (now updated) list state and re-render.
+    const f5Bd = document.getElementById('focus5PickerBackdrop');
+    if (f5Bd && f5Bd.classList.contains('show') && _focus5PickerListId === _rpTargetListId) {
+      const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
+      if (list) {
+        _focus5PickerSel = list.taskIds.map(id => {
+          // tpl:<id> refs need to be resolved to the materialized instance id
+          // for the picker's selection state, which compares against todo ids.
+          if (typeof id === 'string' && id.startsWith('tpl:')) {
+            const tplId = id.slice(4);
+            const inst = todos.find(t => t.fromTemplate === tplId && !t.done);
+            return inst ? inst.id : id;
+          }
+          return id;
+        });
+        try { renderFocus5Picker(); } catch {}
+      }
+    }
     _rpTargetListId = null;
   }
   function renderRoutinePicker(){
