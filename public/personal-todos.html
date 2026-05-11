@@ -636,6 +636,16 @@
     background: rgba(248,113,113,.14); color: #F87171;
     border-color: rgba(248,113,113,.35);
   }
+  .focus5-edit-btn.push-next {
+    background: rgba(167,139,250,.10);
+    border-color: rgba(167,139,250,.30);
+    color: #C4B5FD;
+  }
+  .focus5-edit-btn.push-next:hover {
+    background: rgba(167,139,250,.20);
+    border-color: rgba(167,139,250,.55);
+    color: #DDD6FE;
+  }
   /* Bottom action row in edit mode — Add more / Repick all */
   .focus5-edit-foot {
     display: none;
@@ -7166,7 +7176,8 @@ const VOICE = {
           const tab = document.createElement('button');
           tab.type = 'button';
           tab.className = `pt-focus-mini-tab ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`;
-          tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span><span class="ct">${lDone}/${total || 5}</span>`;
+          const ctHTML = total > 0 ? `<span class="ct">${lDone}/${total}</span>` : '';
+          tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span>${ctHTML}`;
           tab.addEventListener('click', () => {
             focus5State.activeListId = l.id;
             saveFocus5();
@@ -7584,7 +7595,12 @@ const VOICE = {
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
       ` : '';
-      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span><span class="ct">${lDone}/${total || 5}</span>${reorderHTML}`;
+      // Hide the count when the list is empty — "0/5" looks like nagging when
+      // there's literally nothing to be done.
+      const ctHTML = total > 0
+        ? `<span class="ct">${lDone}/${total}</span>`
+        : '';
+      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(l.name)}</span>${ctHTML}${reorderHTML}`;
       tab.addEventListener('click', (e) => {
         const mv = e.target && e.target.closest && e.target.closest('[data-mv]');
         if (mv) {
@@ -7776,6 +7792,10 @@ const VOICE = {
     card.className = `focus5-card ${isActive ? 'active' : isDone ? 'done' : 'queued'}`;
     card.dataset.id = todo.id;
     const numLabel = editing ? `#${taskNumber}` : (isDone ? `Done` : (isActive ? `Up next` : `Queued`));
+    // Can this task be pushed to the next priority? Only if this isn't the
+    // last list in the strip.
+    const activeListIdx = focus5State.lists.findIndex(l => l.id === focus5State.activeListId);
+    const canPushNext = editing && activeListIdx >= 0 && activeListIdx < focus5State.lists.length - 1;
     const editControlsHTML = editing ? `
       <div class="focus5-edit-controls">
         <button class="focus5-edit-btn" data-act="up" type="button" aria-label="Move up" ${taskNumber <= 1 ? 'disabled' : ''}>
@@ -7784,6 +7804,9 @@ const VOICE = {
         <button class="focus5-edit-btn" data-act="down" type="button" aria-label="Move down" ${taskNumber >= (totalCount || 5) ? 'disabled' : ''}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
+        ${canPushNext ? `<button class="focus5-edit-btn push-next" data-act="push-next" type="button" aria-label="Push to next priority list" title="Push to next priority list">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+        </button>` : ''}
         <button class="focus5-edit-btn danger" data-act="remove" type="button" aria-label="Remove from list">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -7813,9 +7836,16 @@ const VOICE = {
     if (editing) {
       const up = card.querySelector('[data-act="up"]');
       const down = card.querySelector('[data-act="down"]');
+      const pushNext = card.querySelector('[data-act="push-next"]');
       const rm = card.querySelector('[data-act="remove"]');
       if (up) up.addEventListener('click', (e) => { e.stopPropagation(); focus5MoveUp(todo.id); });
       if (down) down.addEventListener('click', (e) => { e.stopPropagation(); focus5MoveDown(todo.id); });
+      if (pushNext) pushNext.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Cascade-bump into the next priority list. Re-render to refresh.
+        bumpTaskToNextList(todo.id, focus5State.activeListId);
+        render();
+      });
       if (rm) rm.addEventListener('click', (e) => { e.stopPropagation(); focus5Remove(todo.id); });
     } else if (!isDone) {
       const doneBtn = card.querySelector('[data-act="done"]');
