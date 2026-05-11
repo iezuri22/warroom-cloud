@@ -7397,7 +7397,25 @@ const VOICE = {
       const tb = b ? Date.parse(b) : 0;
       return (ta || 0) - (tb || 0);
     };
+    // Tasks already living in ANY priority list float to the top — that way
+    // the user can see what's already committed before adding more.
+    const inAnyList = new Set();
+    focus5State.lists.forEach(l => {
+      (l.taskIds || []).forEach(id => {
+        if (typeof id === 'string' && id.startsWith('tpl:')) {
+          const tplId = id.slice(4);
+          todos.forEach(t => { if (t.fromTemplate === tplId) inAnyList.add(t.id); });
+        } else {
+          inAnyList.add(id);
+        }
+      });
+    });
     pool.sort((a, b) => {
+      // Primary key: in-priority items first.
+      const aIn = inAnyList.has(a.id) ? 0 : 1;
+      const bIn = inAnyList.has(b.id) ? 0 : 1;
+      if (aIn !== bIn) return aIn - bIn;
+      // Secondary key: user's chosen sort.
       let r = 0;
       if (_focus5PickerSortBy === 'priority') {
         r = (b.priority ? 1 : 0) - (a.priority ? 1 : 0);
