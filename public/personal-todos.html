@@ -7223,6 +7223,23 @@ const VOICE = {
       const inp = document.getElementById('focus5PickerName');
       if (inp && !_focus5PickerName) inp.focus();
     }, 50);
+    // Background freshen — if the last Smartsheet sync was > 15 min ago and
+    // the user has ECM configured, kick off a sync in the background so new
+    // rows from Smartsheets show up in the picker without a manual sync tap.
+    try {
+      const c = ssGetConfig();
+      if (c && c.autoSync !== false && ssIsConfigured()) {
+        const last = c.lastSyncAt ? new Date(c.lastSyncAt).getTime() : 0;
+        const staleMs = 15 * 60 * 1000;
+        if (Date.now() - last > staleMs) {
+          // Don't await — picker stays interactive. Re-render when sync lands
+          // so new tasks pop in.
+          Promise.resolve(ssSync()).then(() => {
+            try { renderFocus5Picker(); } catch {}
+          }).catch(() => {});
+        }
+      }
+    } catch {}
   }
   function closeFocus5Picker(){
     const bd = document.getElementById('focus5PickerBackdrop');
