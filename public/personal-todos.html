@@ -1265,26 +1265,93 @@
     display: flex; flex-direction: column; gap: 10px;
   }
   .gr-board {
-    background: rgba(255,255,255,.04);
+    position: relative;
+    background: rgba(255,255,255,.03);
     border: 1px solid rgba(255,255,255,.08);
-    border-radius: 14px; padding: 12px 14px;
+    border-left: 3px solid var(--board-color, #FF8A3D);
+    border-radius: 14px; padding: 14px 16px;
   }
   .gr-board-head {
     display: flex; align-items: center; gap: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     font-size: 11px; font-weight: 900; letter-spacing: 1.5px;
     text-transform: uppercase;
   }
   .gr-board-dot {
     width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
   }
-  .gr-goal {
-    font-size: 14px; font-weight: 600; line-height: 1.4;
-    color: rgba(255,255,255,.88);
-    padding: 6px 0;
-    border-top: 1px solid rgba(255,255,255,.05);
+  .gr-board-count {
+    margin-left: auto;
+    font-size: 10px; font-weight: 700; letter-spacing: .6px;
+    color: rgba(255,255,255,.4);
+    padding: 2px 7px; border-radius: 99px;
+    background: rgba(255,255,255,.05);
   }
-  .gr-goal:first-of-type { border-top: none }
+  /* Goal card — single goal block with title row + action items */
+  .gr-goal-card {
+    padding: 10px 0;
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+  .gr-goal-card:first-of-type { border-top: none; padding-top: 4px }
+  .gr-goal-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 700; line-height: 1.3;
+    color: rgba(255,255,255,.92);
+  }
+  .gr-goal-bullet {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--board-color, #FF8A3D);
+    box-shadow: 0 0 0 3px rgba(255,255,255,.04);
+  }
+  .gr-goal-text { flex: 1; min-width: 0 }
+  .gr-status {
+    flex-shrink: 0;
+    font-size: 9px; font-weight: 900; letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 3px 8px; border-radius: 99px;
+  }
+  .gr-status.on { background: rgba(74,222,128,.14); color: #4ADE80; border: 1px solid rgba(74,222,128,.3) }
+  .gr-status.ar { background: rgba(255,184,77,.14); color: #FFB84D; border: 1px solid rgba(255,184,77,.3) }
+  .gr-status.bl { background: rgba(248,113,113,.14); color: #F87171; border: 1px solid rgba(248,113,113,.3) }
+  .gr-status.dn { background: rgba(107,168,255,.14); color: #6BA8FF; border: 1px solid rgba(107,168,255,.3) }
+  /* Action items row */
+  .gr-actions {
+    margin-top: 8px;
+    display: flex; flex-direction: column; gap: 5px;
+    padding-left: 16px;
+  }
+  .gr-action {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px;
+    background: rgba(255,255,255,.025);
+    border: 1px solid rgba(255,255,255,.04);
+    border-radius: 8px;
+  }
+  .gr-action-check {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.18);
+    flex-shrink: 0;
+  }
+  .gr-action-text {
+    flex: 1; min-width: 0;
+    font-size: 12.5px; font-weight: 500;
+    color: rgba(255,255,255,.75);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .gr-day {
+    flex-shrink: 0;
+    font-size: 9px; font-weight: 900; letter-spacing: 1px;
+    padding: 2px 7px; border-radius: 6px;
+    background: rgba(255,138,61,.14); color: #FF8A3D;
+    border: 1px solid rgba(255,138,61,.3);
+  }
+  .gr-more {
+    margin-top: 10px; padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    font-size: 11px; font-weight: 700;
+    color: rgba(255,255,255,.4);
+    font-style: italic;
+  }
   .gr-empty {
     padding: 40px 20px; text-align: center;
     font-size: 14px; color: rgba(255,255,255,.4); font-weight: 600;
@@ -7133,32 +7200,90 @@ const VOICE = {
   // user's goals across boards. State key: `personal-goal-reminder-shown-on`.
   // Snooze = 2 hours; Got it = until tomorrow.
   function loadBoardGoals(){
-    // Read from BOARDS_KEY and pull each board's goals. Skip goals sitting
-    // in a "Done" column so the reminder shows active work only.
+    // Merge two sources: top-level quarterly goals (quarterly-goals-v1) +
+    // board-attached goals (goal-board-v2). Match the Goals page so the
+    // reminder reflects exactly what you'd see there.
     try {
       const raw = localStorage.getItem(BOARDS_KEY);
       if (!raw) return [];
       const d = JSON.parse(raw) || {};
       const boards = Array.isArray(d.boards) ? d.boards : [];
       const tombstones = new Set(Array.isArray(d.deletedBoardIds) ? d.deletedBoardIds : []);
-      return boards
-        .filter(b => !tombstones.has(b.id))
-        .map(b => {
-          const cols = Array.isArray(b.columns) ? b.columns : [];
-          // Column names ending in "Done" or named "Complete" are treated as
-          // finish columns; goals there don't need reminders.
-          const doneColIds = new Set(cols.filter(c => /done|complete/i.test(c.name || '')).map(c => c.id));
-          const goals = (Array.isArray(b.goals) ? b.goals : [])
-            .filter(g => !doneColIds.has(g.columnId));
-          return {
-            id: b.id,
-            name: b.name || '',
-            color: b.color || '#888',
-            goals
-          };
-        })
-        .filter(b => b.goals.length > 0);
+      const boardById = new Map();
+      boards.filter(b => !tombstones.has(b.id)).forEach(b => {
+        boardById.set(b.id, { id: b.id, name: b.name || '', color: b.color || '#888', goals: [] });
+      });
+      // Board-attached goals (action items + title)
+      boards.filter(b => !tombstones.has(b.id)).forEach(b => {
+        const cols = Array.isArray(b.columns) ? b.columns : [];
+        const doneColIds = new Set(cols.filter(c => /done|complete|shipped/i.test(c.name || '')).map(c => c.id));
+        (Array.isArray(b.goals) ? b.goals : []).forEach(g => {
+          if (doneColIds.has(g.columnId)) return;
+          if (g.hideFromGoals) return;
+          const bucket = boardById.get(b.id);
+          if (!bucket) return;
+          const actions = Array.isArray(g.actionItems) ? g.actionItems : [];
+          bucket.goals.push({
+            title: g.title || 'Untitled',
+            progress: g.statusProgress || 0,
+            status: g.status || 'on',
+            targetDate: g.targetDate || '',
+            actions: actions
+              .filter(a => !a.done)
+              .map(a => ({ text: a.text || a.title || '', dueDate: a.dueDate || '' }))
+              .slice(0, 5)
+          });
+        });
+      });
+      // Top-level quarterly goals (different storage)
+      try {
+        const qRaw = localStorage.getItem('quarterly-goals-v1');
+        if (qRaw) {
+          const qd = JSON.parse(qRaw) || {};
+          (Array.isArray(qd.goals) ? qd.goals : []).forEach(g => {
+            if (g.status === 'dn') return;
+            // Best-effort: associate with a board by pillar id matching board id
+            const bucket = boardById.get(g.pillar) || (() => {
+              const fallback = { id: 'q-' + (g.pillar || 'misc'), name: (g.pillar || 'Quarterly').toUpperCase(), color: '#FF8A3D', goals: [] };
+              boardById.set(fallback.id, fallback);
+              return fallback;
+            })();
+            const tasks = Array.isArray(g.tasks) ? g.tasks : [];
+            bucket.goals.push({
+              title: g.title || 'Untitled',
+              progress: g.progress || 0,
+              status: g.status || 'on',
+              targetDate: g.targetDate || '',
+              actions: tasks
+                .filter(t => !t.done)
+                .map(t => ({ text: t.text || '', dueDate: t.dueDate || '' }))
+                .slice(0, 5)
+            });
+          });
+        }
+      } catch {}
+      return Array.from(boardById.values()).filter(b => b.goals.length > 0);
     } catch { return []; }
+  }
+  // Pretty short day label from an ISO date (matches Goals page WED/THU/etc.)
+  function _grDayLabel(iso){
+    if (!iso) return '';
+    try {
+      const d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''));
+      if (isNaN(d.getTime())) return '';
+      const days = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+      return days[d.getDay()];
+    } catch { return ''; }
+  }
+  function _grStatusBadge(status){
+    const map = {
+      on: { label: 'On track', cls: 'on' },
+      ar: { label: 'At risk',  cls: 'ar' },
+      bl: { label: 'Blocked',  cls: 'bl' },
+      dn: { label: 'Shipped',  cls: 'dn' }
+    };
+    const s = map[status] || map.on;
+    return `<span class="gr-status ${s.cls}">${s.label}</span>`;
   }
   function showGoalReminder(force){
     if (!force) {
@@ -7184,18 +7309,33 @@ const VOICE = {
       return;
     }
     body.innerHTML = boards.map(b => `
-      <div class="gr-board">
+      <div class="gr-board" style="--board-color:${b.color}">
         <div class="gr-board-head">
           <span class="gr-board-dot" style="background:${b.color}"></span>
           <span>${escHtml(b.name)}</span>
-          <span style="margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.6px;color:rgba(255,255,255,.4)">${b.goals.length} goal${b.goals.length === 1 ? '' : 's'}</span>
+          <span class="gr-board-count">${b.goals.length} goal${b.goals.length === 1 ? '' : 's'}</span>
         </div>
-        ${b.goals.slice(0, 8).map(g => {
-          const txt = (typeof g === 'string') ? g : (g && (g.text || g.name || g.title || ''));
-          if (!txt) return '';
-          return `<div class="gr-goal">${escHtml(txt)}</div>`;
-        }).join('')}
-        ${b.goals.length > 8 ? `<div class="gr-goal" style="color:rgba(255,255,255,.4);font-style:italic">+ ${b.goals.length - 8} more — see the Goals tab</div>` : ''}
+        ${b.goals.slice(0, 6).map(g => `
+          <div class="gr-goal-card">
+            <div class="gr-goal-title">
+              <span class="gr-goal-bullet"></span>
+              <span class="gr-goal-text">${escHtml(g.title)}</span>
+              ${_grStatusBadge(g.status)}
+            </div>
+            ${g.actions.length ? `
+              <div class="gr-actions">
+                ${g.actions.map(a => `
+                  <div class="gr-action">
+                    <span class="gr-action-check"></span>
+                    <span class="gr-action-text">${escHtml(a.text)}</span>
+                    ${a.dueDate ? `<span class="gr-day">${_grDayLabel(a.dueDate)}</span>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `).join('')}
+        ${b.goals.length > 6 ? `<div class="gr-more">+ ${b.goals.length - 6} more · open the Goals tab</div>` : ''}
       </div>
     `).join('');
     bd.classList.add('show');
