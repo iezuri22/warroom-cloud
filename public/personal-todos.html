@@ -1230,6 +1230,37 @@
     letter-spacing: 2px; color: rgba(255,255,255,.2); margin-bottom: 2px;
     margin-top: 16px; padding-left: 4px;
   }
+  /* Routines section — collapsible header for recurring tasks */
+  .routines-header {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 10px 14px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 12px;
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    letter-spacing: .3px;
+    cursor: pointer; margin-top: 16px;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .routines-header:hover { background: rgba(255,255,255,.05); color: #fff; border-color: rgba(255,255,255,.14) }
+  .routines-header .routines-chev {
+    flex-shrink: 0; transform: rotate(90deg);
+    transition: transform .2s;
+    color: rgba(255,255,255,.45);
+  }
+  .routines-header.collapsed .routines-chev { transform: rotate(0deg) }
+  .routines-header .routines-title {
+    flex: 1; text-align: left;
+    text-transform: uppercase; letter-spacing: 1.5px; font-size: 11px;
+  }
+  .routines-header .routines-count {
+    font-variant-numeric: tabular-nums; font-weight: 800;
+    padding: 2px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.06);
+    color: rgba(255,255,255,.65);
+    font-size: 11px;
+  }
   .todo-wrapper { flex-shrink: 0; }
   .todo-item {
     display: flex; align-items: center; gap: 14px;
@@ -4125,13 +4156,68 @@ const VOICE = {
       else                                    r = _cmpNum(a.position, b.position);
       return r * _dir || _cmpNum(a.position, b.position);
     });
-    if (pending.length === 0 && jobFilter !== 'all') {
+    // Dedupe recurring tasks — same template can materialize multiple times
+    // across days and all end up in the loaded todos array. Prefer today's
+    // instance for each template, fall back to whichever has the latest date.
+    const todayK_for_dedupe = todayKey();
+    const seenTpl = new Map();
+    pending = pending.filter(t => {
+      if (!t.fromTemplate) return true;
+      const cur = seenTpl.get(t.fromTemplate);
+      if (!cur) { seenTpl.set(t.fromTemplate, t); return true; }
+      const curIsToday = cur.date === todayK_for_dedupe;
+      const tIsToday = t.date === todayK_for_dedupe;
+      if (tIsToday && !curIsToday) { seenTpl.set(t.fromTemplate, t); return true; }
+      // Keep current, drop this one
+      return false;
+    });
+    // Re-filter the kept recurring entries (the Map keeps best one but the
+    // earlier filter pass may have left duplicates). Walk again building a
+    // clean list.
+    const kept = new Set();
+    pending = pending.filter(t => {
+      if (!t.fromTemplate) return true;
+      const best = seenTpl.get(t.fromTemplate);
+      if (best && best.id === t.id && !kept.has(t.fromTemplate)) {
+        kept.add(t.fromTemplate);
+        return true;
+      }
+      return false;
+    });
+    // Split: recurring routines get their own collapsible section so they
+    // don't clutter the daily list. Non-recurring stay in the main flow.
+    const pendingNormal = pending.filter(t => !t.fromTemplate);
+    const pendingRoutine = pending.filter(t => !!t.fromTemplate);
+    if (pendingNormal.length === 0 && pendingRoutine.length === 0 && jobFilter !== 'all') {
       const empty = document.createElement('div');
       empty.className = 'empty'; empty.style.padding = '40px 0';
       empty.innerHTML = `<div class="empty-text" style="font-size:15px">Nothing under <strong>${escHtml(jobMeta(jobFilter)?.label || jobFilter)}</strong></div>`;
       list.appendChild(empty);
     } else {
-      pending.forEach(todo => list.appendChild(buildItem(todo)));
+      pendingNormal.forEach(todo => list.appendChild(buildItem(todo)));
+    }
+    // Routines section — collapsible, persists state in localStorage
+    if (pendingRoutine.length > 0) {
+      const routinesCollapsed = (function(){ try { return localStorage.getItem('personal-routines-collapsed') !== '0'; } catch { return true; } })();
+      const doneCount = pendingRoutine.filter(t => t.done).length;
+      const header = document.createElement('button');
+      header.className = `routines-header ${routinesCollapsed ? 'collapsed' : ''}`;
+      header.type = 'button';
+      header.innerHTML = `
+        <svg class="routines-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="routines-title">Routines</span>
+        <span class="routines-count">${doneCount}/${pendingRoutine.length}</span>
+      `;
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const next = !header.classList.contains('collapsed');
+        try { localStorage.setItem('personal-routines-collapsed', next ? '1' : '0'); } catch {}
+        render();
+      });
+      list.appendChild(header);
+      if (!routinesCollapsed) {
+        pendingRoutine.forEach(todo => list.appendChild(buildItem(todo)));
+      }
     }
     if (done.length > 0) {
       const label = document.createElement('div');
