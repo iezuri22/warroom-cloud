@@ -1374,6 +1374,75 @@
     background: rgba(248,113,113,.16); color: #F87171;
     border-color: rgba(248,113,113,.35);
   }
+  /* Filter bar at top of goal reminder body */
+  .gr-filter-bar {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    padding: 4px 0 14px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    margin-bottom: 6px;
+  }
+  .gr-filter-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .gr-filter-chip:hover {
+    background: rgba(255,138,61,.08);
+    border-color: rgba(255,138,61,.25);
+    color: #fff;
+  }
+  .gr-filter-chip.active {
+    background: rgba(255,138,61,.18);
+    border-color: rgba(255,138,61,.45);
+    color: #FF8A3D;
+  }
+  .gr-filter-ct {
+    font-size: 10px; font-weight: 800;
+    padding: 1px 6px; border-radius: 99px;
+    background: rgba(255,255,255,.06);
+    color: rgba(255,255,255,.55);
+  }
+  .gr-filter-chip.active .gr-filter-ct {
+    background: rgba(255,138,61,.25);
+    color: #FF8A3D;
+  }
+  /* Inline date button on action items */
+  .gr-action-date {
+    flex-shrink: 0;
+    font-family: inherit;
+    font-size: 10px; font-weight: 900; letter-spacing: 1px;
+    padding: 4px 9px; border-radius: 6px;
+    background: rgba(255,138,61,.14); color: #FF8A3D;
+    border: 1px solid rgba(255,138,61,.3);
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: background .12s, border-color .12s, transform .08s;
+  }
+  .gr-action-date:hover { background: rgba(255,138,61,.22); transform: translateY(-1px) }
+  .gr-action-date.overdue {
+    background: rgba(248,113,113,.16); color: #F87171;
+    border-color: rgba(248,113,113,.35);
+  }
+  .gr-action-date.empty {
+    background: rgba(255,255,255,.04); color: rgba(255,255,255,.5);
+    border-color: rgba(255,255,255,.1);
+  }
+  .gr-action-date.empty:hover {
+    background: rgba(255,138,61,.1); color: #FF8A3D;
+    border-color: rgba(255,138,61,.3);
+  }
+  /* Hidden date input — only triggered via showPicker() */
+  .gr-action-date-input {
+    position: absolute; opacity: 0; pointer-events: none;
+    width: 1px; height: 1px;
+  }
+  .gr-action { position: relative }
   .gr-more {
     margin-top: 10px; padding-top: 8px;
     border-top: 1px solid rgba(255,255,255,.06);
@@ -7584,13 +7653,16 @@ const VOICE = {
           if (!bucket) return;
           const actions = Array.isArray(g.actionItems) ? g.actionItems : [];
           bucket.goals.push({
+            source: 'board',
+            boardId: b.id,
+            goalId: g.id,
             title: g.title || 'Untitled',
             progress: g.statusProgress || 0,
             status: g.status || 'on',
             targetDate: g.targetDate || '',
             actions: actions
               .filter(a => !a.done)
-              .map(a => ({ text: a.text || a.title || '', dueDate: a.dueDate || '' }))
+              .map(a => ({ id: a.id, text: a.text || a.title || '', dueDate: a.dueDate || '' }))
           });
         });
       });
@@ -7609,13 +7681,15 @@ const VOICE = {
             })();
             const tasks = Array.isArray(g.tasks) ? g.tasks : [];
             bucket.goals.push({
+              source: 'quarterly',
+              goalId: g.id,
               title: g.title || 'Untitled',
               progress: g.progress || 0,
               status: g.status || 'on',
               targetDate: g.targetDate || '',
               actions: tasks
                 .filter(t => !t.done)
-                .map(t => ({ text: t.text || '', dueDate: t.dueDate || '' }))
+                .map(t => ({ id: t.id, text: t.text || '', dueDate: t.dueDate || '' }))
             });
           });
         }
@@ -7670,6 +7744,63 @@ const VOICE = {
     const s = map[status] || map.on;
     return `<span class="gr-status ${s.cls}">${s.label}</span>`;
   }
+  // Write a new dueDate back to localStorage. Source = 'board' uses BOARDS_KEY
+  // with boardId/goalId/actionId; source = 'quarterly' uses quarterly-goals-v1.
+  function _grSetActionDueDate(source, ids, isoDate){
+    try {
+      if (source === 'board') {
+        const raw = localStorage.getItem(BOARDS_KEY);
+        if (!raw) return false;
+        const d = JSON.parse(raw);
+        const b = (d.boards || []).find(x => x.id === ids.boardId);
+        if (!b) return false;
+        const g = (b.goals || []).find(x => x.id === ids.goalId);
+        if (!g) return false;
+        const a = (g.actionItems || []).find(x => x.id === ids.actionId);
+        if (!a) return false;
+        a.dueDate = isoDate || '';
+        localStorage.setItem(BOARDS_KEY, JSON.stringify(d));
+        return true;
+      } else if (source === 'quarterly') {
+        const raw = localStorage.getItem('quarterly-goals-v1');
+        if (!raw) return false;
+        const d = JSON.parse(raw);
+        const g = (d.goals || []).find(x => x.id === ids.goalId);
+        if (!g) return false;
+        const a = (g.tasks || []).find(x => x.id === ids.actionId);
+        if (!a) return false;
+        a.dueDate = isoDate || '';
+        localStorage.setItem('quarterly-goals-v1', JSON.stringify(d));
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+  // Filter state for the reminder — persisted across opens.
+  let _grDueFilter = (function(){
+    try { return localStorage.getItem('personal-goal-reminder-filter') || 'all'; } catch { return 'all'; }
+  })();
+  function _grDueBucket(iso){
+    // returns one of: 'overdue', 'today', 'week', 'later', 'none'
+    if (!iso) return 'none';
+    const n = _grDaysUntil(iso);
+    if (n === null) return 'none';
+    if (n < 0) return 'overdue';
+    if (n === 0) return 'today';
+    if (n <= 7) return 'week';
+    return 'later';
+  }
+  // Does an action match the current filter?
+  function _grActionMatches(a){
+    if (_grDueFilter === 'all') return true;
+    const b = _grDueBucket(a.dueDate);
+    if (_grDueFilter === 'overdue') return b === 'overdue';
+    if (_grDueFilter === 'today')   return b === 'today';
+    if (_grDueFilter === 'week')    return b === 'overdue' || b === 'today' || b === 'week';
+    if (_grDueFilter === 'later')   return b === 'later';
+    if (_grDueFilter === 'none')    return b === 'none';
+    return true;
+  }
   function showGoalReminder(force){
     if (!force) {
       const todayK = todayKey();
@@ -7722,42 +7853,123 @@ const VOICE = {
         return 0;
       });
     });
-    body.innerHTML = boards.map(b => `
-      <div class="gr-board" style="--board-color:${b.color}">
-        <div class="gr-board-head">
-          <span class="gr-board-dot" style="background:${b.color}"></span>
-          <span>${escHtml(b.name)}</span>
-          <span class="gr-board-count">${b.goals.length} goal${b.goals.length === 1 ? '' : 's'}</span>
-        </div>
-        ${b.goals.map(g => {
-          const overdue = _grIsOverdue(g.targetDate, g.status);
-          return `
-          <div class="gr-goal-card${overdue ? ' overdue' : ''}">
-            <div class="gr-goal-title">
-              <span class="gr-goal-bullet"></span>
-              <span class="gr-goal-text">${escHtml(g.title)}</span>
-              ${overdue ? `<span class="gr-overdue">Overdue</span>` : ''}
-              ${g.targetDate && !overdue ? `<span class="gr-target">${_grTargetLabel(g.targetDate)}</span>` : ''}
-            </div>
-            ${g.actions.length ? `
-              <div class="gr-actions">
-                ${g.actions.map(a => {
-                  const aOver = _grIsOverdue(a.dueDate, null);
-                  return `
-                  <div class="gr-action">
-                    <span class="gr-action-check"></span>
-                    <span class="gr-action-text">${escHtml(a.text)}</span>
-                    ${a.dueDate ? `<span class="gr-day${aOver ? ' overdue' : ''}">${_grDayLabel(a.dueDate)}</span>` : ''}
-                  </div>
-                `;
-                }).join('')}
-              </div>
-            ` : ''}
-          </div>
-        `;
+    // Tally each due bucket for chip counts
+    const tally = { all: 0, overdue: 0, today: 0, week: 0, later: 0, none: 0 };
+    boards.forEach(b => {
+      b.goals.forEach(g => {
+        (g.actions || []).forEach(a => {
+          tally.all++;
+          const bucket = _grDueBucket(a.dueDate);
+          tally[bucket]++;
+          if (bucket === 'overdue' || bucket === 'today') tally.week++;
+          else if (bucket === 'week') tally.week++;
+        });
+      });
+    });
+    const filters = [
+      { id: 'all',     label: 'All' },
+      { id: 'overdue', label: 'Overdue' },
+      { id: 'today',   label: 'Today' },
+      { id: 'week',    label: 'This week' },
+      { id: 'later',   label: 'Later' },
+      { id: 'none',    label: 'No date' }
+    ];
+    const filterBarHTML = `
+      <div class="gr-filter-bar">
+        ${filters.map(f => {
+          const active = _grDueFilter === f.id ? 'active' : '';
+          const ct = tally[f.id] != null ? tally[f.id] : 0;
+          return `<button type="button" class="gr-filter-chip ${active}" data-filter="${f.id}">${f.label}<span class="gr-filter-ct">${ct}</span></button>`;
         }).join('')}
       </div>
-    `).join('');
+    `;
+    // Filter actions per goal — if a goal ends up with zero matching actions
+    // AND we're filtering, hide the goal card entirely. If "All", show all.
+    const filteredBoards = boards.map(b => {
+      const goals = b.goals.map(g => {
+        const matchingActions = (g.actions || []).filter(_grActionMatches);
+        return { ...g, actions: matchingActions, _hasAny: matchingActions.length > 0 };
+      }).filter(g => _grDueFilter === 'all' ? true : g._hasAny);
+      return { ...b, goals };
+    }).filter(b => b.goals.length > 0);
+    const boardsHTML = filteredBoards.length === 0
+      ? `<div class="gr-empty">No action items match this filter.</div>`
+      : filteredBoards.map(b => `
+        <div class="gr-board" style="--board-color:${b.color}">
+          <div class="gr-board-head">
+            <span class="gr-board-dot" style="background:${b.color}"></span>
+            <span>${escHtml(b.name)}</span>
+            <span class="gr-board-count">${b.goals.length} goal${b.goals.length === 1 ? '' : 's'}</span>
+          </div>
+          ${b.goals.map(g => {
+            const overdue = _grIsOverdue(g.targetDate, g.status);
+            return `
+            <div class="gr-goal-card${overdue ? ' overdue' : ''}">
+              <div class="gr-goal-title">
+                <span class="gr-goal-bullet"></span>
+                <span class="gr-goal-text">${escHtml(g.title)}</span>
+                ${overdue ? `<span class="gr-overdue">Overdue</span>` : ''}
+                ${g.targetDate && !overdue ? `<span class="gr-target">${_grTargetLabel(g.targetDate)}</span>` : ''}
+              </div>
+              ${g.actions.length ? `
+                <div class="gr-actions">
+                  ${g.actions.map(a => {
+                    const aOver = _grIsOverdue(a.dueDate, null);
+                    const noDate = !a.dueDate;
+                    return `
+                    <div class="gr-action" data-source="${g.source}" data-board-id="${g.boardId || ''}" data-goal-id="${g.goalId}" data-action-id="${a.id || ''}">
+                      <span class="gr-action-check"></span>
+                      <span class="gr-action-text">${escHtml(a.text)}</span>
+                      <button type="button" class="gr-action-date ${aOver ? 'overdue' : ''} ${noDate ? 'empty' : ''}" data-action="set-date">
+                        ${a.dueDate ? _grDayLabel(a.dueDate) : 'Set date'}
+                      </button>
+                      <input type="date" class="gr-action-date-input" value="${a.dueDate || ''}">
+                    </div>
+                  `;
+                  }).join('')}
+                </div>
+              ` : ''}
+            </div>
+          `;
+          }).join('')}
+        </div>
+      `).join('');
+    body.innerHTML = filterBarHTML + boardsHTML;
+    // Filter chip taps — switch filter, re-render
+    body.querySelectorAll('.gr-filter-chip').forEach(ch => {
+      ch.addEventListener('click', () => {
+        const f = ch.getAttribute('data-filter') || 'all';
+        _grDueFilter = f;
+        try { localStorage.setItem('personal-goal-reminder-filter', f); } catch {}
+        showGoalReminder(true);
+      });
+    });
+    // Action date taps — open the hidden date input next to the button
+    body.querySelectorAll('.gr-action-date').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.closest('.gr-action');
+        if (!action) return;
+        const input = action.querySelector('.gr-action-date-input');
+        if (!input) return;
+        // showPicker() works on modern browsers; fall back to focus()
+        try { input.showPicker(); }
+        catch { input.focus(); input.click(); }
+      });
+    });
+    body.querySelectorAll('.gr-action-date-input').forEach(input => {
+      input.addEventListener('change', () => {
+        const action = input.closest('.gr-action');
+        if (!action) return;
+        const source   = action.getAttribute('data-source');
+        const boardId  = action.getAttribute('data-board-id');
+        const goalId   = action.getAttribute('data-goal-id');
+        const actionId = action.getAttribute('data-action-id');
+        if (!source || !goalId || !actionId) return;
+        const ok = _grSetActionDueDate(source, { boardId, goalId, actionId }, input.value || '');
+        if (ok) showGoalReminder(true);
+      });
+    });
     bd.classList.add('show');
     bd.setAttribute('aria-hidden', 'false');
   }
