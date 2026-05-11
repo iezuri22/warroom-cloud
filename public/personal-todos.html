@@ -2604,6 +2604,10 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       TV Mode
     </button>
+    <button class="side-drawer-btn" id="drawerNavGoalReminder">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+      Show goals
+    </button>
   </div>
   <div class="side-drawer-spacer"></div>
   <div class="side-drawer-foot">
@@ -7129,8 +7133,8 @@ const VOICE = {
   // user's goals across boards. State key: `personal-goal-reminder-shown-on`.
   // Snooze = 2 hours; Got it = until tomorrow.
   function loadBoardGoals(){
-    // Read from BOARDS_KEY (same store the Goal Board page uses) and pull
-    // each board's `goals` array if present.
+    // Read from BOARDS_KEY and pull each board's goals. Skip goals sitting
+    // in a "Done" column so the reminder shows active work only.
     try {
       const raw = localStorage.getItem(BOARDS_KEY);
       if (!raw) return [];
@@ -7139,46 +7143,68 @@ const VOICE = {
       const tombstones = new Set(Array.isArray(d.deletedBoardIds) ? d.deletedBoardIds : []);
       return boards
         .filter(b => !tombstones.has(b.id))
-        .map(b => ({
-          id: b.id,
-          name: b.name || '',
-          color: b.color || '#888',
-          goals: Array.isArray(b.goals) ? b.goals : []
-        }))
+        .map(b => {
+          const cols = Array.isArray(b.columns) ? b.columns : [];
+          // Column names ending in "Done" or named "Complete" are treated as
+          // finish columns; goals there don't need reminders.
+          const doneColIds = new Set(cols.filter(c => /done|complete/i.test(c.name || '')).map(c => c.id));
+          const goals = (Array.isArray(b.goals) ? b.goals : [])
+            .filter(g => !doneColIds.has(g.columnId));
+          return {
+            id: b.id,
+            name: b.name || '',
+            color: b.color || '#888',
+            goals
+          };
+        })
         .filter(b => b.goals.length > 0);
     } catch { return []; }
   }
-  function maybeShowGoalReminder(){
-    const todayK = todayKey();
-    let lastShown = '';
-    let snoozedUntil = 0;
-    try {
-      lastShown = localStorage.getItem('personal-goal-reminder-shown-on') || '';
-      snoozedUntil = parseInt(localStorage.getItem('personal-goal-reminder-snoozed-until') || '0', 10) || 0;
-    } catch {}
-    if (lastShown === todayK) return;
-    if (snoozedUntil && Date.now() < snoozedUntil) return;
+  function showGoalReminder(force){
+    if (!force) {
+      const todayK = todayKey();
+      let lastShown = '';
+      let snoozedUntil = 0;
+      try {
+        lastShown = localStorage.getItem('personal-goal-reminder-shown-on') || '';
+        snoozedUntil = parseInt(localStorage.getItem('personal-goal-reminder-snoozed-until') || '0', 10) || 0;
+      } catch {}
+      if (lastShown === todayK) return;
+      if (snoozedUntil && Date.now() < snoozedUntil) return;
+    }
     const boards = loadBoardGoals();
-    if (boards.length === 0) return; // nothing to remind about
     const bd = document.getElementById('goalReminderBackdrop');
     const body = document.getElementById('grBody');
     if (!bd || !body) return;
+    if (boards.length === 0) {
+      if (force) {
+        body.innerHTML = `<div class="gr-empty">No goals defined yet. Open the <strong>Goals</strong> or <strong>Board</strong> tab to add some.</div>`;
+        bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false');
+      }
+      return;
+    }
     body.innerHTML = boards.map(b => `
       <div class="gr-board">
         <div class="gr-board-head">
           <span class="gr-board-dot" style="background:${b.color}"></span>
           <span>${escHtml(b.name)}</span>
+          <span style="margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.6px;color:rgba(255,255,255,.4)">${b.goals.length} goal${b.goals.length === 1 ? '' : 's'}</span>
         </div>
-        ${b.goals.slice(0, 6).map(g => {
+        ${b.goals.slice(0, 8).map(g => {
           const txt = (typeof g === 'string') ? g : (g && (g.text || g.name || g.title || ''));
           if (!txt) return '';
           return `<div class="gr-goal">${escHtml(txt)}</div>`;
         }).join('')}
+        ${b.goals.length > 8 ? `<div class="gr-goal" style="color:rgba(255,255,255,.4);font-style:italic">+ ${b.goals.length - 8} more — see the Goals tab</div>` : ''}
       </div>
     `).join('');
     bd.classList.add('show');
     bd.setAttribute('aria-hidden', 'false');
   }
+  // Kept name for backwards compat — the time-gated daily trigger
+  function maybeShowGoalReminder(){ showGoalReminder(false); }
+  // Expose for the drawer button (and DevTools testing)
+  window.showGoalReminder = showGoalReminder;
   (function wireGoalReminder(){
     const bd = document.getElementById('goalReminderBackdrop');
     const okBtn = document.getElementById('grOk');
@@ -7194,6 +7220,13 @@ const VOICE = {
       close();
     });
     if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+    // Drawer button — "Show goals" forces the modal open regardless of timing.
+    const drawerBtn = document.getElementById('drawerNavGoalReminder');
+    if (drawerBtn) drawerBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try { closeSidebar(); } catch {}
+      showGoalReminder(true);
+    });
     // Show ~1.5s after load so the page settles first
     setTimeout(() => { try { maybeShowGoalReminder(); } catch {} }, 1500);
   })();
