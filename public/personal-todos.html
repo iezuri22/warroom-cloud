@@ -823,6 +823,19 @@
     background: rgba(255,138,61,.12);
     border-color: #FF8A3D;
   }
+  .focus5-picker-row.cascade {
+    background: rgba(255,184,77,.10);
+    border-color: rgba(255,184,77,.55);
+    border-style: dashed;
+  }
+  .focus5-picker-cascade-badge {
+    font-size: 10px; font-weight: 900; letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 3px 8px; border-radius: 99px;
+    background: rgba(255,184,77,.18); color: #FFB84D;
+    border: 1px solid rgba(255,184,77,.4);
+    flex-shrink: 0;
+  }
   .focus5-picker-row.disabled {
     opacity: .35; cursor: not-allowed;
   }
@@ -1587,6 +1600,26 @@
     width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
     background: rgba(74,222,128,.18); border: 1px solid rgba(74,222,128,.4);
   }
+  /* Per-slot push-down button — bumps this task to the next priority list. */
+  .pc-slot-push {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    color: rgba(255,255,255,.55);
+    cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s, transform .08s;
+    padding: 0;
+  }
+  .pc-slot-push:hover {
+    background: rgba(255,138,61,.14);
+    border-color: rgba(255,138,61,.35);
+    color: #FF8A3D;
+    transform: translateY(1px);
+  }
+  .pc-slot-push svg { display: block }
   .pc-list-actions {
     display: flex; gap: 6px; margin-top: 4px;
   }
@@ -7031,8 +7064,8 @@ const VOICE = {
     if (!body) return;
     if (titleEl) titleEl.textContent = _focus5PickerListId ? 'Edit list' : 'New focus list';
     if (subEl) subEl.innerHTML = _focus5PickerListId
-      ? `Update the name or pick which tasks belong to this list.`
-      : `Name it (like <em>Morning routine</em>) and tap up to <strong>5</strong> tasks.`;
+      ? `Pick the tasks for this list. Anything past 5 cascades into the next priority.`
+      : `Name it (like <em>Morning routine</em>) and tap your 5 — extras cascade to the next list.`;
     if (nameInp && nameInp.value !== _focus5PickerName) nameInp.value = _focus5PickerName;
     // Routine selector — highlight current pick
     const routineWrap = document.getElementById('focus5PickerRoutine');
@@ -7202,24 +7235,25 @@ const VOICE = {
     } else {
       pool.forEach(t => {
         const isSel = _focus5PickerSel.includes(t.id);
-        const atCap = _focus5PickerSel.length >= 5 && !isSel;
+        // Soft cap: still selectable beyond 5 — the extra picks cascade down
+        // into the next priority list on save. We mark over-cap picks visually.
+        const overCap = isSel && _focus5PickerSel.indexOf(t.id) >= 5;
         const inOther = inOtherList.get(t.id);
-        // Tasks already in ANOTHER list: dim + strikethrough, but still
-        // selectable (user might want to move it). At-cap rows are hard-disabled.
         const row = document.createElement('div');
-        row.className = `focus5-picker-row ${isSel ? 'selected' : ''} ${atCap ? 'disabled' : ''} ${inOther && !isSel ? 'in-other-list' : ''}`;
+        row.className = `focus5-picker-row ${isSel ? 'selected' : ''} ${overCap ? 'cascade' : ''} ${inOther && !isSel ? 'in-other-list' : ''}`;
         row.dataset.id = t.id;
         const job = t.job ? jobMeta(t.job) : null;
         const jobBadge = job ? `<span class="focus5-picker-job" style="background:${job.color}22;color:${job.color}">${escHtml(job.label)}</span>` : '';
         const inListBadge = inOther ? `<span class="focus5-picker-in-list" title="Already in: ${escHtml(inOther)}">in ${escHtml(inOther)}</span>` : '';
+        const cascadeBadge = overCap ? `<span class="focus5-picker-cascade-badge" title="Will cascade to next list">cascade</span>` : '';
         row.innerHTML = `
           <span class="focus5-picker-check">${isSel ? '✓' : ''}</span>
           <span class="focus5-picker-text">${escHtml(t.text || '')}</span>
+          ${cascadeBadge}
           ${inListBadge}
           ${jobBadge}
         `;
         row.addEventListener('click', () => {
-          if (atCap) return;
           if (isSel) _focus5PickerSel = _focus5PickerSel.filter(id => id !== t.id);
           else _focus5PickerSel.push(t.id);
           renderFocus5Picker();
@@ -7227,7 +7261,14 @@ const VOICE = {
         body.appendChild(row);
       });
     }
-    if (countEl) countEl.innerHTML = `<strong>${_focus5PickerSel.length}</strong> / 5 selected`;
+    if (countEl) {
+      if (_focus5PickerSel.length <= 5) {
+        countEl.innerHTML = `<strong>${_focus5PickerSel.length}</strong> / 5 selected`;
+      } else {
+        const overflow = _focus5PickerSel.length - 5;
+        countEl.innerHTML = `<strong>5</strong> + <strong style="color:#FFB84D">${overflow} cascading</strong>`;
+      }
+    }
     // Need a name + at least one task to start. When editing, allow zero tasks
     // (so user can clear out a list and re-fill it without leaving the picker).
     const nameOk = (_focus5PickerName || '').trim().length > 0;
@@ -7242,11 +7283,13 @@ const VOICE = {
     if (!name) return;
     // Convert recurring task instances → 'tpl:<templateId>' refs so the list
     // auto-rebinds to tomorrow's instance instead of pointing at a stale done one.
-    const refs = _focus5PickerSel.slice(0, 5).map(id => {
+    const allRefs = _focus5PickerSel.map(id => {
       const t = todos.find(tt => tt.id === id);
       if (t && t.fromTemplate) return 'tpl:' + t.fromTemplate;
       return id;
     });
+    const refs = allRefs.slice(0, 5);
+    const overflow = allRefs.slice(5);
     const routine = (_focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night') ? _focus5PickerRoutine : null;
     if (_focus5PickerListId) {
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
@@ -7262,6 +7305,15 @@ const VOICE = {
     }
     focus5State.active = true;
     saveFocus5();
+    // Cascade any over-cap picks into the next priority list (and onward).
+    if (overflow.length > 0) {
+      const targetId = _focus5PickerListId || focus5State.activeListId;
+      const idx = focus5State.lists.findIndex(l => l.id === targetId);
+      const nextList = idx >= 0 ? focus5State.lists[idx + 1] : null;
+      if (nextList) {
+        overflow.forEach(id => cascadeAddTaskToList(id, nextList.id, 'end'));
+      }
+    }
     closeFocus5Picker();
     render();
   }
@@ -8065,33 +8117,87 @@ const VOICE = {
     seedDefaultFocus5Lists();
     return focus5State.lists.slice(0, 4);
   }
-  // Pull undone morning routine items into a target list, capped at 5 slots.
-  // Skips items already in the target list. Returns count added.
+  // Add a taskId to a list. If the list is already full (5 items), the item
+  // at the bottom (position 4) is bumped to the END of the next list. If THAT
+  // list is full, its bottom item cascades too. Last list drops overflow.
+  // Position: 'top' (push to slot 0) or 'end' (append). Default 'end'.
+  // The task is also REMOVED from any other list to avoid dupes across lists.
+  function cascadeAddTaskToList(taskId, targetListId, position){
+    const lists = focus5State.lists;
+    const startIdx = lists.findIndex(l => l.id === targetListId);
+    if (startIdx < 0 || !taskId) return false;
+    // First, remove the task from any OTHER list so it doesn't double-book.
+    lists.forEach((l, i) => {
+      if (i === startIdx) return;
+      const at = l.taskIds.indexOf(taskId);
+      if (at >= 0) l.taskIds.splice(at, 1);
+    });
+    // Insert into target, then cascade overflow.
+    let i = startIdx;
+    let incoming = [taskId];
+    while (incoming.length && i < lists.length) {
+      const list = lists[i];
+      const pos = (i === startIdx && position === 'top') ? 'top' : 'end';
+      // Avoid dupes already in this list — pull them out so they end up at the
+      // new insertion position rather than staying put.
+      incoming = incoming.filter(id => {
+        const existing = list.taskIds.indexOf(id);
+        if (existing >= 0) list.taskIds.splice(existing, 1);
+        return true;
+      });
+      if (pos === 'top') list.taskIds.unshift(...incoming);
+      else list.taskIds.push(...incoming);
+      if (list.taskIds.length <= 5) {
+        incoming = [];
+      } else {
+        // Overflow: anything past position 4 cascades to next list.
+        incoming = list.taskIds.splice(5);
+      }
+      i++;
+    }
+    // If we still have overflow after the last list, drop it silently — the
+    // user can add it back manually if they care. This is the failsafe so we
+    // don't loop forever.
+    saveFocus5();
+    return true;
+  }
+  // Pull undone morning routine items into a target list. Uses cascade — if
+  // target ends up over 5, overflow bumps to next priority list. Skips items
+  // already on the target. Returns count added.
   function pullMorningRoutineInto(targetListId){
     const target = focus5State.lists.find(l => l.id === targetListId);
     if (!target) return 0;
     const morningList = focus5State.lists.find(l => l.routine === 'morning');
-    if (!morningList) return 0;
+    if (!morningList || morningList.id === targetListId) return 0;
     const existing = new Set(target.taskIds);
     let added = 0;
     for (const id of morningList.taskIds) {
-      if (target.taskIds.length >= 5) break;
       if (existing.has(id)) continue;
       const t = todos.find(x => x.id === id);
       if (!t || t.done) continue;
-      target.taskIds.push(id);
+      cascadeAddTaskToList(id, targetListId, 'end');
       existing.add(id);
       added++;
     }
-    if (added > 0) saveFocus5();
     return added;
+  }
+  // Move a task from its current list to the next list (with cascade).
+  // Used by the priority confirm modal's per-slot "push down" button.
+  function bumpTaskToNextList(taskId, fromListId){
+    const lists = focus5State.lists;
+    const fromIdx = lists.findIndex(l => l.id === fromListId);
+    if (fromIdx < 0 || fromIdx >= lists.length - 1) return false;
+    const targetList = lists[fromIdx + 1];
+    cascadeAddTaskToList(taskId, targetList.id, 'end');
+    return true;
   }
   // Show / dismiss / state tracking
   function _pcResolveTask(id){
     return todos.find(t => t.id === id) || null;
   }
-  function _pcSlotHTML(list){
+  function _pcSlotHTML(list, listIdx, totalLists){
     const slots = [];
+    const canPushDown = listIdx < totalLists - 1; // last list has nowhere to push to
     for (let i = 0; i < 5; i++) {
       const id = list.taskIds[i];
       const t = id ? _pcResolveTask(id) : null;
@@ -8103,11 +8209,17 @@ const VOICE = {
           </div>
         `);
       } else {
+        const pushBtn = canPushDown
+          ? `<button class="pc-slot-push" data-action="push-down" data-list-id="${list.id}" data-task-id="${t.id}" title="Push to next priority list" aria-label="Push to next priority list">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+             </button>`
+          : '';
         slots.push(`
           <div class="pc-slot ${t.done ? 'done' : ''}" data-list-id="${list.id}" data-slot-idx="${i}">
             <span class="pc-slot-num">${i + 1}</span>
             <span class="pc-slot-text">${escHtml(t.text || '(no title)')}</span>
             ${t.done ? '<span class="pc-slot-check"></span>' : ''}
+            ${pushBtn}
           </div>
         `);
       }
@@ -8158,14 +8270,14 @@ const VOICE = {
           return t && !t.done;
         }).length
       : 0;
-    body.innerHTML = lists.map(l => {
+    body.innerHTML = lists.map((l, idx) => {
       const filled = l.taskIds.filter(id => _pcResolveTask(id)).length;
       const routineBadge = l.routine === 'morning'
         ? '<span class="pc-list-routine">Morning</span>'
         : l.routine === 'night'
           ? '<span class="pc-list-routine night">Evening</span>'
           : '';
-      const canPullMorning = l.routine !== 'morning' && morningUndoneCount > 0 && filled < 5;
+      const canPullMorning = l.routine !== 'morning' && morningUndoneCount > 0;
       return `
         <div class="pc-list" style="--list-color:${PRIORITY_DEFAULTS.find(d => d.name.toLowerCase() === (l.name || '').toLowerCase())?.color || '#FF8A3D'}">
           <div class="pc-list-head">
@@ -8173,7 +8285,7 @@ const VOICE = {
             ${routineBadge}
             <span class="pc-list-count">${filled}/5</span>
           </div>
-          <div class="pc-slots">${_pcSlotHTML(l)}</div>
+          <div class="pc-slots">${_pcSlotHTML(l, idx, lists.length)}</div>
           <div class="pc-list-actions">
             <button class="pc-list-btn" data-action="pick" data-list-id="${l.id}">${filled === 0 ? 'Pick 5' : 'Edit picks'}</button>
             ${canPullMorning ? `<button class="pc-list-btn secondary" data-action="pull-morning" data-list-id="${l.id}">+ Morning (${morningUndoneCount})</button>` : ''}
@@ -8183,12 +8295,25 @@ const VOICE = {
     }).join('');
     // Wire slot taps + button taps
     body.querySelectorAll('.pc-slot').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        // Push-down button has its own handler — don't trigger picker.
+        if (e.target.closest('.pc-slot-push')) return;
         const lid = el.getAttribute('data-list-id');
         if (!lid) return;
         // Close the confirm modal, open the existing picker for that list.
         closePriorityConfirm(false);
         try { openFocus5Picker(lid); } catch {}
+      });
+    });
+    // Per-slot push-down: bump this task into the next priority list (cascade).
+    body.querySelectorAll('.pc-slot-push').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const lid = btn.getAttribute('data-list-id');
+        const tid = btn.getAttribute('data-task-id');
+        if (!lid || !tid) return;
+        bumpTaskToNextList(tid, lid);
+        showPriorityConfirm(true);
       });
     });
     body.querySelectorAll('.pc-list-btn').forEach(el => {
