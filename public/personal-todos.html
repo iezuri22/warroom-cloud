@@ -8378,21 +8378,33 @@ const VOICE = {
   // Returns today's undone recurring task instances (= the routines a user
   // hasn't checked off yet today). Each entry comes with its template's freq
   // bucket so the routine picker can filter by daily/weekly/monthly.
+  // Deduped by template id — recurring tasks can materialize across many days,
+  // so we'd otherwise see "Review emails" repeated for each undone instance.
   function _getUndoneRoutinesToday(){
     const todayK = todayKey();
-    return todos
-      .filter(t => t.fromTemplate && !t.done && (t.date === todayK || !t.date))
-      .map(t => {
-        const tpl = (typeof recurringTasks !== 'undefined' ? recurringTasks : []).find(r => r.id === t.fromTemplate);
-        const f = tpl ? (tpl.freq || 'daily') : 'daily';
-        // Bucket frequencies into the 3 filter buckets the user asked for.
-        let bucket;
-        if (f === 'daily' || f === 'weekdays' || f === 'custom') bucket = 'daily';
-        else if (f === 'weekly') bucket = 'weekly';
-        else if (f === 'monthly') bucket = 'monthly';
-        else bucket = 'daily';
-        return { todo: t, tpl, freq: f, bucket };
+    const tplList = (typeof recurringTasks !== 'undefined' ? recurringTasks : []);
+    const seen = new Map(); // tplId → best instance
+    todos
+      .filter(t => t.fromTemplate && !t.done)
+      .forEach(t => {
+        const cur = seen.get(t.fromTemplate);
+        // Prefer today's instance over a stale one. If neither is today's,
+        // first one wins.
+        const isToday = t.date === todayK;
+        if (!cur) { seen.set(t.fromTemplate, t); return; }
+        const curIsToday = cur.date === todayK;
+        if (isToday && !curIsToday) seen.set(t.fromTemplate, t);
       });
+    return Array.from(seen.values()).map(t => {
+      const tpl = tplList.find(r => r.id === t.fromTemplate);
+      const f = tpl ? (tpl.freq || 'daily') : 'daily';
+      let bucket;
+      if (f === 'daily' || f === 'weekdays' || f === 'custom') bucket = 'daily';
+      else if (f === 'weekly') bucket = 'weekly';
+      else if (f === 'monthly') bucket = 'monthly';
+      else bucket = 'daily';
+      return { todo: t, tpl, freq: f, bucket };
+    });
   }
   // Routine picker state — held while modal is open.
   let _rpTargetListId = null;
