@@ -907,6 +907,11 @@
     border-color: rgba(255,138,61,.4);
   }
   .focus5-btn.race:hover { background: rgba(255,138,61,.18); border-color: #FF8A3D; color: #FF8A3D }
+  .focus5-btn.skip {
+    background: rgba(167,139,250,.08); color: #C4B5FD;
+    border-color: rgba(167,139,250,.35);
+  }
+  .focus5-btn.skip:hover { background: rgba(167,139,250,.18); border-color: #C4B5FD; color: #DDD6FE }
 
   /* The "up next" — biggest card */
   .focus5-card.active {
@@ -7164,31 +7169,6 @@ const VOICE = {
     if (d.type === 'warroom:sprint-celebration') {
       showSprintCelebrationToast(d);
     }
-    if (d.type === 'warroom:sprint-skip') {
-      const slot = parseInt(d.slot, 10) || 1;
-      const skippedId = (d.skippedTodoId || '').toString();
-      // Close the current slot first.
-      closeRaceSlot(slot);
-      // Find the active Focus 5 list and pick the next undone task that isn't
-      // the one we just skipped. If found, open a race for it.
-      try {
-        const list = focus5State.lists.find(l => l.id === focus5State.activeListId);
-        if (!list) return;
-        // Resolve tpl: refs to materialized instance ids the same way the
-        // focus view does, then pick the first undone one we haven't just bailed on.
-        const tasks = list.taskIds.map(id => {
-          if (typeof id === 'string' && id.startsWith('tpl:')) {
-            const tplId = id.slice(4);
-            return todos.find(t => t.fromTemplate === tplId && !t.done) || null;
-          }
-          return todos.find(t => t.id === id) || null;
-        }).filter(Boolean);
-        const next = tasks.find(t => !t.done && t.id !== skippedId);
-        if (next) {
-          setTimeout(() => { try { openRaceOverlay(next); } catch {} }, 200);
-        }
-      } catch {}
-    }
   });
   // Sprint celebration toast — shown when a sprint finishes in the iframe.
   // Pulls headline + milestone HTML from the postMessage payload and shows
@@ -8164,6 +8144,10 @@ const VOICE = {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
           Race timer
         </button>
+        <button class="focus5-btn skip" data-act="skip" type="button" title="Skip — remove from this priority list (task stays in Personal)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="17" y="4" width="2" height="16"/></svg>
+          Skip
+        </button>
       </div>
     ` : '';
     // Recur badge clutters the cramped edit-mode num column (36px wide). Skip
@@ -8195,8 +8179,15 @@ const VOICE = {
     } else if (!isDone) {
       const doneBtn = card.querySelector('[data-act="done"]');
       const raceBtn = card.querySelector('[data-act="race"]');
+      const skipBtn = card.querySelector('[data-act="skip"]');
       if (doneBtn) doneBtn.addEventListener('click', (e) => {
         e.stopPropagation(); toggleTodo(todo.id);
+      });
+      if (skipBtn) skipBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Remove from the active focus list only — task stays in Personal so
+        // user can pick it again later or address it on a different day.
+        try { focus5Remove(todo.id); } catch {}
       });
       if (raceBtn) raceBtn.addEventListener('click', (e) => {
         e.stopPropagation();
