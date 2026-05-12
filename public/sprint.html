@@ -292,6 +292,39 @@ body { display:flex; flex-direction:column; position:relative }
   font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase;
   color:var(--text-fade);
 }
+/* Big readout + minus/plus next to the chip row — bumps target in 5-min steps. */
+.target-adjust {
+  display:flex; align-items:center; gap:14px;
+  margin-top:14px;
+  padding:14px 18px;
+  background:linear-gradient(135deg, rgba(255,138,61,.10), rgba(255,138,61,.04));
+  border:1px solid rgba(255,138,61,.28);
+  border-radius:14px;
+  width:fit-content;
+}
+.target-adj-btn {
+  width:44px; height:44px; border-radius:12px;
+  background:rgba(255,138,61,.18);
+  border:1px solid rgba(255,138,61,.4);
+  color:var(--accent);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; transition:transform .08s, background .12s, border-color .12s;
+}
+.target-adj-btn:hover { background:rgba(255,138,61,.28); border-color:var(--accent) }
+.target-adj-btn:active { transform:scale(.94) }
+.target-adj-btn:disabled { opacity:.3; cursor:not-allowed }
+.target-adj-readout {
+  min-width:88px;
+  display:flex; flex-direction:column; align-items:center; gap:1px;
+}
+.target-adj-val {
+  font-size:34px; font-weight:900; letter-spacing:-.03em;
+  color:var(--text); line-height:1;
+}
+.target-adj-lbl {
+  font-size:10px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase;
+  color:var(--text-fade); margin-top:2px;
+}
 
 .start-btn {
   margin-top:8px; padding:18px 24px; border:none; border-radius:14px;
@@ -852,7 +885,7 @@ body { display:flex; flex-direction:column; position:relative }
           <button class="target-chip" data-min="5">5 min</button>
           <button class="target-chip" data-min="10">10 min</button>
           <button class="target-chip active" data-min="15">15 min</button>
-          <button class="target-chip" data-min="25">25 min</button>
+          <button class="target-chip" data-min="30">30 min</button>
           <button class="target-chip" data-min="45">45 min</button>
           <button class="target-chip" data-min="60">1 hr</button>
           <button class="target-chip" data-min="90">90 min</button>
@@ -862,6 +895,20 @@ body { display:flex; flex-direction:column; position:relative }
             <input type="number" id="targetCustom" placeholder="Custom" min="1" max="480" inputmode="numeric">
             <span class="lbl">min</span>
           </span>
+        </div>
+        <!-- Big selected-target readout with +/- adjusters. Lets user pick a
+             preset and then nudge it by 5-min steps without retyping. -->
+        <div class="target-adjust" id="targetAdjust">
+          <button type="button" class="target-adj-btn" id="targetMinus" aria-label="Decrease 5 min">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="target-adj-readout">
+            <span class="target-adj-val" id="targetAdjVal">15</span>
+            <span class="target-adj-lbl">min</span>
+          </div>
+          <button type="button" class="target-adj-btn" id="targetPlus" aria-label="Increase 5 min">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
       </div>
       <div class="filter-row" id="filterChips"></div>
@@ -1252,10 +1299,11 @@ body { display:flex; flex-direction:column; position:relative }
     const todayKey = new Date().toLocaleDateString('en-CA', { timeZone:'America/Chicago' });
     const todayWins = store.history.filter(h => h.won && (h.completedAt || '').slice(0,10) === todayKey).length;
     const timeSaved = store.history.filter(h => h.won).reduce((sum, h) => sum + Math.max(0, h.targetSeconds - h.actualSeconds), 0);
+    // Win rate dropped — overtime wins keep streak alive so the % stays near
+    // 100 and stops being interesting. Stats now lean into volume/cadence.
     $('statsStrip').innerHTML = `
       <div class="stat-chip streak"><div class="v">${store.currentStreak}🔥</div><div class="l">Streak</div></div>
-      <div class="stat-chip"><div class="v">${todayWins}</div><div class="l">Wins Today</div></div>
-      <div class="stat-chip winrate"><div class="v">${winRate}%</div><div class="l">Win Rate</div></div>
+      <div class="stat-chip"><div class="v">${todayWins}</div><div class="l">Done Today</div></div>
       <div class="stat-chip"><div class="v">${fmtFriendly(timeSaved)}</div><div class="l">Time Saved</div></div>
       <div class="stat-chip"><div class="v">${total}</div><div class="l">Total Sprints</div></div>
     `;
@@ -1708,20 +1756,57 @@ body { display:flex; flex-direction:column; position:relative }
   function escapeAttr(s){ return escapeHtml(s).replace(/"/g, '&quot;'); }
 
   // ============ TARGET PICKER ============
+  // Keep the big readout in sync with whichever input the user touched.
+  const targetAdjVal = $('targetAdjVal');
+  const targetMinusBtn = $('targetMinus');
+  const targetPlusBtn  = $('targetPlus');
+  function setTargetMin(m, syncChips){
+    const clamped = Math.max(1, Math.min(480, Math.round(m)));
+    targetSeconds = clamped * 60;
+    if (targetAdjVal) targetAdjVal.textContent = String(clamped);
+    if (syncChips) {
+      let matched = false;
+      targetChips.querySelectorAll('.target-chip').forEach(c => {
+        const isMatch = parseInt(c.dataset.min, 10) === clamped;
+        c.classList.toggle('active', isMatch);
+        if (isMatch) matched = true;
+      });
+      // If no chip matches, drop the value into the custom input so user sees it
+      if (!matched && targetCustom && document.activeElement !== targetCustom) {
+        targetCustom.value = clamped;
+      } else if (matched && targetCustom) {
+        targetCustom.value = '';
+      }
+    }
+  }
   targetChips.querySelectorAll('.target-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      targetChips.querySelectorAll('.target-chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      targetSeconds = parseInt(chip.dataset.min, 10) * 60;
-      targetCustom.value = '';
+      const m = parseInt(chip.dataset.min, 10);
+      setTargetMin(m, true);
     });
   });
   targetCustom.addEventListener('input', () => {
     const v = parseInt(targetCustom.value, 10);
     if (!Number.isFinite(v) || v <= 0) return;
     targetChips.querySelectorAll('.target-chip').forEach(c => c.classList.remove('active'));
-    targetSeconds = v * 60;
+    setTargetMin(v, false);
   });
+  // +/- buttons: bump in 5-min steps. Updates chip highlight + custom input.
+  if (targetMinusBtn) targetMinusBtn.addEventListener('click', () => {
+    const cur = Math.round(targetSeconds / 60);
+    setTargetMin(cur - 5, true);
+  });
+  if (targetPlusBtn) targetPlusBtn.addEventListener('click', () => {
+    const cur = Math.round(targetSeconds / 60);
+    setTargetMin(cur + 5, true);
+  });
+  // Initialize the readout from whatever chip starts active (15 min default).
+  (function initTargetReadout(){
+    const active = targetChips.querySelector('.target-chip.active');
+    const m = active ? parseInt(active.dataset.min, 10) : 15;
+    if (targetAdjVal) targetAdjVal.textContent = String(m);
+    targetSeconds = m * 60;
+  })();
 
   // ============ NAV ============
   function showView(v){
@@ -2503,6 +2588,26 @@ body { display:flex; flex-direction:column; position:relative }
     }
     if (ovrForm) ovrForm.style.display = 'none';
     resultOverlay.classList.add('show');
+    // Bubble the celebration up to the parent (personal-todos) so the user
+    // gets the dopamine even if they barely interact with the sprint UI. The
+    // parent shows a centered toast with the same headline + milestones.
+    try {
+      if (window.parent && window.parent !== window) {
+        // Pull the milestone HTML + headline directly from the DOM we just rendered.
+        const headline = resultHeadline ? (resultHeadline.textContent || '') : '';
+        const emoji = resultEmoji ? (resultEmoji.textContent || '') : '';
+        const sub = resultSub ? (resultSub.textContent || '') : '';
+        // Just the milestone + context lines, not the time stats (those are
+        // sprint-specific and noisy outside the result screen).
+        const milestones = Array.from(resultStats.querySelectorAll('.result-milestone, .result-context'))
+          .map(el => el.outerHTML).join('');
+        window.parent.postMessage({
+          type: 'warroom:sprint-celebration',
+          won: !!won,
+          headline, emoji, sub, milestonesHTML: milestones,
+        }, '*');
+      }
+    } catch {}
   }
 
   // ============ OVERRIDE: convert a loss into a win retroactively ============
@@ -2977,14 +3082,9 @@ body { display:flex; flex-direction:column; position:relative }
     if (t) taskInput.value = t;
     const tgt = parseInt(sp.get('min') || '', 10);
     if (Number.isFinite(tgt) && tgt > 0) {
-      targetSeconds = tgt * 60;
-      targetChips.querySelectorAll('.target-chip').forEach(c => {
-        c.classList.toggle('active', parseInt(c.dataset.min, 10) === tgt);
-      });
-      // If no chip matched, write to custom
-      if (!targetChips.querySelector('.target-chip.active')) {
-        targetCustom.value = tgt;
-      }
+      // Use the shared setter so chip highlight + readout + custom input all
+      // stay in sync with the URL-provided target.
+      setTargetMin(tgt, true);
     }
     // Race mode: this Sprint instance is running as a fullscreen overlay
     // launched from Personal. Hide its music bar (Personal owns the music)
