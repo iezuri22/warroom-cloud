@@ -1733,6 +1733,110 @@
   }
   .gr-ok:hover { transform: translateY(-1px) }
 
+  /* ============ PRIORITY OVERFLOW PROMPT ============
+     Asks "which task should I bump to the next priority?" when a priority
+     list is already full and a new task is being added. */
+  .priority-overflow-backdrop {
+    position: fixed; inset: 0; z-index: 380;
+    background: rgba(5,5,7,.86); backdrop-filter: blur(10px);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .priority-overflow-backdrop.show { display: flex }
+  .priority-overflow {
+    width: 100%; max-width: 600px;
+    max-height: 90vh; display: flex; flex-direction: column;
+    background: #15151B;
+    border: 1px solid rgba(255,138,61,.4);
+    border-radius: 20px; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,.65);
+  }
+  .pof-head {
+    padding: 24px 26px 14px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .pof-title {
+    font-size: 24px; font-weight: 900; letter-spacing: -.02em;
+    color: #fff; margin-bottom: 6px;
+  }
+  .pof-sub { font-size: 14px; color: rgba(255,255,255,.6); font-weight: 600; line-height: 1.4 }
+  .pof-body {
+    flex: 1; overflow-y: auto;
+    padding: 18px 22px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .pof-section-title {
+    font-size: 11px; font-weight: 900; letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: rgba(255,138,61,.9);
+  }
+  .pof-task-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .pof-task-btn {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; border-radius: 12px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.92);
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: background .12s, border-color .12s, transform .08s;
+  }
+  .pof-task-btn:hover {
+    background: rgba(255,138,61,.10);
+    border-color: rgba(255,138,61,.35);
+    transform: translateX(2px);
+  }
+  .pof-task-num {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(255,138,61,.15);
+    color: #FF8A3D;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 900;
+  }
+  .pof-task-text {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pof-task-arrow {
+    flex-shrink: 0;
+    font-size: 11px; font-weight: 800; letter-spacing: .3px;
+    color: rgba(255,138,61,.7);
+    text-transform: uppercase;
+  }
+  .pof-alt-btn {
+    width: 100%;
+    padding: 14px 16px; border-radius: 12px;
+    background: transparent;
+    border: 1px dashed rgba(255,255,255,.18);
+    color: rgba(255,255,255,.65);
+    font-family: inherit; font-size: 14px; font-weight: 700;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .pof-alt-btn:hover {
+    background: rgba(255,255,255,.04);
+    border-color: rgba(255,255,255,.28);
+    color: #fff;
+  }
+  .pof-foot {
+    padding: 14px 22px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .pof-cancel {
+    padding: 10px 18px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    cursor: pointer;
+  }
+  .pof-cancel:hover { color: #fff; border-color: rgba(255,255,255,.28) }
+
   /* ============ MORNING PRIORITY CONFIRM MODAL ============ */
   .priority-confirm-backdrop {
     position: fixed; inset: 0; z-index: 360;
@@ -3668,6 +3772,20 @@
     <div class="rp-foot">
       <button class="rp-cancel" id="rpCancel" type="button">Close</button>
       <button class="rp-add-all" id="rpAddAll" type="button">Add all visible</button>
+    </div>
+  </div>
+</div>
+
+<!-- Priority Overflow Prompt — fires when adding a 6th task to a priority list -->
+<div class="priority-overflow-backdrop" id="priorityOverflowBackdrop" aria-hidden="true">
+  <div class="priority-overflow" role="dialog" aria-modal="true" aria-labelledby="pofHeader">
+    <div class="pof-head">
+      <div class="pof-title" id="pofHeader">List is full</div>
+      <div class="pof-sub" id="pofSub">Pick which task to bump to the next priority.</div>
+    </div>
+    <div class="pof-body" id="pofBody"></div>
+    <div class="pof-foot">
+      <button class="pof-cancel" id="pofCancel" type="button">Cancel</button>
     </div>
   </div>
 </div>
@@ -7975,7 +8093,7 @@ const VOICE = {
         inp.value = '';
         try {
           const newId = await addTodoItem(text);
-          if (newId) cascadeAddTaskToList(newId, activeList.id, 'end');
+          if (newId) interactiveAddToPriorityList(newId, activeList.id);
         } catch (err) { console.warn('focus5 quick-add failed', err); }
         render();
       });
@@ -8654,6 +8772,19 @@ const VOICE = {
   // list is full, its bottom item cascades too. Last list drops overflow.
   // Position: 'top' (push to slot 0) or 'end' (append). Default 'end'.
   // The task is also REMOVED from any other list to avoid dupes across lists.
+  // ---- Priority-list helpers ----
+  // The three named priority lists (First Priority, Second Priority, Third
+  // Priority...) are conceptually ONE long list of 15 tasks, split into
+  // groups of 5 for visual clarity. Morning Routine + custom lists stay
+  // separate from this chain.
+  function _isPriorityList(list){
+    const name = (list && list.name || '').toLowerCase();
+    return /\bpriority\b/.test(name);
+  }
+  // Ordered chain of priority lists, in display order.
+  function _priorityChain(){
+    return focus5State.lists.filter(_isPriorityList);
+  }
   function cascadeAddTaskToList(taskId, targetListId, position){
     const lists = focus5State.lists;
     const startIdx = lists.findIndex(l => l.id === targetListId);
@@ -8693,6 +8824,122 @@ const VOICE = {
     saveFocus5();
     return true;
   }
+  // Interactive variant: when adding to a FULL priority list, ask the user
+  // whether they want to keep the new task here (and pick which task to bump
+  // to the top of the next priority), or just append to the next priority.
+  // For non-priority lists (or non-full priority lists), falls back to the
+  // silent cascade.
+  function interactiveAddToPriorityList(taskId, targetListId){
+    const list = focus5State.lists.find(l => l.id === targetListId);
+    if (!list) return cascadeAddTaskToList(taskId, targetListId, 'end');
+    // Not a priority list? Just silent cascade.
+    if (!_isPriorityList(list)) return cascadeAddTaskToList(taskId, targetListId, 'end');
+    // Not full yet? Just append normally.
+    if (list.taskIds.length < 5) return cascadeAddTaskToList(taskId, targetListId, 'end');
+    // Full priority list — open the overflow prompt.
+    openPriorityOverflowPrompt(taskId, targetListId);
+    return true;
+  }
+  // Modal state for the overflow prompt.
+  let _pofIncomingTaskId = null;
+  let _pofTargetListId = null;
+  function openPriorityOverflowPrompt(taskId, targetListId){
+    _pofIncomingTaskId = taskId;
+    _pofTargetListId = targetListId;
+    renderPriorityOverflowPrompt();
+    const bd = document.getElementById('priorityOverflowBackdrop');
+    if (bd) { bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
+  }
+  function closePriorityOverflowPrompt(){
+    const bd = document.getElementById('priorityOverflowBackdrop');
+    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+    _pofIncomingTaskId = null;
+    _pofTargetListId = null;
+  }
+  function renderPriorityOverflowPrompt(){
+    const list = focus5State.lists.find(l => l.id === _pofTargetListId);
+    if (!list) return;
+    const incomingTodo = todos.find(t => t.id === _pofIncomingTaskId);
+    const headerEl = document.getElementById('pofHeader');
+    const subEl = document.getElementById('pofSub');
+    const bodyEl = document.getElementById('pofBody');
+    if (!bodyEl) return;
+    // Find next priority list in the chain (for the "send to next" fallback).
+    const chain = _priorityChain();
+    const idxInChain = chain.findIndex(l => l.id === list.id);
+    const nextList = idxInChain >= 0 ? chain[idxInChain + 1] : null;
+    if (headerEl) headerEl.textContent = `${list.name} is full`;
+    if (subEl) {
+      const text = (incomingTodo && incomingTodo.text) || 'this task';
+      subEl.textContent = `Where should "${text}" land?`;
+    }
+    const tasksHTML = list.taskIds.map((id, i) => {
+      const t = todos.find(x => x.id === id);
+      if (!t) return '';
+      return `
+        <button type="button" class="pof-task-btn" data-bump-id="${t.id}">
+          <span class="pof-task-num">${i + 1}</span>
+          <span class="pof-task-text">${escHtml(t.text || '')}</span>
+          <span class="pof-task-arrow">→ ${escHtml(nextList ? nextList.name : 'next list')}</span>
+        </button>
+      `;
+    }).join('');
+    bodyEl.innerHTML = `
+      <div class="pof-section-title">Keep it on ${escHtml(list.name)} — bump one task to ${escHtml(nextList ? nextList.name : 'the next list')}</div>
+      <div class="pof-task-list">${tasksHTML}</div>
+      ${nextList ? `
+        <button type="button" class="pof-alt-btn" id="pofAltBtn">
+          Or just add it to ${escHtml(nextList.name)} instead
+        </button>` : ''}
+    `;
+    bodyEl.querySelectorAll('.pof-task-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const bumpId = btn.getAttribute('data-bump-id');
+        if (!bumpId) return;
+        _commitPriorityOverflow(bumpId);
+      });
+    });
+    const altBtn = bodyEl.querySelector('#pofAltBtn');
+    if (altBtn) altBtn.addEventListener('click', () => {
+      // "Add to next list instead" → just append to next list.
+      if (nextList) cascadeAddTaskToList(_pofIncomingTaskId, nextList.id, 'end');
+      closePriorityOverflowPrompt();
+      render();
+    });
+  }
+  function _commitPriorityOverflow(bumpId){
+    // 1. Find next priority list, push bumpId to its top (cascade if full).
+    // 2. Replace bumpId's slot in the current list with incoming task.
+    const list = focus5State.lists.find(l => l.id === _pofTargetListId);
+    if (!list) { closePriorityOverflowPrompt(); return; }
+    const chain = _priorityChain();
+    const idxInChain = chain.findIndex(l => l.id === list.id);
+    const nextList = idxInChain >= 0 ? chain[idxInChain + 1] : null;
+    if (!nextList) {
+      // No next list — just drop the bump silently and let incoming take the slot
+      const slotIdx = list.taskIds.indexOf(bumpId);
+      if (slotIdx >= 0) list.taskIds[slotIdx] = _pofIncomingTaskId;
+      saveFocus5();
+      closePriorityOverflowPrompt();
+      render();
+      return;
+    }
+    // Remove bumpId from current list first
+    const slotIdx = list.taskIds.indexOf(bumpId);
+    if (slotIdx >= 0) list.taskIds.splice(slotIdx, 1);
+    // Cascade bumpId to the top of next list (overflow handled recursively)
+    cascadeAddTaskToList(bumpId, nextList.id, 'top');
+    // Now add incoming to the current list (which has space again)
+    cascadeAddTaskToList(_pofIncomingTaskId, list.id, 'end');
+    closePriorityOverflowPrompt();
+    render();
+  }
+  (function wirePriorityOverflowPrompt(){
+    const bd = document.getElementById('priorityOverflowBackdrop');
+    const cancel = document.getElementById('pofCancel');
+    if (cancel) cancel.addEventListener('click', closePriorityOverflowPrompt);
+    if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closePriorityOverflowPrompt(); });
+  })();
   // Returns today's undone recurring task instances (= the routines a user
   // hasn't checked off yet today). Each entry comes with its template's freq
   // bucket so the routine picker can filter by daily/weekly/monthly.
