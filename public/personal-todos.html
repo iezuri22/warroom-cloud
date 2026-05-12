@@ -871,10 +871,11 @@
   .focus5-btn.reorder:disabled { opacity: .25; cursor: not-allowed }
   .focus5-btn.reorder:disabled:hover { background: rgba(255,255,255,.04); color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.10) }
   /* Live quick-add row inside Focus 5 view — adds a task and cascade-adds it
-     to the active list. Sits right under the progress bar. */
+     to the active list. Sits at the BOTTOM of the live view so the active
+     "Up next" card keeps the spotlight. */
   .focus5-quick-add {
     display: flex; align-items: stretch; gap: 8px;
-    margin: 4px auto 16px;
+    margin: 24px auto 8px;
     width: 100%; max-width: 820px;
   }
   .focus5-quick-add input {
@@ -7954,20 +7955,21 @@ const VOICE = {
     const editToggleBtn = progress.querySelector('#focus5EditToggle');
     if (editToggleBtn) editToggleBtn.addEventListener('click', () => focus5SetEditMode(!_focus5EditMode));
 
-    // Quick-add row — live, always visible above the cards. Type a task,
-    // hit Enter, it creates a todo and cascade-adds to this list.
+    // Quick-add row — built here, appended at the END of the view after the
+    // task cards render so it doesn't push the active card off-screen.
+    let quickAddEl = null;
     if (!_focus5EditMode) {
-      const quickAdd = document.createElement('form');
-      quickAdd.className = 'focus5-quick-add';
-      quickAdd.innerHTML = `
+      quickAddEl = document.createElement('form');
+      quickAddEl.className = 'focus5-quick-add';
+      quickAddEl.innerHTML = `
         <input type="text" placeholder="+ Quick add to ${escHtml(activeList.name)}..." maxlength="200" autocomplete="off">
         <button type="submit" aria-label="Add task">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
       `;
-      quickAdd.addEventListener('submit', async (e) => {
+      quickAddEl.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const inp = quickAdd.querySelector('input');
+        const inp = quickAddEl.querySelector('input');
         const text = (inp.value || '').trim();
         if (!text) return;
         inp.value = '';
@@ -7977,7 +7979,6 @@ const VOICE = {
         } catch (err) { console.warn('focus5 quick-add failed', err); }
         render();
       });
-      view.appendChild(quickAdd);
     }
 
     // Edit mode: render in stored order so the user can rearrange explicitly.
@@ -8046,6 +8047,8 @@ const VOICE = {
     completed.forEach(t => {
       view.appendChild(buildFocus5Card(t, -1, false, true, tasks.indexOf(t) + 1, false, tasks.length));
     });
+    // Quick-add at the BOTTOM — out of the way of the active "Up next" card.
+    if (quickAddEl) view.appendChild(quickAddEl);
     list.appendChild(view);
   }
   function buildFocus5Card(todo, idx, isActive, isDone, taskNumber, editing, totalCount){
