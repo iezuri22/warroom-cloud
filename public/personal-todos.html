@@ -1798,6 +1798,38 @@
     transform: translateY(1px);
   }
   .pc-slot-push svg { display: block }
+  /* Per-list quick-add input — type to drop a task straight into this list. */
+  .pc-quick-add {
+    display: flex; align-items: stretch; gap: 6px;
+    margin-top: 6px;
+  }
+  .pc-quick-add input {
+    flex: 1; min-width: 0;
+    padding: 8px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.92);
+    font-family: inherit; font-size: 13px; font-weight: 500;
+    outline: none;
+    transition: border-color .12s, background .12s;
+  }
+  .pc-quick-add input::placeholder { color: rgba(255,255,255,.36); font-weight: 500 }
+  .pc-quick-add input:focus {
+    border-color: rgba(255,138,61,.5);
+    background: rgba(255,138,61,.06);
+  }
+  .pc-quick-add button {
+    flex-shrink: 0;
+    width: 34px; border-radius: 8px;
+    background: rgba(255,138,61,.14);
+    border: 1px solid rgba(255,138,61,.35);
+    color: #FF8A3D;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: background .12s, border-color .12s;
+  }
+  .pc-quick-add button:hover { background: rgba(255,138,61,.24); border-color: #FF8A3D }
   .pc-list-actions {
     display: flex; gap: 6px; margin-top: 4px;
   }
@@ -3589,7 +3621,6 @@
     <div class="gr-body" id="grBody"></div>
     <div class="gr-foot">
       <button class="gr-snooze" id="grSnooze" type="button">Remind me again later</button>
-      <button class="gr-ok" id="grOk" type="button">Got it</button>
     </div>
   </div>
 </div>
@@ -8376,13 +8407,12 @@ const VOICE = {
   function showGoalReminder(force){
     if (!force) {
       const todayK = todayKey();
-      let lastShown = '';
       let snoozedUntil = 0;
       try {
-        lastShown = localStorage.getItem('personal-goal-reminder-shown-on') || '';
         snoozedUntil = parseInt(localStorage.getItem('personal-goal-reminder-snoozed-until') || '0', 10) || 0;
       } catch {}
-      if (lastShown === todayK) return;
+      // No more "Got it" lock — only snooze can quiet the reminder, and only
+      // for 2 hours. Re-fires controlled by maxCount + gapMin from settings.
       if (snoozedUntil && Date.now() < snoozedUntil) return;
       // Respect user-configured time window + count + spacing. First fire of
       // the day is allowed past startHour regardless of endHour, so a late
@@ -8553,13 +8583,11 @@ const VOICE = {
   window.showGoalReminder = showGoalReminder;
   (function wireGoalReminder(){
     const bd = document.getElementById('goalReminderBackdrop');
-    const okBtn = document.getElementById('grOk');
     const snoozeBtn = document.getElementById('grSnooze');
     function close(){ if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); } }
-    if (okBtn) okBtn.addEventListener('click', () => {
-      try { localStorage.setItem('personal-goal-reminder-shown-on', todayKey()); } catch {}
-      close();
-    });
+    // "Got it" removed — user wants to KEEP getting reminded about goals.
+    // Only snooze (defer 2 hrs) and tap-outside-to-close exist as dismiss paths.
+    // Both leave the daily fire intact, so tomorrow it'll pop again.
     if (snoozeBtn) snoozeBtn.addEventListener('click', () => {
       // Snooze 2 hours
       try { localStorage.setItem('personal-goal-reminder-snoozed-until', String(Date.now() + 2 * 3600 * 1000)); } catch {}
@@ -8916,6 +8944,12 @@ const VOICE = {
             <span class="pc-list-count">${filled}/5</span>
           </div>
           <div class="pc-slots">${_pcSlotHTML(l, idx, lists.length)}</div>
+          <form class="pc-quick-add" data-list-id="${l.id}">
+            <input type="text" placeholder="Quick add a task..." maxlength="200" autocomplete="off">
+            <button type="submit" aria-label="Add task">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+          </form>
           <div class="pc-list-actions">
             <button class="pc-list-btn" data-action="pick" data-list-id="${l.id}">${filled === 0 ? 'Pick 5' : 'Edit picks'}</button>
             ${canPullRoutines ? `<button class="pc-list-btn secondary" data-action="pull-routines" data-list-id="${l.id}">+ Routines (${undoneRoutineCount})</button>` : ''}
@@ -8959,6 +8993,25 @@ const VOICE = {
           // user can flip back. Cascade rules apply on each add.
           openRoutinePicker(lid);
         }
+      });
+    });
+    // Per-list quick-add: type a task, hit Enter or +, it creates a todo in
+    // Personal AND cascade-adds it to this priority list. Cascade rule means
+    // if the list is already full, the existing bottom item bumps to the
+    // next priority — same logic as everywhere else.
+    body.querySelectorAll('.pc-quick-add').forEach(form => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const lid = form.getAttribute('data-list-id');
+        const inp = form.querySelector('input');
+        const text = (inp.value || '').trim();
+        if (!lid || !text) return;
+        inp.value = '';
+        try {
+          const newId = await addTodoItem(text);
+          if (newId) cascadeAddTaskToList(newId, lid, 'end');
+        } catch (err) { console.warn('quick-add failed', err); }
+        showPriorityConfirm(true);
       });
     });
     bd.classList.add('show');
