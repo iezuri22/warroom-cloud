@@ -859,6 +859,55 @@
     border-color: rgba(167,139,250,.35);
   }
   .focus5-btn.skip:hover { background: rgba(167,139,250,.18); border-color: #C4B5FD; color: #DDD6FE }
+  /* Subtle inline reorder buttons on live cards — small icon-only pills. */
+  .focus5-btn.reorder {
+    width: 36px; height: 36px; padding: 0;
+    justify-content: center;
+    background: rgba(255,255,255,.04);
+    border-color: rgba(255,255,255,.10);
+    color: rgba(255,255,255,.55);
+  }
+  .focus5-btn.reorder:hover { background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.22) }
+  .focus5-btn.reorder:disabled { opacity: .25; cursor: not-allowed }
+  .focus5-btn.reorder:disabled:hover { background: rgba(255,255,255,.04); color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.10) }
+  /* Live quick-add row inside Focus 5 view — adds a task and cascade-adds it
+     to the active list. Sits right under the progress bar. */
+  .focus5-quick-add {
+    display: flex; align-items: stretch; gap: 8px;
+    margin: 4px auto 16px;
+    width: 100%; max-width: 820px;
+  }
+  .focus5-quick-add input {
+    flex: 1; min-width: 0;
+    padding: 13px 18px; border-radius: 12px;
+    background: rgba(255,138,61,.06);
+    border: 1.5px dashed rgba(255,138,61,.32);
+    color: rgba(255,255,255,.94);
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    outline: none;
+    transition: border-color .12s, background .12s;
+  }
+  .focus5-quick-add input::placeholder {
+    color: rgba(255,138,61,.65); font-weight: 600;
+  }
+  .focus5-quick-add input:focus {
+    border-color: #FF8A3D; border-style: solid;
+    background: rgba(255,138,61,.12);
+  }
+  .focus5-quick-add button {
+    flex-shrink: 0;
+    width: 48px; border-radius: 12px;
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
+    border: none;
+    color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    box-shadow: 0 6px 18px rgba(255,138,61,.3);
+    transition: transform .08s, box-shadow .12s;
+  }
+  .focus5-quick-add button:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(255,138,61,.4) }
+  .focus5-quick-add button:active { transform: scale(.96) }
 
   /* The "up next" — biggest card */
   .focus5-card.active {
@@ -7905,6 +7954,32 @@ const VOICE = {
     const editToggleBtn = progress.querySelector('#focus5EditToggle');
     if (editToggleBtn) editToggleBtn.addEventListener('click', () => focus5SetEditMode(!_focus5EditMode));
 
+    // Quick-add row — live, always visible above the cards. Type a task,
+    // hit Enter, it creates a todo and cascade-adds to this list.
+    if (!_focus5EditMode) {
+      const quickAdd = document.createElement('form');
+      quickAdd.className = 'focus5-quick-add';
+      quickAdd.innerHTML = `
+        <input type="text" placeholder="+ Quick add to ${escHtml(activeList.name)}..." maxlength="200" autocomplete="off">
+        <button type="submit" aria-label="Add task">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      `;
+      quickAdd.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const inp = quickAdd.querySelector('input');
+        const text = (inp.value || '').trim();
+        if (!text) return;
+        inp.value = '';
+        try {
+          const newId = await addTodoItem(text);
+          if (newId) cascadeAddTaskToList(newId, activeList.id, 'end');
+        } catch (err) { console.warn('focus5 quick-add failed', err); }
+        render();
+      });
+      view.appendChild(quickAdd);
+    }
+
     // Edit mode: render in stored order so the user can rearrange explicitly.
     // Ignore the done/pending split — that visual would fight the reorder UX.
     if (_focus5EditMode) {
@@ -8009,6 +8084,12 @@ const VOICE = {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="17" y="4" width="2" height="16"/></svg>
           Skip
         </button>
+        <button class="focus5-btn reorder" data-act="up" type="button" title="Move up" ${taskNumber <= 1 ? 'disabled' : ''} aria-label="Move up">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button class="focus5-btn reorder" data-act="down" type="button" title="Move down" ${taskNumber >= (totalCount || 5) ? 'disabled' : ''} aria-label="Move down">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
     ` : '';
     // Recur badge clutters the cramped edit-mode num column (36px wide). Skip
@@ -8041,6 +8122,16 @@ const VOICE = {
       const doneBtn = card.querySelector('[data-act="done"]');
       const raceBtn = card.querySelector('[data-act="race"]');
       const skipBtn = card.querySelector('[data-act="skip"]');
+      const upBtn = card.querySelector('[data-act="up"]');
+      const downBtn = card.querySelector('[data-act="down"]');
+      if (upBtn) upBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        focus5MoveUp(todo.id);
+      });
+      if (downBtn) downBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        focus5MoveDown(todo.id);
+      });
       if (doneBtn) doneBtn.addEventListener('click', (e) => {
         e.stopPropagation(); toggleTodo(todo.id);
       });
@@ -8865,12 +8956,6 @@ const VOICE = {
             ${routineBadge}
             <span class="pc-list-count">${filled}/5</span>
           </div>
-          <form class="pc-quick-add" data-list-id="${l.id}">
-            <input type="text" placeholder="+ Add a task to this list..." maxlength="200" autocomplete="off">
-            <button type="submit" aria-label="Add task">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-          </form>
           <div class="pc-slots">${_pcSlotHTML(l, idx, lists.length)}</div>
           <div class="pc-list-actions">
             <button class="pc-list-btn" data-action="pick" data-list-id="${l.id}">${filled === 0 ? 'Pick 5' : 'Edit picks'}</button>
@@ -8933,25 +9018,6 @@ const VOICE = {
           // user can flip back. Cascade rules apply on each add.
           openRoutinePicker(lid);
         }
-      });
-    });
-    // Per-list quick-add: type a task, hit Enter or +, it creates a todo in
-    // Personal AND cascade-adds it to this priority list. Cascade rule means
-    // if the list is already full, the existing bottom item bumps to the
-    // next priority — same logic as everywhere else.
-    body.querySelectorAll('.pc-quick-add').forEach(form => {
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const lid = form.getAttribute('data-list-id');
-        const inp = form.querySelector('input');
-        const text = (inp.value || '').trim();
-        if (!lid || !text) return;
-        inp.value = '';
-        try {
-          const newId = await addTodoItem(text);
-          if (newId) cascadeAddTaskToList(newId, lid, 'end');
-        } catch (err) { console.warn('quick-add failed', err); }
-        showPriorityConfirm(true);
       });
     });
     bd.classList.add('show');
