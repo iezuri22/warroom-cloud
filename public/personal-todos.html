@@ -870,6 +870,45 @@
   .focus5-btn.reorder:hover { background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.22) }
   .focus5-btn.reorder:disabled { opacity: .25; cursor: not-allowed }
   .focus5-btn.reorder:disabled:hover { background: rgba(255,255,255,.04); color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.10) }
+  /* Stats bar — shown under the progress row in live Focus 5 view.
+     Compact, horizontal, scrolls on mobile. Done/active throughput + PRs. */
+  .focus5-stats {
+    display: flex; gap: 8px;
+    margin: 14px auto 4px;
+    width: 100%; max-width: 820px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .focus5-stats::-webkit-scrollbar { display: none }
+  .focus5-stat {
+    flex: 1; flex-shrink: 0;
+    min-width: 100px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 12px 10px; border-radius: 12px;
+    background: rgba(255,255,255,.035);
+    border: 1px solid rgba(255,255,255,.07);
+    gap: 4px;
+  }
+  .focus5-stat .v {
+    font-size: 22px; font-weight: 900; letter-spacing: -.02em;
+    color: #fff; line-height: 1;
+  }
+  .focus5-stat .l {
+    font-size: 9.5px; font-weight: 800; letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.5);
+  }
+  .focus5-stat.pr {
+    background: linear-gradient(135deg, rgba(252,211,77,.12), rgba(252,211,77,.04));
+    border-color: rgba(252,211,77,.32);
+  }
+  .focus5-stat.pr .v { color: #FCD34D }
+  .focus5-stat.pr .l { color: rgba(252,211,77,.75) }
+  @media (max-width: 720px) {
+    .focus5-stat { min-width: 92px; padding: 10px 8px }
+    .focus5-stat .v { font-size: 18px }
+  }
+
   /* Live quick-add row inside Focus 5 view — adds a task and cascade-adds it
      to the active list. Sits at the BOTTOM of the live view so the active
      "Up next" card keeps the spotlight. */
@@ -4848,6 +4887,17 @@ const VOICE = {
       todo.date = tk;
       patch.date = tk;
     }
+    // Stamp a completion timestamp so the stats bar can count "done today"
+    // / "done this week" without relying on the task's assigned date (which
+    // could be in the past). Cleared on un-toggle.
+    if (todo.done) {
+      const now = new Date().toISOString();
+      todo.completedAt = now;
+      patch.completedAt = now;
+    } else if (todo.completedAt) {
+      todo.completedAt = null;
+      patch.completedAt = null;
+    }
     // When a priority-list task gets marked done, the chain rebalances:
     // strip done out of the priority list and pull the top of the next
     // priority list up to fill the slot. Treats First/Second/Third as
@@ -8083,6 +8133,22 @@ const VOICE = {
     const editToggleBtn = progress.querySelector('#focus5EditToggle');
     if (editToggleBtn) editToggleBtn.addEventListener('click', () => focus5SetEditMode(!_focus5EditMode));
 
+    // Stats bar — show under the progress row in non-edit mode. Tracks
+    // completion volume across todos so user feels the throughput.
+    if (!_focus5EditMode) {
+      const stats = _computeFocusStats();
+      const statsBar = document.createElement('div');
+      statsBar.className = 'focus5-stats';
+      statsBar.innerHTML = `
+        <div class="focus5-stat"><span class="v">${stats.doneToday}</span><span class="l">Done today</span></div>
+        <div class="focus5-stat"><span class="v">${stats.activeWeek}</span><span class="l">Active this week</span></div>
+        <div class="focus5-stat"><span class="v">${stats.doneWeek}</span><span class="l">Done this week</span></div>
+        <div class="focus5-stat pr"><span class="v">${stats.prDay}</span><span class="l">PR day</span></div>
+        <div class="focus5-stat pr"><span class="v">${stats.prWeek}</span><span class="l">PR week</span></div>
+      `;
+      view.appendChild(statsBar);
+    }
+
     // Quick-add row — built here, appended at the END of the view after the
     // task cards render so it doesn't push the active card off-screen.
     let quickAddEl = null;
@@ -8794,6 +8860,76 @@ const VOICE = {
   // Ordered chain of priority lists, in display order.
   function _priorityChain(){
     return focus5State.lists.filter(_isPriorityList);
+  }
+  // Returns the Chicago YYYY-MM-DD key for a given Date.
+  function _ckey(d){
+    return (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  }
+  // Returns the Monday of the week containing the given date (Chicago time).
+  function _mondayKeyFor(d){
+    const cur = new Date(_ckey(d) + 'T12:00:00');
+    const dow = cur.getDay(); // 0=Sun..6=Sat
+    const offset = (dow + 6) % 7;
+    cur.setDate(cur.getDate() - offset);
+    return _ckey(cur);
+  }
+  // Stats for the focus view's small stats bar. Counts across ALL todos
+  // (not just the active list) so it reflects the user's overall throughput.
+  // PRs are tracked in localStorage so they survive page reload.
+  function _computeFocusStats(){
+    const todayK = _ckey();
+    const mondayK = _mondayKeyFor();
+    // doneAt key: prefer completedAt ISO, fall back to `date` (assigned date)
+    // for older todos that didn't have the field. We bucket by Chicago day.
+    function doneDayKey(t){
+      if (t.completedAt) {
+        try { return _ckey(new Date(t.completedAt)); } catch {}
+      }
+      return t.date || '';
+    }
+    let doneToday = 0;
+    let doneWeek = 0;
+    let activeWeek = 0;
+    const dailyCounts = {}; // dayK → count of completions
+    todos.forEach(t => {
+      if (t.done) {
+        const dk = doneDayKey(t);
+        if (!dk) return;
+        if (dk === todayK) doneToday++;
+        if (dk >= mondayK) doneWeek++;
+        dailyCounts[dk] = (dailyCounts[dk] || 0) + 1;
+      } else {
+        // "Active this week" = an open task that's either dated to this week
+        // or was created this week (use date or createdAt).
+        const dk = t.date || (t.createdAt ? _ckey(new Date(t.createdAt)) : '');
+        if (dk && dk >= mondayK) activeWeek++;
+      }
+    });
+    // PRs — running max across all days/weeks. Persisted so a new best survives reload.
+    let storedPRDay = 0, storedPRWeek = 0;
+    try {
+      storedPRDay = parseInt(localStorage.getItem('personal-pr-done-day') || '0', 10) || 0;
+      storedPRWeek = parseInt(localStorage.getItem('personal-pr-done-week') || '0', 10) || 0;
+    } catch {}
+    const todayCount = dailyCounts[todayK] || 0;
+    if (todayCount > storedPRDay) {
+      storedPRDay = todayCount;
+      try { localStorage.setItem('personal-pr-done-day', String(storedPRDay)); } catch {}
+    }
+    // Weekly: sum dailyCounts within the current week's window
+    let weekCount = 0;
+    Object.entries(dailyCounts).forEach(([k, n]) => { if (k >= mondayK) weekCount += n; });
+    if (weekCount > storedPRWeek) {
+      storedPRWeek = weekCount;
+      try { localStorage.setItem('personal-pr-done-week', String(storedPRWeek)); } catch {}
+    }
+    return {
+      doneToday,
+      doneWeek,
+      activeWeek,
+      prDay: storedPRDay,
+      prWeek: storedPRWeek,
+    };
   }
   // Rebalance the priority chain so each list keeps 5 ACTIVE tasks:
   //   1. Strip done tasks out of every priority list (they're still saved
