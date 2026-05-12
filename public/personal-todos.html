@@ -4848,6 +4848,13 @@ const VOICE = {
       todo.date = tk;
       patch.date = tk;
     }
+    // When a priority-list task gets marked done, the chain rebalances:
+    // strip done out of the priority list and pull the top of the next
+    // priority list up to fill the slot. Treats First/Second/Third as
+    // one continuous queue.
+    if (todo.done) {
+      try { rebalancePriorityChain(); } catch {}
+    }
     render();
     try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch {}
     // Bridge completion state to War Room analytics + mirror to linked plan task
@@ -7437,6 +7444,9 @@ const VOICE = {
     const list = focus5ActiveList(); if (!list) return;
     const idx = focus5IndexForInstanceId(list, taskId);
     if (idx >= 0) list.taskIds.splice(idx, 1);
+    // Rebalance the priority chain after a skip so the slot backfills from
+    // the next priority list. Safe no-op for non-priority lists.
+    try { rebalancePriorityChain(); } catch {}
     saveFocus5();
     render();
   }
@@ -8784,6 +8794,42 @@ const VOICE = {
   // Ordered chain of priority lists, in display order.
   function _priorityChain(){
     return focus5State.lists.filter(_isPriorityList);
+  }
+  // Rebalance the priority chain so each list keeps 5 ACTIVE tasks:
+  //   1. Strip done tasks out of every priority list (they're still saved
+  //      as done todos in Personal; they just shouldn't take up focus slots).
+  //   2. Pull the top of each "next" priority up to fill the gap, going down
+  //      the chain. End result: First Priority always holds the top 5 active
+  //      tasks, Second holds the next 5, etc.
+  // Skips template refs (tpl:...) since those auto-rebind to today's instance
+  // and shouldn't be promoted/demoted between priority lists.
+  function rebalancePriorityChain(){
+    const chain = _priorityChain();
+    if (chain.length === 0) return;
+    let mutated = false;
+    // Step 1: strip done. A tpl ref counts as "always active" since it points
+    // at a template, not a single instance — only strip real ids whose todo
+    // is currently marked done.
+    chain.forEach(list => {
+      const before = list.taskIds.length;
+      list.taskIds = list.taskIds.filter(id => {
+        if (typeof id === 'string' && id.startsWith('tpl:')) return true;
+        const t = todos.find(x => x.id === id);
+        if (!t) return true; // unresolved; leave it (could be loading)
+        return !t.done;
+      });
+      if (list.taskIds.length !== before) mutated = true;
+    });
+    // Step 2: top up. For each priority list, if length < 5 and the NEXT one
+    // has tasks, pull from the next one's top.
+    for (let i = 0; i < chain.length - 1; i++) {
+      while (chain[i].taskIds.length < 5 && chain[i + 1].taskIds.length > 0) {
+        const promoted = chain[i + 1].taskIds.shift();
+        chain[i].taskIds.push(promoted);
+        mutated = true;
+      }
+    }
+    if (mutated) saveFocus5();
   }
   function cascadeAddTaskToList(taskId, targetListId, position){
     const lists = focus5State.lists;
