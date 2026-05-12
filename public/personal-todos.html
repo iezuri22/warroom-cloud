@@ -870,43 +870,39 @@
   .focus5-btn.reorder:hover { background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.22) }
   .focus5-btn.reorder:disabled { opacity: .25; cursor: not-allowed }
   .focus5-btn.reorder:disabled:hover { background: rgba(255,255,255,.04); color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.10) }
-  /* Stats bar — shown under the progress row in live Focus 5 view.
-     Compact, horizontal, scrolls on mobile. Done/active throughput + PRs. */
-  .focus5-stats {
-    display: flex; gap: 8px;
-    margin: 14px auto 4px;
-    width: 100%; max-width: 820px;
-    overflow-x: auto;
-    scrollbar-width: none;
+  /* Inline stats pills inside the FOCUS 5 toggle row. Compact and quiet —
+     just a few digits and tiny labels so they don't overpower the row. */
+  .pt-focus-stats {
+    display: inline-flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
+    margin-left: auto;
+    padding: 0 4px;
   }
-  .focus5-stats::-webkit-scrollbar { display: none }
-  .focus5-stat {
-    flex: 1; flex-shrink: 0;
-    min-width: 100px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 12px 10px; border-radius: 12px;
-    background: rgba(255,255,255,.035);
-    border: 1px solid rgba(255,255,255,.07);
-    gap: 4px;
+  .pt-focus-stat {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    padding: 4px 9px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+    color: rgba(255,255,255,.55);
+    white-space: nowrap;
   }
-  .focus5-stat .v {
-    font-size: 22px; font-weight: 900; letter-spacing: -.02em;
-    color: #fff; line-height: 1;
+  .pt-focus-stat b {
+    color: #fff;
+    font-size: 13px; font-weight: 900; letter-spacing: -.02em;
   }
-  .focus5-stat .l {
-    font-size: 9.5px; font-weight: 800; letter-spacing: 1.4px;
-    text-transform: uppercase;
-    color: rgba(255,255,255,.5);
+  .pt-focus-stat.pr {
+    background: rgba(252,211,77,.08);
+    border-color: rgba(252,211,77,.28);
+    color: rgba(252,211,77,.72);
   }
-  .focus5-stat.pr {
-    background: linear-gradient(135deg, rgba(252,211,77,.12), rgba(252,211,77,.04));
-    border-color: rgba(252,211,77,.32);
+  .pt-focus-stat.pr b { color: #FCD34D }
+  @media (max-width: 980px) {
+    .pt-focus-stat { padding: 3px 7px; font-size: 9.5px }
+    .pt-focus-stat b { font-size: 12px }
   }
-  .focus5-stat.pr .v { color: #FCD34D }
-  .focus5-stat.pr .l { color: rgba(252,211,77,.75) }
   @media (max-width: 720px) {
-    .focus5-stat { min-width: 92px; padding: 10px 8px }
-    .focus5-stat .v { font-size: 18px }
+    .pt-focus-stats { display: none } /* keep mobile header clean */
   }
 
   /* Live quick-add row inside Focus 5 view — adds a task and cascade-adds it
@@ -3645,6 +3641,9 @@
         <span class="pt-focus-dots" id="ptFocusDots" aria-hidden="true">
           <span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span><span class="pt-focus-dot"></span>
         </span>
+        <!-- Compact stats pills — priority-task throughput. Sits inline with
+             the focus toggle so it doesn't take its own row. -->
+        <span class="pt-focus-stats" id="ptFocusStats" aria-hidden="true"></span>
         <button class="pt-focus-plus" id="ptFocusNewListBtn" type="button" title="New focus list" aria-label="New focus list">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
@@ -7515,6 +7514,9 @@ const VOICE = {
     const line = document.getElementById('ptFocusLine');
     const dotsWrap = document.getElementById('ptFocusDots');
     if (!btn || !line || !dotsWrap) return;
+    // Inline stats pills — refreshed on every render. Cheap; just reads
+    // todos + focus5State, no DB calls.
+    try { _renderFocusStatsPills(); } catch {}
     const list = focus5ActiveList();
     const tasks = focus5Tasks();
     const picked = list ? list.taskIds.length : 0;
@@ -8133,21 +8135,6 @@ const VOICE = {
     const editToggleBtn = progress.querySelector('#focus5EditToggle');
     if (editToggleBtn) editToggleBtn.addEventListener('click', () => focus5SetEditMode(!_focus5EditMode));
 
-    // Stats bar — show under the progress row in non-edit mode. Tracks
-    // completion volume across todos so user feels the throughput.
-    if (!_focus5EditMode) {
-      const stats = _computeFocusStats();
-      const statsBar = document.createElement('div');
-      statsBar.className = 'focus5-stats';
-      statsBar.innerHTML = `
-        <div class="focus5-stat"><span class="v">${stats.doneToday}</span><span class="l">Done today</span></div>
-        <div class="focus5-stat"><span class="v">${stats.activeWeek}</span><span class="l">Active this week</span></div>
-        <div class="focus5-stat"><span class="v">${stats.doneWeek}</span><span class="l">Done this week</span></div>
-        <div class="focus5-stat pr"><span class="v">${stats.prDay}</span><span class="l">PR day</span></div>
-        <div class="focus5-stat pr"><span class="v">${stats.prWeek}</span><span class="l">PR week</span></div>
-      `;
-      view.appendChild(statsBar);
-    }
 
     // Quick-add row — built here, appended at the END of the view after the
     // task cards render so it doesn't push the active card off-screen.
@@ -8873,63 +8860,84 @@ const VOICE = {
     cur.setDate(cur.getDate() - offset);
     return _ckey(cur);
   }
-  // Stats for the focus view's small stats bar. Counts across ALL todos
-  // (not just the active list) so it reflects the user's overall throughput.
-  // PRs are tracked in localStorage so they survive page reload.
+  // Stats for the focus view header pills. Scoped to PRIORITY tasks only —
+  // todos that have been promoted to a priority list (priorityAt stamp) plus
+  // tasks currently sitting in the priority chain.
+  // "Active this week" counts a priority task that was active any time this
+  // week, including ones that have since been completed.
   function _computeFocusStats(){
     const todayK = _ckey();
     const mondayK = _mondayKeyFor();
-    // doneAt key: prefer completedAt ISO, fall back to `date` (assigned date)
-    // for older todos that didn't have the field. We bucket by Chicago day.
+    const chain = _priorityChain();
+    // Build set of task IDs currently in the priority chain (so we count
+    // them as "active" even if priorityAt wasn't stamped — e.g. older tasks).
+    const currentPriorityIds = new Set();
+    chain.forEach(list => {
+      (list.taskIds || []).forEach(id => {
+        if (typeof id === 'string' && id.startsWith('tpl:')) return;
+        currentPriorityIds.add(id);
+      });
+    });
     function doneDayKey(t){
-      if (t.completedAt) {
-        try { return _ckey(new Date(t.completedAt)); } catch {}
-      }
+      if (t.completedAt) { try { return _ckey(new Date(t.completedAt)); } catch {} }
       return t.date || '';
     }
+    // A todo "counts as priority" if it's currently on the chain OR has a
+    // priorityAt stamp (i.e. was on a priority list at some point).
+    function isPriorityTask(t){
+      return currentPriorityIds.has(t.id) || !!t.priorityAt;
+    }
+    // "Active this week" = priority task that was active any time since
+    // Monday. Currently on chain qualifies. Done this week qualifies. Older
+    // priorityAt that's already this-week-or-earlier and not yet done qualifies.
     let doneToday = 0;
     let doneWeek = 0;
     let activeWeek = 0;
-    const dailyCounts = {}; // dayK → count of completions
+    const dailyCounts = {}; // dayK → priority completions
     todos.forEach(t => {
+      if (!isPriorityTask(t)) return;
       if (t.done) {
         const dk = doneDayKey(t);
         if (!dk) return;
         if (dk === todayK) doneToday++;
-        if (dk >= mondayK) doneWeek++;
+        if (dk >= mondayK) { doneWeek++; activeWeek++; }
         dailyCounts[dk] = (dailyCounts[dk] || 0) + 1;
       } else {
-        // "Active this week" = an open task that's either dated to this week
-        // or was created this week (use date or createdAt).
-        const dk = t.date || (t.createdAt ? _ckey(new Date(t.createdAt)) : '');
-        if (dk && dk >= mondayK) activeWeek++;
+        // Still active — currently on priority chain counts toward this week.
+        if (currentPriorityIds.has(t.id)) activeWeek++;
       }
     });
-    // PRs — running max across all days/weeks. Persisted so a new best survives reload.
+    // PRs — track per-day priority completions. Persists in localStorage.
     let storedPRDay = 0, storedPRWeek = 0;
     try {
-      storedPRDay = parseInt(localStorage.getItem('personal-pr-done-day') || '0', 10) || 0;
-      storedPRWeek = parseInt(localStorage.getItem('personal-pr-done-week') || '0', 10) || 0;
+      storedPRDay = parseInt(localStorage.getItem('personal-pr-prio-day') || '0', 10) || 0;
+      storedPRWeek = parseInt(localStorage.getItem('personal-pr-prio-week') || '0', 10) || 0;
     } catch {}
     const todayCount = dailyCounts[todayK] || 0;
     if (todayCount > storedPRDay) {
       storedPRDay = todayCount;
-      try { localStorage.setItem('personal-pr-done-day', String(storedPRDay)); } catch {}
+      try { localStorage.setItem('personal-pr-prio-day', String(storedPRDay)); } catch {}
     }
-    // Weekly: sum dailyCounts within the current week's window
     let weekCount = 0;
     Object.entries(dailyCounts).forEach(([k, n]) => { if (k >= mondayK) weekCount += n; });
     if (weekCount > storedPRWeek) {
       storedPRWeek = weekCount;
-      try { localStorage.setItem('personal-pr-done-week', String(storedPRWeek)); } catch {}
+      try { localStorage.setItem('personal-pr-prio-week', String(storedPRWeek)); } catch {}
     }
-    return {
-      doneToday,
-      doneWeek,
-      activeWeek,
-      prDay: storedPRDay,
-      prWeek: storedPRWeek,
-    };
+    return { doneToday, doneWeek, activeWeek, prDay: storedPRDay, prWeek: storedPRWeek };
+  }
+  // Render the compact stats pills inline in the Focus 5 header.
+  function _renderFocusStatsPills(){
+    const el = document.getElementById('ptFocusStats');
+    if (!el) return;
+    const s = _computeFocusStats();
+    el.innerHTML = `
+      <span class="pt-focus-stat" title="Done today"><b>${s.doneToday}</b>today</span>
+      <span class="pt-focus-stat" title="Done this week"><b>${s.doneWeek}</b>wk</span>
+      <span class="pt-focus-stat" title="Active priority tasks this week"><b>${s.activeWeek}</b>active</span>
+      <span class="pt-focus-stat pr" title="PR day — best priority completions in a day"><b>${s.prDay}</b>pr/d</span>
+      <span class="pt-focus-stat pr" title="PR week — best priority completions in a week"><b>${s.prWeek}</b>pr/w</span>
+    `;
   }
   // Rebalance the priority chain so each list keeps 5 ACTIVE tasks:
   //   1. Strip done tasks out of every priority list (they're still saved
@@ -8971,6 +8979,18 @@ const VOICE = {
     const lists = focus5State.lists;
     const startIdx = lists.findIndex(l => l.id === targetListId);
     if (startIdx < 0 || !taskId) return false;
+    // Stamp priorityAt on the todo if the target list is a priority list.
+    // Drives the "active this week" stat — once a task has touched a
+    // priority list this week, it counts as an active priority all week.
+    if (_isPriorityList(lists[startIdx])) {
+      const t = (typeof taskId === 'string' && taskId.startsWith('tpl:'))
+        ? null
+        : todos.find(x => x.id === taskId);
+      if (t && !t.priorityAt) {
+        t.priorityAt = new Date().toISOString();
+        try { updateDoc(doc(db, 'tv_todos', t.id), { priorityAt: t.priorityAt }); } catch {}
+      }
+    }
     // First, remove the task from any OTHER list so it doesn't double-book.
     lists.forEach((l, i) => {
       if (i === startIdx) return;
