@@ -6,8 +6,12 @@
 //   Authorization: Bearer <smartsheets_user_token>
 //   body: <forwarded as-is for PUT/POST>
 //
-// We require a valid War Room session cookie so random people can't use this
-// as an open Smartsheets relay.
+// Auth is either:
+//   1. Owner: valid War Room session cookie + Authorization header with the
+//      owner's Smartsheets bearer token.
+//   2. Team: `x-team-token` header matching TEAM_ACCESS_TOKEN env var. In this
+//      mode the server injects its own Smartsheets bearer (SMARTSHEET_API_TOKEN
+//      env var) so team members don't need direct access to the token.
 import { requireAuth } from './_auth.js';
 
 const SMARTSHEET_BASE = 'https://api.smartsheet.com/2.0';
@@ -17,10 +21,19 @@ const ALLOWED_PATH_RE = /^\/sheets\/\d+(\/(rows(\/\d+)?|columns|attachments|disc
 
 export default async function handler(req, res) {
   const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-  if (!requireAuth(req, SESSION_SECRET)) {
+  const TEAM_TOKEN    = process.env.TEAM_ACCESS_TOKEN || '';
+  const TEAM_SS_TOKEN = process.env.SMARTSHEET_API_TOKEN || '';
+
+  // Detect auth mode: prefer the team header if present (so teammates with
+  // BOTH a cookie and a token cleanly get team behavior).
+  const teamHeader = (req.headers['x-team-token'] || '').toString();
+  const isTeam = TEAM_TOKEN && teamHeader && teamHeader === TEAM_TOKEN;
+  const isOwner = !isTeam && requireAuth(req, SESSION_SECRET);
+  if (!isTeam && !isOwner) {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
+
   // Browser sends path + intended method via query params. We use POST as the
   // wrapper method so request bodies work regardless of intent.
   const path = (req.query.path || '').toString();
@@ -33,11 +46,24 @@ export default async function handler(req, res) {
     res.status(400).json({ error: 'method not allowed' });
     return;
   }
-  const auth = req.headers.authorization || '';
-  if (!/^Bearer\s+/.test(auth)) {
-    res.status(400).json({ error: 'missing Smartsheets Bearer token' });
-    return;
+
+  // Authorization source: owner mode uses the bearer they sent; team mode uses
+  // the server-side Smartsheets token so teammates never touch the raw key.
+  let auth;
+  if (isTeam) {
+    if (!TEAM_SS_TOKEN) {
+      res.status(500).json({ error: 'team_smartsheets_token_unset' });
+      return;
+    }
+    auth = 'Bearer ' + TEAM_SS_TOKEN;
+  } else {
+    auth = req.headers.authorization || '';
+    if (!/^Bearer\s+/.test(auth)) {
+      res.status(400).json({ error: 'missing Smartsheets Bearer token' });
+      return;
+    }
   }
+
   const url = SMARTSHEET_BASE + path;
   const init = {
     method: targetMethod,

@@ -356,6 +356,31 @@
 
 <script>
 const SS_KEY = 'smartsheets-config';
+const TEAM_TOKEN_KEY = 'ecm-team-token';
+// ---- Team mode (magic-link access) -----------------------------------------
+// Anyone hitting ecm.html?team=<token> is in team mode. The token is saved to
+// localStorage so they don't need to keep the URL handy after the first open.
+// In team mode the page never reads/writes the owner's smartsheets-config —
+// the server provides the sheet ID + token from env vars and we keep an
+// ephemeral config object in memory only.
+let _teamMode = false;
+let _teamConfig = null; // { sheetId, owner } once bootstrapped
+function _readTeamToken(){
+  try {
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get('team');
+    if (fromUrl) {
+      try { localStorage.setItem(TEAM_TOKEN_KEY, fromUrl); } catch {}
+      // Strip the token from the URL so it doesn't sit in history/sharing.
+      url.searchParams.delete('team');
+      try { window.history.replaceState({}, '', url.toString()); } catch {}
+      return fromUrl;
+    }
+    return localStorage.getItem(TEAM_TOKEN_KEY) || '';
+  } catch { return ''; }
+}
+const _teamToken = _readTeamToken();
+_teamMode = !!_teamToken;
 const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Not feasible - close ticket','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT','Completed'];
 // Shorter labels for the horizontally-scrolling chip strip; the drawer
 // dropdown still shows the full names so picking is unambiguous.
@@ -384,7 +409,31 @@ function statusClass(s){
   return '';
 }
 function escHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function getConfig(){ try { return JSON.parse(localStorage.getItem(SS_KEY) || '{}'); } catch { return {}; } }
+function getConfig(){
+  // In team mode the server-bootstrapped config is authoritative — never read
+  // the owner's smartsheets-config (teammates should never see the owner's
+  // sheet ID typed in their browser's local storage).
+  if (_teamMode && _teamConfig) {
+    return { token: 'team', sheetId: _teamConfig.sheetId, owner: _teamConfig.owner };
+  }
+  try { return JSON.parse(localStorage.getItem(SS_KEY) || '{}'); } catch { return {}; }
+}
+async function bootstrapTeamConfig(){
+  // Fetch the team config once. Cached on _teamConfig for the page lifetime.
+  if (!_teamMode || _teamConfig) return _teamConfig;
+  try {
+    const r = await fetch('/api/team-config', {
+      method: 'GET',
+      headers: { 'x-team-token': _teamToken }
+    });
+    if (!r.ok) {
+      _teamConfig = null;
+      return null;
+    }
+    _teamConfig = await r.json();
+    return _teamConfig;
+  } catch { return null; }
+}
 
 let sheet = null;          // raw sheet response
 let rows = [];             // [{ id, task, ticket, status, owner, details, outcome, subType, createdDate }]
@@ -406,10 +455,14 @@ async function ssProxy(path, method, body){
   const c = getConfig();
   if (!c.token) throw new Error('No Smartsheets token configured');
   const url = `/api/smartsheets?path=${encodeURIComponent(path)}&method=${encodeURIComponent(method)}`;
-  const init = {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/json' },
-  };
+  const headers = { 'Accept': 'application/json' };
+  if (_teamMode) {
+    // Team mode: server uses its own Smartsheets token; we just pass the gate.
+    headers['x-team-token'] = _teamToken;
+  } else {
+    headers['Authorization'] = 'Bearer ' + c.token;
+  }
+  const init = { method: 'POST', headers };
   if (body !== undefined && method !== 'GET' && method !== 'DELETE') {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
@@ -423,14 +476,36 @@ function cellValue(row, colId){
 }
 
 async function loadSheet(){
+  // Team mode: bootstrap the in-memory config from the server before the
+  // very first sheet load. After this, getConfig() returns the team config.
+  if (_teamMode && !_teamConfig) {
+    const ok = await bootstrapTeamConfig();
+    if (!ok) {
+      const list = document.getElementById('list');
+      list.innerHTML = `
+        <div class="nag">
+          <h3>Access denied</h3>
+          <p>This team access link isn't valid. Ping the owner for a new one.</p>
+        </div>`;
+      return;
+    }
+  }
   const c = getConfig();
   if (!c.token || !c.sheetId) {
     const list = document.getElementById('list');
-    list.innerHTML = `
-      <div class="nag">
-        <h3>Connect Smartsheets first</h3>
-        <p>Open the War Room settings (gear icon top right) and add your Smartsheets API token, sheet ID, and owner name. Then come back here.</p>
-      </div>`;
+    if (_teamMode) {
+      list.innerHTML = `
+        <div class="nag">
+          <h3>Team mode — not configured</h3>
+          <p>The team access link is valid but the server hasn't been set up with a sheet ID yet. Ping the owner.</p>
+        </div>`;
+    } else {
+      list.innerHTML = `
+        <div class="nag">
+          <h3>Connect Smartsheets first</h3>
+          <p>Open the War Room settings (gear icon top right) and add your Smartsheets API token, sheet ID, and owner name. Then come back here.</p>
+        </div>`;
+    }
     return;
   }
   const btn = document.getElementById('btnSync');
