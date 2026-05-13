@@ -342,16 +342,26 @@
     border-left-color: rgba(244,114,182,.55);
   }
 
-  /* Internal checkbox in the drawer — bigger tap target, clear on/off state */
+  /* Multi-column drawer row — fits Status / Ticket / Date / Internal in one row */
+  .field-row {
+    display: flex; gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+  .field-row .field { flex: 1 1 130px; min-width: 0; }
+  .field-row .field.field-compact { flex: 0 0 auto; }
+
+  /* Internal checkbox — compact version sits alongside other fields */
   .internal-toggle {
-    display: inline-flex; align-items: center; gap: 10px;
+    display: inline-flex; align-items: center; gap: 8px;
     padding: 10px 14px; border-radius: 10px;
     background: rgba(255,255,255,.04);
     border: 1px solid rgba(255,255,255,.10);
     color: rgba(255,255,255,.85);
     cursor: pointer; user-select: none;
     transition: all .15s;
-    align-self: flex-start;
+    height: 42px; box-sizing: border-box;
+    white-space: nowrap;
   }
   .internal-toggle:hover { background: rgba(255,255,255,.07); border-color: rgba(255,255,255,.2) }
   .internal-toggle.on {
@@ -360,7 +370,7 @@
     color: #F472B6;
   }
   .internal-toggle .box {
-    width: 18px; height: 18px; border-radius: 5px;
+    width: 16px; height: 16px; border-radius: 4px;
     background: rgba(255,255,255,.04);
     border: 1.5px solid rgba(255,255,255,.25);
     flex-shrink: 0;
@@ -372,18 +382,41 @@
     border-color: #F472B6;
   }
   .internal-toggle.on .box::after {
-    content: ''; width: 5px; height: 9px;
+    content: ''; width: 4px; height: 8px;
     border-right: 2px solid #050507;
     border-bottom: 2px solid #050507;
     transform: rotate(45deg) translate(-1px, -1px);
   }
   .internal-toggle .label-text {
-    font-size: 13px; font-weight: 700;
+    font-size: 12px; font-weight: 700;
   }
-  .internal-toggle .sub {
-    font-size: 11px; font-weight: 500; opacity: .65;
-    margin-left: 4px;
+
+  /* Collapsible outcome — hidden by default to save vertical space */
+  .field-collapsible > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,.03);
+    border: 1px dashed rgba(255,255,255,.10);
+    color: rgba(255,255,255,.55);
+    font-size: 11px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase;
+    transition: all .15s;
+    display: flex; align-items: center; gap: 8px;
   }
+  .field-collapsible > summary::-webkit-details-marker { display: none }
+  .field-collapsible > summary:hover { color: #fff; border-color: rgba(255,255,255,.22) }
+  .field-collapsible > summary .chev {
+    transition: transform .2s;
+    opacity: .7;
+  }
+  .field-collapsible[open] > summary .chev { transform: rotate(90deg) }
+  .field-collapsible[open] > summary {
+    border-style: solid;
+    margin-bottom: 6px;
+  }
+  .field-collapsible .field-body { margin-top: 8px }
 
   /* Status filter chips */
   .status-bar {
@@ -1377,39 +1410,46 @@ function render(){
           <input class="input" data-field="Task Name" value="${escHtml(r.task || '')}" placeholder="Task name" style="font-weight:700">
         </div>
         <div class="field">
-          <span class="lbl">Owner / Assignee</span>
-          <input class="input" type="text" data-field="Owner" value="${escHtml(r.owner || '')}" placeholder="Owner name" style="font-weight:600">
-        </div>
-        <div class="field">
-          <span class="lbl">Status</span>
-          <select class="select" data-field="Status">
-            ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <span class="lbl">Ticket #</span>
-          <input class="input" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
-        </div>
-        <div class="field">
           <span class="lbl">Description</span>
           <textarea class="textarea" data-field="Details" placeholder="Context for this task…">${escHtml(r.details || '')}</textarea>
         </div>
-        <div class="field">
-          <span class="lbl">Outcome</span>
-          <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
+        <!-- One-row strip: Owner · Status · Ticket · Completion · Internal -->
+        <div class="field-row">
+          <div class="field">
+            <span class="lbl">Owner / Assignee</span>
+            <input class="input" type="text" data-field="Owner" value="${escHtml(r.owner || '')}" placeholder="Owner name" style="font-weight:600">
+          </div>
+          <div class="field">
+            <span class="lbl">Status</span>
+            <select class="select" data-field="Status">
+              ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <span class="lbl">Ticket #</span>
+            <input class="input" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
+          </div>
+          <div class="field">
+            <span class="lbl">Completion${r.status === 'Completed' && !r.completionDate ? ' <span style="color:#F87171;font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
+            <input class="input" type="date" data-field="Completion Date" value="${escHtml((r.completionDate || '').slice(0, 10))}">
+          </div>
+          <div class="field field-compact">
+            <span class="lbl">Internal</span>
+            <button type="button" class="internal-toggle ${isInternal ? 'on' : ''}" data-internal="${escHtml(String(r.id))}" title="${isInternal && internalFlags[r.id]?.markedBy ? 'Flagged by ' + escHtml(internalFlags[r.id].markedBy) : 'Mark as internal-only — not customer-facing'}">
+              <span class="box"></span>
+              <span class="label-text">${isInternal ? 'Internal only' : 'Mark internal'}</span>
+            </button>
+          </div>
         </div>
-        <div class="field">
-          <span class="lbl">Completion Date${r.status === 'Completed' && !r.completionDate ? ' <span style="color:#F87171;font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
-          <input class="input" type="date" data-field="Completion Date" value="${escHtml((r.completionDate || '').slice(0, 10))}">
-        </div>
-        <div class="field">
-          <span class="lbl">Visibility</span>
-          <button type="button" class="internal-toggle ${isInternal ? 'on' : ''}" data-internal="${escHtml(String(r.id))}" title="Mark this task as internal-only — not customer-facing">
-            <span class="box"></span>
-            <span class="label-text">Internal only</span>
-            <span class="sub">${isInternal && internalFlags[r.id]?.markedBy ? '· flagged by ' + escHtml(internalFlags[r.id].markedBy) : 'not customer-facing'}</span>
-          </button>
-        </div>
+        <details class="field-collapsible"${r.outcome ? ' open' : ''}>
+          <summary>
+            <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            <span>${r.outcome ? 'Outcome' : 'Add outcome'}</span>
+          </summary>
+          <div class="field field-body">
+            <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
+          </div>
+        </details>
         ${ack ? `
         <div class="field">
           <span class="lbl">Acknowledgement</span>
