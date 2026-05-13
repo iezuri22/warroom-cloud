@@ -1168,12 +1168,25 @@ const USER_NAME_KEY = 'ecm-user-name';
 let _userName = '';
 try { _userName = (localStorage.getItem(USER_NAME_KEY) || '').trim(); } catch {}
 function setUserName(name){
+  const prev = _userName;
   _userName = (name || '').trim();
   try {
     if (_userName) localStorage.setItem(USER_NAME_KEY, _userName);
     else localStorage.removeItem(USER_NAME_KEY);
   } catch {}
   updateUserPill();
+  // When a name change happens AFTER the sheet is already loaded, re-apply the
+  // owner filter so the viewer sees their own tasks first. Skips if the user
+  // has explicitly chosen a different owner filter in this session.
+  if (prev !== _userName && rows && rows.length) {
+    const knownOwners = new Set(rows.map(r => r.owner).filter(Boolean));
+    if (_userName && knownOwners.has(_userName)) {
+      filterOwner = _userName;
+      const sel = document.getElementById('ownerSelect');
+      if (sel) sel.value = _userName;
+      try { render(); } catch {}
+    }
+  }
 }
 function ensureUserName(onReady){
   // Async variant: if no name set yet, open the picker. When user picks (or
@@ -1570,8 +1583,13 @@ function populateOwnerSelect(){
   const sel = document.getElementById('ownerSelect');
   const owners = Array.from(new Set(rows.map(r => r.owner).filter(Boolean))).sort();
   const c = getConfig();
-  // Default owner from settings if first time
-  if (!filterOwner && c.owner && owners.includes(c.owner)) filterOwner = c.owner;
+  // Default to current user's tasks first (works for everyone on the magic
+  // link — Nick sees Nick's, Talha sees Talha's). Fall back to the configured
+  // owner from team-config only if we don't know who's looking yet.
+  if (!filterOwner) {
+    if (_userName && owners.includes(_userName)) filterOwner = _userName;
+    else if (c.owner && owners.includes(c.owner)) filterOwner = c.owner;
+  }
   sel.innerHTML = `<option value="">All owners</option>` + owners.map(o => `<option value="${escHtml(o)}" ${o === filterOwner ? 'selected' : ''}>${escHtml(o)}</option>`).join('');
 }
 function populateProgramSelect(){
@@ -2278,7 +2296,20 @@ window.addEventListener('message', (ev) => {
   if (ev && ev.data && ev.data.type === 'warroom:smartsheets-config-changed') loadSheet();
 });
 
-loadSheet();
+// Boot: load the sheet, then prompt for identity if we're in team mode and
+// don't know who's looking yet. Picking a name auto-filters to their tasks.
+loadSheet().then(() => {
+  if (_teamMode && !_userName) {
+    setTimeout(() => {
+      try {
+        openNamePicker({
+          title: 'Who are you?',
+          sub: 'We\'ll show your tasks first. You can change this any time from the top-right pill.'
+        });
+      } catch {}
+    }, 300);
+  }
+});
 </script>
 </body>
 </html>
