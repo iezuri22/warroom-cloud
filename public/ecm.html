@@ -492,12 +492,53 @@
     overflow: hidden; text-overflow: ellipsis;
     letter-spacing: -.01em;
   }
-  /* Secondary metadata row — created date, ticket #, sub-type, program */
+  /* Secondary metadata row — fixed-slot layout so each piece stays in the same
+     spot row-to-row. Empty slots reserve their space so columns visually align.
+     Order: Created · Ticket · Sub-Type · Program · Completed. */
   .row-sub {
-    display: flex; align-items: center; gap: 10px;
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) minmax(110px, 1fr) minmax(160px, 1.4fr) minmax(120px, 1fr) minmax(150px, 1fr);
+    align-items: center;
+    gap: 12px;
     min-width: 0; padding-left: 0;
     font-size: 12px; color: rgba(255,255,255,.55); font-weight: 600;
-    flex-wrap: wrap;
+  }
+  .row-sub-slot {
+    display: flex; align-items: center;
+    min-width: 0;
+  }
+  /* Missing marker — red, clearly different from any program color */
+  .row-missing {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 6px;
+    background: rgba(248,113,113,.10);
+    color: #F87171;
+    border: 1px solid rgba(248,113,113,.32);
+    font-size: 10px; font-weight: 800; letter-spacing: .8px;
+    text-transform: uppercase;
+  }
+  .row-missing svg { opacity: .9 }
+  /* Slot placeholder — invisible but reserves grid space when a piece is N/A
+     and not a "missing" case (e.g. no sub-type isn't a problem, just absent) */
+  .row-slot-empty { visibility: hidden; height: 1px }
+  /* Completed date pill — green accent, mirrors created-date treatment */
+  .row-sub-completed {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 6px;
+    background: rgba(74,222,128,.10);
+    border: 1px solid rgba(74,222,128,.28);
+    color: #4ADE80;
+    font-size: 11px; font-weight: 800; letter-spacing: .2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .row-sub-completed svg { flex-shrink: 0; opacity: .9 }
+
+  /* On narrow screens, collapse slots into two stacked rows for readability */
+  @media (max-width: 720px) {
+    .row-sub {
+      grid-template-columns: 1fr 1fr;
+      row-gap: 6px;
+    }
   }
   /* Created date — prominent pill with cyan accent. Surfaces "when this hit my plate"
      since acking each day's batch is the main job. */
@@ -884,6 +925,8 @@ function escHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => 
 // Program color palette — small, distinct, dark-mode-friendly. Same program
 // name always maps to the same color via a stable hash. Each color includes
 // the trio (bg, border, fg) for the .row-program tag.
+// Red intentionally omitted — that color is reserved for "MISSING" data markers
+// so the eye can scan for problems without programs competing for attention.
 const PROGRAM_COLORS = [
   { bg: 'rgba(94,234,212,.10)',  bd: 'rgba(94,234,212,.35)',  fg: '#5EEAD4' }, // teal
   { bg: 'rgba(255,138,61,.10)',  bd: 'rgba(255,138,61,.35)',  fg: '#FF8A3D' }, // orange
@@ -892,8 +935,8 @@ const PROGRAM_COLORS = [
   { bg: 'rgba(244,114,182,.10)', bd: 'rgba(244,114,182,.38)', fg: '#F472B6' }, // pink
   { bg: 'rgba(74,222,128,.10)',  bd: 'rgba(74,222,128,.38)',  fg: '#4ADE80' }, // green
   { bg: 'rgba(255,200,77,.10)',  bd: 'rgba(255,200,77,.38)',  fg: '#FFC84D' }, // amber
-  { bg: 'rgba(232,121,121,.10)', bd: 'rgba(232,121,121,.38)', fg: '#F87171' }, // red
   { bg: 'rgba(125,211,252,.10)', bd: 'rgba(125,211,252,.38)', fg: '#7DD3FC' }, // sky
+  { bg: 'rgba(196,181,253,.10)', bd: 'rgba(196,181,253,.38)', fg: '#A78BFA' }, // lavender
   { bg: 'rgba(232,232,232,.06)', bd: 'rgba(232,232,232,.28)', fg: '#E5E7EB' }  // gray-fallback
 ];
 function programColor(name){
@@ -904,9 +947,10 @@ function programColor(name){
   return PROGRAM_COLORS[Math.abs(h) % (PROGRAM_COLORS.length - 1)];
 }
 // Avatar palette + initials for owner-ack pills
+// Red intentionally omitted — reserved for MISSING data markers
 const OWNER_COLORS = [
   '#FF8A3D', '#6BA8FF', '#4ADE80', '#C4B5FD', '#F472B6',
-  '#FFD166', '#5EEAD4', '#F87171', '#7DD3FC', '#A78BFA'
+  '#FFD166', '#5EEAD4', '#7DD3FC', '#A78BFA', '#FB923C'
 ];
 function ownerColor(name){
   if (!name) return '#888';
@@ -1238,13 +1282,40 @@ function render(){
     row.className = `row ${expandedId === r.id ? 'expanded' : ''}`;
     row.dataset.id = r.id;
     const sCls = statusClass(r.status);
-    const ticketHTML = r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '';
     const statusHTML = r.status ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>` : '';
+    // Reserved slots — each one renders content, an invisible placeholder, or
+    // a red MISSING marker. Reserve markers for things that SHOULD be set:
+    //   - ticket # always (open or closed)
+    //   - completion date when status is Completed
+    const isClosedStatus = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
+    const missingIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+    // Ticket — show #number or red MISSING
+    const ticketSlotInner = r.ticket
+      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
+      : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`;
+    // Sub-Type — show or invisible placeholder
+    const subTypeSlotInner = r.subType
+      ? `<span class="row-subtype">${escHtml(r.subType)}</span>`
+      : `<span class="row-slot-empty">—</span>`;
+    // Program — color tag if present, else invisible placeholder (never red,
+    // red is reserved for missing markers)
     const pcol = programColor(r.program);
-    const programHTML = r.program
+    const programSlotInner = r.program
       ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
-      : '';
-    const subTypeHTML = r.subType ? `<span class="row-subtype">${escHtml(r.subType)}</span>` : '';
+      : `<span class="row-slot-empty">—</span>`;
+    // Completed date — green pill when present, red MISSING when status is
+    // Completed and the date is empty, invisible placeholder otherwise
+    const completedSlotInner = (() => {
+      if (r.completionDate) {
+        const abs = fmtAbsoluteDate(r.completionDate);
+        const checkIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+        return `<span class="row-sub-completed" title="Completed ${escHtml(abs || r.completionDate)}">${checkIcon}${escHtml(abs)}</span>`;
+      }
+      if (r.status === 'Completed') {
+        return `<span class="row-missing" title="No completion date — status is Completed">${missingIcon}Missing</span>`;
+      }
+      return `<span class="row-slot-empty">—</span>`;
+    })();
     // Ack state for this row
     const ack = acks[r.id];
     if (ack) row.classList.add('is-acked');
@@ -1281,12 +1352,16 @@ function render(){
       const calIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
       return `<span class="row-sub-date${freshCls}" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}${rel ? `<span class="rel">· ${escHtml(rel)}</span>` : ''}</span>`;
     })();
-    // Build sub-row: created date + ticket + sub-type + program. Skipped pieces
-    // collapse cleanly. Separators only between consecutive non-empty pieces.
-    const subPieces = [createdHTML, ticketHTML, subTypeHTML, programHTML].filter(Boolean);
-    const subRowHTML = subPieces.length
-      ? `<div class="row-sub">${subPieces.join('<span class="row-sub-sep">·</span>')}</div>`
-      : '';
+    // Build sub-row using fixed slots so each piece keeps its position
+    // row-to-row. Order: Created · Ticket · Sub-Type · Program · Completed.
+    const subRowHTML = `
+      <div class="row-sub">
+        <span class="row-sub-slot">${createdHTML || '<span class="row-slot-empty">—</span>'}</span>
+        <span class="row-sub-slot">${ticketSlotInner}</span>
+        <span class="row-sub-slot">${subTypeSlotInner}</span>
+        <span class="row-sub-slot">${programSlotInner}</span>
+        <span class="row-sub-slot">${completedSlotInner}</span>
+      </div>`;
     row.innerHTML = `
       <div class="row-head">
         ${checkboxHTML}
@@ -1322,6 +1397,10 @@ function render(){
         <div class="field">
           <span class="lbl">Outcome</span>
           <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
+        </div>
+        <div class="field">
+          <span class="lbl">Completion Date${r.status === 'Completed' && !r.completionDate ? ' <span style="color:#F87171;font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
+          <input class="input" type="date" data-field="Completion Date" value="${escHtml((r.completionDate || '').slice(0, 10))}">
         </div>
         <div class="field">
           <span class="lbl">Visibility</span>
@@ -1384,6 +1463,7 @@ function render(){
                       : fieldName === 'Outcome Details' ? r.outcome
                       : fieldName === 'Task Name' ? r.task
                       : fieldName === 'Owner' ? r.owner
+                      : fieldName === 'Completion Date' ? (r.completionDate || '').slice(0, 10)
                       : '';
           if ((local || '') === (v || '')) return;
           await pushField(r, fieldName, v, row);
@@ -1580,6 +1660,7 @@ async function pushField(r, fieldTitle, value, rowEl){
     if (fieldTitle === 'Outcome Details') r.outcome = value;
     if (fieldTitle === 'Task Name') r.task = value;
     if (fieldTitle === 'Owner') r.owner = value;
+    if (fieldTitle === 'Completion Date') r.completionDate = value;
     if (savedEl) {
       savedEl.textContent = 'Saved to Smartsheets';
       savedEl.classList.add('ok');
@@ -1587,6 +1668,9 @@ async function pushField(r, fieldTitle, value, rowEl){
     }
     // Re-render the parent row badges if the status changed
     if (fieldTitle === 'Status') render();
+    // Re-render so the green completion-date pill (or MISSING marker) on the
+    // row reflects the new value
+    if (fieldTitle === 'Completion Date') render();
   } catch (e) {
     console.error('push failed', e);
     if (savedEl) {
