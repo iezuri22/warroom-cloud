@@ -7946,11 +7946,14 @@ const VOICE = {
         saveFocus5();
         return;
       }
-      // New shape — sanitize
+      // New shape — sanitize. Do NOT slice taskIds to 5 here — the cascade
+      // logic enforces the cap during adds, but if a list temporarily exceeds
+      // 5 (e.g. force-push when the chain is full), we must preserve those
+      // tasks across loads instead of silently dropping them.
       const lists = Array.isArray(d.lists) ? d.lists.filter(l => l && typeof l.id === 'string') : [];
       lists.forEach(l => {
         l.name = (typeof l.name === 'string' && l.name.trim()) ? l.name : 'Focus list';
-        l.taskIds = Array.isArray(l.taskIds) ? l.taskIds.slice(0, 5) : [];
+        l.taskIds = Array.isArray(l.taskIds) ? l.taskIds : [];
         l.routine = (l.routine === 'morning' || l.routine === 'night') ? l.routine : null;
       });
       let activeId = typeof d.activeListId === 'string' ? d.activeListId : '';
@@ -9848,9 +9851,14 @@ const VOICE = {
       }
       i++;
     }
-    // If we still have overflow after the last list, drop it silently — the
-    // user can add it back manually if they care. This is the failsafe so we
-    // don't loop forever.
+    // If we still have overflow after the last list, DON'T drop it. Force-push
+    // it into the last list (which may temporarily exceed 5). Better to violate
+    // the 5-cap visually than to lose a task the user just intentionally added.
+    if (incoming.length && lists.length > 0) {
+      const last = lists[lists.length - 1];
+      last.taskIds.push(...incoming);
+      console.warn('focus5 cascade overflow: pushed extras into last list (over 5 cap)', incoming);
+    }
     saveFocus5();
     return true;
   }
