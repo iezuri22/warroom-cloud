@@ -1895,6 +1895,38 @@
     padding: 12px 14px; border-radius: 10px;
     background: rgba(255,255,255,.03);
     border: 1px solid rgba(255,255,255,.05);
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .cb-row:hover { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); }
+  .cb-row-wrap { display: flex; flex-direction: column; gap: 0; }
+  .cb-row-wrap.open .cb-row {
+    border-color: rgba(74,222,128,.25);
+    border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+  }
+  /* Inline project picker that drops below a completed row */
+  .cb-row-projects {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 12px 14px;
+    background: rgba(255,255,255,.02);
+    border: 1px solid rgba(255,255,255,.05);
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+  }
+  .cb-row-wrap.open .cb-row-projects { display: flex; }
+  .cb-row-projects .pick {
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.65); padding: 6px 11px;
+    border-radius: 8px; font: 600 12px var(--font-family, inherit);
+    cursor: pointer; transition: all .15s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .cb-row-projects .pick:hover { color: #fff; background: rgba(255,255,255,.08); }
+  .cb-row-projects .pick .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .cb-row-projects .pick.active {
+    background: rgba(74,222,128,.18); border-color: rgba(74,222,128,.4); color: #fff;
   }
   .cb-row-check {
     width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
@@ -9712,19 +9744,65 @@ const VOICE = {
     bodyEl.innerHTML = filtered.map(t => {
       const dk = _cbDoneDateKey(t);
       const dateLabel = _cbDateLabel(dk);
-      const job = t.job ? (typeof jobMeta === 'function' ? jobMeta(t.job) : null) : null;
+      const currentJobId = migrateJobId(t.job || '');
+      const job = t.job ? (typeof jobMeta === 'function' ? jobMeta(currentJobId) : null) : null;
       const jobBadge = job
         ? `<span class="cb-row-job" style="background:${job.color}22;color:${job.color}">${escHtml(job.label)}</span>`
-        : '';
+        : `<span class="cb-row-job" style="opacity:.5">No project</span>`;
+      // Inline project picker — hidden until row is tapped
+      const picker = `
+        <div class="cb-row-projects">
+          ${(typeof JOBS !== 'undefined' ? JOBS : []).map(j => `
+            <button type="button" class="pick ${currentJobId === j.id ? 'active' : ''}" data-cbjob="${escHtml(j.id)}">
+              <span class="dot" style="background:${j.color}"></span>${escHtml(j.label)}
+            </button>
+          `).join('')}
+          <button type="button" class="pick ${!t.job ? 'active' : ''}" data-cbjob="">No project</button>
+        </div>
+      `;
       return `
-        <div class="cb-row">
-          <span class="cb-row-check">✓</span>
-          <span class="cb-row-text">${escHtml(t.text || '')}</span>
-          ${jobBadge}
-          ${dateLabel ? `<span class="cb-row-date">${dateLabel}</span>` : ''}
+        <div class="cb-row-wrap" data-rowid="${escHtml(t.id)}">
+          <div class="cb-row">
+            <span class="cb-row-check">✓</span>
+            <span class="cb-row-text">${escHtml(t.text || '')}</span>
+            ${jobBadge}
+            ${dateLabel ? `<span class="cb-row-date">${dateLabel}</span>` : ''}
+          </div>
+          ${picker}
         </div>
       `;
     }).join('');
+    // Wire: tap row to toggle picker, tap a project to update task
+    bodyEl.querySelectorAll('.cb-row-wrap').forEach(wrap => {
+      const row = wrap.querySelector('.cb-row');
+      if (row) row.addEventListener('click', (e) => {
+        if (e.target.closest('.pick')) return; // clicks inside picker handled below
+        bodyEl.querySelectorAll('.cb-row-wrap.open').forEach(w => { if (w !== wrap) w.classList.remove('open'); });
+        wrap.classList.toggle('open');
+      });
+      wrap.querySelectorAll('[data-cbjob]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = wrap.getAttribute('data-rowid');
+          const newJob = b.getAttribute('data-cbjob') || '';
+          if (!id) return;
+          try {
+            await updateDoc(doc(db, 'tv_todos', id), { job: newJob });
+          } catch (err) { console.error('cb project update failed', err); }
+          // Update cache so re-render shows the new state without re-fetching
+          if (_cbDoneCache) {
+            const cached = _cbDoneCache.find(x => x.id === id);
+            if (cached) cached.job = newJob;
+          }
+          // Sync the local todos array too in case this task is loaded
+          const t = todos.find(x => x.id === id);
+          if (t) t.job = newJob;
+          // Refresh pill count + stats
+          try { _refreshStatsFromFirestore(); } catch {}
+          renderCompletedBrowser();
+        });
+      });
+    });
   }
   (function wireCompletedBrowser(){
     const closeBtn = document.getElementById('cbClose');
