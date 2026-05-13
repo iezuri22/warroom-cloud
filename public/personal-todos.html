@@ -628,6 +628,51 @@
   }
   .pt-focus-mini-strip.show { display: flex }
   body.focus5-active .pt-focus-mini-strip { display: none }
+  /* Project goal pills — one per board that has active goals + actions */
+  .pt-project-goals {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 2px 10px;
+  }
+  .pt-project-goals.show { display: flex }
+  body.focus5-active .pt-project-goals { display: none }
+  .project-goal-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.12);
+    color: rgba(255,255,255,.85);
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .project-goal-pill:hover {
+    background: rgba(255,255,255,.07);
+    transform: translateY(-1px);
+  }
+  .project-goal-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  }
+  .project-goal-pill .label { white-space: nowrap }
+  .project-goal-pill .tag {
+    text-transform: uppercase;
+    font-size: 9px; font-weight: 900; letter-spacing: 1.2px;
+    opacity: .7;
+    padding-left: 2px;
+  }
+  .project-goal-pill .ct {
+    font-size: 10px; font-weight: 900;
+    padding: 1px 7px; border-radius: 99px;
+    background: rgba(255,138,61,.18);
+    color: #FF8A3D;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 720px) {
+    .project-goal-pill { font-size: 10px; padding: 5px 10px 5px 7px }
+    .project-goal-pill .tag { font-size: 8px; letter-spacing: 1px }
+  }
   .pt-focus-mini-tab {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 5px 10px; border-radius: 99px;
@@ -3864,6 +3909,10 @@
       </div>
       <!-- Mini list-strip — visible when there's more than 1 list and user is NOT in focus mode -->
       <div class="pt-focus-mini-strip" id="ptFocusMiniStrip"></div>
+      <!-- Project goal pills — one per project with active goals. Tap to open
+           the goal-reminder modal scoped to that project so adding goal tasks
+           to priority is a 2-tap path. -->
+      <div class="pt-project-goals" id="ptProjectGoals"></div>
       <div id="filterBarSlot"></div>
     </div>
     <div class="list" id="list"></div>
@@ -7821,6 +7870,45 @@ const VOICE = {
   // free; audio keeps playing in the background regardless.)
 
   // -------- TOGGLE PILL --------
+  // Renders the strip of "PROJECT — Goals" pills under the focus5 toggle.
+  // Pulls boards via loadBoardGoals() so the count reflects exactly what the
+  // goal-reminder modal shows. Click a pill to open the modal scoped to that
+  // project — the fastest path from "I want to push goal work into priority"
+  // to having it in a focus5 list.
+  function renderProjectGoalsPills(){
+    const el = document.getElementById('ptProjectGoals');
+    if (!el) return;
+    let boards = [];
+    try { boards = loadBoardGoals(); } catch {}
+    // Hide entirely if there are no projects with goals
+    if (!boards.length) {
+      el.classList.remove('show');
+      el.innerHTML = '';
+      return;
+    }
+    // Action-count per board (un-done actions across all that board's goals)
+    el.innerHTML = boards.map(b => {
+      let actionCount = 0;
+      (b.goals || []).forEach(g => { actionCount += (g.actions || []).length; });
+      const color = b.color || '#FF8A3D';
+      const ctHTML = actionCount > 0 ? `<span class="ct">${actionCount}</span>` : '';
+      return `<button type="button" class="project-goal-pill" data-board="${escHtml(b.id)}" title="See ${escHtml(b.name)} goals + add to priority">
+        <span class="dot" style="background:${color}"></span>
+        <span class="label">${escHtml(b.name)}</span>
+        <span class="tag">· Goals</span>
+        ${ctHTML}
+      </button>`;
+    }).join('');
+    el.classList.add('show');
+    // Click → open goal-reminder modal scoped to that project
+    el.querySelectorAll('[data-board]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.getAttribute('data-board') || '';
+        _grJobFilter = id;
+        try { showGoalReminder(true); } catch {}
+      });
+    });
+  }
   function updateFocus5Toggle(){
     const btn = document.getElementById('ptFocusToggle');
     const line = document.getElementById('ptFocusLine');
@@ -7829,6 +7917,8 @@ const VOICE = {
     // Inline stats pills — refreshed on every render. Cheap; just reads
     // todos + focus5State, no DB calls.
     try { _renderFocusStatsPills(); } catch {}
+    // Project goal pills — one per board with active goals. Also cheap.
+    try { renderProjectGoalsPills(); } catch {}
     const list = focus5ActiveList();
     const tasks = focus5Tasks();
     const picked = list ? list.taskIds.length : 0;
@@ -8933,6 +9023,9 @@ const VOICE = {
   let _grDueFilter = (function(){
     try { return localStorage.getItem('personal-goal-reminder-filter') || 'all'; } catch { return 'all'; }
   })();
+  // Job/board filter — when set, the goal-reminder modal scopes to one project.
+  // Cleared whenever the modal is dismissed so the next auto-fire shows all.
+  let _grJobFilter = '';
   function _grDueBucket(iso){
     // returns one of: 'overdue', 'today', 'week', 'later', 'none'
     if (!iso) return 'none';
@@ -9037,13 +9130,16 @@ const VOICE = {
     `;
     // Filter actions per goal — if a goal ends up with zero matching actions
     // AND we're filtering, hide the goal card entirely. If "All", show all.
+    // Also apply the optional job/board filter set by the project goal pills.
     const filteredBoards = boards.map(b => {
       const goals = b.goals.map(g => {
         const matchingActions = (g.actions || []).filter(_grActionMatches);
         return { ...g, actions: matchingActions, _hasAny: matchingActions.length > 0 };
       }).filter(g => _grDueFilter === 'all' ? true : g._hasAny);
       return { ...b, goals };
-    }).filter(b => b.goals.length > 0);
+    })
+    .filter(b => !_grJobFilter || b.id === _grJobFilter)
+    .filter(b => b.goals.length > 0);
     const boardsHTML = filteredBoards.length === 0
       ? `<div class="gr-empty">No action items match this filter.</div>`
       : filteredBoards.map(b => `
@@ -9132,7 +9228,12 @@ const VOICE = {
   (function wireGoalReminder(){
     const bd = document.getElementById('goalReminderBackdrop');
     const snoozeBtn = document.getElementById('grSnooze');
-    function close(){ if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); } }
+    function close(){
+      if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+      // Always reset the job filter when closing so the next auto-fire (or
+      // direct nav-bar open) shows every project's goals by default.
+      _grJobFilter = '';
+    }
     // "Got it" removed — user wants to KEEP getting reminded about goals.
     // Only snooze (defer 2 hrs) and tap-outside-to-close exist as dismiss paths.
     // Both leave the daily fire intact, so tomorrow it'll pop again.
