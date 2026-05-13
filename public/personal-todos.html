@@ -5076,6 +5076,18 @@ const VOICE = {
       }
       localStorage.setItem('personal-done-log', JSON.stringify(log));
     } catch {}
+    // Optimistic lifetime-completed pill update — only count tasks with a
+    // project (no-project chores excluded). The async fetch after render()
+    // resyncs from Firestore as a backup.
+    try {
+      if (todo.job && String(todo.job).trim()) {
+        const cur = parseInt(localStorage.getItem('personal-completed-lifetime') || '0', 10) || 0;
+        const next = Math.max(0, cur + (todo.done ? 1 : -1));
+        localStorage.setItem('personal-completed-lifetime', String(next));
+        const span = document.querySelector('.focus5-tab.completed-pill .ct');
+        if (span) span.textContent = String(next);
+      }
+    } catch {}
     // When a priority-list task gets marked done, the chain rebalances:
     // strip done out of the priority list and pull the top of the next
     // priority list up to fill the slot. Treats First/Second/Third as
@@ -8261,15 +8273,15 @@ const VOICE = {
       });
       strip.appendChild(tab);
     });
-    // Completed pill — shows lifetime done count, taps to open the completed
-    // browser with date/job filters. Built from the personal-done-log.
+    // Completed pill — shows lifetime done count of tasks WITH a project
+    // (chores/no-project tasks intentionally excluded). Reads cached count
+    // immediately and refreshes from Firestore async so it stays fresh.
     const completedTab = document.createElement('button');
     completedTab.type = 'button';
     completedTab.className = 'focus5-tab completed-pill';
     let lifetimeDone = 0;
     try {
-      const log = JSON.parse(localStorage.getItem('personal-done-log') || '{}') || {};
-      Object.values(log).forEach(n => { lifetimeDone += Number(n) || 0; });
+      lifetimeDone = parseInt(localStorage.getItem('personal-completed-lifetime') || '0', 10) || 0;
     } catch {}
     completedTab.innerHTML = `
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -8278,6 +8290,8 @@ const VOICE = {
     `;
     completedTab.addEventListener('click', () => openCompletedBrowser());
     strip.appendChild(completedTab);
+    // Async refresh from Firestore — counts only done tasks with a project
+    try { _updateCompletedPillCount(); } catch {}
     const addTab = document.createElement('button');
     addTab.type = 'button';
     addTab.className = 'focus5-add-tab';
@@ -9435,6 +9449,30 @@ const VOICE = {
   let _cbDoneCache = null;     // Array of done todos, freshly fetched
   let _cbDateFilter = 'all';   // 'all' | 'today' | 'week' | 'month'
   let _cbJobFilter = 'all';    // 'all' | <jobId>
+  // Lifetime completed count for the Focus 5 pill. Counts ONLY tasks that have
+  // a project assigned — no-project tasks (chores etc.) are intentionally
+  // excluded so the pill reflects real work shipped, not housekeeping.
+  let _completedCountFetching = false;
+  async function _updateCompletedPillCount(){
+    if (_completedCountFetching) return;
+    _completedCountFetching = true;
+    try {
+      const doneQ = query(todosCol, where('done', '==', true));
+      const snap = await getDocs(doneQ);
+      let n = 0;
+      snap.forEach(d => {
+        const t = d.data() || {};
+        if (t.job && String(t.job).trim()) n++;
+      });
+      try { localStorage.setItem('personal-completed-lifetime', String(n)); } catch {}
+      const span = document.querySelector('.focus5-tab.completed-pill .ct');
+      if (span) span.textContent = String(n);
+    } catch (e) {
+      console.error('completed pill count fetch failed', e);
+    } finally {
+      _completedCountFetching = false;
+    }
+  }
   async function openCompletedBrowser(){
     const bd = document.getElementById('completedBrowserBackdrop');
     if (!bd) return;
@@ -9517,13 +9555,15 @@ const VOICE = {
         renderCompletedBrowser();
       });
     });
-    // Job filter counts
-    const jobCounts = { all: all.length };
+    // Job filter counts — 'all' excludes no-project (chores) to match the
+    // Focus 5 pill total. Tap "No project" to see those.
+    const jobCounts = { all: 0 };
     (typeof JOBS !== 'undefined' ? JOBS : []).forEach(j => { jobCounts[j.id] = 0; });
     jobCounts['_none'] = 0;
     all.forEach(t => {
       const jid = t.job || '_none';
       if (jobCounts[jid] !== undefined) jobCounts[jid]++;
+      if (jid !== '_none') jobCounts.all++;
     });
     const jobChips = [{ id: 'all', label: 'All projects', color: null }];
     (typeof JOBS !== 'undefined' ? JOBS : []).forEach(j => {
@@ -9541,15 +9581,17 @@ const VOICE = {
         renderCompletedBrowser();
       });
     });
-    // Apply filters
+    // Apply filters — 'all' projects means "has a project", matching the pill.
     const filtered = all.filter(t => {
       const dk = _cbDoneDateKey(t);
       if (_cbDateFilter === 'today' && dk !== todayK) return false;
       if (_cbDateFilter === 'week' && (!dk || dk < mondayK)) return false;
       if (_cbDateFilter === 'month' && (!dk || dk.slice(0, 7) !== monthPrefix)) return false;
-      if (_cbJobFilter !== 'all') {
-        const jid = t.job || '_none';
-        if (jid !== _cbJobFilter) return false;
+      const jid = t.job || '_none';
+      if (_cbJobFilter === 'all') {
+        if (jid === '_none') return false;
+      } else if (jid !== _cbJobFilter) {
+        return false;
       }
       return true;
     });
