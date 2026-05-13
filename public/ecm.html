@@ -169,6 +169,66 @@
   }
   .needs-ack-dot.show { display: inline-block }
 
+  /* Per-owner needs-ack counts — small horizontal strip showing who has how
+     many tasks pending acknowledgement. Tap one to filter to that owner. */
+  .owner-acks {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 10px;
+  }
+  .owner-acks:empty { display: none }
+  .owner-ack-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 8px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.85);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .owner-ack-pill:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.2) }
+  .owner-ack-pill .avatar {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 900;
+    color: #050507;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+  .owner-ack-pill .ct {
+    font-size: 11px; font-weight: 900;
+    padding: 2px 8px; border-radius: 99px;
+    background: rgba(255,138,61,.18);
+    color: #FF8A3D;
+    font-variant-numeric: tabular-nums;
+  }
+  .owner-ack-pill.zero .ct {
+    background: rgba(74,222,128,.16);
+    color: #4ADE80;
+  }
+  .owner-ack-pill.active {
+    background: rgba(74,158,255,.16);
+    border-color: #6BA8FF;
+    color: #fff;
+  }
+  .owner-ack-pill.active .ct {
+    background: rgba(74,158,255,.32);
+    color: #fff;
+  }
+
+  /* Program color tags — each program gets a deterministic color from a small
+     palette. Same program always renders the same color so the eye can track. */
+  .row-program {
+    font-size: 10px; font-weight: 800; letter-spacing: .6px;
+    text-transform: uppercase;
+    padding: 3px 9px; border-radius: 6px;
+    border: 1px solid;
+    /* Default — overridden inline by JS with the chosen palette color */
+    background: rgba(255,255,255,.05);
+    color: rgba(255,255,255,.55);
+    border-color: rgba(255,255,255,.10);
+  }
+
   /* Bulk action bar — pinned above list when items selected */
   .bulk-bar {
     display: none;
@@ -368,19 +428,35 @@
   }
   /* Secondary metadata row — created date, ticket #, sub-type, program */
   .row-sub {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 10px;
     min-width: 0; padding-left: 0;
-    font-size: 11px; color: rgba(255,255,255,.45); font-weight: 600;
+    font-size: 12px; color: rgba(255,255,255,.55); font-weight: 600;
     flex-wrap: wrap;
   }
+  /* Created date — prominent pill with cyan accent. Surfaces "when this hit my plate"
+     since acking each day's batch is the main job. */
   .row-sub-date {
-    display: inline-flex; align-items: center; gap: 5px;
-    color: rgba(255,255,255,.5);
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 6px;
+    background: rgba(94,234,212,.10);
+    border: 1px solid rgba(94,234,212,.22);
+    color: #7DD3C0;
+    font-size: 11px; font-weight: 800; letter-spacing: .2px;
     font-variant-numeric: tabular-nums;
   }
-  .row-sub-date svg {
-    flex-shrink: 0; opacity: .6;
+  .row-sub-date svg { flex-shrink: 0; opacity: .85 }
+  .row-sub-date .rel {
+    color: rgba(125,211,192,.65);
+    font-weight: 700;
+    margin-left: 2px;
   }
+  /* Fresh items (≤ 2 days) get an amber accent to draw the eye */
+  .row-sub-date.fresh {
+    background: rgba(255,200,77,.12);
+    border-color: rgba(255,200,77,.32);
+    color: #FFD166;
+  }
+  .row-sub-date.fresh .rel { color: rgba(255,209,102,.7) }
   .row-sub-sep {
     color: rgba(255,255,255,.18);
     flex-shrink: 0;
@@ -520,6 +596,8 @@
       <span class="needs-ack-dot" id="needsAckDot" aria-hidden="true"></span>
     </button>
   </div>
+  <!-- Per-owner needs-ack counts — auto-populated from rows. Tap to filter. -->
+  <div class="owner-acks" id="ownerAcks"></div>
   <div class="search-row">
     <input type="text" class="search-input" id="searchInput" placeholder="Search task name, ticket, details…" autocomplete="off">
     <select class="owner-pick" id="ownerSelect" title="Filter by owner">
@@ -708,6 +786,49 @@ function statusClass(s){
   return '';
 }
 function escHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Program color palette — small, distinct, dark-mode-friendly. Same program
+// name always maps to the same color via a stable hash. Each color includes
+// the trio (bg, border, fg) for the .row-program tag.
+const PROGRAM_COLORS = [
+  { bg: 'rgba(94,234,212,.10)',  bd: 'rgba(94,234,212,.35)',  fg: '#5EEAD4' }, // teal
+  { bg: 'rgba(255,138,61,.10)',  bd: 'rgba(255,138,61,.35)',  fg: '#FF8A3D' }, // orange
+  { bg: 'rgba(167,139,250,.10)', bd: 'rgba(167,139,250,.38)', fg: '#C4B5FD' }, // violet
+  { bg: 'rgba(74,158,255,.10)',  bd: 'rgba(74,158,255,.38)',  fg: '#6BA8FF' }, // blue
+  { bg: 'rgba(244,114,182,.10)', bd: 'rgba(244,114,182,.38)', fg: '#F472B6' }, // pink
+  { bg: 'rgba(74,222,128,.10)',  bd: 'rgba(74,222,128,.38)',  fg: '#4ADE80' }, // green
+  { bg: 'rgba(255,200,77,.10)',  bd: 'rgba(255,200,77,.38)',  fg: '#FFC84D' }, // amber
+  { bg: 'rgba(232,121,121,.10)', bd: 'rgba(232,121,121,.38)', fg: '#F87171' }, // red
+  { bg: 'rgba(125,211,252,.10)', bd: 'rgba(125,211,252,.38)', fg: '#7DD3FC' }, // sky
+  { bg: 'rgba(232,232,232,.06)', bd: 'rgba(232,232,232,.28)', fg: '#E5E7EB' }  // gray-fallback
+];
+function programColor(name){
+  if (!name) return PROGRAM_COLORS[PROGRAM_COLORS.length - 1];
+  let h = 0;
+  const s = String(name).toUpperCase();
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return PROGRAM_COLORS[Math.abs(h) % (PROGRAM_COLORS.length - 1)];
+}
+// Avatar palette + initials for owner-ack pills
+const OWNER_COLORS = [
+  '#FF8A3D', '#6BA8FF', '#4ADE80', '#C4B5FD', '#F472B6',
+  '#FFD166', '#5EEAD4', '#F87171', '#7DD3FC', '#A78BFA'
+];
+function ownerColor(name){
+  if (!name) return '#888';
+  let h = 0; const s = String(name);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return OWNER_COLORS[Math.abs(h) % OWNER_COLORS.length];
+}
+function ownerInitials(name){
+  if (!name) return '?';
+  const parts = String(name).trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function ownerFirstName(name){
+  if (!name) return '';
+  return String(name).trim().split(/\s+/)[0];
+}
 function getConfig(){
   // In team mode the server-bootstrapped config is authoritative — never read
   // the owner's smartsheets-config (teammates should never see the owner's
@@ -995,6 +1116,7 @@ function render(){
   renderStatusBar();
   updateNeedsAckDot();
   renderBulkBar();
+  renderOwnerAcks();
   const list = document.getElementById('list');
   const pool = applyFilters();
   document.getElementById('metaCount').textContent = `${pool.length} of ${rows.length}`;
@@ -1010,7 +1132,10 @@ function render(){
     const sCls = statusClass(r.status);
     const ticketHTML = r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '';
     const statusHTML = r.status ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>` : '';
-    const programHTML = r.program ? `<span class="row-program">${escHtml(r.program)}</span>` : '';
+    const pcol = programColor(r.program);
+    const programHTML = r.program
+      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
+      : '';
     const subTypeHTML = r.subType ? `<span class="row-subtype">${escHtml(r.subType)}</span>` : '';
     // Ack state for this row
     const ack = acks[r.id];
@@ -1025,14 +1150,23 @@ function render(){
     } else if (currentView === 'ack') {
       ackInlineHTML = `<button type="button" class="row-ack-btn" data-ack="${escHtml(String(r.id))}">Ack</button>`;
     }
-    // Created date — primary metadata. Shown as "Apr 12 · 5d ago" for recent
-    // tasks, falls back to the absolute date for older ones. Empty if missing.
+    // Created date — primary metadata, rendered as a small pill so it's the
+    // first thing the eye lands on. Items created in the last 2 days get the
+    // amber "fresh" treatment to draw attention to today's incoming work.
     const createdHTML = (() => {
       if (!r.createdDate) return '';
       const abs = fmtAbsoluteDate(r.createdDate);
       const rel = timeAgo(r.createdDate);
-      const calIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
-      return `<span class="row-sub-date" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}${rel ? ` <span style="opacity:.6">· ${escHtml(rel)}</span>` : ''}</span>`;
+      const ageDays = (() => {
+        try {
+          const t = new Date(r.createdDate).getTime();
+          if (!t) return 999;
+          return (Date.now() - t) / 86400000;
+        } catch { return 999; }
+      })();
+      const freshCls = ageDays <= 2 ? ' fresh' : '';
+      const calIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+      return `<span class="row-sub-date${freshCls}" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}${rel ? `<span class="rel">· ${escHtml(rel)}</span>` : ''}</span>`;
     })();
     // Build sub-row: created date + ticket + sub-type + program. Skipped pieces
     // collapse cleanly. Separators only between consecutive non-empty pieces.
@@ -1201,6 +1335,50 @@ function updateNeedsAckDot(){
   if (!dot) return;
   const needsCount = rows.filter(r => !acks[r.id]).length;
   dot.classList.toggle('show', needsCount > 0);
+}
+// Per-owner pending-ack counts — small avatar pills showing each owner with
+// open (un-acked, non-completed) rows. Tap a pill to filter the list to that
+// owner. Auto-discovered from the data — no hardcoded names.
+function renderOwnerAcks(){
+  const el = document.getElementById('ownerAcks');
+  if (!el) return;
+  // Count un-acked open rows per owner. "Open" = not Completed / Not feasible.
+  const counts = {};
+  rows.forEach(r => {
+    if (!r.owner) return;
+    if (acks[r.id]) return;
+    if (r.status === 'Completed' || r.status === 'Not feasible - close ticket') return;
+    counts[r.owner] = (counts[r.owner] || 0) + 1;
+  });
+  const owners = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  if (!owners.length) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = owners.map(o => {
+    const n = counts[o];
+    const init = ownerInitials(o);
+    const col = ownerColor(o);
+    const first = ownerFirstName(o);
+    const active = filterOwner === o ? 'active' : '';
+    const zero = n === 0 ? 'zero' : '';
+    return `<button type="button" class="owner-ack-pill ${active} ${zero}" data-owner-ack="${escHtml(o)}" title="${escHtml(o)} — ${n} task${n === 1 ? '' : 's'} to acknowledge">
+      <span class="avatar" style="background:${col}">${escHtml(init)}</span>
+      <span>${escHtml(first)}</span>
+      <span class="ct">${n}</span>
+    </button>`;
+  }).join('');
+  el.querySelectorAll('[data-owner-ack]').forEach(b => {
+    b.addEventListener('click', () => {
+      const o = b.getAttribute('data-owner-ack') || '';
+      // Toggle filter — tap active pill again to clear
+      filterOwner = (filterOwner === o) ? '' : o;
+      // Sync the owner select dropdown so it stays consistent
+      const sel = document.getElementById('ownerSelect');
+      if (sel) sel.value = filterOwner;
+      render();
+    });
+  });
 }
 
 async function pushField(r, fieldTitle, value, rowEl){
