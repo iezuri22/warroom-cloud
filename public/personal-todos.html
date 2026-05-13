@@ -7049,24 +7049,59 @@ const VOICE = {
     return { start: fmt(mon), end: fmt(sun), today: tk };
   }
   function ptHoursDone(){
-    if (!Array.isArray(todos)) return { dailySecs: 0, weeklySecs: 0 };
+    // Aggregate per-day from the SPRINT HISTORY log when available — each
+    // entry has a per-session completedAt timestamp + actualSeconds, so we
+    // get accurate per-day splits even when a single task is worked across
+    // multiple days. Fall back to per-task timeSpent for users who don't use
+    // the sprint timer (so they still get some signal).
     const range = ptWeekRange();
     let dailySecs = 0, weeklySecs = 0;
-    todos.forEach(t => {
-      if (!t.done) return;
-      const secs = Number(t.timeSpent) || 0;
-      if (secs <= 0) return;
-      // Prefer completedAt (the moment the work was actually finished) over
-      // t.date (the task's assigned day, which can be wildly off if the user
-      // worked across multiple days before checking it off).
-      let tk = '';
-      if (t.completedAt) {
-        try { tk = new Date(t.completedAt).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); } catch {}
+    // -- Source 1: sprint history (best signal — has session timestamps) --
+    try {
+      const raw = localStorage.getItem('sprint-history-v1');
+      if (raw) {
+        const hist = JSON.parse(raw) || [];
+        const entries = Array.isArray(hist) ? hist : (Array.isArray(hist.history) ? hist.history : []);
+        entries.forEach(e => {
+          const secs = Number(e.actualSeconds) || 0;
+          if (secs <= 0) return;
+          let tk = '';
+          if (e.completedAt) {
+            try { tk = new Date(e.completedAt).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); } catch {}
+          }
+          if (!tk) return;
+          if (tk === range.today) dailySecs += secs;
+          if (tk >= range.start && tk <= range.end) weeklySecs += secs;
+        });
       }
-      if (!tk) tk = (t.date || '').slice(0, 10);
-      if (tk === range.today) dailySecs += secs;
-      if (tk >= range.start && tk <= range.end) weeklySecs += secs;
-    });
+    } catch {}
+    // -- Source 2: per-task timeSpent fallback. Skip tasks whose sprint history
+    // would have already covered (sourceLinked === 'personal' or 'recent') —
+    // but the sprint store doesn't easily reveal that, so we just SKIP this
+    // source entirely when we have sprint history data. Keeps numbers honest.
+    let hadSprintData = false;
+    try {
+      const raw = localStorage.getItem('sprint-history-v1');
+      if (raw) {
+        const hist = JSON.parse(raw) || [];
+        const entries = Array.isArray(hist) ? hist : (Array.isArray(hist.history) ? hist.history : []);
+        hadSprintData = entries.length > 0;
+      }
+    } catch {}
+    if (!hadSprintData && Array.isArray(todos)) {
+      todos.forEach(t => {
+        if (!t.done) return;
+        const secs = Number(t.timeSpent) || 0;
+        if (secs <= 0) return;
+        let tk = '';
+        if (t.completedAt) {
+          try { tk = new Date(t.completedAt).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); } catch {}
+        }
+        if (!tk) tk = (t.date || '').slice(0, 10);
+        if (tk === range.today) dailySecs += secs;
+        if (tk >= range.start && tk <= range.end) weeklySecs += secs;
+      });
+    }
     return { dailySecs, weeklySecs };
   }
   function fmtHM(secs){
@@ -8886,42 +8921,22 @@ const VOICE = {
     cur.setDate(cur.getDate() - offset);
     return _ckey(cur);
   }
-  // Stats for the focus view header pills. Scoped to PRIORITY tasks only —
-  // todos that have been promoted to a priority list (priorityAt stamp) plus
-  // tasks currently sitting in the priority chain.
-  // "Active this week" counts a priority task that was active any time this
-  // week, including ones that have since been completed.
+  // Stats for the focus view header pills. Counts ALL done todos by day —
+  // we tried scoping to priority-only but that under-counted everything since
+  // priority tracking only got added recently. Simpler + more accurate:
+  // count what the user actually checked off.
   function _computeFocusStats(){
     const todayK = _ckey();
     const mondayK = _mondayKeyFor();
-    const chain = _priorityChain();
-    // Build set of task IDs currently in the priority chain (so we count
-    // them as "active" even if priorityAt wasn't stamped — e.g. older tasks).
-    const currentPriorityIds = new Set();
-    chain.forEach(list => {
-      (list.taskIds || []).forEach(id => {
-        if (typeof id === 'string' && id.startsWith('tpl:')) return;
-        currentPriorityIds.add(id);
-      });
-    });
     function doneDayKey(t){
       if (t.completedAt) { try { return _ckey(new Date(t.completedAt)); } catch {} }
       return t.date || '';
     }
-    // A todo "counts as priority" if it's currently on the chain OR has a
-    // priorityAt stamp (i.e. was on a priority list at some point).
-    function isPriorityTask(t){
-      return currentPriorityIds.has(t.id) || !!t.priorityAt;
-    }
-    // "Active this week" = priority task that was active any time since
-    // Monday. Currently on chain qualifies. Done this week qualifies. Older
-    // priorityAt that's already this-week-or-earlier and not yet done qualifies.
     let doneToday = 0;
     let doneWeek = 0;
     let activeWeek = 0;
-    const dailyCounts = {}; // dayK → priority completions
+    const dailyCounts = {};
     todos.forEach(t => {
-      if (!isPriorityTask(t)) return;
       if (t.done) {
         const dk = doneDayKey(t);
         if (!dk) return;
@@ -8929,27 +8944,37 @@ const VOICE = {
         if (dk >= mondayK) { doneWeek++; activeWeek++; }
         dailyCounts[dk] = (dailyCounts[dk] || 0) + 1;
       } else {
-        // Still active — currently on priority chain counts toward this week.
-        if (currentPriorityIds.has(t.id)) activeWeek++;
+        // Active = not done AND created OR dated this week.
+        const cdk = t.createdAt ? _ckey(new Date(t.createdAt)) : '';
+        const ddk = (t.date || '').slice(0, 10);
+        if ((cdk && cdk >= mondayK) || (ddk && ddk >= mondayK)) activeWeek++;
       }
     });
-    // PRs — track per-day priority completions. Persists in localStorage.
+    // PRs — running max across all days/weeks of completion counts. Live-updates
+    // when today/week beats the stored best.
     let storedPRDay = 0, storedPRWeek = 0;
     try {
-      storedPRDay = parseInt(localStorage.getItem('personal-pr-prio-day') || '0', 10) || 0;
-      storedPRWeek = parseInt(localStorage.getItem('personal-pr-prio-week') || '0', 10) || 0;
+      storedPRDay = parseInt(localStorage.getItem('personal-pr-done-day') || '0', 10) || 0;
+      storedPRWeek = parseInt(localStorage.getItem('personal-pr-done-week') || '0', 10) || 0;
     } catch {}
-    const todayCount = dailyCounts[todayK] || 0;
-    if (todayCount > storedPRDay) {
-      storedPRDay = todayCount;
-      try { localStorage.setItem('personal-pr-prio-day', String(storedPRDay)); } catch {}
-    }
-    let weekCount = 0;
-    Object.entries(dailyCounts).forEach(([k, n]) => { if (k >= mondayK) weekCount += n; });
-    if (weekCount > storedPRWeek) {
-      storedPRWeek = weekCount;
-      try { localStorage.setItem('personal-pr-prio-week', String(storedPRWeek)); } catch {}
-    }
+    // Recompute historical PR from all known daily counts so we capture days
+    // the user did a lot before this tracking shipped.
+    Object.values(dailyCounts).forEach(n => {
+      if (n > storedPRDay) storedPRDay = n;
+    });
+    // Group dailyCounts into ISO weeks to find the best week ever.
+    const weekTotals = {};
+    Object.entries(dailyCounts).forEach(([k, n]) => {
+      try {
+        const wk = _mondayKeyFor(new Date(k + 'T12:00:00'));
+        weekTotals[wk] = (weekTotals[wk] || 0) + n;
+      } catch {}
+    });
+    Object.values(weekTotals).forEach(n => {
+      if (n > storedPRWeek) storedPRWeek = n;
+    });
+    try { localStorage.setItem('personal-pr-done-day', String(storedPRDay)); } catch {}
+    try { localStorage.setItem('personal-pr-done-week', String(storedPRWeek)); } catch {}
     return { doneToday, doneWeek, activeWeek, prDay: storedPRDay, prWeek: storedPRWeek };
   }
   // Render the compact stats pills inline in the Focus 5 header.
