@@ -4328,7 +4328,7 @@
 
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, writeBatch } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
     authDomain: "tv-todos.firebaseapp.com",
@@ -5035,6 +5035,9 @@ const VOICE = {
     // Drain sprint completions on every load (not gated to today — completions
     // can apply to any date the user is currently viewing).
     try { await drainSprintCompletions(); } catch (e) { console.warn('sprint completions drain failed', e); }
+    // Backfill any focus5 task IDs not in `todos` from Firestore so priority
+    // tasks added on other days don't disappear from the priority view.
+    try { await ensureFocus5TasksLoaded(); } catch (e) { console.warn('focus5 backfill failed', e); }
     render();
   }
   // ============ SPRINT COMPLETIONS DRAIN ============
@@ -7973,6 +7976,68 @@ const VOICE = {
   function saveFocus5(){
     try { localStorage.setItem(FOCUS5_KEY, JSON.stringify(focus5State)); } catch {}
   }
+  // When a task is added to a priority list, its ID lives in focus5State
+  // (localStorage). But the in-memory `todos` array only contains tasks for
+  // the currently-viewed day + range tasks. If a priority task's date is
+  // older than the current view (or got missed by the loader), it'd disappear
+  // from the priority view even though it's still saved in Firestore.
+  // This helper fetches any missing IDs directly so the priority view never
+  // ghosts tasks the user explicitly added.
+  async function ensureFocus5TasksLoaded(){
+    if (!focus5State || !Array.isArray(focus5State.lists)) return;
+    const missing = new Set();
+    focus5State.lists.forEach(l => {
+      (l.taskIds || []).forEach(id => {
+        if (typeof id !== 'string') return;
+        if (id.startsWith('tpl:')) return; // template ref — resolved via materialization
+        if (!todos.find(t => t.id === id)) missing.add(id);
+      });
+    });
+    if (missing.size === 0) return;
+    let fetched = 0;
+    for (const id of missing) {
+      try {
+        const snap = await getDoc(doc(db, 'tv_todos', id));
+        if (snap.exists()) {
+          const data = snap.data() || {};
+          todos.push({ id, ...data });
+          fetched++;
+        }
+      } catch (e) { console.warn('focus5 task backfill failed', id, e); }
+    }
+    if (fetched > 0) {
+      try { render(); } catch {}
+    }
+  }
+  // Expose a small debug helper so the user can find tasks by text from the
+  // console: window._findMyTask('hop'). Returns an array of matches with id,
+  // text, date, and where the task currently lives in focus5State.
+  window._findMyTask = async function(keyword){
+    const kw = (keyword || '').toLowerCase().trim();
+    if (!kw) return console.warn('Pass a keyword, e.g. window._findMyTask("hop")');
+    try {
+      const snap = await getDocs(collection(db, 'tv_todos'));
+      const matches = [];
+      snap.forEach(d => {
+        const t = d.data() || {};
+        if ((t.text || '').toLowerCase().includes(kw)) {
+          const inLists = (focus5State.lists || [])
+            .filter(l => (l.taskIds || []).includes(d.id))
+            .map(l => l.name);
+          matches.push({
+            id: d.id,
+            text: t.text,
+            date: t.date,
+            done: !!t.done,
+            inFocus5Lists: inLists.length ? inLists.join(', ') : '—',
+            job: t.job || ''
+          });
+        }
+      });
+      console.table(matches);
+      return matches;
+    } catch (e) { console.error('find failed', e); }
+  };
   // -------- LIST helpers --------
   function focus5ActiveList(){
     return focus5State.lists.find(l => l.id === focus5State.activeListId) || null;
