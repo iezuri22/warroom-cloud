@@ -647,6 +647,39 @@ body{padding:16px 14px 120px}
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* ===== Jobs management modal ===== */
+.jm-overlay{
+  position:fixed;inset:0;z-index:1000;background:rgba(5,5,7,.78);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;padding:20px;
+}
+.jm-modal{
+  width:min(560px,100%);max-height:84vh;background:#15151B;border:1px solid rgba(255,255,255,.10);
+  border-radius:16px;display:flex;flex-direction:column;overflow:hidden;
+}
+.jm-head{padding:18px 22px 12px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:flex-start;gap:12px}
+.jm-title{font-size:18px;font-weight:900;letter-spacing:-.01em;color:#fff}
+.jm-sub{font-size:12px;color:rgba(255,255,255,.55);font-weight:600;margin-top:4px}
+.jm-close{margin-left:auto;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);color:rgba(255,255,255,.7);font-size:20px;cursor:pointer;line-height:1}
+.jm-close:hover{color:#fff;background:rgba(255,255,255,.08)}
+.jm-body{flex:1;overflow-y:auto;padding:12px 22px;display:flex;flex-direction:column;gap:8px}
+.jm-row{display:flex;align-items:center;gap:8px;padding:10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px}
+.jm-row .swatch{width:18px;height:18px;border-radius:5px;flex-shrink:0;cursor:pointer;border:1px solid rgba(255,255,255,.15)}
+.jm-row input[type="text"]{flex:1;min-width:0;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:8px;padding:8px 12px;color:rgba(255,255,255,.92);font:inherit;font-size:13px;font-weight:600;outline:none}
+.jm-row input[type="text"]:focus{border-color:rgba(74,158,255,.5)}
+.jm-row .ct{font-size:10px;font-weight:700;color:rgba(255,255,255,.4);padding:2px 8px;border-radius:99px;background:rgba(255,255,255,.05);flex-shrink:0}
+.jm-row .delete-btn{padding:6px 10px;border-radius:8px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);color:#F87171;font:inherit;font-size:11px;font-weight:800;cursor:pointer;flex-shrink:0}
+.jm-row .delete-btn:hover{background:rgba(248,113,113,.18);border-color:#F87171}
+.jm-add{margin:6px 22px;padding:10px;border-radius:10px;background:rgba(255,138,61,.10);border:1px dashed rgba(255,138,61,.4);color:#FF8A3D;font:inherit;font-size:13px;font-weight:800;cursor:pointer;text-align:center;transition:all .15s}
+.jm-add:hover{background:rgba(255,138,61,.18);border-style:solid}
+.jm-actions{padding:14px 22px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:flex-end;gap:8px}
+.jm-cancel,.jm-save{padding:9px 18px;border-radius:99px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.jm-cancel{background:transparent;border:1px solid rgba(255,255,255,.16);color:rgba(255,255,255,.7)}
+.jm-cancel:hover{color:#fff;border-color:rgba(255,255,255,.32)}
+.jm-save{background:linear-gradient(135deg,#FF8A3D,#FF6B3D);border:1px solid rgba(255,138,61,.5);color:#050507}
+.jm-save:hover{transform:translateY(-1px)}
+.manage-jobs-btn{margin-left:6px;background:rgba(255,255,255,.04)!important;color:rgba(255,255,255,.7)!important;border:1px solid rgba(255,255,255,.12)!important}
+.manage-jobs-btn:hover{color:#fff!important;border-color:rgba(255,255,255,.28)!important}
+
 /* Two progress bars with labels */
 .prog-row .prog-label{
   font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;
@@ -866,6 +899,7 @@ input[type="date"].f-i{
 
 <div class="toolbar">
   <button class="add-btn" onclick="openAddModal()">+ Goal</button>
+  <button class="add-btn manage-jobs-btn" onclick="openJobsModal()" title="Add or remove projects (jobs)">Manage jobs</button>
 </div>
 
 </aside>
@@ -883,6 +917,25 @@ input[type="date"].f-i{
 <div class="list" id="list"></div>
 <div class="timeline" id="timeline" style="display:none"></div>
 </main>
+</div>
+
+<!-- Jobs (projects/boards) management modal -->
+<div class="jm-overlay" id="jmOverlay" style="display:none">
+  <div class="jm-modal" role="dialog" aria-modal="true" aria-labelledby="jmTitle">
+    <div class="jm-head">
+      <div>
+        <div class="jm-title" id="jmTitle">Manage jobs</div>
+        <div class="jm-sub">Add or remove projects. Deleting a job removes its goals from the goals page.</div>
+      </div>
+      <button type="button" class="jm-close" onclick="closeJobsModal()" aria-label="Close">×</button>
+    </div>
+    <div class="jm-body" id="jmRows"></div>
+    <button type="button" class="jm-add" onclick="addJobsRow()">+ Add job</button>
+    <div class="jm-actions">
+      <button type="button" class="jm-cancel" onclick="closeJobsModal()">Cancel</button>
+      <button type="button" class="jm-save" onclick="saveJobsModal()">Save</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1008,6 +1061,114 @@ function saveBoardData(d){
     localStorage.setItem(BOARD_SK,s);
     if(window.syncClient && typeof window.syncClient.push==='function'){ try{window.syncClient.push(BOARD_SK,s)}catch{} }
   }catch(e){}
+}
+
+// ===== Jobs (boards) management modal =====
+// Each board in goal-board-v2 IS a job. The modal edits names/colors, adds new
+// boards, and deletes existing ones. Deleting marks the id in deletedBoardIds
+// so it doesn't resurrect on next sync.
+const JOB_PALETTE = ['#FF8A3D','#6BA8FF','#A78BFA','#4ADE80','#F472B6','#FFC84D','#5EEAD4','#7DD3FC','#F87171'];
+let _jmRows = []; // working copy: [{id, name, color, isNew?, deleted?, count}]
+function openJobsModal(){
+  const bd = loadBoard();
+  const tomb = new Set(Array.isArray(bd.deletedBoardIds) ? bd.deletedBoardIds : []);
+  _jmRows = (bd.boards||[])
+    .filter(b => !tomb.has(b.id))
+    .map(b => ({
+      id: b.id,
+      name: b.name || '',
+      color: b.color || JOB_PALETTE[0],
+      count: (b.goals||[]).length
+    }));
+  renderJobsModal();
+  const ov = document.getElementById('jmOverlay');
+  if (ov) ov.style.display = 'flex';
+}
+function closeJobsModal(){
+  const ov = document.getElementById('jmOverlay');
+  if (ov) ov.style.display = 'none';
+  _jmRows = [];
+}
+function renderJobsModal(){
+  const body = document.getElementById('jmRows');
+  if (!body) return;
+  body.innerHTML = _jmRows.map((r, i) => r.deleted ? '' : `
+    <div class="jm-row" data-idx="${i}">
+      <span class="swatch" style="background:${r.color}" onclick="cycleJobsRowColor(${i})" title="Change color"></span>
+      <input type="text" value="${escapeHtml(r.name)}" oninput="updateJobsRowName(${i}, this.value)" placeholder="Job name">
+      ${r.count ? `<span class="ct" title="${r.count} goal${r.count===1?'':'s'} attached">${r.count}</span>` : ''}
+      <button type="button" class="delete-btn" onclick="deleteJobsRow(${i})">Delete</button>
+    </div>
+  `).join('');
+}
+function addJobsRow(){
+  _jmRows.push({
+    id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name: '',
+    color: JOB_PALETTE[_jmRows.length % JOB_PALETTE.length],
+    count: 0,
+    isNew: true
+  });
+  renderJobsModal();
+  // Focus the new input
+  setTimeout(() => {
+    const rows = document.querySelectorAll('#jmRows .jm-row input');
+    if (rows.length) rows[rows.length - 1].focus();
+  }, 50);
+}
+function updateJobsRowName(i, v){ if (_jmRows[i]) _jmRows[i].name = v; }
+function cycleJobsRowColor(i){
+  if (!_jmRows[i]) return;
+  const idx = JOB_PALETTE.indexOf(_jmRows[i].color);
+  _jmRows[i].color = JOB_PALETTE[(idx + 1) % JOB_PALETTE.length];
+  renderJobsModal();
+}
+function deleteJobsRow(i){
+  if (!_jmRows[i]) return;
+  const r = _jmRows[i];
+  if (r.count > 0) {
+    if (!confirm(`Delete "${r.name}"? It has ${r.count} goal${r.count===1?'':'s'} attached — they'll be removed too.`)) return;
+  } else if (!r.isNew) {
+    if (!confirm(`Delete "${r.name}"?`)) return;
+  }
+  _jmRows[i].deleted = true;
+  renderJobsModal();
+}
+function saveJobsModal(){
+  const bd = loadBoard();
+  const tomb = new Set(Array.isArray(bd.deletedBoardIds) ? bd.deletedBoardIds : []);
+  const boardsById = new Map((bd.boards||[]).map(b => [b.id, b]));
+  // Apply edits + adds
+  const next = [];
+  _jmRows.forEach(r => {
+    if (r.deleted) {
+      // Mark id as tombstoned (only if it existed before this session)
+      if (!r.isNew) tomb.add(r.id);
+      return;
+    }
+    const existing = boardsById.get(r.id);
+    if (existing) {
+      existing.name = (r.name || '').trim() || existing.name;
+      existing.color = r.color;
+      next.push(existing);
+    } else {
+      next.push({
+        id: r.id,
+        name: (r.name || '').trim() || 'Untitled',
+        color: r.color,
+        goals: [],
+        cards: [],
+        columns: []
+      });
+    }
+  });
+  // Keep any boards not in _jmRows (e.g. already tombstoned ones) as-is
+  bd.boards = next;
+  bd.deletedBoardIds = Array.from(tomb);
+  saveBoardData(bd);
+  closeJobsModal();
+  renderAll();
+  try { toast('Jobs saved'); } catch {}
 }
 function isBoardGoalDone(g){
   if(g.status==='dn') return true;
@@ -1693,9 +1854,22 @@ function renderBoardCard({b,g,col}){
       <button class="ab primary" onclick="nudgeBoardStatusProgress('${b.id}','${g.id}',10)">+10%</button>
       ${cardDone?'':`<button class="ab ship" onclick="shipBoardCard('${b.id}','${g.id}')">Ship</button>`}
       <button class="ab" onclick="openBoardCard('${b.id}','${g.id}')">Open</button>
-      <button class="ab del" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide'}</button>
+      <button class="ab" onclick="toggleHideBoardCard('${b.id}','${g.id}')">${g.hideFromGoals?'Unhide':'Hide'}</button>
+      <button class="ab del" onclick="deleteBoardGoal('${b.id}','${g.id}')" title="Delete this goal">Delete</button>
     </div>
   </article>`;
+}
+// Delete a board-card goal — removes it from the board's goals array and
+// saves. Confirmation prompt because this is destructive and synced.
+function deleteBoardGoal(boardId, goalId){
+  if (!confirm('Delete this goal? This removes it from the board permanently.')) return;
+  const bd = loadBoard();
+  const b = (bd.boards||[]).find(x => x.id === boardId);
+  if (!b) return;
+  b.goals = (b.goals||[]).filter(g => g.id !== goalId);
+  saveBoardData(bd);
+  renderAll();
+  try { toast('Goal deleted'); } catch {}
 }
 
 // ---- Opens a board card in goal-board.html (top-level nav in case we're in an iframe) ----
