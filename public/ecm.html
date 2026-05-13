@@ -323,10 +323,11 @@
   .row {
     background: rgba(255,255,255,.03);
     border: 1px solid rgba(255,255,255,.08);
-    border-radius: 14px;
-    padding: 12px 14px;
+    border-radius: 12px;
+    padding: 14px 16px;
     cursor: pointer;
     transition: background .15s, border-color .15s;
+    display: flex; flex-direction: column; gap: 8px;
   }
   .row:hover { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.14) }
   .row.expanded {
@@ -334,14 +335,20 @@
     border-color: rgba(74,158,255,.3);
     cursor: default;
   }
+  /* Acked rows get a subtle green hairline so they're scannable at a glance */
+  .row.is-acked {
+    border-left: 3px solid rgba(74,222,128,.5);
+    padding-left: 13px;
+  }
   .row-head {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 12px;
+    min-width: 0;
   }
   .row-status {
     flex-shrink: 0;
-    font-size: 9px; font-weight: 900; letter-spacing: 1px;
+    font-size: 9px; font-weight: 900; letter-spacing: 1.2px;
     text-transform: uppercase;
-    padding: 4px 9px; border-radius: 99px;
+    padding: 5px 10px; border-radius: 6px;
     color: rgba(255,255,255,.7);
     background: rgba(255,255,255,.08);
     white-space: nowrap;
@@ -354,29 +361,56 @@
   .row-status.s-blocked { background: rgba(248,113,113,.14); color: #F87171 }
   .row-text {
     flex: 1; min-width: 0;
-    font-size: 14px; font-weight: 700; line-height: 1.3;
+    font-size: 15px; font-weight: 700; line-height: 1.35;
     color: rgba(255,255,255,.95);
-    overflow: hidden;
+    overflow: hidden; text-overflow: ellipsis;
+    letter-spacing: -.01em;
+  }
+  /* Secondary metadata row — created date, ticket #, sub-type, program */
+  .row-sub {
+    display: flex; align-items: center; gap: 8px;
+    min-width: 0; padding-left: 0;
+    font-size: 11px; color: rgba(255,255,255,.45); font-weight: 600;
+    flex-wrap: wrap;
+  }
+  .row-sub-date {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: rgba(255,255,255,.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .row-sub-date svg {
+    flex-shrink: 0; opacity: .6;
+  }
+  .row-sub-sep {
+    color: rgba(255,255,255,.18);
+    flex-shrink: 0;
   }
   .row-meta {
     flex-shrink: 0;
     display: inline-flex; align-items: center; gap: 8px;
-    font-size: 11px; color: rgba(255,255,255,.4); font-weight: 700;
+    font-size: 11px; color: rgba(255,255,255,.5); font-weight: 700;
+    margin-left: auto;
   }
   .row-ticket {
     font-variant-numeric: tabular-nums;
-    color: rgba(107,168,255,.85);
-    padding: 2px 7px; border-radius: 99px;
-    background: rgba(74,158,255,.10);
-    border: 1px solid rgba(74,158,255,.22);
+    font-size: 11px; font-weight: 800;
+    color: rgba(107,168,255,.9);
+    padding: 3px 9px; border-radius: 6px;
+    background: rgba(74,158,255,.08);
+    border: 1px solid rgba(74,158,255,.2);
   }
   .row-program {
-    font-size: 10px; font-weight: 800; letter-spacing: .5px;
+    font-size: 10px; font-weight: 800; letter-spacing: .6px;
     text-transform: uppercase;
-    padding: 2px 8px; border-radius: 99px;
-    background: rgba(255,255,255,.06);
-    color: rgba(255,255,255,.6);
+    padding: 3px 9px; border-radius: 6px;
+    background: rgba(255,255,255,.05);
+    color: rgba(255,255,255,.55);
     border: 1px solid rgba(255,255,255,.10);
+  }
+  .row-subtype {
+    font-size: 10px; font-weight: 700; letter-spacing: .3px;
+    color: rgba(255,255,255,.45);
+    padding: 3px 0;
   }
 
   /* ============ EXPAND DRAWER ============ */
@@ -607,6 +641,19 @@ function timeAgo(iso){
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch { return ''; }
+}
+// Compact absolute date for the row sub-meta. "May 12" if this year, "May 12, 2024"
+// otherwise. Returns empty string if input can't be parsed.
+function fmtAbsoluteDate(iso){
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleDateString('en-US', sameYear
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' });
   } catch { return ''; }
 }
 // ---- Team mode (magic-link access) -----------------------------------------
@@ -964,8 +1011,10 @@ function render(){
     const ticketHTML = r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '';
     const statusHTML = r.status ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>` : '';
     const programHTML = r.program ? `<span class="row-program">${escHtml(r.program)}</span>` : '';
+    const subTypeHTML = r.subType ? `<span class="row-subtype">${escHtml(r.subType)}</span>` : '';
     // Ack state for this row
     const ack = acks[r.id];
+    if (ack) row.classList.add('is-acked');
     const isChecked = selectedAckIds.has(r.id);
     const checkboxHTML = `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk ack"></span>`;
     // Ack badge / inline button — visible in ack view OR when row is already acked
@@ -976,14 +1025,29 @@ function render(){
     } else if (currentView === 'ack') {
       ackInlineHTML = `<button type="button" class="row-ack-btn" data-ack="${escHtml(String(r.id))}">Ack</button>`;
     }
+    // Created date — primary metadata. Shown as "Apr 12 · 5d ago" for recent
+    // tasks, falls back to the absolute date for older ones. Empty if missing.
+    const createdHTML = (() => {
+      if (!r.createdDate) return '';
+      const abs = fmtAbsoluteDate(r.createdDate);
+      const rel = timeAgo(r.createdDate);
+      const calIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+      return `<span class="row-sub-date" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}${rel ? ` <span style="opacity:.6">· ${escHtml(rel)}</span>` : ''}</span>`;
+    })();
+    // Build sub-row: created date + ticket + sub-type + program. Skipped pieces
+    // collapse cleanly. Separators only between consecutive non-empty pieces.
+    const subPieces = [createdHTML, ticketHTML, subTypeHTML, programHTML].filter(Boolean);
+    const subRowHTML = subPieces.length
+      ? `<div class="row-sub">${subPieces.join('<span class="row-sub-sep">·</span>')}</div>`
+      : '';
     row.innerHTML = `
       <div class="row-head">
         ${checkboxHTML}
         ${statusHTML}
         <span class="row-text">${escHtml(r.task)}</span>
         ${ackInlineHTML}
-        <span class="row-meta">${programHTML}${ticketHTML}${r.subType ? `<span>${escHtml(r.subType)}</span>` : ''}</span>
       </div>
+      ${subRowHTML}
       <div class="drawer">
         <div class="field">
           <span class="lbl">Task name</span>
