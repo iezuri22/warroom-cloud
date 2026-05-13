@@ -1311,13 +1311,31 @@ function _readTeamToken(){
     const url = new URL(window.location.href);
     const fromUrl = url.searchParams.get('team');
     if (fromUrl) {
-      try { localStorage.setItem(TEAM_TOKEN_KEY, fromUrl); } catch {}
-      // Strip the token from the URL so it doesn't sit in history/sharing.
-      url.searchParams.delete('team');
-      try { window.history.replaceState({}, '', url.toString()); } catch {}
+      // Try localStorage first, but VERIFY it actually wrote — incognito mode
+      // in Safari (and others) silently swallows setItem so the value is gone
+      // by next page load. Also write to sessionStorage as a fallback so an
+      // incognito refresh still has the token in-session.
+      let persisted = false;
+      try {
+        localStorage.setItem(TEAM_TOKEN_KEY, fromUrl);
+        if (localStorage.getItem(TEAM_TOKEN_KEY) === fromUrl) persisted = true;
+      } catch {}
+      try { sessionStorage.setItem(TEAM_TOKEN_KEY, fromUrl); } catch {}
+      // Only strip the URL when we're sure the token persisted in localStorage.
+      // Otherwise leave it in the URL so a refresh still picks it up.
+      if (persisted) {
+        url.searchParams.delete('team');
+        try { window.history.replaceState({}, '', url.toString()); } catch {}
+      }
       return fromUrl;
     }
-    return localStorage.getItem(TEAM_TOKEN_KEY) || '';
+    // Read prefers localStorage but falls back to sessionStorage (incognito).
+    let stored = '';
+    try { stored = localStorage.getItem(TEAM_TOKEN_KEY) || ''; } catch {}
+    if (!stored) {
+      try { stored = sessionStorage.getItem(TEAM_TOKEN_KEY) || ''; } catch {}
+    }
+    return stored;
   } catch { return ''; }
 }
 const _teamToken = _readTeamToken();
@@ -1467,12 +1485,22 @@ function cellValue(row, colId){
 }
 
 async function loadSheet(){
-  // Defensive: if we have a token in localStorage but _teamMode somehow got
-  // dropped (e.g. URL was stripped before module init on a quirky browser),
-  // restore team mode so we don't bounce the team user to the owner nag.
+  // Defensive: if we have a token anywhere but _teamMode somehow got dropped
+  // (e.g. incognito storage quirk), restore team mode so we don't bounce the
+  // team user to the owner nag. Checks URL → localStorage → sessionStorage.
   try {
     if (!_teamMode) {
-      const stored = localStorage.getItem(TEAM_TOKEN_KEY) || '';
+      let stored = '';
+      try {
+        const u = new URL(window.location.href);
+        stored = u.searchParams.get('team') || '';
+      } catch {}
+      if (!stored) {
+        try { stored = localStorage.getItem(TEAM_TOKEN_KEY) || ''; } catch {}
+      }
+      if (!stored) {
+        try { stored = sessionStorage.getItem(TEAM_TOKEN_KEY) || ''; } catch {}
+      }
       if (stored) { _teamMode = true; }
     }
   } catch {}
