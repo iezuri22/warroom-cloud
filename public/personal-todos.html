@@ -4910,6 +4910,17 @@ const VOICE = {
     // priority list up to fill the slot. Treats First/Second/Third as
     // one continuous queue.
     if (todo.done) {
+      // Before rebalance strips this task from the priority chain, make
+      // sure it carries a priorityAt stamp so the stats counters can still
+      // attribute it to "priority done this week" even after it's gone.
+      try {
+        const onPriority = focus5State.lists.some(l =>
+          _isPriorityList(l) && l.taskIds.includes(todo.id));
+        if (onPriority && !todo.priorityAt) {
+          todo.priorityAt = new Date().toISOString();
+          patch.priorityAt = todo.priorityAt;
+        }
+      } catch {}
       try { rebalancePriorityChain(); } catch {}
     }
     render();
@@ -7045,7 +7056,14 @@ const VOICE = {
       if (!t.done) return;
       const secs = Number(t.timeSpent) || 0;
       if (secs <= 0) return;
-      const tk = (t.date || '').slice(0, 10);
+      // Prefer completedAt (the moment the work was actually finished) over
+      // t.date (the task's assigned day, which can be wildly off if the user
+      // worked across multiple days before checking it off).
+      let tk = '';
+      if (t.completedAt) {
+        try { tk = new Date(t.completedAt).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); } catch {}
+      }
+      if (!tk) tk = (t.date || '').slice(0, 10);
       if (tk === range.today) dailySecs += secs;
       if (tk >= range.start && tk <= range.end) weeklySecs += secs;
     });

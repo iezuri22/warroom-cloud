@@ -1145,8 +1145,16 @@ body { display:flex; flex-direction:column; position:relative }
   function fmtFriendly(secs){
     const s = Math.max(0, Math.round(secs));
     if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60), r = s % 60;
-    return r === 0 ? `${m}m` : `${m}m ${r}s`;
+    const totalMins = Math.floor(s / 60);
+    const r = s % 60;
+    // Roll up to hours+minutes once we cross an hour so the user never sees
+    // "90m" or "180m" — always "1h 30m" or "3h".
+    if (totalMins >= 60) {
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      return m === 0 ? `${h}h` : `${h}h ${m}m`;
+    }
+    return r === 0 ? `${totalMins}m` : `${totalMins}m ${r}s`;
   }
   // Tighter version for the grind-meter widgets — hours roll up so totals
   // don't look unwieldy after a few sprints.
@@ -1273,8 +1281,8 @@ body { display:flex; flex-direction:column; position:relative }
       shownPR['s' + grind.sprints] = 1;
     }
     if (grind.totalSecs === pr.bestSecs && grind.totalSecs > 60 && parseInt(shownPR['t' + grind.totalSecs] || '0', 10) === 0) {
-      const m = Math.floor(grind.totalSecs / 60);
-      lines.push(`<div class="result-milestone pr"><strong>${m}m logged today.</strong> Never done this much in a day. Type shit.</div>`);
+      const label = fmtFriendlyShort(grind.totalSecs);
+      lines.push(`<div class="result-milestone pr"><strong>${label} logged today.</strong> Never done this much in a day. Type shit.</div>`);
       shownPR['t' + grind.totalSecs] = 1;
     }
     // -------- Contextual nudge (welcome back, late night, etc) --------
