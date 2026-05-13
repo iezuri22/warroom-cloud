@@ -725,6 +725,99 @@
     color: #fff;
   }
 
+  /* Name picker modal — used by user pill + Ack field to pick from team list */
+  .np-backdrop {
+    position: fixed; inset: 0; z-index: 1200;
+    background: rgba(5,5,7,.78); backdrop-filter: blur(6px);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .np-backdrop.show { display: flex }
+  .np-modal {
+    width: min(440px, 100%); max-height: 80vh;
+    background: #15151B; border: 1px solid rgba(255,255,255,.10);
+    border-radius: 16px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .np-head {
+    padding: 16px 20px 10px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+    display: flex; align-items: flex-start; gap: 12px;
+  }
+  .np-title {
+    font-size: 17px; font-weight: 900; letter-spacing: -.01em;
+    color: #fff;
+  }
+  .np-sub { font-size: 12px; color: rgba(255,255,255,.55); font-weight: 600; margin-top: 4px }
+  .np-close {
+    margin-left: auto;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.7); cursor: pointer;
+    font-size: 20px; line-height: 1;
+  }
+  .np-close:hover { color: #fff; background: rgba(255,255,255,.08) }
+  .np-body {
+    flex: 1; overflow-y: auto;
+    padding: 10px 20px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .np-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.06);
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .np-row:hover { background: rgba(255,255,255,.07); border-color: rgba(255,255,255,.14) }
+  .np-row.current {
+    background: rgba(74,158,255,.10);
+    border-color: rgba(74,158,255,.4);
+  }
+  .np-avatar {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 900; color: #050507;
+    text-transform: uppercase;
+  }
+  .np-name {
+    flex: 1; font-size: 14px; font-weight: 700; color: rgba(255,255,255,.92);
+  }
+  .np-row.current .np-tick {
+    color: #6BA8FF; font-weight: 900;
+  }
+  .np-empty {
+    padding: 20px; text-align: center;
+    color: rgba(255,255,255,.4);
+    font-size: 12px; font-weight: 600;
+  }
+  .np-foot {
+    padding: 12px 20px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    display: flex; gap: 8px;
+  }
+  .np-write {
+    flex: 1;
+    padding: 9px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: #fff;
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    outline: none;
+  }
+  .np-write:focus { border-color: rgba(74,158,255,.5) }
+  .np-save {
+    padding: 9px 18px; border-radius: 99px;
+    background: linear-gradient(135deg, #6BA8FF, #4A8FE5);
+    border: 1px solid rgba(74,158,255,.5);
+    color: #050507;
+    font-family: inherit; font-size: 13px; font-weight: 800;
+    cursor: pointer;
+  }
+  .np-save:hover { transform: translateY(-1px) }
+
   /* Settings nag — shown when no Smartsheets config */
   .nag {
     margin: 30px 20px;
@@ -796,6 +889,26 @@
     </button>
   </div>
   <div class="status-bar" id="statusBar"></div>
+</div>
+
+<!-- Name picker — replaces the prompt() flow for both the user pill and the
+     drawer Ack field. Opens centered, lists known owners, lets you write in a
+     custom name. -->
+<div class="np-backdrop" id="namePickerBackdrop" aria-hidden="true">
+  <div class="np-modal" role="dialog" aria-modal="true">
+    <div class="np-head">
+      <div>
+        <div class="np-title" id="namePickerTitle">Who are you?</div>
+        <div class="np-sub" id="namePickerSub">Pick from your team. Used to stamp acknowledgements.</div>
+      </div>
+      <button type="button" class="np-close" id="namePickerClose" aria-label="Close">×</button>
+    </div>
+    <div class="np-body" id="namePickerBody"></div>
+    <div class="np-foot">
+      <input type="text" class="np-write" id="namePickerWrite" placeholder="Or type a name…" autocomplete="off">
+      <button type="button" class="np-save" id="namePickerSave">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- Bulk-action bar: appears when one or more rows are selected in Ack view. -->
@@ -902,13 +1015,84 @@ function setUserName(name){
   } catch {}
   updateUserPill();
 }
-function ensureUserName(){
-  if (_userName) return _userName;
-  const def = (_teamMode && _teamConfig && _teamConfig.owner) ? _teamConfig.owner : '';
-  const ans = (prompt('Your name? (one-time — used to stamp who acknowledged each task)', def) || '').trim();
-  if (!ans) return '';
-  setUserName(ans);
-  return ans;
+function ensureUserName(onReady){
+  // Async variant: if no name set yet, open the picker. When user picks (or
+  // closes), the callback fires. If a name is already set, the callback fires
+  // immediately with that name. Keeps backwards-compatible sync-style returns
+  // when called without a callback — used by legacy paths that just need to
+  // check current state.
+  if (_userName) {
+    if (typeof onReady === 'function') onReady(_userName);
+    return _userName;
+  }
+  if (typeof onReady === 'function') {
+    openNamePicker({
+      title: 'Who are you?',
+      sub: 'Pick from the team. Used to stamp acknowledgements.',
+      onPick: (name) => { onReady(name || ''); }
+    });
+  }
+  return '';
+}
+// Name picker modal — replaces prompt() with a click-to-pick list of known
+// owners + a write-in field for new names. Used by the user pill and any flow
+// that needs to know "who are you" before stamping data.
+function openNamePicker(opts){
+  opts = opts || {};
+  const bd = document.getElementById('namePickerBackdrop');
+  const titleEl = document.getElementById('namePickerTitle');
+  const subEl = document.getElementById('namePickerSub');
+  const body = document.getElementById('namePickerBody');
+  const writeIn = document.getElementById('namePickerWrite');
+  if (!bd || !body) return;
+  if (titleEl && opts.title) titleEl.textContent = opts.title;
+  if (subEl && opts.sub) subEl.textContent = opts.sub;
+  // Build the owner list — known sheet owners + team-config owner + current
+  // user. Dedupe + sort.
+  const known = new Set();
+  rows.forEach(r => { if (r.owner) known.add(r.owner); });
+  if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
+  if (_userName) known.add(_userName);
+  const owners = Array.from(known).sort();
+  if (owners.length === 0) {
+    body.innerHTML = `<div class="np-empty">No team members discovered yet — type a name below to set yours.</div>`;
+  } else {
+    body.innerHTML = owners.map(o => `
+      <div class="np-row ${o === _userName ? 'current' : ''}" data-name="${escHtml(o)}">
+        <span class="np-avatar" style="background:${ownerColor(o)}">${escHtml(ownerInitials(o))}</span>
+        <span class="np-name">${escHtml(o)}</span>
+        ${o === _userName ? '<span class="np-tick">✓</span>' : ''}
+      </div>
+    `).join('');
+    body.querySelectorAll('[data-name]').forEach(row => {
+      row.addEventListener('click', () => {
+        const name = row.getAttribute('data-name') || '';
+        setUserName(name);
+        closeNamePicker();
+        if (typeof opts.onPick === 'function') opts.onPick(name);
+      });
+    });
+  }
+  if (writeIn) writeIn.value = '';
+  bd.classList.add('show');
+  bd.setAttribute('aria-hidden', 'false');
+  // Stash callback so the save button + Enter key can use it
+  bd._pickCallback = opts.onPick || null;
+  setTimeout(() => { try { writeIn && writeIn.focus(); } catch {} }, 50);
+}
+function closeNamePicker(){
+  const bd = document.getElementById('namePickerBackdrop');
+  if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); bd._pickCallback = null; }
+}
+function saveNamePicker(){
+  const writeIn = document.getElementById('namePickerWrite');
+  const bd = document.getElementById('namePickerBackdrop');
+  const v = (writeIn && writeIn.value || '').trim();
+  if (!v) { closeNamePicker(); return; }
+  setUserName(v);
+  const cb = bd && bd._pickCallback;
+  closeNamePicker();
+  if (typeof cb === 'function') cb(v);
 }
 function updateUserPill(){
   const el = document.getElementById('userPill');
@@ -1189,10 +1373,19 @@ async function loadSheet(){
       // Normalize so any truthy non-empty value reads as flagged.
       internalSS: colInternal ? !!cellValue(r, colInternal.id) : false,
       modifiedAt: r.modifiedAt || '',
-      // Per-row permalink — direct deep-link to the row in Smartsheets web UI.
-      // Use it to wire an "Open in Smartsheets" button in the drawer.
+      // Per-row permalink — Smartsheets returns this on each row by default,
+      // but if it's missing we'll fall back to constructing one from the
+      // sheet's permalink + row ID below.
       permalink: r.permalink || ''
     }));
+    // Backfill missing per-row permalinks using the sheet's own permalink.
+    // Smartsheets sheet URLs work with #rowId=<id> to jump to a specific row.
+    const sheetPermalink = (sheet && sheet.permalink) || '';
+    if (sheetPermalink) {
+      rows.forEach(r => {
+        if (!r.permalink) r.permalink = `${sheetPermalink}?rowId=${r.id}`;
+      });
+    }
     // Mirror Smartsheets Internal Only column into the local internalFlags map
     // so rows flagged in Smartsheets show the badge immediately, even if no
     // Firestore doc exists yet. Firestore writes still happen on toggle for
@@ -1504,18 +1697,28 @@ function render(){
               <span class="label-text">${isInternal ? 'Internal only' : 'Mark internal'}</span>
             </button>
           </div>
-          <div class="field field-compact">
-            <span class="lbl">Ack</span>
+          <div class="field">
+            <span class="lbl">Ack ${ack ? ' (acked)' : ''}</span>
             ${ack ? `
-              <div style="display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 12px;border-radius:10px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:#4ADE80;font-size:12px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
-                <span>✓ ${escHtml(ack.ackedBy || 'Acked')}</span>
+              <div style="display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 14px;border-radius:10px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:#4ADE80;font-size:12px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
+                <span>✓ ${escHtml(ack.ackedBy || 'Acked')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}</span>
                 <button type="button" data-unack="${escHtml(String(r.id))}" style="padding:3px 9px;border-radius:99px;border:1px solid rgba(255,255,255,.18);background:transparent;color:rgba(255,255,255,.6);font:inherit;font-size:10px;font-weight:800;letter-spacing:.5px;cursor:pointer">UN-ACK</button>
               </div>
             ` : `
-              <button type="button" class="internal-toggle" data-ack="${escHtml(String(r.id))}" style="background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.32);color:#4ADE80" title="Mark as acknowledged">
-                <span class="box" style="border-color:rgba(74,222,128,.4)"></span>
-                <span class="label-text">Acknowledge</span>
-              </button>
+              <div style="display:flex;align-items:center;gap:8px">
+                <select class="select ack-as-select" data-row-id="${escHtml(String(r.id))}" style="flex:1">
+                  ${(function(){
+                    const known = new Set();
+                    rows.forEach(rr => { if (rr.owner) known.add(rr.owner); });
+                    if (_userName) known.add(_userName);
+                    if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
+                    const sorted = Array.from(known).sort();
+                    if (sorted.length === 0) sorted.push('Me');
+                    return sorted.map(n => `<option value="${escHtml(n)}" ${n === (_userName || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
+                  })()}
+                </select>
+                <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:42px">Ack</button>
+              </div>
             `}
           </div>
         </div>
@@ -1584,6 +1787,14 @@ function render(){
         e.stopPropagation();
         handleAck(r.id);
       }));
+      // "Ack as <selected>" — reads the adjacent dropdown's value so the user
+      // can ack on someone else's behalf without switching identity.
+      row.querySelectorAll('[data-ack-with]').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sel = row.querySelector('.ack-as-select');
+        const pickedName = sel ? sel.value.trim() : '';
+        handleAck(r.id, pickedName || _userName || '');
+      }));
       row.querySelectorAll('[data-unack]').forEach(b => b.addEventListener('click', (e) => {
         e.stopPropagation();
         handleUnack(r.id);
@@ -1621,15 +1832,21 @@ function render(){
 }
 
 // Ack / un-ack handlers — Firestore writes, optimistic state update.
-async function handleAck(rowId){
-  const name = ensureUserName();
-  if (!name) return;
-  // Optimistic update so the UI reflects the change before Firestore confirms
-  acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId) };
-  selectedAckIds.delete(rowId);
-  render();
-  try { await window._ecmAcks.ackRow(rowId, name); }
-  catch (e) { console.error('ack failed', e); alert('Couldn\'t save ack — try again'); }
+// Ack a row. Optional name override (used by the drawer's "Ack as" dropdown).
+// Without it, falls back to the current user — opening the name picker if
+// no current user is set yet.
+async function handleAck(rowId, nameOverride){
+  const proceed = async (name) => {
+    if (!name) return;
+    acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId) };
+    selectedAckIds.delete(rowId);
+    render();
+    try { await window._ecmAcks.ackRow(rowId, name); }
+    catch (e) { console.error('ack failed', e); alert('Couldn\'t save ack — try again'); }
+  };
+  if (nameOverride) return proceed(nameOverride);
+  if (_userName) return proceed(_userName);
+  ensureUserName(name => { if (name) proceed(name); });
 }
 async function handleUnack(rowId){
   delete acks[rowId];
@@ -1637,22 +1854,23 @@ async function handleUnack(rowId){
   try { await window._ecmAcks.unackRow(rowId); }
   catch (e) { console.error('un-ack failed', e); }
 }
-// Bulk acknowledge — ack everything currently selected
+// Bulk acknowledge — ack everything currently selected. Opens the name picker
+// if no current user is set yet.
 async function bulkAck(){
-  const name = ensureUserName();
-  if (!name) return;
-  const ids = Array.from(selectedAckIds);
-  if (!ids.length) return;
-  // Optimistic UI
-  const nowIso = new Date().toISOString();
-  ids.forEach(id => { acks[id] = { ackedBy: name, ackedAt: nowIso, rowId: String(id) }; });
-  selectedAckIds.clear();
-  renderBulkBar();
-  render();
-  // Fire writes in parallel — Firestore handles concurrent setDocs fine
-  try {
-    await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, name)));
-  } catch (e) { console.error('bulk ack partial fail', e); }
+  const proceed = async (name) => {
+    if (!name) return;
+    const ids = Array.from(selectedAckIds);
+    if (!ids.length) return;
+    const nowIso = new Date().toISOString();
+    ids.forEach(id => { acks[id] = { ackedBy: name, ackedAt: nowIso, rowId: String(id) }; });
+    selectedAckIds.clear();
+    renderBulkBar();
+    render();
+    try { await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, name))); }
+    catch (e) { console.error('bulk ack partial fail', e); }
+  };
+  if (_userName) return proceed(_userName);
+  ensureUserName(name => { if (name) proceed(name); });
 }
 function renderBulkBar(){
   const bar = document.getElementById('bulkBar');
@@ -1844,16 +2062,31 @@ document.querySelectorAll('.view-tab').forEach(b => {
   });
 });
 
-// User identity pill — click to set/change name
+// User identity pill — opens the name picker dropdown
 const userPillEl = document.getElementById('userPill');
 if (userPillEl) {
   userPillEl.addEventListener('click', () => {
-    const current = _userName || '';
-    const ans = (prompt('Your name?', current) || '').trim();
-    if (ans !== null && ans !== current) setUserName(ans);
+    openNamePicker({
+      title: _userName ? 'Change name' : 'Who are you?',
+      sub: 'Pick from the team or type a new name.'
+    });
   });
 }
 updateUserPill();
+
+// Wire the name-picker modal close + save + click-outside-to-close
+(function wireNamePicker(){
+  const bd = document.getElementById('namePickerBackdrop');
+  const closeBtn = document.getElementById('namePickerClose');
+  const saveBtn = document.getElementById('namePickerSave');
+  const writeIn = document.getElementById('namePickerWrite');
+  if (closeBtn) closeBtn.addEventListener('click', closeNamePicker);
+  if (saveBtn) saveBtn.addEventListener('click', saveNamePicker);
+  if (writeIn) writeIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveNamePicker(); }
+  });
+  if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeNamePicker(); });
+})();
 
 // Bulk action bar wiring
 const bulkAckBtn = document.getElementById('bulkAckBtn');
