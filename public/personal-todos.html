@@ -870,6 +870,42 @@
   .focus5-btn.reorder:hover { background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.22) }
   .focus5-btn.reorder:disabled { opacity: .25; cursor: not-allowed }
   .focus5-btn.reorder:disabled:hover { background: rgba(255,255,255,.04); color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.10) }
+  /* Project chip on focus5 card — shows current project, tap to swap or clear */
+  .focus5-btn.project {
+    background: rgba(255,255,255,.04);
+    border-color: rgba(255,255,255,.10);
+    color: rgba(255,255,255,.65);
+    gap: 6px;
+  }
+  .focus5-btn.project:hover {
+    background: rgba(255,255,255,.10); color: #fff; border-color: rgba(255,255,255,.22);
+  }
+  .focus5-btn.project .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: rgba(255,255,255,.25);
+  }
+  /* Inline project picker that drops below the action row */
+  .focus5-card-projects {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    margin-top: 2px;
+  }
+  .focus5-card.projects-open .focus5-card-projects { display: flex; }
+  .focus5-card-projects .pick {
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+    color: rgba(255,255,255,.65); padding: 6px 11px;
+    border-radius: 8px; font: 600 12px var(--font-family, inherit);
+    cursor: pointer; transition: all .15s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .focus5-card-projects .pick:hover { color: #fff; background: rgba(255,255,255,.08); }
+  .focus5-card-projects .pick .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .focus5-card-projects .pick.active {
+    background: rgba(255,138,61,.18); border-color: rgba(255,138,61,.4); color: #fff;
+  }
   /* Inline stats pills inside the FOCUS 5 toggle row. Sits between the
      line text and the dots. Asymmetric padding shifts the visual center
      leftward so the cluster sits closer to the line text — visually centered
@@ -8520,6 +8556,14 @@ const VOICE = {
         </button>
       </div>
     ` : '';
+    // Current project chip — shows on the actions row, tap opens inline picker
+    const currentJob = todo.job ? (typeof jobMeta === 'function' ? jobMeta(migrateJobId(todo.job)) : null) : null;
+    const projectChipHTML = (!isDone && !editing) ? `
+      <button class="focus5-btn project" data-act="project" type="button" title="Change project — tap None to clear">
+        <span class="dot" ${currentJob ? `style="background:${currentJob.color}"` : ''}></span>
+        <span>${escHtml(currentJob ? currentJob.label : 'No project')}</span>
+      </button>
+    ` : '';
     const standardActions = (!isDone && !editing) ? `
       <div class="focus5-card-actions">
         <button class="focus5-btn primary" data-act="done" type="button">Mark done</button>
@@ -8531,12 +8575,26 @@ const VOICE = {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="17" y="4" width="2" height="16"/></svg>
           Skip
         </button>
+        ${projectChipHTML}
         <button class="focus5-btn reorder" data-act="up" type="button" title="Move up" ${taskNumber <= 1 ? 'disabled' : ''} aria-label="Move up">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
         </button>
         <button class="focus5-btn reorder" data-act="down" type="button" title="Move down" ${taskNumber >= (totalCount || 5) ? 'disabled' : ''} aria-label="Move down">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
+      </div>
+    ` : '';
+    // Project picker row — hidden until user taps the project chip. Tap a chip
+    // to set project, tap "No project" to clear. Auto-closes after pick.
+    const currentJobId = migrateJobId(todo.job || '');
+    const projectsRowHTML = (!isDone && !editing) ? `
+      <div class="focus5-card-projects">
+        ${(typeof JOBS !== 'undefined' ? JOBS : []).map(j => `
+          <button type="button" class="pick ${currentJobId === j.id ? 'active' : ''}" data-jobpick="${escHtml(j.id)}">
+            <span class="dot" style="background:${j.color}"></span>${escHtml(j.label)}
+          </button>
+        `).join('')}
+        <button type="button" class="pick ${!todo.job ? 'active' : ''}" data-jobpick="">No project</button>
       </div>
     ` : '';
     // Recur badge clutters the cramped edit-mode num column (36px wide). Skip
@@ -8548,6 +8606,7 @@ const VOICE = {
       <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}${recurBadge}</div>
       <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
       ${standardActions}
+      ${projectsRowHTML}
       ${editControlsHTML}
     `;
     // Wire actions
@@ -8569,8 +8628,24 @@ const VOICE = {
       const doneBtn = card.querySelector('[data-act="done"]');
       const raceBtn = card.querySelector('[data-act="race"]');
       const skipBtn = card.querySelector('[data-act="skip"]');
+      const projectBtn = card.querySelector('[data-act="project"]');
       const upBtn = card.querySelector('[data-act="up"]');
       const downBtn = card.querySelector('[data-act="down"]');
+      // Tap project chip → toggle inline picker. Tap a project (or No project)
+      // → update task, close picker.
+      if (projectBtn) projectBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        card.classList.toggle('projects-open');
+      });
+      card.querySelectorAll('[data-jobpick]').forEach(b => {
+        b.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const newJob = b.getAttribute('data-jobpick') || '';
+          try { await updateTodoFields(todo.id, { job: newJob }); } catch {}
+          card.classList.remove('projects-open');
+          render();
+        });
+      });
       if (upBtn) upBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         focus5MoveUp(todo.id);
@@ -9150,11 +9225,26 @@ const VOICE = {
     Object.entries(dailyCounts).forEach(([k, n]) => {
       if (k >= mondayK) doneWeek += Number(n) || 0;
     });
-    // Active = total open todos assigned to user (Personal + ECM-owned).
-    // The ECM sync already filters to the configured owner name, so anything
-    // in `todos` is assigned to me. Just count all not-done items.
+    // Open count = open tasks owned by user. Excludes:
+    //   - Done items (obvs)
+    //   - Routine instances (fromTemplate) — these auto-materialize daily, not
+    //     "things i need to do" in the project-work sense
+    //   - ECM tasks whose owner doesn't match current config (defensive — sync
+    //     already filters but legacy rows from prior syncs can linger)
     let activeWeek = 0;
-    todos.forEach(t => { if (!t.done) activeWeek++; });
+    let ecmOwner = '';
+    try {
+      const cfg = JSON.parse(localStorage.getItem('smartsheets-config') || '{}') || {};
+      ecmOwner = (cfg.owner || '').toLowerCase();
+    } catch {}
+    todos.forEach(t => {
+      if (t.done) return;
+      if (t.fromTemplate) return;
+      if (t.smartsheetRowId && t.smartsheetOwner && ecmOwner) {
+        if (String(t.smartsheetOwner).toLowerCase() !== ecmOwner) return;
+      }
+      activeWeek++;
+    });
     // PRs — running max across all days/weeks of completion counts. Live-updates
     // when today/week beats the stored best.
     let storedPRDay = 0, storedPRWeek = 0;
@@ -9449,30 +9539,49 @@ const VOICE = {
   let _cbDoneCache = null;     // Array of done todos, freshly fetched
   let _cbDateFilter = 'all';   // 'all' | 'today' | 'week' | 'month'
   let _cbJobFilter = 'all';    // 'all' | <jobId>
-  // Lifetime completed count for the Focus 5 pill. Counts ONLY tasks that have
-  // a project assigned — no-project tasks (chores etc.) are intentionally
-  // excluded so the pill reflects real work shipped, not housekeeping.
-  let _completedCountFetching = false;
-  async function _updateCompletedPillCount(){
-    if (_completedCountFetching) return;
-    _completedCountFetching = true;
+  // Rebuilds the daily-done log AND the lifetime completed-with-project count
+  // from Firestore truth. Called on Focus 5 view render so stats stay accurate
+  // even on a fresh device where localStorage is empty.
+  //   - Daily-done log: counts ALL done tasks (including chores) — powers the
+  //     stats bar's done-today / done-week / PR pills
+  //   - Lifetime project count: counts ONLY done tasks WITH a project — powers
+  //     the green Completed pill
+  let _statsRefreshing = false;
+  async function _refreshStatsFromFirestore(){
+    if (_statsRefreshing) return;
+    _statsRefreshing = true;
     try {
       const doneQ = query(todosCol, where('done', '==', true));
       const snap = await getDocs(doneQ);
-      let n = 0;
+      const log = {};
+      let projectDoneCount = 0;
       snap.forEach(d => {
         const t = d.data() || {};
-        if (t.job && String(t.job).trim()) n++;
+        // Stats: group by completion date for done-today / done-week / PRs
+        if (t.completedAt) {
+          let dk = '';
+          try { dk = _ckey(new Date(t.completedAt)); } catch {}
+          if (dk) log[dk] = (log[dk] || 0) + 1;
+        }
+        // Completed pill: only count done tasks with a project
+        if (t.job && String(t.job).trim()) projectDoneCount++;
       });
-      try { localStorage.setItem('personal-completed-lifetime', String(n)); } catch {}
+      try {
+        localStorage.setItem('personal-done-log', JSON.stringify(log));
+        localStorage.setItem('personal-completed-lifetime', String(projectDoneCount));
+      } catch {}
+      // Update DOM directly so user sees fresh numbers without a re-render
+      try { _renderFocusStatsPills(); } catch {}
       const span = document.querySelector('.focus5-tab.completed-pill .ct');
-      if (span) span.textContent = String(n);
+      if (span) span.textContent = String(projectDoneCount);
     } catch (e) {
-      console.error('completed pill count fetch failed', e);
+      console.error('stats refresh failed', e);
     } finally {
-      _completedCountFetching = false;
+      _statsRefreshing = false;
     }
   }
+  // Back-compat alias — older call sites may reach for this name
+  const _updateCompletedPillCount = _refreshStatsFromFirestore;
   async function openCompletedBrowser(){
     const bd = document.getElementById('completedBrowserBackdrop');
     if (!bd) return;
