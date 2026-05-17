@@ -1733,10 +1733,12 @@ body.focus-big-min .focus-big{cursor:pointer}
 .stats-close:hover{color:#fff; background:rgba(255,255,255,.10)}
 .stats-body{
   flex:1; overflow-y:auto;
-  padding:24px 28px 60px;
+  padding:24px 32px 60px;
   display:flex; flex-direction:column; gap:28px;
-  max-width:1100px; margin:0 auto; width:100%; box-sizing:border-box;
+  max-width:1400px; margin:0 auto; width:100%; box-sizing:border-box;
 }
+/* Kill page scroll when stats is open so there's only one scrollbar */
+body.stats-open{overflow:hidden}
 .stats-section h3{
   font-size:11px; font-weight:900; letter-spacing:1.6px;
   text-transform:uppercase;
@@ -2318,7 +2320,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-13-v10-chart-height-backfill -->
+<!-- BUILD: 2026-05-13-v11-noproject-wider -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4674,8 +4676,28 @@ function openStatsModal(){
       });
     });
   } catch {}
-  // Sort: most active (open actions first), then biggest done count
-  projectStats.sort((a, b) => (b.actionsOpen - a.actionsOpen) || (b.doneCount - a.doneCount));
+  // No-project bucket — show tasks completed without any project assigned.
+  // No goal-actions for this bucket (goals always live under a project) but
+  // user wants to see their housekeeping/no-project task count.
+  const noneCount = Number(doneByProject['_none'] || 0);
+  if (noneCount > 0 || projectStats.length === 0) {
+    projectStats.push({
+      id: '_none',
+      name: 'No project',
+      color: '#888',
+      actionsOpen: 0,
+      actionsDone: 0,
+      doneCount: noneCount,
+      isNone: true
+    });
+  }
+  // Sort: most active (open actions first), then biggest done count.
+  // No-project bucket sinks to the bottom regardless since it has no goals.
+  projectStats.sort((a, b) => {
+    if (a.isNone && !b.isNone) return 1;
+    if (b.isNone && !a.isNone) return -1;
+    return (b.actionsOpen - a.actionsOpen) || (b.doneCount - a.doneCount);
+  });
 
   body.innerHTML = `
     <div class="stats-section">
@@ -4781,10 +4803,18 @@ function openStatsModal(){
   `;
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.add('show'); ov.setAttribute('aria-hidden', 'false'); }
+  document.body.classList.add('stats-open');
+  // Nudge personal-todos to refresh its done-by-project log from Firestore
+  // so the next stats render has current numbers. Fire-and-forget.
+  try {
+    const f = document.getElementById('todosFrame');
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'warroom:refresh-stats' }, '*');
+  } catch {}
 }
 function closeStatsModal(){
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.remove('show'); ov.setAttribute('aria-hidden', 'true'); }
+  document.body.classList.remove('stats-open');
 }
 // Initialize the PR Week pill. Very defensive — logs everything so we can
 // diagnose remotely when things don't show up.
