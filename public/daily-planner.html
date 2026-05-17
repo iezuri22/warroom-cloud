@@ -2254,7 +2254,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-13-v6-calbadge-nullsafe -->
+<!-- BUILD: 2026-05-13-v8-daily-time-log -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4300,8 +4300,8 @@ function applyHourGoals(d){
   weekPill.classList.toggle('done', !!d.weeklyDone);
   row.removeAttribute('hidden');
   // PR Week time tracking — bump the stored peak whenever current weekly time
-  // exceeds it. Same for daily PR time. Persisted to localStorage so it sticks
-  // across reloads.
+  // exceeds it. Also log today's running total into a per-day map so we can
+  // reconstruct PR Day across sources (sprint + plain timer combined).
   try {
     let prDayTime = parseInt(localStorage.getItem('personal-pr-day-time-secs') || '0', 10) || 0;
     let prWeekTime = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
@@ -4313,6 +4313,15 @@ function applyHourGoals(d){
       prWeekTime = d.weeklySecs;
       localStorage.setItem('personal-pr-week-time-secs', String(prWeekTime));
     }
+    // Per-day total log — includes plain-timer time, sprint time, and any
+    // other source the hour-goals computation rolls up. Keyed by today's
+    // Chicago date so PR Day/Week stays accurate across reloads.
+    try {
+      const today = _statsDateKey();
+      const log = JSON.parse(localStorage.getItem('personal-daily-time-log') || '{}') || {};
+      log[today] = Math.max(Number(log[today] || 0), Number(d.dailySecs || 0));
+      localStorage.setItem('personal-daily-time-log', JSON.stringify(log));
+    } catch {}
     const prVal = document.getElementById('prWeekVal');
     if (prVal) prVal.textContent = prWeekTime > 0 ? fmtHM(prWeekTime) : '—';
   } catch {}
@@ -4365,17 +4374,28 @@ function _statsBuildDailyTimeFromSprintHistory(){
   });
   return map;
 }
-// Backfill PR Day/Week TIME using sprint-history-v1 — useful when the user has
-// been logging sprints longer than they've had the new tracking turned on.
-// Updates localStorage so the pill + hero card reflect their true peaks.
+// Merge two daily time maps, taking max(sprint, dailyTimeLog) per day. The
+// daily-log captures the hour-goals total (sprint + plain-timer combined),
+// so it's the truer signal — but sprint history reaches farther back. Use
+// the larger of the two per day.
+function _statsCombinedDailyTimeMap(){
+  const sprintMap = _statsBuildDailyTimeFromSprintHistory();
+  let log = {};
+  try { log = JSON.parse(localStorage.getItem('personal-daily-time-log') || '{}') || {}; } catch {}
+  const out = {};
+  Object.keys(sprintMap).forEach(k => { out[k] = Math.max(out[k] || 0, sprintMap[k] || 0); });
+  Object.keys(log).forEach(k => { out[k] = Math.max(out[k] || 0, Number(log[k]) || 0); });
+  return out;
+}
+// Backfill PR Day/Week TIME from the combined daily-time map. Pulls from
+// sprint history AND the per-day hour-goals log so the PR reflects all
+// time-tracking sources, not just sprints.
 function backfillTimePRsFromHistory(){
   try {
-    const dailyMap = _statsBuildDailyTimeFromSprintHistory();
+    const dailyMap = _statsCombinedDailyTimeMap();
     let prDay = parseInt(localStorage.getItem('personal-pr-day-time-secs') || '0', 10) || 0;
     let prWeek = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
-    // Daily PR
     Object.values(dailyMap).forEach(n => { if (n > prDay) prDay = n; });
-    // Weekly PR — bucket by Monday key
     const weeks = {};
     Object.entries(dailyMap).forEach(([dk, n]) => {
       const wk = _statsMondayKey(new Date(dk + 'T12:00:00'));
@@ -4408,8 +4428,8 @@ function openStatsModal(){
     doneTotal += Number(n) || 0;
     if (k >= monKey) doneWeek += Number(n) || 0;
   });
-  // Time-per-day from sprint history (best historical signal we have)
-  const dailyTimeMap = _statsBuildDailyTimeFromSprintHistory();
+  // Time-per-day combined from sprint history + per-day hour-goals log
+  const dailyTimeMap = _statsCombinedDailyTimeMap();
   let timeToday = dailyTimeMap[today] || 0;
   let timeWeek = 0;
   Object.entries(dailyTimeMap).forEach(([k, n]) => { if (k >= monKey) timeWeek += n; });
@@ -4512,14 +4532,19 @@ function openStatsModal(){
       <div class="bar-lbl">${DOW_LBL[i]}</div>
     </div>`).join('');
 
-  // Sprint stats from history
+  // Sprint stats from history. Store shape is { history:[...], currentStreak,
+  // bestStreak } — handle both that and legacy flat-array shape defensively.
   let sprints = [];
-  try { sprints = JSON.parse(localStorage.getItem('sprint-history-v1') || '[]') || []; } catch {}
+  try {
+    const parsed = JSON.parse(localStorage.getItem('sprint-history-v1') || 'null');
+    if (Array.isArray(parsed)) sprints = parsed;
+    else if (parsed && Array.isArray(parsed.history)) sprints = parsed.history;
+  } catch {}
   const sprintTotal = sprints.length;
   let sprintWins = 0, sprintTotalSecs = 0;
   sprints.forEach(s => {
     if (s && (s.won || s.win)) sprintWins++;
-    sprintTotalSecs += Number(s && (s.secs || s.elapsedSecs || s.duration) || 0);
+    sprintTotalSecs += Number(s && (s.actualSeconds || s.secs || s.elapsedSecs || s.duration) || 0);
   });
   const winRate = sprintTotal > 0 ? Math.round((sprintWins / sprintTotal) * 100) : 0;
 
