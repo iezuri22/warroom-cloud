@@ -2254,7 +2254,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-13-v4-pr-cloud-ready -->
+<!-- BUILD: 2026-05-13-v6-calbadge-nullsafe -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4633,42 +4633,65 @@ function closeStatsModal(){
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.remove('show'); ov.setAttribute('aria-hidden', 'true'); }
 }
-// Initialize the PR Week pill — backfill from sprint history once cloud
-// state has arrived (otherwise sync-client silently overwrites localStorage
-// AFTER our backfill, undoing the work). Wire click immediately so the pill
-// works even before cloud arrives.
+// Initialize the PR Week pill. Very defensive — logs everything so we can
+// diagnose remotely when things don't show up.
+console.log('[PR] init script reached');
 (function initPRWeekPill(){
   function refreshPRPillFromStorage(){
     try {
       const v = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
       const el = document.getElementById('prWeekVal');
       if (el) el.textContent = v > 0 ? fmtHM(v) : '—';
-    } catch {}
+      console.log('[PR] pill refreshed, value =', v, 'fmt =', v > 0 ? fmtHM(v) : '—');
+    } catch (e) { console.warn('[PR] refresh failed', e); }
   }
   function runBackfillAndRefresh(){
-    try { backfillTimePRsFromHistory(); } catch (e) { console.warn('PR backfill failed', e); }
+    try {
+      const r = backfillTimePRsFromHistory();
+      console.log('[PR] backfill result:', r);
+    } catch (e) { console.warn('[PR] backfill threw', e); }
     refreshPRPillFromStorage();
   }
-  // Wire the click handler now so it's always responsive
-  try {
-    const pill = document.getElementById('prWeekPill');
-    if (pill) pill.addEventListener('click', openStatsModal);
-  } catch {}
-  // Show whatever's currently in localStorage immediately (might be stale,
-  // we'll refresh after cloud-ready).
+  const pill = document.getElementById('prWeekPill');
+  console.log('[PR] pill element =', pill);
+  if (pill) {
+    pill.addEventListener('click', () => {
+      console.log('[PR] pill clicked');
+      try { openStatsModal(); } catch (e) { console.error('[PR] openStatsModal threw', e); alert('Stats failed: ' + e.message); }
+    });
+  } else {
+    console.error('[PR] pill not found in DOM!');
+  }
   refreshPRPillFromStorage();
-  // Wait for cloud state to land before recomputing PRs from sprint history.
   if (window.__warroomCloudReady) {
+    console.log('[PR] cloud already ready, running backfill now');
     runBackfillAndRefresh();
   } else {
-    document.addEventListener('warroom:cloud-ready', runBackfillAndRefresh, { once: true });
-    // Belt-and-suspenders: if cloud-ready never fires (offline), still try
-    // backfilling after a short delay so the pill isn't stuck on stale data.
+    console.log('[PR] waiting for cloud-ready event');
+    document.addEventListener('warroom:cloud-ready', () => {
+      console.log('[PR] cloud-ready fired');
+      runBackfillAndRefresh();
+    }, { once: true });
     setTimeout(() => {
-      if (!window.__warroomCloudReady) runBackfillAndRefresh();
+      if (!window.__warroomCloudReady) {
+        console.log('[PR] 4s timeout, running backfill anyway');
+        runBackfillAndRefresh();
+      }
     }, 4000);
   }
 })();
+// Also force a backfill 8s after page load as a final safety net, in case
+// any of the above paths got swallowed by a race condition.
+setTimeout(() => {
+  try {
+    console.log('[PR] 8s safety backfill');
+    const r = backfillTimePRsFromHistory();
+    console.log('[PR] safety result:', r);
+    const v = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
+    const el = document.getElementById('prWeekVal');
+    if (el) el.textContent = v > 0 ? fmtHM(v) : '—';
+  } catch (e) { console.warn('[PR] safety backfill threw', e); }
+}, 8000);
 window.addEventListener('message', (ev) => {
   const d = ev && ev.data;
   if (!d || typeof d !== 'object') return;
@@ -7033,8 +7056,10 @@ function updateCalBadge(){
     if(!notes[baseId+'_done'])count++;
   });
   const badge=document.getElementById('calBadge');
-  if(count>0){badge.style.display='flex';badge.textContent=count}
-  else{badge.style.display='none'}
+  if(badge){
+    if(count>0){badge.style.display='flex';badge.textContent=count}
+    else{badge.style.display='none'}
+  }
   // Drawer copy
   const drBadge=document.getElementById('drawerCalBadge');
   if(drBadge){
