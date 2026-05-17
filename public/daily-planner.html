@@ -2254,7 +2254,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-04-15-v3-goals-tab -->
+<!-- BUILD: 2026-05-13-v4-pr-cloud-ready -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4633,17 +4633,41 @@ function closeStatsModal(){
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.remove('show'); ov.setAttribute('aria-hidden', 'true'); }
 }
-// Initialize the PR Week pill — backfill from sprint history first so it
-// reflects historical peaks, not just sessions since tracking turned on.
+// Initialize the PR Week pill — backfill from sprint history once cloud
+// state has arrived (otherwise sync-client silently overwrites localStorage
+// AFTER our backfill, undoing the work). Wire click immediately so the pill
+// works even before cloud arrives.
 (function initPRWeekPill(){
+  function refreshPRPillFromStorage(){
+    try {
+      const v = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
+      const el = document.getElementById('prWeekVal');
+      if (el) el.textContent = v > 0 ? fmtHM(v) : '—';
+    } catch {}
+  }
+  function runBackfillAndRefresh(){
+    try { backfillTimePRsFromHistory(); } catch (e) { console.warn('PR backfill failed', e); }
+    refreshPRPillFromStorage();
+  }
+  // Wire the click handler now so it's always responsive
   try {
-    try { backfillTimePRsFromHistory(); } catch {}
-    const v = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
-    const el = document.getElementById('prWeekVal');
-    if (el) el.textContent = v > 0 ? fmtHM(v) : '—';
     const pill = document.getElementById('prWeekPill');
     if (pill) pill.addEventListener('click', openStatsModal);
   } catch {}
+  // Show whatever's currently in localStorage immediately (might be stale,
+  // we'll refresh after cloud-ready).
+  refreshPRPillFromStorage();
+  // Wait for cloud state to land before recomputing PRs from sprint history.
+  if (window.__warroomCloudReady) {
+    runBackfillAndRefresh();
+  } else {
+    document.addEventListener('warroom:cloud-ready', runBackfillAndRefresh, { once: true });
+    // Belt-and-suspenders: if cloud-ready never fires (offline), still try
+    // backfilling after a short delay so the pill isn't stuck on stale data.
+    setTimeout(() => {
+      if (!window.__warroomCloudReady) runBackfillAndRefresh();
+    }, 4000);
+  }
 })();
 window.addEventListener('message', (ev) => {
   const d = ev && ev.data;
