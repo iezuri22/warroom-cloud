@@ -10130,6 +10130,7 @@ const VOICE = {
       const doneQ = query(todosCol, where('done', '==', true));
       const snap = await getDocs(doneQ);
       const log = {};
+      const byProject = {}; // job ID → lifetime done count
       let projectDoneCount = 0;
       snap.forEach(d => {
         const t = d.data() || {};
@@ -10145,12 +10146,20 @@ const VOICE = {
           dk = String(t.date).slice(0, 10);
         }
         if (dk) log[dk] = (log[dk] || 0) + 1;
+        // Per-project lifetime done — used by the Stats page's "By project"
+        // section in the shell. Migrate legacy job IDs so chips/badges line up.
+        const rawJob = (t.job && String(t.job).trim()) ? t.job : '_none';
+        const job = (typeof migrateJobId === 'function' && rawJob !== '_none')
+          ? migrateJobId(rawJob)
+          : rawJob;
+        byProject[job] = (byProject[job] || 0) + 1;
         // Completed pill: only count done tasks with a project
         if (t.job && String(t.job).trim()) projectDoneCount++;
       });
       try {
         localStorage.setItem('personal-done-log', JSON.stringify(log));
         localStorage.setItem('personal-completed-lifetime', String(projectDoneCount));
+        localStorage.setItem('personal-done-by-project', JSON.stringify(byProject));
       } catch {}
       // Update DOM directly so user sees fresh numbers without a re-render
       try { _renderFocusStatsPills(); } catch {}
