@@ -8119,7 +8119,19 @@ const VOICE = {
   function focus5Tasks(){
     const list = focus5ActiveList();
     if (!list) return [];
-    return list.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
+    // Apply today's skip filter — entries the user skipped today shouldn't
+    // render, but they STAY in taskIds so they reappear tomorrow (especially
+    // important for daily routines).
+    const skipped = _focus5GetSkippedToday();
+    return list.taskIds.map(id => {
+      // Skip if the raw entry was skipped (e.g. 'tpl:xxx' or instance id)
+      if (skipped.has(id)) return null;
+      const t = resolveFocus5TaskId(id);
+      if (!t) return null;
+      // Skip if the resolved instance id was marked skipped
+      if (skipped.has(t.id)) return null;
+      return t;
+    }).filter(Boolean);
   }
   function focus5DoneCount(){ return focus5Tasks().filter(t => t.done).length; }
   // Map an instance id (the kind embedded in card buttons) back to the position
@@ -8157,6 +8169,66 @@ const VOICE = {
     try { rebalancePriorityChain(); } catch {}
     saveFocus5();
     render();
+  }
+  // Skip-for-today: keeps the entry in the list (so it returns tomorrow) but
+  // hides it from today's view. Used by the Skip button on routine cards so
+  // a missed morning routine still shows up the next day. For non-routine
+  // entries, falls back to a hard remove (current Skip semantics).
+  const FOCUS5_SKIP_KEY = 'personal-focus5-skipped';
+  function _focus5LoadSkipMap(){
+    try { return JSON.parse(localStorage.getItem(FOCUS5_SKIP_KEY) || '{}') || {}; } catch { return {}; }
+  }
+  function _focus5SaveSkipMap(m){
+    try { localStorage.setItem(FOCUS5_SKIP_KEY, JSON.stringify(m)); } catch {}
+  }
+  function _focus5GetSkippedToday(){
+    const m = _focus5LoadSkipMap();
+    const today = todayKey();
+    const arr = Array.isArray(m[today]) ? m[today] : [];
+    return new Set(arr);
+  }
+  function _focus5MarkSkippedToday(refOrId){
+    const m = _focus5LoadSkipMap();
+    const today = todayKey();
+    // Prune any non-today buckets so the map stays small
+    Object.keys(m).forEach(k => { if (k !== today) delete m[k]; });
+    const arr = Array.isArray(m[today]) ? m[today] : [];
+    if (!arr.includes(refOrId)) arr.push(refOrId);
+    m[today] = arr;
+    _focus5SaveSkipMap(m);
+  }
+  // Determines if a given list entry (id or 'tpl:' ref) represents a routine.
+  function _focus5IsRoutineEntry(list, taskIdOrInstanceId){
+    // Direct tpl: reference is always a routine
+    const inList = list.taskIds.find(e => e === taskIdOrInstanceId || e === ('tpl:' + (taskIdOrInstanceId.fromTemplate || '')));
+    // Resolve through the entry — find the entry in taskIds first
+    for (const entry of list.taskIds) {
+      if (typeof entry === 'string' && entry.startsWith('tpl:')) {
+        const tplId = entry.slice(4);
+        const inst = todos.find(t => t.fromTemplate === tplId);
+        if (inst && inst.id === taskIdOrInstanceId) return { entry, isRoutine: true };
+        if (entry === taskIdOrInstanceId) return { entry, isRoutine: true };
+      } else if (entry === taskIdOrInstanceId) {
+        const t = todos.find(x => x.id === entry);
+        return { entry, isRoutine: !!(t && t.fromTemplate) };
+      }
+    }
+    return { entry: null, isRoutine: false };
+  }
+  function focus5SkipOrRemove(taskId){
+    const list = focus5ActiveList(); if (!list) return;
+    const info = _focus5IsRoutineEntry(list, taskId);
+    if (info.isRoutine && info.entry) {
+      // Routine — skip for today only, keep the entry so it returns tomorrow.
+      // Stash both the entry (could be 'tpl:xxx') AND the instance id so the
+      // render filter catches both forms.
+      _focus5MarkSkippedToday(info.entry);
+      if (info.entry !== taskId) _focus5MarkSkippedToday(taskId);
+      render();
+    } else {
+      // One-off task — hard remove (the existing Skip semantic).
+      focus5Remove(taskId);
+    }
   }
   function focus5SetEditMode(on){
     _focus5EditMode = !!on;
@@ -9105,9 +9177,9 @@ const VOICE = {
       });
       if (skipBtn) skipBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Remove from the active focus list only — task stays in Personal so
-        // user can pick it again later or address it on a different day.
-        try { focus5Remove(todo.id); } catch {}
+        // Routine → skip for today only (returns tomorrow).
+        // One-off → hard remove from the list (existing Skip semantic).
+        try { focus5SkipOrRemove(todo.id); } catch {}
       });
       if (raceBtn) raceBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -10648,7 +10720,7 @@ const VOICE = {
             try { openRaceOverlay(todo); } catch {}
           }
         } else if (act === 'skip') {
-          try { focus5Remove(tid); } catch {}
+          try { focus5SkipOrRemove(tid); } catch {}
           showPriorityConfirm(true);
         } else if (act === 'push-down') {
           const lid = btn.getAttribute('data-list-id');
