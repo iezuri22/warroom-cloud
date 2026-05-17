@@ -1846,15 +1846,22 @@ body.focus-big-min .focus-big{cursor:pointer}
   box-shadow:0 0 14px rgba(255,200,77,.25);
 }
 .stats-chart-bar .bar-val{
-  position:absolute; top:-18px;
-  font-size:10px; font-weight:800; color:rgba(255,255,255,.7);
+  position:absolute; top:-16px; left:50%; transform:translateX(-50%);
+  font-size:9.5px; font-weight:800; color:rgba(255,255,255,.7);
   font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+  background:rgba(15,15,20,.7);
+  padding:1px 4px; border-radius:4px;
+  line-height:1.2;
 }
 .stats-chart-bar .bar-lbl{
-  margin-top:6px;
-  font-size:10px; font-weight:700; color:rgba(255,255,255,.45);
-  letter-spacing:.4px; text-transform:uppercase;
+  position:absolute; bottom:-18px; left:50%; transform:translateX(-50%);
+  font-size:9.5px; font-weight:700; color:rgba(255,255,255,.45);
+  letter-spacing:.3px; text-transform:uppercase;
+  white-space:nowrap;
 }
+/* Add bottom padding to bar container so labels don't get clipped */
+.stats-chart-bars{padding-top:18px; padding-bottom:22px; height:auto; min-height:140px}
 .stats-chart-bar.today .bar-lbl{color:#FFD166}
 
 /* Two-column row */
@@ -1881,6 +1888,63 @@ body.focus-big-min .focus-big{cursor:pointer}
   padding:24px 16px; text-align:center;
   color:rgba(255,255,255,.4);
   font-size:13px; font-weight:600;
+}
+
+/* Per-project breakdown rows */
+.stats-projects{
+  display:flex; flex-direction:column; gap:10px;
+}
+.proj-row{
+  background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:12px;
+  padding:14px 16px;
+}
+.proj-head{
+  display:flex; align-items:center; gap:10px;
+  margin-bottom:10px; flex-wrap:wrap;
+}
+.proj-dot{width:10px; height:10px; border-radius:50%; flex-shrink:0}
+.proj-name{
+  font-size:15px; font-weight:900; color:#fff;
+  letter-spacing:-.01em;
+}
+.proj-summary{
+  margin-left:auto;
+  font-size:11px; font-weight:700; color:rgba(255,255,255,.5);
+  font-variant-numeric:tabular-nums;
+}
+.proj-bars{display:flex; flex-direction:column; gap:6px}
+.proj-bar{
+  display:grid; grid-template-columns:130px 1fr 40px; gap:10px;
+  align-items:center;
+}
+.proj-bar-lbl{
+  font-size:10px; font-weight:800; letter-spacing:1.1px;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.5);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.proj-bar-track{
+  height:8px; border-radius:99px;
+  background:rgba(255,255,255,.06);
+  overflow:hidden;
+}
+.proj-bar-fill{
+  height:100%; border-radius:99px;
+  transition:width .4s ease-out;
+}
+.proj-bar-fill.done{background:linear-gradient(90deg,#4ADE80,#22C55E)}
+.proj-bar-fill.tasks{background:linear-gradient(90deg,#6BA8FF,#3B82F6)}
+.proj-bar-val{
+  text-align:right;
+  font-size:13px; font-weight:900; color:#fff;
+  font-variant-numeric:tabular-nums;
+}
+@media (max-width:560px){
+  .proj-bar{grid-template-columns:110px 1fr 32px; gap:8px}
+  .proj-bar-lbl{font-size:9px; letter-spacing:.8px}
+  .proj-summary{width:100%; margin-left:0; order:3}
 }
 
 @media (max-width:900px){
@@ -2254,7 +2318,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-13-v8-daily-time-log -->
+<!-- BUILD: 2026-05-13-v9-pr-dates-by-project -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4453,6 +4517,53 @@ function openStatsModal(){
   const prDayTime = num('personal-pr-day-time-secs');
   const prWeekTime = num('personal-pr-week-time-secs');
   const lifetimeProjectDone = num('personal-completed-lifetime');
+  // Compute WHEN each PR happened by scanning the underlying logs. Done by
+  // date scans the done-log for the day with the highest count; same for time.
+  function _fmtPRDate(dk){
+    if (!dk) return '—';
+    try {
+      const d = new Date(dk + 'T12:00:00');
+      const opts = { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' };
+      return d.toLocaleDateString('en-US', opts);
+    } catch { return dk; }
+  }
+  function _fmtPRWeek(monKey){
+    if (!monKey) return '—';
+    try {
+      const d = new Date(monKey + 'T12:00:00');
+      const end = new Date(d); end.setDate(end.getDate() + 6);
+      const m = (x) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return `Week of ${m(d)}`;
+    } catch { return monKey; }
+  }
+  // PR Day TIME date — find the day in dailyTimeMap matching prDayTime
+  let prDayTimeDate = '';
+  Object.entries(dailyTimeMap).forEach(([dk, n]) => { if (n === prDayTime && !prDayTimeDate) prDayTimeDate = dk; });
+  // PR Week TIME date — sum dailyTimeMap by week and find max
+  let prWeekTimeMonday = '';
+  {
+    const weeks = {};
+    Object.entries(dailyTimeMap).forEach(([dk, n]) => {
+      const wk = _statsMondayKey(new Date(dk + 'T12:00:00'));
+      if (!wk) return;
+      weeks[wk] = (weeks[wk] || 0) + n;
+    });
+    Object.entries(weeks).forEach(([wk, n]) => { if (n === prWeekTime && !prWeekTimeMonday) prWeekTimeMonday = wk; });
+  }
+  // PR Done DAY date — find the day in log matching prDoneDay
+  let prDoneDayDate = '';
+  Object.entries(log).forEach(([dk, n]) => { if (n === prDoneDay && !prDoneDayDate) prDoneDayDate = dk; });
+  // PR Done WEEK date — bucket log by week, find max
+  let prDoneWeekMonday = '';
+  {
+    const weeks = {};
+    Object.entries(log).forEach(([dk, n]) => {
+      const wk = _statsMondayKey(new Date(dk + 'T12:00:00'));
+      if (!wk) return;
+      weeks[wk] = (weeks[wk] || 0) + (Number(n) || 0);
+    });
+    Object.entries(weeks).forEach(([wk, n]) => { if (n === prDoneWeek && !prDoneWeekMonday) prDoneWeekMonday = wk; });
+  }
   // Update PR Week pill immediately
   try {
     const prEl = document.getElementById('prWeekVal');
@@ -4532,38 +4643,38 @@ function openStatsModal(){
       <div class="bar-lbl">${DOW_LBL[i]}</div>
     </div>`).join('');
 
-  // Sprint stats from history. Store shape is { history:[...], currentStreak,
-  // bestStreak } — handle both that and legacy flat-array shape defensively.
-  let sprints = [];
-  try {
-    const parsed = JSON.parse(localStorage.getItem('sprint-history-v1') || 'null');
-    if (Array.isArray(parsed)) sprints = parsed;
-    else if (parsed && Array.isArray(parsed.history)) sprints = parsed.history;
-  } catch {}
-  const sprintTotal = sprints.length;
-  let sprintWins = 0, sprintTotalSecs = 0;
-  sprints.forEach(s => {
-    if (s && (s.won || s.win)) sprintWins++;
-    sprintTotalSecs += Number(s && (s.actualSeconds || s.secs || s.elapsedSecs || s.duration) || 0);
-  });
-  const winRate = sprintTotal > 0 ? Math.round((sprintWins / sprintTotal) * 100) : 0;
-
-  // Goals counts (best-effort, may be empty)
-  let goalsActive = 0, goalsShipped = 0;
+  // Per-project breakdown — pulls from goal-board-v2 (project = board).
+  // For each project, count goal action items open vs done + the project's
+  // share of the lifetime done log. Lifetime data is captured in
+  // `personal-done-by-project` (written by personal-todos.toggleTodo).
+  const projectStats = []; // [{ id, name, color, actionsOpen, actionsDone, doneCount }]
+  let totalGoalActionsOpen = 0, totalGoalActionsDone = 0;
+  let doneByProject = {};
+  try { doneByProject = JSON.parse(localStorage.getItem('personal-done-by-project') || '{}') || {}; } catch {}
   try {
     const bd = JSON.parse(localStorage.getItem('goal-board-v2') || '{}');
-    (bd.boards || []).forEach(b => (b.goals || []).forEach(g => {
-      if (g.status === 'dn' || g.completedAt) goalsShipped++;
-      else if (!g.hideFromGoals) goalsActive++;
-    }));
-  } catch {}
-  try {
-    const q = JSON.parse(localStorage.getItem('quarterly-goals-v1') || '{}');
-    (q.goals || []).forEach(g => {
-      if (g.status === 'dn') goalsShipped++;
-      else goalsActive++;
+    const tombstones = new Set(Array.isArray(bd.deletedBoardIds) ? bd.deletedBoardIds : []);
+    (bd.boards || []).filter(b => !tombstones.has(b.id)).forEach(b => {
+      let open = 0, done = 0;
+      (b.goals || []).forEach(g => {
+        (g.actionItems || []).forEach(a => {
+          if (a.done) done++; else open++;
+        });
+      });
+      totalGoalActionsOpen += open;
+      totalGoalActionsDone += done;
+      projectStats.push({
+        id: b.id,
+        name: b.name || 'Untitled',
+        color: b.color || '#888',
+        actionsOpen: open,
+        actionsDone: done,
+        doneCount: Number(doneByProject[b.id] || 0)
+      });
     });
   } catch {}
+  // Sort: most active (open actions first), then biggest done count
+  projectStats.sort((a, b) => (b.actionsOpen - a.actionsOpen) || (b.doneCount - a.doneCount));
 
   body.innerHTML = `
     <div class="stats-section">
@@ -4572,22 +4683,22 @@ function openStatsModal(){
         <div class="stats-hero-card">
           <div class="label">PR Day · Time</div>
           <div class="value">${prDayTime > 0 ? fmtHM(prDayTime) : '—'}</div>
-          <div class="sub">Best single-day time logged</div>
+          <div class="sub">${prDayTimeDate ? 'On ' + _fmtPRDate(prDayTimeDate) : 'Best single-day time logged'}</div>
         </div>
         <div class="stats-hero-card">
           <div class="label">PR Week · Time</div>
           <div class="value">${prWeekTime > 0 ? fmtHM(prWeekTime) : '—'}</div>
-          <div class="sub">Best week of time logged</div>
+          <div class="sub">${prWeekTimeMonday ? _fmtPRWeek(prWeekTimeMonday) : 'Best week of time logged'}</div>
         </div>
         <div class="stats-hero-card">
           <div class="label">PR Day · Shipped</div>
           <div class="value">${prDoneDay}</div>
-          <div class="sub">Most tasks done in one day</div>
+          <div class="sub">${prDoneDayDate ? 'On ' + _fmtPRDate(prDoneDayDate) : 'Most tasks done in one day'}</div>
         </div>
         <div class="stats-hero-card">
           <div class="label">PR Week · Shipped</div>
           <div class="value">${prDoneWeek}</div>
-          <div class="sub">Most tasks done in one week</div>
+          <div class="sub">${prDoneWeekMonday ? _fmtPRWeek(prDoneWeekMonday) : 'Most tasks done in one week'}</div>
         </div>
       </div>
     </div>
@@ -4632,22 +4743,38 @@ function openStatsModal(){
     </div>
 
     <div class="stats-section">
-      <h3>Sprint stats</h3>
+      <h3>Goal tasks</h3>
       <div class="stats-grid">
-        <div class="stats-card purple"><div class="label">Total sprints</div><div class="value">${sprintTotal}</div></div>
-        <div class="stats-card purple"><div class="label">Sprint wins</div><div class="value">${sprintWins}</div></div>
-        <div class="stats-card purple"><div class="label">Win rate</div><div class="value">${winRate}<span class="sub">%</span></div></div>
-        <div class="stats-card purple"><div class="label">Total sprint time</div><div class="value">${fmtHM(sprintTotalSecs)}</div></div>
+        <div class="stats-card"><div class="label">Open goal tasks</div><div class="value">${totalGoalActionsOpen}</div></div>
+        <div class="stats-card green"><div class="label">Shipped goal tasks</div><div class="value">${totalGoalActionsDone}</div></div>
+        <div class="stats-card"><div class="label">Project tasks done</div><div class="value">${lifetimeProjectDone}<span class="sub">excl. no-project</span></div></div>
+        <div class="stats-card"><div class="label">All tasks done</div><div class="value">${doneTotal}</div></div>
       </div>
     </div>
 
     <div class="stats-section">
-      <h3>Goals + lifetime</h3>
-      <div class="stats-grid">
-        <div class="stats-card"><div class="label">Active goals</div><div class="value">${goalsActive}</div></div>
-        <div class="stats-card green"><div class="label">Shipped goals</div><div class="value">${goalsShipped}</div></div>
-        <div class="stats-card"><div class="label">Project tasks done</div><div class="value">${lifetimeProjectDone}<span class="sub">excl. no-project</span></div></div>
-        <div class="stats-card"><div class="label">All tasks done</div><div class="value">${doneTotal}</div></div>
+      <h3>By project</h3>
+      <div class="stats-projects">
+        ${projectStats.length === 0 ? '<div class="stats-empty">No projects with goals yet.</div>' : projectStats.map(p => {
+          const max = Math.max(1, p.actionsOpen + p.actionsDone, p.doneCount);
+          const openPct = ((p.actionsOpen / max) * 100).toFixed(0);
+          const donePct = ((p.actionsDone / max) * 100).toFixed(0);
+          const tasksPct = ((p.doneCount / max) * 100).toFixed(0);
+          return `
+            <div class="proj-row">
+              <div class="proj-head">
+                <span class="proj-dot" style="background:${p.color}"></span>
+                <span class="proj-name">${p.name}</span>
+                <span class="proj-summary">${p.actionsOpen} open · ${p.actionsDone} shipped · ${p.doneCount} task${p.doneCount === 1 ? '' : 's'} done</span>
+              </div>
+              <div class="proj-bars">
+                <div class="proj-bar"><span class="proj-bar-lbl">Open goal tasks</span><div class="proj-bar-track"><div class="proj-bar-fill open" style="width:${openPct}%;background:${p.color}"></div></div><span class="proj-bar-val">${p.actionsOpen}</span></div>
+                <div class="proj-bar"><span class="proj-bar-lbl">Shipped goal tasks</span><div class="proj-bar-track"><div class="proj-bar-fill done" style="width:${donePct}%"></div></div><span class="proj-bar-val">${p.actionsDone}</span></div>
+                <div class="proj-bar"><span class="proj-bar-lbl">Tasks completed</span><div class="proj-bar-track"><div class="proj-bar-fill tasks" style="width:${tasksPct}%"></div></div><span class="proj-bar-val">${p.doneCount}</span></div>
+              </div>
+            </div>
+          `;
+        }).join('')}
       </div>
     </div>
   `;
