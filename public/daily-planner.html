@@ -1700,6 +1700,11 @@ body.focus-big-min .focus-big{cursor:pointer}
   display:none; flex-direction:column; overflow:hidden;
 }
 .stats-overlay.show{display:flex}
+.stats-modal{
+  width:100%; height:100%;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
 .stats-head{
   padding:18px 28px 14px;
   border-bottom:1px solid rgba(255,255,255,.06);
@@ -4333,16 +4338,23 @@ function _statsAddDays(dateKey, n){
     return d.toLocaleDateString('en-CA');
   } catch { return ''; }
 }
-// Reconstruct daily time totals from sprint-history-v1 — every win/loss has a
-// secs field stamped with a completion timestamp. Group by Chicago date.
+// Reconstruct daily time totals from sprint-history-v1. The store is
+// { history: [...], currentStreak, bestStreak }. Each history entry has
+// actualSeconds + completedAt. Group by Chicago date.
 function _statsBuildDailyTimeFromSprintHistory(){
+  let parsed = null;
+  try { parsed = JSON.parse(localStorage.getItem('sprint-history-v1') || 'null'); } catch {}
+  if (!parsed) return {};
+  // Support both shapes: legacy flat array OR the current { history } object
   let arr = [];
-  try { arr = JSON.parse(localStorage.getItem('sprint-history-v1') || '[]') || []; } catch {}
-  if (!Array.isArray(arr)) return {};
+  if (Array.isArray(parsed)) arr = parsed;
+  else if (parsed && Array.isArray(parsed.history)) arr = parsed.history;
+  else return {};
   const map = {};
   arr.forEach(s => {
     if (!s) return;
-    const secs = Number(s.secs || s.elapsedSecs || s.duration || 0) || 0;
+    // Sprint entries store actualSeconds (real time spent), not "secs".
+    const secs = Number(s.actualSeconds || s.secs || s.elapsedSecs || s.duration || 0) || 0;
     if (!secs) return;
     const ts = s.completedAt || s.finishedAt || s.endedAt || s.ts || s.timestamp;
     if (!ts) return;
