@@ -2320,7 +2320,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-13-v11-noproject-wider -->
+<!-- BUILD: 2026-05-17-v12-stats-refresh-postback -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4475,7 +4475,10 @@ function backfillTimePRsFromHistory(){
   } catch (e) { console.warn('backfill PR time failed', e); return { prDay: 0, prWeek: 0 }; }
 }
 
-function openStatsModal(){
+// Internal: builds + writes the stats modal body HTML from current
+// localStorage state. Called by openStatsModal on first open AND again when
+// the personal-todos iframe finishes a fresh Firestore scan and posts back.
+function _renderStatsBody(){
   const body = document.getElementById('statsBody');
   if (!body) return;
   // First: backfill PRs from sprint history so the values reflect real peaks
@@ -4801,17 +4804,43 @@ function openStatsModal(){
       </div>
     </div>
   `;
+}
+// Tracks whether the stats modal is open so the postback handler below knows
+// whether to re-render. Without this guard, stale refresh-postbacks (e.g.,
+// after closing the modal) would keep writing to the hidden body.
+let _statsModalOpen = false;
+function openStatsModal(){
+  const body = document.getElementById('statsBody');
+  if (!body) return;
+  _statsModalOpen = true;
+  // Render once from current localStorage so the modal opens instantly.
+  _renderStatsBody();
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.add('show'); ov.setAttribute('aria-hidden', 'false'); }
   document.body.classList.add('stats-open');
-  // Nudge personal-todos to refresh its done-by-project log from Firestore
-  // so the next stats render has current numbers. Fire-and-forget.
+  // Now ask personal-todos to do a fresh Firestore scan. When it posts back
+  // `warroom:stats-refreshed`, the global listener (below) re-renders.
   try {
     const f = document.getElementById('todosFrame');
     if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'warroom:refresh-stats' }, '*');
   } catch {}
 }
+// Refresh postback handler — fires once the iframe finishes its async
+// Firestore scan and writes fresh localStorage values for done-log,
+// done-by-project, and completed-lifetime. We re-render the visible modal
+// body so per-project counts and "No project" bucket show actual numbers
+// instead of zeros.
+window.addEventListener('message', (ev) => {
+  if (!ev || !ev.data) return;
+  if (ev.data.type !== 'warroom:stats-refreshed') return;
+  if (!_statsModalOpen) return;
+  try {
+    console.log('[STATS] refresh-postback received', ev.data);
+    _renderStatsBody();
+  } catch (e) { console.warn('[STATS] re-render failed', e); }
+});
 function closeStatsModal(){
+  _statsModalOpen = false;
   const ov = document.getElementById('statsOverlay');
   if (ov) { ov.classList.remove('show'); ov.setAttribute('aria-hidden', 'true'); }
   document.body.classList.remove('stats-open');
