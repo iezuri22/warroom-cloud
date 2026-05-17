@@ -10135,12 +10135,18 @@ const VOICE = {
     if (_statsRefreshing) return;
     _statsRefreshing = true;
     try {
-      const doneQ = query(todosCol, where('done', '==', true));
-      const snap = await getDocs(doneQ);
+      // Two scans: done + open. Done powers the lifetime counts; open powers
+      // the new per-project "still open" bar in the Stats page so we can
+      // show open vs closed side-by-side.
+      const [doneSnap, openSnap] = await Promise.all([
+        getDocs(query(todosCol, where('done', '==', true))),
+        getDocs(query(todosCol, where('done', '==', false)))
+      ]);
       const log = {};
       const byProject = {}; // job ID → lifetime done count
+      const openByProject = {}; // job ID → current open count
       let projectDoneCount = 0;
-      snap.forEach(d => {
+      doneSnap.forEach(d => {
         const t = d.data() || {};
         // Stats: group by completion date — prefer completedAt, fall back to
         // t.date for legacy tasks completed before completedAt stamping shipped.
@@ -10164,10 +10170,19 @@ const VOICE = {
         // Completed pill: only count done tasks with a project
         if (t.job && String(t.job).trim()) projectDoneCount++;
       });
+      openSnap.forEach(d => {
+        const t = d.data() || {};
+        const rawJob = (t.job && String(t.job).trim()) ? t.job : '_none';
+        const job = (typeof migrateJobId === 'function' && rawJob !== '_none')
+          ? migrateJobId(rawJob)
+          : rawJob;
+        openByProject[job] = (openByProject[job] || 0) + 1;
+      });
       try {
         localStorage.setItem('personal-done-log', JSON.stringify(log));
         localStorage.setItem('personal-completed-lifetime', String(projectDoneCount));
         localStorage.setItem('personal-done-by-project', JSON.stringify(byProject));
+        localStorage.setItem('personal-open-by-project', JSON.stringify(openByProject));
       } catch {}
       // Update DOM directly so user sees fresh numbers without a re-render
       try { _renderFocusStatsPills(); } catch {}
@@ -10180,6 +10195,7 @@ const VOICE = {
           window.parent.postMessage({
             type: 'warroom:stats-refreshed',
             byProjectKeys: Object.keys(byProject).length,
+            openByProjectKeys: Object.keys(openByProject).length,
             noneCount: Number(byProject._none || 0),
             totalDone: Object.values(log).reduce((a, b) => a + (Number(b) || 0), 0)
           }, '*');

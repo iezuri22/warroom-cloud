@@ -1936,8 +1936,10 @@ body.stats-open{overflow:hidden}
   height:100%; border-radius:99px;
   transition:width .4s ease-out;
 }
+.proj-bar-fill.open{background:linear-gradient(90deg,#FF8A3D,#F97316)}
 .proj-bar-fill.done{background:linear-gradient(90deg,#4ADE80,#22C55E)}
 .proj-bar-fill.tasks{background:linear-gradient(90deg,#6BA8FF,#3B82F6)}
+.proj-bar-fill.goal{height:100%; border-radius:99px}
 .proj-bar-val{
   text-align:right;
   font-size:13px; font-weight:900; color:#fff;
@@ -2320,7 +2322,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
-<!-- BUILD: 2026-05-17-v12-stats-refresh-postback -->
+<!-- BUILD: 2026-05-17-v13-open-vs-done-by-project -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
@@ -4649,14 +4651,18 @@ function _renderStatsBody(){
       <div class="bar-lbl">${DOW_LBL[i]}</div>
     </div>`).join('');
 
-  // Per-project breakdown — pulls from goal-board-v2 (project = board).
-  // For each project, count goal action items open vs done + the project's
-  // share of the lifetime done log. Lifetime data is captured in
-  // `personal-done-by-project` (written by personal-todos.toggleTodo).
-  const projectStats = []; // [{ id, name, color, actionsOpen, actionsDone, doneCount }]
+  // Per-project breakdown — for each project show OPEN vs DONE so user can
+  // compare backlog to throughput at a glance. Data sources:
+  //   - personal-open-by-project   → current open todos with this job ID
+  //   - personal-done-by-project   → lifetime done todos with this job ID
+  //   - goal-board-v2              → goal-actions open/done (separate metric)
+  const projectStats = []; // [{ id, name, color, openCount, doneCount, actionsOpen, actionsDone, isNone }]
   let totalGoalActionsOpen = 0, totalGoalActionsDone = 0;
-  let doneByProject = {};
+  let doneByProject = {}, openByProject = {};
   try { doneByProject = JSON.parse(localStorage.getItem('personal-done-by-project') || '{}') || {}; } catch {}
+  try { openByProject = JSON.parse(localStorage.getItem('personal-open-by-project') || '{}') || {}; } catch {}
+  // Build project list from goal-board boards. Each board is a project.
+  const seenProjectIds = new Set();
   try {
     const bd = JSON.parse(localStorage.getItem('goal-board-v2') || '{}');
     const tombstones = new Set(Array.isArray(bd.deletedBoardIds) ? bd.deletedBoardIds : []);
@@ -4669,37 +4675,60 @@ function _renderStatsBody(){
       });
       totalGoalActionsOpen += open;
       totalGoalActionsDone += done;
+      seenProjectIds.add(b.id);
       projectStats.push({
         id: b.id,
         name: b.name || 'Untitled',
         color: b.color || '#888',
+        openCount: Number(openByProject[b.id] || 0),
+        doneCount: Number(doneByProject[b.id] || 0),
         actionsOpen: open,
-        actionsDone: done,
-        doneCount: Number(doneByProject[b.id] || 0)
+        actionsDone: done
       });
     });
   } catch {}
-  // No-project bucket — show tasks completed without any project assigned.
-  // No goal-actions for this bucket (goals always live under a project) but
-  // user wants to see their housekeeping/no-project task count.
-  const noneCount = Number(doneByProject['_none'] || 0);
-  if (noneCount > 0 || projectStats.length === 0) {
+  // Stray project IDs in the data (e.g. tasks tagged with a job that has no
+  // board) — surface them so we don't hide work. Common case: built-in jobs
+  // like 'ecm' that aren't boards but show up everywhere else.
+  const strayIds = new Set();
+  Object.keys(openByProject).forEach(k => { if (k !== '_none' && !seenProjectIds.has(k)) strayIds.add(k); });
+  Object.keys(doneByProject).forEach(k => { if (k !== '_none' && !seenProjectIds.has(k)) strayIds.add(k); });
+  // Friendly labels for built-in / common job IDs that don't map to a board.
+  const JOB_LABELS = { ecm: 'ECM', work: 'Work', vitaltouch: 'VitalTouch', personal: 'Personal' };
+  const JOB_COLORS = { ecm: '#6BA8FF', work: '#FFC84D', vitaltouch: '#4ADE80', personal: '#C084FC' };
+  strayIds.forEach(id => {
+    projectStats.push({
+      id,
+      name: JOB_LABELS[id] || id.charAt(0).toUpperCase() + id.slice(1),
+      color: JOB_COLORS[id] || '#888',
+      openCount: Number(openByProject[id] || 0),
+      doneCount: Number(doneByProject[id] || 0),
+      actionsOpen: 0,
+      actionsDone: 0
+    });
+  });
+  // No-project bucket — tasks completed without a project assigned.
+  const noneDone = Number(doneByProject['_none'] || 0);
+  const noneOpen = Number(openByProject['_none'] || 0);
+  if (noneDone > 0 || noneOpen > 0 || projectStats.length === 0) {
     projectStats.push({
       id: '_none',
       name: 'No project',
       color: '#888',
+      openCount: noneOpen,
+      doneCount: noneDone,
       actionsOpen: 0,
       actionsDone: 0,
-      doneCount: noneCount,
       isNone: true
     });
   }
-  // Sort: most active (open actions first), then biggest done count.
-  // No-project bucket sinks to the bottom regardless since it has no goals.
+  // Sort: biggest active workload first (open + done), no-project to bottom.
   projectStats.sort((a, b) => {
     if (a.isNone && !b.isNone) return 1;
     if (b.isNone && !a.isNone) return -1;
-    return (b.actionsOpen - a.actionsOpen) || (b.doneCount - a.doneCount);
+    const aTotal = a.openCount + a.doneCount;
+    const bTotal = b.openCount + b.doneCount;
+    return bTotal - aTotal;
   });
 
   body.innerHTML = `
@@ -4782,21 +4811,31 @@ function _renderStatsBody(){
       <h3>By project</h3>
       <div class="stats-projects">
         ${projectStats.length === 0 ? '<div class="stats-empty">No projects with goals yet.</div>' : projectStats.map(p => {
-          const max = Math.max(1, p.actionsOpen + p.actionsDone, p.doneCount);
-          const openPct = ((p.actionsOpen / max) * 100).toFixed(0);
-          const donePct = ((p.actionsDone / max) * 100).toFixed(0);
-          const tasksPct = ((p.doneCount / max) * 100).toFixed(0);
+          // Scale bars against the biggest count in this row so the visual
+          // is honest within a project even when projects have wildly
+          // different volumes.
+          const max = Math.max(1, p.openCount, p.doneCount, p.actionsOpen + p.actionsDone);
+          const openPct = ((p.openCount / max) * 100).toFixed(0);
+          const donePct = ((p.doneCount / max) * 100).toFixed(0);
+          const total = p.openCount + p.doneCount;
+          const closedPct = total > 0 ? Math.round((p.doneCount / total) * 100) : 0;
+          const goalTotal = p.actionsOpen + p.actionsDone;
+          const goalDonePct = goalTotal > 0 ? Math.round((p.actionsDone / goalTotal) * 100) : 0;
+          const goalBarPct = goalTotal > 0 ? ((p.actionsDone / max) * 100).toFixed(0) : '0';
+          const goalLine = goalTotal > 0
+            ? `<div class="proj-bar"><span class="proj-bar-lbl">Goal progress</span><div class="proj-bar-track"><div class="proj-bar-fill goal" style="width:${goalBarPct}%;background:${p.color};opacity:.55"></div></div><span class="proj-bar-val">${p.actionsDone}/${goalTotal} · ${goalDonePct}%</span></div>`
+            : '';
           return `
             <div class="proj-row">
               <div class="proj-head">
                 <span class="proj-dot" style="background:${p.color}"></span>
                 <span class="proj-name">${p.name}</span>
-                <span class="proj-summary">${p.actionsOpen} open · ${p.actionsDone} shipped · ${p.doneCount} task${p.doneCount === 1 ? '' : 's'} done</span>
+                <span class="proj-summary">${p.openCount} open · ${p.doneCount} done${total > 0 ? ' · ' + closedPct + '% closed' : ''}</span>
               </div>
               <div class="proj-bars">
-                <div class="proj-bar"><span class="proj-bar-lbl">Open goal tasks</span><div class="proj-bar-track"><div class="proj-bar-fill open" style="width:${openPct}%;background:${p.color}"></div></div><span class="proj-bar-val">${p.actionsOpen}</span></div>
-                <div class="proj-bar"><span class="proj-bar-lbl">Shipped goal tasks</span><div class="proj-bar-track"><div class="proj-bar-fill done" style="width:${donePct}%"></div></div><span class="proj-bar-val">${p.actionsDone}</span></div>
-                <div class="proj-bar"><span class="proj-bar-lbl">Tasks completed</span><div class="proj-bar-track"><div class="proj-bar-fill tasks" style="width:${tasksPct}%"></div></div><span class="proj-bar-val">${p.doneCount}</span></div>
+                <div class="proj-bar"><span class="proj-bar-lbl">Open tasks</span><div class="proj-bar-track"><div class="proj-bar-fill open" style="width:${openPct}%"></div></div><span class="proj-bar-val">${p.openCount}</span></div>
+                <div class="proj-bar"><span class="proj-bar-lbl">Done tasks</span><div class="proj-bar-track"><div class="proj-bar-fill done" style="width:${donePct}%"></div></div><span class="proj-bar-val">${p.doneCount}</span></div>
+                ${goalLine}
               </div>
             </div>
           `;
