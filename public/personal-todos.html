@@ -2946,6 +2946,74 @@
   /* ============ FAB + ADD-TASK SHEET ============
      A small floating "+" button replaces the always-visible bottom add bar.
      Tap to expand a sheet with the input + job + frequency + Add. */
+  /* Big top-right Add button — visible on every Personal view (list AND
+     priorities) so the primary action is always one tap away. Pulls the +Add
+     out of the cramped job-chip strip into its own prominent spot. */
+  .pt-add-top {
+    position: fixed;
+    top: 14px; right: 16px;
+    z-index: 60;
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 20px 0 16px;
+    border-radius: 99px;
+    background: linear-gradient(135deg, #FFA66B, #FF8A3D);
+    border: none;
+    color: #0A0A0F;
+    font-family: inherit; font-size: 15px; font-weight: 900;
+    letter-spacing: .2px;
+    cursor: pointer;
+    box-shadow: 0 10px 28px rgba(255,138,61,.45), 0 1px 0 rgba(255,255,255,.18) inset;
+    transition: transform .15s, box-shadow .15s, filter .15s;
+  }
+  .pt-add-top:hover {
+    transform: translateY(-1px) scale(1.03);
+    box-shadow: 0 14px 36px rgba(255,138,61,.6), 0 1px 0 rgba(255,255,255,.22) inset;
+    filter: brightness(1.05);
+  }
+  .pt-add-top:active { transform: translateY(0) scale(.96) }
+  .pt-add-top svg { stroke: #0A0A0F; stroke-width: 3; width: 18px; height: 18px }
+  @media (max-width: 640px) {
+    .pt-add-top { top: 10px; right: 10px; height: 40px; padding: 0 16px 0 12px; font-size: 14px }
+    .pt-add-top svg { width: 16px; height: 16px }
+  }
+  /* Hide the inline +Add chip in the filter bar — replaced by the big top
+     button. Keeping the CSS rather than tearing out the chip render code
+     means we don't break the chip-bar layout assumptions. */
+  .job-chip.jobs-add-chip { display: none !important; }
+  /* Add-sheet: priority list selector row — picks one of the Focus 5 lists
+     to also drop the new task into. Plays nice with cascade rules. */
+  .add-sheet-priority {
+    display: flex; flex-direction: column; gap: 6px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255,138,61,.06);
+    border: 1px dashed rgba(255,138,61,.28);
+  }
+  .add-sheet-priority-label {
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgba(255,138,61,.85);
+  }
+  .add-sheet-priority-row {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .add-sheet-priority-btn {
+    padding: 7px 12px; border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.7);
+    font-family: inherit; font-size: 12px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .add-sheet-priority-btn:hover { color: #fff; border-color: rgba(255,138,61,.5) }
+  .add-sheet-priority-btn.active {
+    background: rgba(255,138,61,.22);
+    border-color: #FF8A3D;
+    color: #fff;
+  }
   /* FAB hidden — the sticky + Add chip in the filter bar is the primary path
      and stays visible regardless of scroll position. */
   .add-fab { display: none !important; }
@@ -4217,6 +4285,12 @@
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 </button>
 
+<!-- Big top-right Add button — primary CTA, visible across list + Focus 5 -->
+<button class="pt-add-top" id="ptAddTop" type="button" aria-label="Add a task">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  <span>Add</span>
+</button>
+
 <!-- Add-task sheet (hidden until FAB tapped) -->
 <div class="add-sheet-backdrop" id="addSheetBackdrop"></div>
 <div class="add-sheet" id="addSheet" role="dialog" aria-label="Add task">
@@ -4236,6 +4310,12 @@
         <option value="monthly">Monthly</option>
       </select>
       <button class="add-btn" id="addBtn">Add</button>
+    </div>
+    <!-- Priority-list selector — optionally also drop the new task into one
+         of the Focus 5 priority lists. Empty (none selected) = just add. -->
+    <div class="add-sheet-priority" id="addSheetPriority">
+      <span class="add-sheet-priority-label">Also add to priority list</span>
+      <div class="add-sheet-priority-row" id="addSheetPriorityRow"></div>
     </div>
   </div>
 </div>
@@ -7107,34 +7187,79 @@ const VOICE = {
     }
   }
 
+  // Holds the priority-list selection from the add sheet, so handleAdd can
+  // pull the new task into the right Focus 5 list right after creation.
+  let _addSheetPriorityListId = null;
   async function handleAdd() {
     const input = document.getElementById('todoInput');
     const text = input.value.trim();
     if (!text) return;
     const sel = document.getElementById('freqSelect');
     const freq = sel ? sel.value : 'once';
+    let newTaskId = null;
     if (freq === 'once' || !freq) {
-      addTodoItem(text);
+      newTaskId = await addTodoItem(text);
     } else {
       const opts = Object.assign({ freq }, _mainFreqReader.read());
       // Guard: custom without any picked day → treat as one-off
       if (freq === 'custom' && (!Array.isArray(opts.weekdays) || !opts.weekdays.length)) {
-        addTodoItem(text);
-        input.value = ''; input.focus();
-        return;
-      }
-      const tplId = await addRecurring(text, opts);
-      if (tplId && shouldRecurOn(recurringTasks.find(t => t.id === tplId), dkey(currentDate))) {
-        await materializeRecurringForDay(dkey(currentDate));
-        render();
+        newTaskId = await addTodoItem(text);
+      } else {
+        const tplId = await addRecurring(text, opts);
+        if (tplId && shouldRecurOn(recurringTasks.find(t => t.id === tplId), dkey(currentDate))) {
+          await materializeRecurringForDay(dkey(currentDate));
+          render();
+        }
+        // Find the materialized instance ID so we can also push it onto the
+        // priority list if the user picked one.
+        if (tplId) {
+          const todayD = dkey(currentDate);
+          const inst = todos.find(t => t.fromTemplate === tplId && t.date === todayD && !t.done);
+          if (inst) newTaskId = inst.id;
+        }
       }
     }
+    // Priority-list assignment from the add sheet picker.
+    if (newTaskId && _addSheetPriorityListId) {
+      try { interactiveAddToPriorityList(newTaskId, _addSheetPriorityListId); } catch (e) { console.warn('priority add failed', e); }
+    }
+    _addSheetPriorityListId = null;
     input.value = ''; input.focus();
   }
   // ---- FAB / Add-task sheet ----
+  function _renderAddSheetPriorityPicker(){
+    const row = document.getElementById('addSheetPriorityRow');
+    const wrap = document.getElementById('addSheetPriority');
+    if (!row || !wrap) return;
+    // Only show the priority picker if there are priority lists set up.
+    const lists = (typeof getPriorityLists === 'function') ? getPriorityLists() : (focus5State && focus5State.lists ? focus5State.lists.filter(l => !l.routine) : []);
+    if (!lists || lists.length === 0) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    const noneBtn = `<button type="button" class="add-sheet-priority-btn ${!_addSheetPriorityListId ? 'active' : ''}" data-list-id="">None</button>`;
+    const btns = lists.map(l => {
+      const filled = (l.taskIds || []).filter(id => {
+        // Count only IDs that resolve to real (non-done) tasks.
+        return todos.find(t => t.id === id && !t.done);
+      }).length;
+      const isActive = _addSheetPriorityListId === l.id;
+      return `<button type="button" class="add-sheet-priority-btn ${isActive ? 'active' : ''}" data-list-id="${escHtml(l.id)}">${escHtml(l.name || 'List')} <span style="opacity:.55;margin-left:4px;font-weight:700">${filled}/5</span></button>`;
+    }).join('');
+    row.innerHTML = noneBtn + btns;
+    row.querySelectorAll('[data-list-id]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.getAttribute('data-list-id') || '';
+        _addSheetPriorityListId = id || null;
+        _renderAddSheetPriorityPicker(); // re-render to update active state
+      });
+    });
+  }
   function openAddSheet(){
     const bd = document.getElementById('addSheetBackdrop');
     if (bd) bd.classList.add('show');
+    // Reset priority pick each time the sheet opens so a stale choice from a
+    // prior add doesn't silently bind the next task to a list.
+    _addSheetPriorityListId = null;
+    _renderAddSheetPriorityPicker();
     setTimeout(() => {
       const inp = document.getElementById('todoInput');
       if (inp) inp.focus();
@@ -7148,7 +7273,9 @@ const VOICE = {
     const fab = document.getElementById('addFab');
     const bd = document.getElementById('addSheetBackdrop');
     const closeBtn = document.getElementById('addSheetClose');
+    const topBtn = document.getElementById('ptAddTop');
     if (fab) fab.addEventListener('click', openAddSheet);
+    if (topBtn) topBtn.addEventListener('click', openAddSheet);
     if (bd) bd.addEventListener('click', closeAddSheet);
     if (closeBtn) closeBtn.addEventListener('click', closeAddSheet);
     document.addEventListener('keydown', (e) => {
