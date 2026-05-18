@@ -2270,6 +2270,42 @@
     border-color: rgba(74,222,128,.18);
   }
   .pc-slot.done .pc-slot-text { color: rgba(255,255,255,.5); opacity: .8 }
+  /* Drag-reorder affordance + states. The grip on the left invites the
+     drag; the dragging slot half-fades and ghosts; the drop target gets
+     an orange outline so it's unambiguous where the slot will land. */
+  .pc-slot-grip {
+    width: 22px; min-width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: rgba(255,255,255,.35);
+    cursor: grab;
+    touch-action: none;
+    transition: color .15s;
+    user-select: none;
+  }
+  .pc-slot-grip:hover { color: rgba(255,138,61,.85) }
+  .pc-slot.dragging {
+    opacity: .35;
+    transform: scale(.98);
+    transition: none;
+  }
+  .pc-slot.drag-over {
+    border-color: #FF8A3D !important;
+    box-shadow: 0 0 0 2px rgba(255,138,61,.35);
+  }
+  .pc-slot-floater {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    border-radius: 14px;
+    background: rgba(255,138,61,.18);
+    border: 1px solid #FF8A3D;
+    color: #fff;
+    padding: 10px 14px;
+    font-size: 14px; font-weight: 800;
+    box-shadow: 0 16px 36px rgba(0,0,0,.45);
+    max-width: 320px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .pc-slot-head {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px;
@@ -10938,6 +10974,9 @@ const VOICE = {
         <div class="pc-slot ${cardCls}" data-list-id="${list.id}" data-slot-idx="${i}" data-task-id="${t.id}">
           <div class="pc-slot-head">
             <span class="pc-slot-eyebrow">${eyebrow} · #${i + 1}</span>
+            <span class="pc-slot-grip" data-grip="${escHtml(String(t.id))}" title="Drag to reorder" aria-label="Drag to reorder">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="15" cy="18" r="1.2"/></svg>
+            </span>
             ${t.done ? '<span class="pc-slot-check"></span>' : ''}
           </div>
           <div class="pc-slot-text">${escHtml(t.text || '(no title)')}</div>
@@ -11073,8 +11112,104 @@ const VOICE = {
         }
       });
     });
+    // Wire drag-reorder on the slots. Pointer events handle desktop AND
+    // mobile in one path. Drag only within the same list — cross-list moves
+    // are handled by the "push down" button instead.
+    _wirePcSlotDrag(body);
     bd.classList.add('show');
     bd.setAttribute('aria-hidden', 'false');
+  }
+  // Pointer-event-based drag reordering for priority-confirm slots. Listens on
+  // the grip handle so dragging doesn't fight with the action buttons or the
+  // empty-slot tap-to-pick. Updates focus5State.lists[*].taskIds on drop.
+  function _wirePcSlotDrag(root){
+    let dragState = null;
+    function buildFloater(text){
+      const f = document.createElement('div');
+      f.className = 'pc-slot-floater';
+      f.textContent = text || '(no title)';
+      document.body.appendChild(f);
+      return f;
+    }
+    function moveFloater(f, x, y){
+      if (!f) return;
+      f.style.left = (x + 14) + 'px';
+      f.style.top = (y + 14) + 'px';
+    }
+    function targetFromPoint(x, y, listId){
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      const slot = el.closest('.pc-slot');
+      if (!slot) return null;
+      if (slot.getAttribute('data-list-id') !== listId) return null; // same-list only
+      return slot;
+    }
+    function clearDragOver(){
+      root.querySelectorAll('.pc-slot.drag-over').forEach(el => el.classList.remove('drag-over'));
+    }
+    root.querySelectorAll('[data-grip]').forEach(grip => {
+      grip.addEventListener('pointerdown', (e) => {
+        // Only left-button / single-finger drags
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        const slot = grip.closest('.pc-slot');
+        if (!slot) return;
+        const listId = slot.getAttribute('data-list-id');
+        const taskId = slot.getAttribute('data-task-id');
+        if (!listId || !taskId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try { grip.setPointerCapture(e.pointerId); } catch {}
+        const text = (slot.querySelector('.pc-slot-text')?.textContent || '').trim();
+        dragState = {
+          pointerId: e.pointerId,
+          listId,
+          taskId,
+          slot,
+          floater: buildFloater(text)
+        };
+        slot.classList.add('dragging');
+        moveFloater(dragState.floater, e.clientX, e.clientY);
+      });
+      grip.addEventListener('pointermove', (e) => {
+        if (!dragState || dragState.pointerId !== e.pointerId) return;
+        e.preventDefault();
+        moveFloater(dragState.floater, e.clientX, e.clientY);
+        clearDragOver();
+        const tgt = targetFromPoint(e.clientX, e.clientY, dragState.listId);
+        if (tgt && tgt !== dragState.slot) tgt.classList.add('drag-over');
+      });
+      const finish = (e) => {
+        if (!dragState || dragState.pointerId !== e.pointerId) return;
+        const tgt = targetFromPoint(e.clientX, e.clientY, dragState.listId);
+        clearDragOver();
+        dragState.slot.classList.remove('dragging');
+        try { grip.releasePointerCapture(e.pointerId); } catch {}
+        if (dragState.floater) { try { dragState.floater.remove(); } catch {} }
+        if (tgt && tgt !== dragState.slot) {
+          // Reorder the underlying taskIds. Insert dragged task at target's
+          // slot index, shifting others. Empty target slots are allowed —
+          // dropping there places the task at that index.
+          const list = focus5State.lists.find(l => l.id === dragState.listId);
+          if (list) {
+            const fromIdx = list.taskIds.indexOf(dragState.taskId);
+            const toIdx = parseInt(tgt.getAttribute('data-slot-idx') || '0', 10);
+            if (fromIdx >= 0 && fromIdx !== toIdx) {
+              const [moved] = list.taskIds.splice(fromIdx, 1);
+              // Re-clamp target — if user dragged from a low index to a high
+              // index, the array just shrank; clamp so we don't go past end.
+              const clamped = Math.max(0, Math.min(toIdx, list.taskIds.length));
+              list.taskIds.splice(clamped, 0, moved);
+              saveFocus5();
+              try { render(); } catch {}
+              try { showPriorityConfirm(true); } catch {}
+            }
+          }
+        }
+        dragState = null;
+      };
+      grip.addEventListener('pointerup', finish);
+      grip.addEventListener('pointercancel', finish);
+    });
   }
   function closePriorityConfirm(markConfirmed){
     const bd = document.getElementById('priorityConfirmBackdrop');
