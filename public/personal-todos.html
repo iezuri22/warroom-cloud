@@ -10064,6 +10064,27 @@ const VOICE = {
   function _priorityChain(){
     return focus5State.lists.filter(_isPriorityList);
   }
+  // Enforce the 5-cap on First and Second priority lists. If a list (or any
+  // list later in the chain) has more than 5 tasks, the bottom item bumps
+  // to the end of the next priority list. The LAST priority list in the
+  // chain is uncapped — overflow accumulates there. Safe to call after any
+  // mutation that might push a list past 5 (drag, add, manual edit).
+  function _cascadePriorityOverflow(startingList){
+    const chain = _priorityChain();
+    if (chain.length === 0) return;
+    // Find the chain index for the list we mutated, then walk forward
+    // cascading bottoms until everything except the last list is ≤ 5.
+    let idx = chain.findIndex(l => l === startingList);
+    if (idx < 0) return; // not a priority list (e.g. a routine list)
+    while (idx < chain.length - 1) {
+      const cur = chain[idx];
+      while (cur.taskIds.length > 5) {
+        const overflow = cur.taskIds.pop();
+        chain[idx + 1].taskIds.push(overflow);
+      }
+      idx++;
+    }
+  }
   // Returns the Chicago YYYY-MM-DD key for a given Date.
   function _ckey(d){
     return (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
@@ -11232,6 +11253,12 @@ const VOICE = {
               if (srcList === tgtList && fromIdx < toIdx) toIdx = Math.max(0, toIdx);
               const clamped = Math.max(0, Math.min(toIdx, tgtList.taskIds.length));
               tgtList.taskIds.splice(clamped, 0, moved);
+              // Cascade overflow: First and Second priority lists cap at 5.
+              // If a drop into one of them pushes it past 5, the bottom task
+              // gets bumped to the END of the next priority list. Repeat
+              // down the chain. Only the LAST priority list (Third) is
+              // allowed to grow past 5 — overflow piles up there.
+              _cascadePriorityOverflow(tgtList);
               saveFocus5();
               try { render(); } catch {}
               try { showPriorityConfirm(true); } catch {}
