@@ -1149,6 +1149,50 @@
     cursor: pointer; transition: border-color .15s, background .15s;
     min-width: 0;
   }
+  /* Manual add row at the top of the picker — type a new task and add+select
+     in one shot. Spans both columns so it's the first thing you see. */
+  .focus5-picker-manual {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-radius: 14px;
+    background: rgba(255,138,61,.06);
+    border: 1px dashed rgba(255,138,61,.32);
+    margin-bottom: 4px;
+  }
+  .focus5-picker-manual:focus-within {
+    background: rgba(255,138,61,.10);
+    border-color: rgba(255,138,61,.6);
+    border-style: solid;
+  }
+  .focus5-picker-manual input {
+    flex: 1;
+    background: transparent;
+    border: none; outline: none;
+    color: #fff;
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    padding: 4px 0;
+  }
+  .focus5-picker-manual input::placeholder { color: rgba(255,255,255,.4) }
+  .focus5-picker-manual-icon {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,138,61,.18);
+    color: #FF8A3D;
+    flex-shrink: 0;
+  }
+  .focus5-picker-manual-btn {
+    padding: 8px 14px; border-radius: 99px;
+    background: rgba(255,138,61,.18);
+    border: 1px solid rgba(255,138,61,.45);
+    color: #FF8A3D;
+    font-family: inherit; font-size: 12px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .15s;
+    flex-shrink: 0;
+  }
+  .focus5-picker-manual-btn:hover:not(:disabled) { background: rgba(255,138,61,.3); color: #fff }
+  .focus5-picker-manual-btn:disabled { opacity: .35; cursor: not-allowed }
   .focus5-picker-row:hover { border-color: rgba(255,138,61,.25); background: rgba(255,255,255,.05) }
   .focus5-picker-row.selected {
     background: rgba(255,138,61,.12);
@@ -7376,15 +7420,44 @@ const VOICE = {
         throw new Error('Required columns not found (Task Name, Owner, Status).');
       }
       const ownerName = (c.owner || '').toLowerCase();
-      const incomplete = (sheet.rows || []).filter(r => {
+      // Two views of the same sheet:
+      //   incomplete         — owner's still-open rows (drives new-task creation)
+      //   byRowIdAllStatuses — every row keyed by id, used to detect status flips
+      //                        on rows we previously synced (so Completed in
+      //                        Smartsheets propagates to done=true here).
+      const incomplete = [];
+      const byRowIdAllStatuses = new Map();
+      (sheet.rows || []).forEach(r => {
         const o = (ssCellValue(r, colOwner.id) || '').toString().toLowerCase();
+        if (o !== ownerName) return;
         const s = (ssCellValue(r, colStatus.id) || '').toString();
-        if (o !== ownerName) return false;
-        return SS_INCOMPLETE_STATUSES.includes(s);
+        byRowIdAllStatuses.set(String(r.id), { row: r, status: s });
+        if (SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
       // Dedupe map: smartsheetRowId → existing todo
       const byRowId = new Map();
       todos.forEach(t => { if (t.smartsheetRowId) byRowId.set(String(t.smartsheetRowId), t); });
+      // Closed-in-Smartsheets propagation — for any local todo we previously
+      // synced, check the latest Smartsheets status. If it's now Completed (or
+      // Not feasible), mark the local task done. Skip the push-back path
+      // because the source-of-truth is already Smartsheets — we're just
+      // catching up.
+      const SS_CLOSED = new Set(['Completed', 'Not feasible - close ticket']);
+      let closedFromSheet = 0;
+      for (const t of todos) {
+        if (!t.smartsheetRowId || t.done) continue;
+        const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
+        if (!found) continue;
+        if (!SS_CLOSED.has(found.status)) continue;
+        const patch = {
+          done: true,
+          completedAt: new Date().toISOString(),
+          smartsheetStatus: found.status
+        };
+        Object.assign(t, patch);
+        try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
+        closedFromSheet++;
+      }
       let added = 0, updated = 0;
       for (const row of incomplete) {
         const text = (ssCellValue(row, colTask.id) || '').toString().trim();
@@ -7437,6 +7510,7 @@ const VOICE = {
         const parts = [];
         if (added) parts.push(`+${added}`);
         if (updated) parts.push(`~${updated}`);
+        if (closedFromSheet) parts.push(`✓${closedFromSheet}`);
         if (flushed) parts.push(`↑${flushed}`);
         count.textContent = parts.length ? parts.join(' · ') : 'no change';
         count.style.display = '';
@@ -8458,6 +8532,51 @@ const VOICE = {
       });
     }
     body.innerHTML = '';
+    // Manual-add row — type a new task and add it straight to this list
+    // without having to leave the picker. Inherits the active job filter (if
+    // any) so the new task lands in the right project automatically.
+    const manualRow = document.createElement('div');
+    manualRow.className = 'focus5-picker-manual';
+    const manualJob = (_focus5PickerJobFilter && _focus5PickerJobFilter !== 'all') ? _focus5PickerJobFilter : '';
+    const manualJobMeta = manualJob ? (typeof jobMeta === 'function' ? jobMeta(manualJob) : null) : null;
+    const manualJobHint = manualJobMeta
+      ? `<span class="focus5-picker-job" style="background:${manualJobMeta.color}22;color:${manualJobMeta.color}">${escHtml(manualJobMeta.label)}</span>`
+      : '';
+    manualRow.innerHTML = `
+      <span class="focus5-picker-manual-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </span>
+      <input type="text" id="focus5PickerManualInput" placeholder="Add a new task to this list…" maxlength="180" autocomplete="off">
+      ${manualJobHint}
+      <button type="button" class="focus5-picker-manual-btn" id="focus5PickerManualBtn" disabled>Add</button>
+    `;
+    body.appendChild(manualRow);
+    const manualInput = manualRow.querySelector('#focus5PickerManualInput');
+    const manualBtn = manualRow.querySelector('#focus5PickerManualBtn');
+    const doManualAdd = async () => {
+      const text = (manualInput.value || '').trim();
+      if (!text) return;
+      manualBtn.disabled = true;
+      manualInput.disabled = true;
+      try {
+        const newId = await addTodoItem(text, null, manualJob ? { job: manualJob } : undefined);
+        if (newId) {
+          // Select the newly-created task so it lands in this list on save.
+          _focus5PickerSel.push(newId);
+        }
+      } catch (e) { console.warn('manual add failed', e); }
+      manualInput.value = '';
+      renderFocus5Picker();
+      // Re-focus the input so the user can stack adds.
+      setTimeout(() => { try { document.getElementById('focus5PickerManualInput')?.focus(); } catch {} }, 30);
+    };
+    manualInput.addEventListener('input', () => {
+      manualBtn.disabled = !(manualInput.value || '').trim();
+    });
+    manualInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doManualAdd(); }
+    });
+    manualBtn.addEventListener('click', doManualAdd);
     // Routine-aware filter:
     //   Morning/Night list → ONLY recurring tasks (the daily things that make
     //     a routine work).
