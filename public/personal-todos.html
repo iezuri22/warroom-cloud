@@ -2297,6 +2297,10 @@
     border-color: #FF8A3D !important;
     box-shadow: 0 0 0 2px rgba(255,138,61,.35);
   }
+  .pc-list.drag-over {
+    border-color: #FF8A3D !important;
+    box-shadow: 0 0 0 2px rgba(255,138,61,.30);
+  }
   .pc-slot-floater {
     position: fixed;
     z-index: 9999;
@@ -11047,7 +11051,7 @@ const VOICE = {
           : '';
       const canPullRoutines = l.routine !== 'morning' && undoneRoutineCount > 0;
       return `
-        <div class="pc-list" style="--list-color:${PRIORITY_DEFAULTS.find(d => d.name.toLowerCase() === (l.name || '').toLowerCase())?.color || '#FF8A3D'}">
+        <div class="pc-list" data-list-id="${l.id}" style="--list-color:${PRIORITY_DEFAULTS.find(d => d.name.toLowerCase() === (l.name || '').toLowerCase())?.color || '#FF8A3D'}">
           <div class="pc-list-head">
             <span>${escHtml(l.name || 'List')}</span>
             ${routineBadge}
@@ -11141,16 +11145,21 @@ const VOICE = {
       f.style.left = (x + 14) + 'px';
       f.style.top = (y + 14) + 'px';
     }
-    function targetFromPoint(x, y, listId){
+    function targetFromPoint(x, y){
       const el = document.elementFromPoint(x, y);
       if (!el) return null;
+      // First try a slot. Falling back to a .pc-list lets the user drop on
+      // the empty area of another priority list (e.g. an unfilled list with
+      // no slots rendered as targets) and have it append.
       const slot = el.closest('.pc-slot');
-      if (!slot) return null;
-      if (slot.getAttribute('data-list-id') !== listId) return null; // same-list only
-      return slot;
+      if (slot) return { slot, list: slot.closest('.pc-list') };
+      const list = el.closest('.pc-list');
+      if (list) return { slot: null, list };
+      return null;
     }
     function clearDragOver(){
       root.querySelectorAll('.pc-slot.drag-over').forEach(el => el.classList.remove('drag-over'));
+      root.querySelectorAll('.pc-list.drag-over').forEach(el => el.classList.remove('drag-over'));
     }
     root.querySelectorAll('[data-grip]').forEach(grip => {
       grip.addEventListener('pointerdown', (e) => {
@@ -11180,30 +11189,49 @@ const VOICE = {
         e.preventDefault();
         moveFloater(dragState.floater, e.clientX, e.clientY);
         clearDragOver();
-        const tgt = targetFromPoint(e.clientX, e.clientY, dragState.listId);
-        if (tgt && tgt !== dragState.slot) tgt.classList.add('drag-over');
+        const tgt = targetFromPoint(e.clientX, e.clientY);
+        if (!tgt) return;
+        if (tgt.slot && tgt.slot !== dragState.slot) {
+          tgt.slot.classList.add('drag-over');
+        } else if (!tgt.slot && tgt.list) {
+          // Dropping on the bare list area (no slot under the pointer)
+          tgt.list.classList.add('drag-over');
+        }
       });
       const finish = (e) => {
         if (!dragState || dragState.pointerId !== e.pointerId) return;
-        const tgt = targetFromPoint(e.clientX, e.clientY, dragState.listId);
+        const tgt = targetFromPoint(e.clientX, e.clientY);
         clearDragOver();
         dragState.slot.classList.remove('dragging');
         try { grip.releasePointerCapture(e.pointerId); } catch {}
         if (dragState.floater) { try { dragState.floater.remove(); } catch {} }
-        if (tgt && tgt !== dragState.slot) {
-          // Reorder the underlying taskIds. Insert dragged task at target's
-          // slot index, shifting others. Empty target slots are allowed —
-          // dropping there places the task at that index.
-          const list = focus5State.lists.find(l => l.id === dragState.listId);
-          if (list) {
-            const fromIdx = list.taskIds.indexOf(dragState.taskId);
-            const toIdx = parseInt(tgt.getAttribute('data-slot-idx') || '0', 10);
-            if (fromIdx >= 0 && fromIdx !== toIdx) {
-              const [moved] = list.taskIds.splice(fromIdx, 1);
-              // Re-clamp target — if user dragged from a low index to a high
-              // index, the array just shrank; clamp so we don't go past end.
-              const clamped = Math.max(0, Math.min(toIdx, list.taskIds.length));
-              list.taskIds.splice(clamped, 0, moved);
+        if (tgt && tgt.list) {
+          const srcListId = dragState.listId;
+          // Target list id — slot owns it if present, otherwise the list itself.
+          const tgtListId = tgt.slot
+            ? tgt.slot.getAttribute('data-list-id')
+            : tgt.list.getAttribute('data-list-id') ||
+              // Fall back to parsing from any data attribute inside the list card
+              tgt.list.querySelector('[data-list-id]')?.getAttribute('data-list-id');
+          // Within-list reorder OR cross-list move — both end up here.
+          const srcList = focus5State.lists.find(l => l.id === srcListId);
+          const tgtList = focus5State.lists.find(l => l.id === tgtListId);
+          if (srcList && tgtList) {
+            const fromIdx = srcList.taskIds.indexOf(dragState.taskId);
+            if (fromIdx >= 0) {
+              const [moved] = srcList.taskIds.splice(fromIdx, 1);
+              // Target index: slot index if dropping on a slot, else append.
+              let toIdx;
+              if (tgt.slot) {
+                toIdx = parseInt(tgt.slot.getAttribute('data-slot-idx') || '0', 10);
+              } else {
+                toIdx = tgtList.taskIds.length;
+              }
+              // If we removed from earlier in the same list, the array shrank
+              // so we need to re-clamp.
+              if (srcList === tgtList && fromIdx < toIdx) toIdx = Math.max(0, toIdx);
+              const clamped = Math.max(0, Math.min(toIdx, tgtList.taskIds.length));
+              tgtList.taskIds.splice(clamped, 0, moved);
               saveFocus5();
               try { render(); } catch {}
               try { showPriorityConfirm(true); } catch {}
