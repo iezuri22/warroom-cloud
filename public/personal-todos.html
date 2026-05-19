@@ -704,12 +704,13 @@
   .pt-focus-mini-tab.complete .ct { background: rgba(74,222,128,.16); color: #4ADE80 }
 
   /* ============ FOCUS 5 VIEW — replaces .list contents in focus mode ============ */
-  /* When the body is in Focus 5, hide the job filter bar + ECM status chips.
-     Those filters describe the All list and have nothing to do with the
-     priority lists; surfacing them here just adds noise. */
-  body.in-focus5 #filterBarSlot,
-  body.in-focus5 .job-filter-bar,
-  body.in-focus5 .ecm-status-bar { display: none !important }
+  /* Belt-and-suspenders: also hide the ECM status chip strip whenever Focus 5
+     is on, since focus5-active already hides the rest of the filter bar
+     chrome but the ECM sub-strip is appended separately. */
+  body.focus5-active .ecm-status-bar { display: none !important }
+  /* Tighten the gap between the Focus 5 toggle bar at top and the list strip
+     by collapsing the .list top padding while in focus mode. */
+  body.focus5-active .list { padding-top: 4px !important }
   .focus5-view {
     display: flex; flex-direction: column; gap: 12px;
     padding: 4px 4px 80px;
@@ -1082,6 +1083,22 @@
     text-align: center; padding: 60px 24px 40px;
     display: flex; flex-direction: column; align-items: center; gap: 24px;
   }
+  /* Empty state — tighter than the celebration so the page doesn't feel
+     wasted when you just opened a fresh list. */
+  .focus5-celebrate.focus5-empty {
+    padding: 24px 24px 32px;
+    gap: 16px;
+  }
+  .focus5-celebrate.focus5-empty .focus5-celebrate-title {
+    font-size: 38px;
+  }
+  .focus5-celebrate.focus5-empty .focus5-celebrate-sub {
+    font-size: 14px;
+  }
+  @media (max-width: 600px) {
+    .focus5-celebrate.focus5-empty { padding: 16px 16px 24px }
+    .focus5-celebrate.focus5-empty .focus5-celebrate-title { font-size: 28px }
+  }
   .focus5-celebrate-title {
     font-size: 56px; font-weight: 900; letter-spacing: -.03em;
     background: linear-gradient(135deg, #FF8A3D, #FFB07F);
@@ -1361,6 +1378,33 @@
   }
   .focus5-picker-jobs button.active .ct {
     background: rgba(255,138,61,.22); color: #FF8A3D;
+  }
+  /* Routine/All toggle — only appears when picking for a routine list.
+     Amber tint to read as routine-themed, not a job filter. */
+  .focus5-picker-jobs .focus5-routine-toggle {
+    color: #FFD08A;
+    border-color: rgba(255,184,77,.30);
+    background: rgba(255,184,77,.06);
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .focus5-picker-jobs .focus5-routine-toggle svg { opacity: .85 }
+  .focus5-picker-jobs .focus5-routine-toggle:hover {
+    color: #fff;
+    border-color: rgba(255,184,77,.65);
+  }
+  .focus5-picker-jobs .focus5-routine-toggle.active {
+    background: rgba(255,184,77,.28);
+    border-color: #FFB84D;
+    color: #fff;
+  }
+  .focus5-picker-jobs .focus5-routine-toggle.active .ct {
+    background: rgba(255,184,77,.30); color: #FFB84D;
+  }
+  .focus5-picker-divider {
+    display: inline-block;
+    width: 1px; height: 18px; align-self: center;
+    background: rgba(255,255,255,.10);
+    margin: 0 2px;
   }
   /* Sort row inside picker — sort dropdown + direction toggle */
   .focus5-picker-sort {
@@ -5970,9 +6014,6 @@ const VOICE = {
     const progressFill = document.getElementById('progressFill');
     const progressInfo = document.getElementById('progressInfo');
     const clearBtn = document.getElementById('clearBtn');
-    // Out of Focus 5 — drop the body class so the job filter bar + ECM
-    // status chips show again for normal task views.
-    document.body.classList.remove('in-focus5');
     updateTotalTimeDisplay();
     if (loading) {
       list.innerHTML = '<div class="loading">Loading...</div>';
@@ -8221,6 +8262,10 @@ const VOICE = {
   let _focus5PickerStatusFilter = 'all'; // only used when job filter = ECM
   let _focus5PickerSortBy = 'created';
   let _focus5PickerSortDir = 'desc';
+  // When picking for a routine list, default to showing only recurring
+  // tasks (the daily things that make a routine work). User can toggle to
+  // 'all' if they want to add a one-off morning task.
+  let _focus5PickerRoutineMode = 'routine'; // 'routine' | 'all' — only relevant for routine lists
   let _focus5EditMode = false;        // in-place edit on the focus view
   // Auto-select-by-time runs once per page load. After that, user's manual
   // taps stick — otherwise every render would yank them back to the
@@ -8612,7 +8657,10 @@ const VOICE = {
     const picked = list ? list.taskIds.length : 0;
     const done = tasks.filter(t => t.done).length;
     btn.classList.toggle('active', !!focus5State.active);
-    document.body.classList.toggle('focus5-active', !!focus5State.active && tasks.length > 0);
+    // Focus mode chrome (collapsed mainHead, hidden music + goals + filter bar)
+    // applies whenever Focus 5 is on — including the empty "Pick tasks" state
+    // so the user doesn't see normal-mode chrome behind the Focus 5 toggle.
+    document.body.classList.toggle('focus5-active', !!focus5State.active);
     // Routine pill on the toggle — sun/moon if active list is flagged
     const rPill = document.getElementById('ptFocusRoutinePill');
     if (rPill) {
@@ -8702,6 +8750,8 @@ const VOICE = {
     // Default to newest-first so the freshly-added stuff is at the top.
     _focus5PickerSortBy = 'created';
     _focus5PickerSortDir = 'desc';
+    // Reset to routines-only for routine lists each time the picker opens.
+    _focus5PickerRoutineMode = 'routine';
     if (_focus5PickerListId) {
       const list = focus5State.lists.find(l => l.id === _focus5PickerListId);
       _focus5PickerName = list ? list.name : '';
@@ -8820,14 +8870,19 @@ const VOICE = {
     });
     manualBtn.addEventListener('click', doManualAdd);
     // Routine vs priority list:
-    //   Routine lists (Morning/Night) → ALL non-done tasks. Routines often mix
-    //     recurring (workout, journal) with one-off morning to-dos. The user
-    //     gets to decide what counts as routine; we don't gatekeep.
-    //   Priority lists → hide recurring tasks so the routine work doesn't clog
-    //     the priority queue.
+    //   Routine lists default to recurring-only (the daily things that make a
+    //     routine work). User can toggle to 'all' to mix in one-off morning
+    //     to-dos.
+    //   Priority lists hide recurring tasks so routine work doesn't clog the
+    //     priority queue.
     const isRoutineList = _focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night';
     let basePool = todos.filter(t => !t.done);
-    if (!isRoutineList) basePool = basePool.filter(t => !t.fromTemplate);
+    if (isRoutineList) {
+      if (_focus5PickerRoutineMode === 'routine') basePool = basePool.filter(t => !!t.fromTemplate);
+      // 'all' mode → no filter on fromTemplate
+    } else {
+      basePool = basePool.filter(t => !t.fromTemplate);
+    }
     // Dedupe: recurring tasks materialize daily, so the same template can have
     // multiple pending instances across days. Dedupe by templateId so each
     // routine task shows up once. Also dedupe by text (case/space-insensitive)
@@ -8855,14 +8910,38 @@ const VOICE = {
       JOBS.forEach(j => { counts[j.id] = basePool.filter(t => (t.job || '') === j.id).length; });
       const chips = [{ id: 'all', label: 'All', color: null, count: counts.all }];
       JOBS.forEach(j => chips.push({ id: j.id, label: j.label, color: j.color, count: counts[j.id] || 0 }));
-      jobsWrap.innerHTML = chips.map(c => {
+      // For routine lists, prepend a Routines/All toggle so user can swap
+      // between recurring-only (default) and full pool (to add one-off
+      // morning tasks).
+      let routineToggleHTML = '';
+      if (isRoutineList) {
+        const allNonDone = todos.filter(t => !t.done).length;
+        const recurringOnly = todos.filter(t => !t.done && !!t.fromTemplate).length;
+        routineToggleHTML = `
+          <button type="button" class="focus5-routine-toggle ${_focus5PickerRoutineMode === 'routine' ? 'active' : ''}" data-rmode="routine" title="Show only recurring tasks">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+            Routines<span class="ct">${recurringOnly}</span>
+          </button>
+          <button type="button" class="focus5-routine-toggle ${_focus5PickerRoutineMode === 'all' ? 'active' : ''}" data-rmode="all" title="Include one-off tasks too">
+            All<span class="ct">${allNonDone}</span>
+          </button>
+          <span class="focus5-picker-divider" aria-hidden="true"></span>`;
+      }
+      jobsWrap.innerHTML = routineToggleHTML + chips.map(c => {
         const dot = c.color ? `<span class="dot" style="background:${c.color}"></span>` : '';
         return `<button type="button" class="${_focus5PickerJobFilter === c.id ? 'active' : ''}" data-job="${escHtml(c.id)}">${dot}${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
       }).join('');
-      jobsWrap.querySelectorAll('button').forEach(b => {
+      jobsWrap.querySelectorAll('[data-job]').forEach(b => {
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           _focus5PickerJobFilter = b.dataset.job || 'all';
+          renderFocus5Picker();
+        });
+      });
+      jobsWrap.querySelectorAll('[data-rmode]').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _focus5PickerRoutineMode = b.dataset.rmode || 'routine';
           renderFocus5Picker();
         });
       });
@@ -9161,9 +9240,6 @@ const VOICE = {
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
-    // Body class lets CSS hide the job filter bar + ECM status chips while in
-    // Focus 5 — they're irrelevant when you're staring at the 5 you committed to.
-    document.body.classList.add('in-focus5');
     list.innerHTML = '';
     const activeList = focus5ActiveList();
     const tasks = focus5Tasks();
@@ -9322,7 +9398,7 @@ const VOICE = {
         ? `<button class="focus5-btn" id="focus5RestoreBtn" type="button" style="margin-left:8px;background:rgba(255,138,61,.14);border:1px solid rgba(255,138,61,.45);color:#FF8A3D">Restore ${recoverable.length} priority task${recoverable.length === 1 ? '' : 's'}</button>`
         : '';
       const empty = document.createElement('div');
-      empty.className = 'focus5-celebrate';
+      empty.className = 'focus5-celebrate focus5-empty';
       empty.innerHTML = `
         <div class="focus5-celebrate-title">${escHtml(activeList.name)}</div>
         <div class="focus5-celebrate-sub">No tasks in this list yet. Add up to 5.</div>
