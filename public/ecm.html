@@ -2219,18 +2219,17 @@ function isInternalRow(r){
   if (internalFlags && internalFlags[r.id]) return true;
   return false;
 }
-// Issue filter predicates — keep these named so we can reuse in counts + filter.
-// Dev/report items are tracked on their own tab; don't flag them as data-
-// quality issues on the All rows view.
+// Issue filter predicates — global data-quality flags. Apply to every row
+// regardless of view (No ticket / Missing date are problems anywhere they
+// appear). Only Internal items get a pass since they don't follow the
+// customer ticket flow.
 function isMissingTicket(r){
   if (isInternalRow(r)) return false;
-  if (isDevOrReportRow(r)) return false;
   const t = (r.ticket == null ? '' : String(r.ticket)).trim();
   return !t;
 }
 function isMissingCompletionDate(r){
   if (isInternalRow(r)) return false;
-  if (isDevOrReportRow(r)) return false;
   const closed = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
   const cd = (r.completionDate == null ? '' : String(r.completionDate)).trim();
   return closed && !cd;
@@ -2238,10 +2237,14 @@ function isMissingCompletionDate(r){
 function applyFilters(){
   let pool = rows.slice();
   // Dev + Reporting items live on the dedicated Dev/Reports tab — exclude
-  // them from the All rows / Acks views so per-owner queues don't get
-  // clogged with work that's tracked elsewhere (Talha had a huge queue
-  // because most dev work was assigned to him).
-  pool = pool.filter(r => !isDevOrReportRow(r));
+  // them from the All rows view so per-owner queues don't get clogged with
+  // work that's tracked elsewhere. EXCEPT when the data-quality filters
+  // (No ticket / Missing date) are active — those are global hygiene
+  // problems that need visibility no matter the type.
+  const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__';
+  if (!isIssueFilter) {
+    pool = pool.filter(r => !isDevOrReportRow(r));
+  }
   // Ack view: hide already-acked rows by default so the queue clears as you go.
   // Acked tasks remain visible if filter is on All status (so you can still
   // see them — but the dot indicator only counts unacked).
@@ -2307,18 +2310,22 @@ function applyFilters(){
 
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
-  // Count statuses across rows that match owner + program (the "scope") so
-  // status-chip counts always reflect what you're looking at. Dev/report
-  // items live on their own tab so we exclude them from the scope here.
+  // Status counts scope to non-dev/report rows so the All / Open / per-status
+  // chips reflect just standard ECM work.
   let scoped = rows.filter(r => !isDevOrReportRow(r));
   if (filterOwner) scoped = scoped.filter(r => r.owner === filterOwner);
   if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
+  // Data-quality issue counts scan EVERY row (including dev/report). A
+  // missing ticket or completion date is a problem no matter the type.
+  let issueScope = rows;
+  if (filterOwner) issueScope = issueScope.filter(r => r.owner === filterOwner);
+  if (filterProgram) issueScope = issueScope.filter(r => r.program === filterProgram);
   const counts = {
     all: scoped.length,
     __open__: scoped.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status)).length,
     __parked__: scoped.filter(r => ECM_PARKED_STATUSES.has(r.status)).length,
-    __no_ticket__: scoped.filter(isMissingTicket).length,
-    __no_completion_date__: scoped.filter(isMissingCompletionDate).length
+    __no_ticket__: issueScope.filter(isMissingTicket).length,
+    __no_completion_date__: issueScope.filter(isMissingCompletionDate).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   // Build chip groups: Open statuses → separator → Parked → separator →
