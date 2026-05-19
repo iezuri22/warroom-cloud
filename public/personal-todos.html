@@ -6844,9 +6844,15 @@ const VOICE = {
     }
     // Smartsheets row link — small open-in-new icon next to the ticket pill
     // for any row synced from Smartsheets. Stops propagation so tapping the
-    // icon doesn't toggle the drawer.
-    const ssLinkHTML = todo.smartsheetPermalink
-      ? ` <a class="todo-ss-link" href="${escHtml(todo.smartsheetPermalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+    // icon doesn't toggle the drawer. Uses the row permalink if we have it
+    // (populated on sync); falls back to the sheet URL constructed from
+    // sheetId so the icon always works even before the next sync runs.
+    let ssLinkHref = todo.smartsheetPermalink || '';
+    if (!ssLinkHref && todo.smartsheetSheetId) {
+      ssLinkHref = `https://app.smartsheet.com/sheets/${encodeURIComponent(todo.smartsheetSheetId)}`;
+    }
+    const ssLinkHTML = (todo.smartsheetRowId && ssLinkHref)
+      ? ` <a class="todo-ss-link" href="${escHtml(ssLinkHref)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
       : '';
     // Period pill (morning/afternoon/evening). If it was auto-shifted from
     // an earlier period, show the original alongside.
@@ -7735,6 +7741,20 @@ const VOICE = {
       // catching up.
       const SS_CLOSED = new Set(['Completed', 'Not feasible - close ticket']);
       let closedFromSheet = 0;
+      // Backfill smartsheetPermalink on any synced todo that doesn't have it
+      // yet — older sync runs didn't store the permalink, so the link icon
+      // would otherwise miss until next full update.
+      for (const t of todos) {
+        if (!t.smartsheetRowId) continue;
+        const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
+        if (!found) continue;
+        const perma = (found.row && found.row.permalink) || '';
+        if (perma && !t.smartsheetPermalink) {
+          const patch = { smartsheetPermalink: perma };
+          Object.assign(t, patch);
+          try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
+        }
+      }
       for (const t of todos) {
         if (!t.smartsheetRowId || t.done) continue;
         const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
