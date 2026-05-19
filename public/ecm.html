@@ -388,44 +388,51 @@
     background: rgba(255,255,255,.06);
     color: rgba(255,255,255,.6);
   }
-  /* Filter chip row inside Dev / Reports view — program filter + type filter */
+  /* Dev / Reports filter row — three compact dropdowns + reset, single row.
+     Replaces the chip strip which got noisy with status + program + type all
+     fighting for space. */
   .dr-filters {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 4px 20px 12px;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center;
+    padding: 6px 20px 14px;
   }
-  .dr-filter-chip {
-    padding: 5px 11px; border-radius: 99px;
+  .dr-filter-select {
+    padding: 7px 30px 7px 12px; border-radius: 10px;
     background: rgba(255,255,255,.04);
     border: 1px solid rgba(255,255,255,.10);
-    color: rgba(255,255,255,.7);
+    color: rgba(255,255,255,.85);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .2px;
+    cursor: pointer;
+    outline: none;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.45)' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    transition: border-color .12s, color .12s;
+  }
+  .dr-filter-select:hover { border-color: rgba(255,138,61,.42); color: #fff }
+  .dr-filter-select.active {
+    border-color: #FF8A3D;
+    color: #FF8A3D;
+  }
+  .dr-filter-select option { background: #15151B; color: #fff }
+  .dr-filter-reset {
+    padding: 6px 12px; border-radius: 10px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.55);
     font-family: inherit; font-size: 11px; font-weight: 700;
-    letter-spacing: .25px;
+    letter-spacing: .3px;
     cursor: pointer;
     transition: all .12s;
-    display: inline-flex; align-items: center; gap: 6px;
   }
-  .dr-filter-chip:hover { color: #fff; border-color: rgba(255,138,61,.42) }
-  .dr-filter-chip.active {
-    background: rgba(255,138,61,.18);
-    border-color: #FF8A3D;
-    color: #fff;
-  }
-  .dr-filter-chip .ct {
-    font-size: 10px; font-weight: 900;
-    padding: 1px 6px; border-radius: 99px;
-    background: rgba(255,255,255,.10);
-    color: rgba(255,255,255,.85);
-  }
-  .dr-filter-chip.active .ct {
-    background: rgba(255,255,255,.18);
-    color: #fff;
-  }
-  .dr-filter-sep {
-    display: inline-block;
-    width: 1px; height: 18px;
-    background: rgba(255,255,255,.10);
-    margin: 0 2px;
-    align-self: center;
+  .dr-filter-reset:hover { color: #fff; border-color: rgba(255,255,255,.25) }
+  .dr-filter-meta {
+    margin-left: auto;
+    font-size: 11px; font-weight: 700;
+    color: rgba(255,255,255,.5);
+    letter-spacing: .2px;
   }
 
   /* View toggle (All rows / Acks) */
@@ -2697,23 +2704,24 @@ function updateDevReportsCount(){
   const openDev = rows.filter(r => isDevOrReportRow(r) && r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length;
   el.textContent = openDev > 0 ? String(openDev) : '';
 }
-// Dev/Reports view local filter state. Survives renders but resets when
-// you navigate away — by design; this view is for "what's stale right now"
-// and shouldn't carry yesterday's filters.
-let _drProgramFilter = 'all';
-let _drTypeFilter = 'all';
+// Dev/Reports view local filter state. Resets when you navigate away —
+// this view is for "what's stale right now" and shouldn't carry filters.
+let _drTypeFilter = 'all';     // 'all' | 'dev' | 'report'
+let _drStatusFilter = 'open';  // 'open' | 'all' | <specific status>
+let _drProgramFilter = 'all';  // 'all' | <program name>
 function _wireDrFilters(root){
-  root.querySelectorAll('[data-dr-type]').forEach(b => {
-    b.addEventListener('click', () => {
-      _drTypeFilter = b.getAttribute('data-dr-type') || 'all';
-      renderDevReports();
-    });
-  });
-  root.querySelectorAll('[data-dr-program]').forEach(b => {
-    b.addEventListener('click', () => {
-      _drProgramFilter = b.getAttribute('data-dr-program') || 'all';
-      renderDevReports();
-    });
+  const typeSel = root.querySelector('#drTypeSel');
+  if (typeSel) typeSel.addEventListener('change', () => { _drTypeFilter = typeSel.value || 'all'; renderDevReports(); });
+  const statusSel = root.querySelector('#drStatusSel');
+  if (statusSel) statusSel.addEventListener('change', () => { _drStatusFilter = statusSel.value || 'open'; renderDevReports(); });
+  const programSel = root.querySelector('#drProgramSel');
+  if (programSel) programSel.addEventListener('change', () => { _drProgramFilter = programSel.value || 'all'; renderDevReports(); });
+  const resetBtn = root.querySelector('#drFilterReset');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    _drTypeFilter = 'all';
+    _drStatusFilter = 'open';
+    _drProgramFilter = 'all';
+    renderDevReports();
   });
   root.querySelectorAll('[data-dr-open]').forEach(b => {
     b.addEventListener('click', (e) => {
@@ -2734,13 +2742,20 @@ function _wireDrFilters(root){
 function renderDevReports(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
-  // Filter to dev/report rows. INTENTIONALLY ignore the global owner filter
-  // — this view is a team-wide queue. Also ignore the status chip strip
-  // (limbo includes closed work for context).
-  let pool = rows.filter(isDevOrReportRow);
-  if (_drProgramFilter !== 'all') pool = pool.filter(r => r.program === _drProgramFilter);
+  // INTENTIONALLY ignore the global owner filter — this view is a team-wide
+  // queue. Apply local type / status / program filters instead.
+  const all = rows.filter(isDevOrReportRow);
+  let pool = all.slice();
   if (_drTypeFilter === 'dev') pool = pool.filter(r => devOrReportKind(r) === 'dev');
   else if (_drTypeFilter === 'report') pool = pool.filter(r => devOrReportKind(r) === 'report');
+  // Status filter: 'open' = any non-closed, 'all' = no filter, anything else
+  // = exact status match.
+  if (_drStatusFilter === 'open') {
+    pool = pool.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket');
+  } else if (_drStatusFilter !== 'all') {
+    pool = pool.filter(r => r.status === _drStatusFilter);
+  }
+  if (_drProgramFilter !== 'all') pool = pool.filter(r => r.program === _drProgramFilter);
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
     pool = pool.filter(r =>
@@ -2750,30 +2765,48 @@ function renderDevReports(){
       (r.details || '').toLowerCase().includes(q)
     );
   }
-  // Tallies BEFORE program/type filters so the chip counts stay meaningful
-  // regardless of what's currently selected.
-  const all = rows.filter(isDevOrReportRow);
-  const programCounts = new Map();
-  all.forEach(r => {
-    const p = r.program || '';
-    if (!p) return;
-    programCounts.set(p, (programCounts.get(p) || 0) + 1);
-  });
-  const programs = [...programCounts.entries()].sort((a, b) => b[1] - a[1]);
+  // Counts (from full unfiltered set) for the dropdown labels.
   const devCt = all.filter(r => devOrReportKind(r) === 'dev').length;
   const reportCt = all.filter(r => devOrReportKind(r) === 'report').length;
-  // Build the filter chip row HTML
-  const programChipsHTML = programs.map(([name, ct]) =>
-    `<button type="button" class="dr-filter-chip ${_drProgramFilter === name ? 'active' : ''}" data-dr-program="${escHtml(name)}">${escHtml(name)}<span class="ct">${ct}</span></button>`
+  const programCounts = new Map();
+  const statusCounts = new Map();
+  all.forEach(r => {
+    if (r.program) programCounts.set(r.program, (programCounts.get(r.program) || 0) + 1);
+    if (r.status) statusCounts.set(r.status, (statusCounts.get(r.status) || 0) + 1);
+  });
+  // Open count = non-closed
+  const openCt = all.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length;
+  // Build status options in the canonical SS_STATUSES order so the UI
+  // matches the rest of the app (Requested → To-Do → ... → Completed).
+  const statusOptions = SS_STATUSES.filter(s => statusCounts.has(s)).map(s =>
+    `<option value="${escHtml(s)}" ${_drStatusFilter === s ? 'selected' : ''}>${escHtml(s)} (${statusCounts.get(s)})</option>`
   ).join('');
+  const programs = [...programCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const programOptions = programs.map(([name, ct]) =>
+    `<option value="${escHtml(name)}" ${_drProgramFilter === name ? 'selected' : ''}>${escHtml(name)} (${ct})</option>`
+  ).join('');
+  const typeCls = _drTypeFilter !== 'all' ? 'active' : '';
+  const statusCls = _drStatusFilter !== 'all' ? 'active' : '';
+  const programCls = _drProgramFilter !== 'all' ? 'active' : '';
+  const anyFilterActive = _drTypeFilter !== 'all' || _drStatusFilter !== 'open' || _drProgramFilter !== 'all';
   const filtersHTML = `
     <div class="dr-filters">
-      <button type="button" class="dr-filter-chip ${_drTypeFilter === 'all' ? 'active' : ''}" data-dr-type="all">All<span class="ct">${devCt + reportCt}</span></button>
-      <button type="button" class="dr-filter-chip ${_drTypeFilter === 'dev' ? 'active' : ''}" data-dr-type="dev">Dev<span class="ct">${devCt}</span></button>
-      <button type="button" class="dr-filter-chip ${_drTypeFilter === 'report' ? 'active' : ''}" data-dr-type="report">Reporting<span class="ct">${reportCt}</span></button>
-      ${programs.length ? '<span class="dr-filter-sep"></span>' : ''}
-      <button type="button" class="dr-filter-chip ${_drProgramFilter === 'all' ? 'active' : ''}" data-dr-program="all">All programs</button>
-      ${programChipsHTML}
+      <select class="dr-filter-select ${typeCls}" id="drTypeSel">
+        <option value="all" ${_drTypeFilter === 'all' ? 'selected' : ''}>All types (${devCt + reportCt})</option>
+        <option value="dev" ${_drTypeFilter === 'dev' ? 'selected' : ''}>Dev (${devCt})</option>
+        <option value="report" ${_drTypeFilter === 'report' ? 'selected' : ''}>Reporting (${reportCt})</option>
+      </select>
+      <select class="dr-filter-select ${statusCls}" id="drStatusSel">
+        <option value="open" ${_drStatusFilter === 'open' ? 'selected' : ''}>Open (${openCt})</option>
+        <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All statuses</option>
+        ${statusOptions}
+      </select>
+      <select class="dr-filter-select ${programCls}" id="drProgramSel">
+        <option value="all" ${_drProgramFilter === 'all' ? 'selected' : ''}>All programs</option>
+        ${programOptions}
+      </select>
+      ${anyFilterActive ? `<button type="button" class="dr-filter-reset" id="drFilterReset">Reset</button>` : ''}
+      <span class="dr-filter-meta">${pool.length} of ${all.length}</span>
     </div>`;
   // Split into Dev vs Reports for the section headers
   const devs = [], reportsArr = [];
@@ -2787,9 +2820,9 @@ function renderDevReports(){
   };
   devs.sort(sortLimbo);
   reportsArr.sort(sortLimbo);
-  if (metaEl) metaEl.textContent = `${pool.length} of ${all.length} dev / report item${all.length === 1 ? '' : 's'}`;
+  if (metaEl) metaEl.textContent = `${all.length} dev / report item${all.length === 1 ? '' : 's'}`;
   if (!pool.length) {
-    list.innerHTML = filtersHTML + `<div class="empty">No dev or report items match. ${all.length === 0 ? 'Make sure the <strong>Request Type</strong> column has Dev / Reporting values set.' : 'Try clearing the filters above.'}</div>`;
+    list.innerHTML = filtersHTML + `<div class="empty">${all.length === 0 ? 'No dev or report items found. Make sure the <strong>Request Type</strong> column has Dev / Reporting values set in Smartsheets.' : 'No items match the current filters.'}</div>`;
     _wireDrFilters(list);
     return;
   }
@@ -2819,9 +2852,11 @@ function renderDevReports(){
     const limboHTML = ageDays >= 0
       ? `<span class="dr-limbo ${limboCls}">${ageDays}d in limbo</span>`
       : '';
+    // Only render the notes block if there's actual content. Empty
+    // placeholders just waste vertical space across a dense grid.
     const notesHTML = (r.outcome && r.outcome.trim())
       ? `<div class="dr-notes">${escHtml(r.outcome.trim())}</div>`
-      : `<div class="dr-notes empty">No outcome notes yet</div>`;
+      : '';
     const openInSheetHTML = r.permalink
       ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets">Smartsheets ↗</a>`
       : '';
