@@ -310,6 +310,18 @@
     vertical-align: middle;
   }
   .view-tab-ct:empty { display: none }
+  /* "has-new" state — fresh linked pairs detected that the user hasn't
+     opened the tab to acknowledge yet. Switches the badge to a brighter
+     amber so it actually catches the eye. */
+  .view-tab-ct.has-new {
+    background: rgba(255,138,61,.32);
+    color: #FF8A3D;
+    animation: linksBadgePulse 1.6s ease-in-out infinite;
+  }
+  @keyframes linksBadgePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,138,61,.0) }
+    50%      { box-shadow: 0 0 0 4px rgba(255,138,61,.18) }
+  }
 
   /* Dev / Reports cards — compact, dense layout. The full-width "Last update"
      box was wasting space when most items have no outcome notes. Now the
@@ -3543,11 +3555,68 @@ function renderDevReports(){
 // ----- Links view (full-page list of every linked group) -----
 // Each group renders as a card, rows inside sorted by createdDate ascending
 // (oldest first — the "original" item cascades down to its later siblings).
+// localStorage key for the snapshot of "links you've already seen". When the
+// detector finds a pair that's NOT in the snapshot, we mark the Links tab
+// with a NEW dot so the user knows fresh matches surfaced since last visit.
+const _LINKS_SEEN_KEY = 'ecm-links-seen-pairs-v1';
+function _loadSeenPairs(){
+  try {
+    const raw = localStorage.getItem(_LINKS_SEEN_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+function _saveSeenPairs(set){
+  try { localStorage.setItem(_LINKS_SEEN_KEY, JSON.stringify([...set])); } catch {}
+}
+// Canonical pair key so {A,B} and {B,A} hash to the same string.
+function _pairKey(a, b){
+  return String(a) < String(b) ? `${a}|${b}` : `${b}|${a}`;
+}
+// Returns count of pairs in the current match map that the user hasn't
+// seen yet (not in the persisted snapshot).
+function _countNewLinkPairs(){
+  const matchMap = _computeRowMatches();
+  const seen = _loadSeenPairs();
+  let fresh = 0;
+  const counted = new Set();
+  for (const [rowId, peers] of matchMap) {
+    for (const peerId of peers) {
+      const key = _pairKey(rowId, peerId);
+      if (counted.has(key)) continue;
+      counted.add(key);
+      if (!seen.has(key)) fresh++;
+    }
+  }
+  return fresh;
+}
+// Called when user opens the Links tab — marks every current pair as seen
+// so the NEW dot clears.
+function _markLinksSeen(){
+  const matchMap = _computeRowMatches();
+  const seen = new Set();
+  for (const [rowId, peers] of matchMap) {
+    for (const peerId of peers) {
+      seen.add(_pairKey(rowId, peerId));
+    }
+  }
+  _saveSeenPairs(seen);
+}
 function updateLinksCount(){
   const el = document.getElementById('linksCount');
   if (!el) return;
   const groups = _collectLinkedGroups();
-  el.textContent = groups.length > 0 ? String(groups.length) : '';
+  const fresh = _countNewLinkPairs();
+  // Show count when there are groups, prepend "NEW" indicator when fresh
+  // pairs exist that the user hasn't acknowledged.
+  if (groups.length === 0) {
+    el.textContent = '';
+    el.classList.remove('has-new');
+    return;
+  }
+  el.textContent = fresh > 0 ? `+${fresh}` : String(groups.length);
+  el.classList.toggle('has-new', fresh > 0);
 }
 // Collect unique groups from the match map. Each group is an array of rows
 // sorted by createdDate ascending. Returned in oldest-first order (first
@@ -3593,6 +3662,10 @@ function renderLinks(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   const groups = _collectLinkedGroups();
+  // Landing on this view = user is reviewing the current matches. Stamp
+  // the current pair set as "seen" so the NEW indicator clears. New
+  // matches that show up after this will light it up again.
+  _markLinksSeen();
   if (metaEl) metaEl.textContent = `${groups.length} linked group${groups.length === 1 ? '' : 's'}`;
   if (!groups.length) {
     list.innerHTML = `<div class="empty">No linked items detected. Items that share a Program and have similar task names will appear here grouped together.</div>`;
