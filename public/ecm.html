@@ -2740,6 +2740,7 @@ function updateDevReportsCount(){
 let _drTypeFilter = 'all';     // 'all' | 'dev' | 'report'
 let _drStatusFilter = 'open';  // 'open' | 'parked' | 'completed' | 'all' | <specific status>
 let _drProgramFilter = 'all';  // 'all' | <program name>
+let _drAgeFilter = 'any';      // 'any' | '30' | '60' | '90' | '120'  (min days open)
 let _drSortBy = 'status';      // 'status' | 'created'
 function _wireDrFilters(root){
   const typeSel = root.querySelector('#drTypeSel');
@@ -2748,6 +2749,8 @@ function _wireDrFilters(root){
   if (statusSel) statusSel.addEventListener('change', () => { _drStatusFilter = statusSel.value || 'open'; renderDevReports(); });
   const programSel = root.querySelector('#drProgramSel');
   if (programSel) programSel.addEventListener('change', () => { _drProgramFilter = programSel.value || 'all'; renderDevReports(); });
+  const ageSel = root.querySelector('#drAgeSel');
+  if (ageSel) ageSel.addEventListener('change', () => { _drAgeFilter = ageSel.value || 'any'; renderDevReports(); });
   const sortSel = root.querySelector('#drSortSel');
   if (sortSel) sortSel.addEventListener('change', () => { _drSortBy = sortSel.value || 'status'; renderDevReports(); });
   const resetBtn = root.querySelector('#drFilterReset');
@@ -2755,6 +2758,7 @@ function _wireDrFilters(root){
     _drTypeFilter = 'all';
     _drStatusFilter = 'open';
     _drProgramFilter = 'all';
+    _drAgeFilter = 'any';
     _drSortBy = 'status';
     renderDevReports();
   });
@@ -2795,6 +2799,10 @@ function renderDevReports(){
     pool = pool.filter(r => r.status === _drStatusFilter);
   }
   if (_drProgramFilter !== 'all') pool = pool.filter(r => r.program === _drProgramFilter);
+  if (_drAgeFilter !== 'any') {
+    const minDays = parseInt(_drAgeFilter, 10) || 0;
+    pool = pool.filter(r => _daysSince(r.createdDate) >= minDays);
+  }
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
     pool = pool.filter(r =>
@@ -2825,11 +2833,22 @@ function renderDevReports(){
   const programOptions = programs.map(([name, ct]) =>
     `<option value="${escHtml(name)}" ${_drProgramFilter === name ? 'selected' : ''}>${escHtml(name)} (${ct})</option>`
   ).join('');
+  // Age tallies — count items in the OPEN bucket that have been open at
+  // least N days. Counts use the open bucket as the base so the dropdown
+  // numbers match what you'd see filtering by "Open" status.
+  const openAll = all.filter(r => drStatusBucket(r.status) === 'open');
+  const ageCounts = {
+    30:  openAll.filter(r => _daysSince(r.createdDate) >= 30).length,
+    60:  openAll.filter(r => _daysSince(r.createdDate) >= 60).length,
+    90:  openAll.filter(r => _daysSince(r.createdDate) >= 90).length,
+    120: openAll.filter(r => _daysSince(r.createdDate) >= 120).length
+  };
   const typeCls = _drTypeFilter !== 'all' ? 'active' : '';
   const statusCls = _drStatusFilter !== 'open' ? 'active' : '';
   const programCls = _drProgramFilter !== 'all' ? 'active' : '';
+  const ageCls = _drAgeFilter !== 'any' ? 'active' : '';
   const sortCls = _drSortBy !== 'status' ? 'active' : '';
-  const anyFilterActive = _drTypeFilter !== 'all' || _drStatusFilter !== 'open' || _drProgramFilter !== 'all' || _drSortBy !== 'status';
+  const anyFilterActive = _drTypeFilter !== 'all' || _drStatusFilter !== 'open' || _drProgramFilter !== 'all' || _drAgeFilter !== 'any' || _drSortBy !== 'status';
   const filtersHTML = `
     <div class="dr-filters">
       <select class="dr-filter-select ${typeCls}" id="drTypeSel">
@@ -2843,6 +2862,13 @@ function renderDevReports(){
         <option value="completed" ${_drStatusFilter === 'completed' ? 'selected' : ''}>Completed (${completedCt})</option>
         <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All (${all.length})</option>
         ${statusOptions}
+      </select>
+      <select class="dr-filter-select ${ageCls}" id="drAgeSel" title="Days open">
+        <option value="any" ${_drAgeFilter === 'any' ? 'selected' : ''}>Any age</option>
+        <option value="30" ${_drAgeFilter === '30' ? 'selected' : ''}>30+ days open (${ageCounts[30]})</option>
+        <option value="60" ${_drAgeFilter === '60' ? 'selected' : ''}>60+ days open (${ageCounts[60]})</option>
+        <option value="90" ${_drAgeFilter === '90' ? 'selected' : ''}>90+ days open (${ageCounts[90]})</option>
+        <option value="120" ${_drAgeFilter === '120' ? 'selected' : ''}>120+ days open (${ageCounts[120]})</option>
       </select>
       <select class="dr-filter-select ${programCls}" id="drProgramSel">
         <option value="all" ${_drProgramFilter === 'all' ? 'selected' : ''}>All programs</option>
@@ -2910,9 +2936,12 @@ function renderDevReports(){
     const programHTML = r.program
       ? (() => { const pc = programColor(r.program); return `<span class="row-program" style="background:${pc.bg};border-color:${pc.bd};color:${pc.fg}">${escHtml(r.program)}</span>`; })()
       : '';
+    // "Days open" = days since createdDate. For Parked items it's still
+    // accurate (parked items haven't closed). For Completed, we hide it
+    // since "X days open" doesn't make sense on a closed item.
     const limboCls = ageDays >= 30 ? 'very-stale' : ageDays >= 14 ? 'stale' : '';
-    const limboHTML = ageDays >= 0
-      ? `<span class="dr-limbo ${limboCls}">${ageDays}d in limbo</span>`
+    const limboHTML = (ageDays >= 0 && !isClosed)
+      ? `<span class="dr-limbo ${limboCls}" title="Days since this row was created">${ageDays}d open</span>`
       : '';
     // Only render the notes block if there's actual content. Empty
     // placeholders just waste vertical space across a dense grid.
