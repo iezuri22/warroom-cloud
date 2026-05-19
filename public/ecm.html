@@ -1383,10 +1383,6 @@
   <!-- View toggle: All rows / Acks / Notifications. -->
   <div class="view-toggle">
     <button type="button" class="view-tab active" data-view="all">All rows</button>
-    <button type="button" class="view-tab" data-view="ack">
-      Acks
-      <span class="needs-ack-dot" id="needsAckDot" aria-hidden="true"></span>
-    </button>
     <button type="button" class="view-tab" data-view="notif">
       Notifications
       <span class="needs-ack-dot" id="needsNotifDot" aria-hidden="true"></span>
@@ -1672,7 +1668,16 @@ async function _ecmDetectNotifications(currentRows){
 // Notifications addressed to the current user that haven't been acked yet.
 function _myUnreadNotifications(){
   if (!_userName) return [];
-  return notifications.filter(n => n.targetUser === _userName && !n.ackedBy);
+  // Unread = open rows assigned to me that I haven't acked yet (and aren't
+  // dev/report items, which live on their own tab). Matches what the
+  // Notifications view actually shows.
+  return rows.filter(r =>
+    r.owner === _userName &&
+    !acks[r.id] &&
+    !isDevOrReportRow(r) &&
+    r.status !== 'Completed' &&
+    r.status !== 'Not feasible - close ticket'
+  );
 }
 function updateBellBadge(){
   const btn = document.getElementById('bellBtn');
@@ -3065,10 +3070,39 @@ function renderNotifications(){
     list.innerHTML = `<div class="empty">Set your name (top right) to see notifications targeted to you.</div>`;
     return;
   }
-  const mine = notifications.filter(n => n.targetUser === _userName);
-  const unread = mine.filter(n => !n.ackedBy);
-  const archived = mine.filter(n => !!n.ackedBy);
-  // Default view = unread only (clean inbox). Toggle shows archived.
+  // Unified inbox model: every row currently assigned to me (that I haven't
+  // acked yet) shows up as a notification. We enrich each item with metadata
+  // from the ecm_notifications collection when available so we can say
+  // "Reassigned from Talha" instead of just "New task." The ack/unack
+  // mechanism on the row IS the read/unread state — no separate notif ack.
+  //
+  // Excludes dev/report items — those live on the Dev/Reports tab.
+  const myRows = rows.filter(r =>
+    r.owner === _userName &&
+    !isDevOrReportRow(r) &&
+    r.status !== 'Completed' &&
+    r.status !== 'Not feasible - close ticket'
+  );
+  // Index latest notification doc per row id for context decoration.
+  const notifByRow = new Map();
+  notifications.forEach(n => {
+    if (n.targetUser !== _userName) return;
+    const cur = notifByRow.get(n.rowId);
+    if (!cur || (Date.parse(n.createdAt) || 0) > (Date.parse(cur.createdAt) || 0)) {
+      notifByRow.set(n.rowId, n);
+    }
+  });
+  // Merge: build a list of { row, notif } entries. Sort by notif createdAt
+  // (most recent first), falling back to row's createdDate.
+  const merged = myRows.map(r => ({ row: r, notif: notifByRow.get(String(r.id)) || null }));
+  merged.sort((a, b) => {
+    const ta = (a.notif && Date.parse(a.notif.createdAt)) || Date.parse(a.row.createdDate) || 0;
+    const tb = (b.notif && Date.parse(b.notif.createdAt)) || Date.parse(b.row.createdDate) || 0;
+    return tb - ta;
+  });
+  const unread = merged.filter(m => !acks[m.row.id]);
+  const archived = merged.filter(m => !!acks[m.row.id]);
+  // Default = unread only. Toggle to see what you've already cleared.
   const visible = _showArchivedNotifs ? archived : unread;
   if (metaEl) metaEl.textContent = unread.length > 0
     ? `${unread.length} unread · ${archived.length} archived`
@@ -3086,36 +3120,46 @@ function renderNotifications(){
   if (!visible.length) {
     const emptyMsg = _showArchivedNotifs
       ? 'No archived notifications yet. Items you mark as read land here.'
-      : (mine.length === 0
-          ? `No notifications. New or reassigned tasks for <strong>${escHtml(_userName)}</strong> will appear here.`
+      : (merged.length === 0
+          ? `No open items assigned to <strong>${escHtml(_userName)}</strong>.`
           : 'Inbox is clear. Tap Archive above to see what you\'ve already read.');
     list.innerHTML = toggleHTML + `<div class="empty">${emptyMsg}</div>`;
     _wireNotifToggle(list);
     return;
   }
-  list.innerHTML = toggleHTML + visible.map(n => {
-    const isAcked = !!n.ackedBy;
-    const kindLabel = n.kind === 'reassign' ? 'Reassigned to you' : 'New task';
-    const kindCls = n.kind === 'reassign' ? 'reassign' : 'new';
-    const when = timeAgo(n.createdAt) || fmtAbsoluteDate(n.createdAt) || '';
-    const ticketBit = n.ticket
-      ? `<span><span class="label">Ticket</span><span class="val">#${escHtml(String(n.ticket))}</span></span>`
+  list.innerHTML = toggleHTML + visible.map(m => {
+    const r = m.row;
+    const n = m.notif;
+    const isAcked = !!acks[r.id];
+    const ack = acks[r.id];
+    // Reason label: explicit notif kind (new/reassign) when we have one,
+    // otherwise just show the current status as context.
+    let kindLabel, kindCls;
+    if (n && n.kind === 'reassign') { kindLabel = 'Reassigned to you'; kindCls = 'reassign'; }
+    else if (n && n.kind === 'new') { kindLabel = 'New task'; kindCls = 'new'; }
+    else { kindLabel = r.status || 'Assigned to you'; kindCls = 'new'; }
+    const when = (n && (timeAgo(n.createdAt) || fmtAbsoluteDate(n.createdAt)))
+      || timeAgo(r.createdDate)
+      || fmtAbsoluteDate(r.createdDate)
+      || '';
+    const ticketBit = r.ticket
+      ? `<span><span class="label">Ticket</span><span class="val">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span></span>`
       : '';
-    const programBit = n.program
-      ? `<span><span class="label">Program</span><span class="val">${escHtml(n.program)}</span></span>`
+    const programBit = r.program
+      ? `<span><span class="label">Program</span><span class="val">${escHtml(r.program)}</span></span>`
       : '';
-    const prevBit = (n.kind === 'reassign' && n.previousOwner)
+    const prevBit = (n && n.kind === 'reassign' && n.previousOwner)
       ? `<span><span class="label">From</span><span class="val">${escHtml(n.previousOwner)}</span></span>`
       : '';
     const ackBadge = isAcked
-      ? `<span class="notif-ack-state">✓ Acked${n.ackedAt ? ' · ' + escHtml(timeAgo(n.ackedAt) || '') : ''}</span>`
+      ? `<span class="notif-ack-state">✓ Read${ack && ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt) || '') : ''}</span>`
       : '';
-    const permaBtn = n.permalink
-      ? `<button type="button" data-notif-open="${escHtml(n.permalink)}">Open in Smartsheets</button>`
+    const permaBtn = r.permalink
+      ? `<button type="button" data-notif-open="${escHtml(r.permalink)}">Open in Smartsheets</button>`
       : '';
     const ackBtn = isAcked
-      ? `<button type="button" data-notif-unack="${escHtml(n._id)}">Mark unread</button>`
-      : `<button type="button" class="primary" data-notif-ack="${escHtml(n._id)}">Mark as read</button>`;
+      ? `<button type="button" data-notif-unack-row="${escHtml(String(r.id))}">Mark unread</button>`
+      : `<button type="button" class="primary" data-notif-ack-row="${escHtml(String(r.id))}">Mark as read</button>`;
     return `
       <div class="notif-row ${isAcked ? '' : 'unread'}">
         <div class="notif-head">
@@ -3123,7 +3167,7 @@ function renderNotifications(){
           <span class="notif-when">${escHtml(when)}</span>
           ${ackBadge}
         </div>
-        <div class="notif-task">${escHtml(n.task || '(untitled)')}</div>
+        <div class="notif-task">${escHtml(r.task || '(untitled)')}</div>
         <div class="notif-meta">
           ${prevBit}
           ${ticketBit}
@@ -3135,19 +3179,19 @@ function renderNotifications(){
         </div>
       </div>`;
   }).join('');
-  // Wire actions
-  list.querySelectorAll('[data-notif-ack]').forEach(b => {
+  // Wire actions — read/unread maps directly to the row's ack record now.
+  list.querySelectorAll('[data-notif-ack-row]').forEach(b => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = b.getAttribute('data-notif-ack');
-      ackNotification(id, _userName).catch(err => console.warn('ack notif failed', err));
+      const id = b.getAttribute('data-notif-ack-row');
+      if (id) ackRow(id, _userName, '').catch(err => console.warn('ack failed', err));
     });
   });
-  list.querySelectorAll('[data-notif-unack]').forEach(b => {
+  list.querySelectorAll('[data-notif-unack-row]').forEach(b => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = b.getAttribute('data-notif-unack');
-      unackNotification(id).catch(err => console.warn('unack notif failed', err));
+      const id = b.getAttribute('data-notif-unack-row');
+      if (id) unackRow(id).catch(err => console.warn('unack failed', err));
     });
   });
   list.querySelectorAll('[data-notif-open]').forEach(b => {
