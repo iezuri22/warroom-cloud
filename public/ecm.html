@@ -2862,13 +2862,20 @@ function renderDevReports(){
       (r.details || '').toLowerCase().includes(q)
     );
   }
-  // Counts for dropdown labels (from full unfiltered set).
-  const devCt = all.filter(r => devOrReportKind(r) === 'dev').length;
-  const reportCt = all.filter(r => devOrReportKind(r) === 'report').length;
+  // Status / age / program counts all reflect the CURRENT type filter, so
+  // "Open (X)" actually means "open items of this type" instead of being
+  // stuck at the global open count regardless of what you filtered by.
+  // Type dropdown intentionally shows no counts (per user feedback — too
+  // noisy when the other dropdowns already carry the numbers).
+  const typeScoped = all.filter(r => {
+    if (_drTypeFilter === 'dev') return devOrReportKind(r) === 'dev';
+    if (_drTypeFilter === 'report') return devOrReportKind(r) === 'report';
+    return true;
+  });
   const programCounts = new Map();
   const statusCounts = new Map();
   let openCt = 0, parkedCt = 0, completedCt = 0;
-  all.forEach(r => {
+  typeScoped.forEach(r => {
     if (r.program) programCounts.set(r.program, (programCounts.get(r.program) || 0) + 1);
     if (r.status) statusCounts.set(r.status, (statusCounts.get(r.status) || 0) + 1);
     const b = drStatusBucket(r.status);
@@ -2883,10 +2890,9 @@ function renderDevReports(){
   const programOptions = programs.map(([name, ct]) =>
     `<option value="${escHtml(name)}" ${_drProgramFilter === name ? 'selected' : ''}>${escHtml(name)} (${ct})</option>`
   ).join('');
-  // Age tallies — count items in the OPEN bucket that have been open at
-  // least N days. Counts use the open bucket as the base so the dropdown
-  // numbers match what you'd see filtering by "Open" status.
-  const openAll = all.filter(r => drStatusBucket(r.status) === 'open');
+  // Age tallies — items in the OPEN bucket (of the current type scope)
+  // that have been open at least N days.
+  const openAll = typeScoped.filter(r => drStatusBucket(r.status) === 'open');
   const ageCounts = {
     30:  openAll.filter(r => _daysSince(r.createdDate) >= 30).length,
     60:  openAll.filter(r => _daysSince(r.createdDate) >= 60).length,
@@ -2902,15 +2908,15 @@ function renderDevReports(){
   const filtersHTML = `
     <div class="dr-filters">
       <select class="dr-filter-select ${typeCls}" id="drTypeSel">
-        <option value="all" ${_drTypeFilter === 'all' ? 'selected' : ''}>All types (${devCt + reportCt})</option>
-        <option value="dev" ${_drTypeFilter === 'dev' ? 'selected' : ''}>Dev (${devCt})</option>
-        <option value="report" ${_drTypeFilter === 'report' ? 'selected' : ''}>Reporting (${reportCt})</option>
+        <option value="all" ${_drTypeFilter === 'all' ? 'selected' : ''}>All types</option>
+        <option value="dev" ${_drTypeFilter === 'dev' ? 'selected' : ''}>Dev</option>
+        <option value="report" ${_drTypeFilter === 'report' ? 'selected' : ''}>Reporting</option>
       </select>
       <select class="dr-filter-select ${statusCls}" id="drStatusSel">
         <option value="open" ${_drStatusFilter === 'open' ? 'selected' : ''}>Open (${openCt})</option>
         <option value="parked" ${_drStatusFilter === 'parked' ? 'selected' : ''}>Parked (${parkedCt})</option>
         <option value="completed" ${_drStatusFilter === 'completed' ? 'selected' : ''}>Completed (${completedCt})</option>
-        <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All (${all.length})</option>
+        <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All (${typeScoped.length})</option>
         ${statusOptions}
       </select>
       <select class="dr-filter-select ${ageCls}" id="drAgeSel" title="Days open">
