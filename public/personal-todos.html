@@ -10038,10 +10038,14 @@ const VOICE = {
   // seeded before. New default scheme: First/Second/Third Priority — three
   // ordered priority lists that cascade overflow down the chain (only the
   // last can exceed 5). Morning Routine lives separately as a routine list.
+  // Default lists seeded once for new users. First/Second/Third are the
+  // priority chain (cascade rules apply). Morning Routine is a separate
+  // routine list — sits alongside the priorities but isn't in the cascade.
   const PRIORITY_DEFAULTS = [
-    { name: 'First Priority',  routine: null, color: '#FF8A3D' },
-    { name: 'Second Priority', routine: null, color: '#A78BFA' },
-    { name: 'Third Priority',  routine: null, color: '#6BA8FF' }
+    { name: 'First Priority',  routine: null,      color: '#FF8A3D' },
+    { name: 'Second Priority', routine: null,      color: '#A78BFA' },
+    { name: 'Third Priority',  routine: null,      color: '#6BA8FF' },
+    { name: 'Morning Routine', routine: 'morning', color: '#FFB84D' }
   ];
   // Migration: rename legacy priority list names from the old scheme
   // ("9-5 priorities" / "EZRK build" / "Evening / personal") to the new
@@ -10105,29 +10109,58 @@ const VOICE = {
     // Always run the name migration first so old defaults get renamed
     // BEFORE the seed function decides what's missing.
     try { _migratePriorityListNames(); } catch {}
-    const seededKey = 'personal-focus-5-defaults-seeded';
-    let seeded = false;
-    try { seeded = localStorage.getItem(seededKey) === '1'; } catch {}
-    if (seeded && focus5State.lists.length > 0) return;
-    // Build up missing default lists by name match (case-insensitive).
+    // Per-default seeded tracking. Each default name is recorded once it's
+    // been seeded (or once we noticed the user already has it). Means:
+    //   - If we ADD a new default to PRIORITY_DEFAULTS in code, devices that
+    //     already ran the old seed will pick up the new one too.
+    //   - If the user DELETES a default they don't want, we won't re-add it
+    //     because its name will still be in the seeded set.
+    const seededDefaultsKey = 'personal-focus-5-seeded-defaults';
+    let seededDefaults = new Set();
+    try {
+      const raw = localStorage.getItem(seededDefaultsKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) seededDefaults = new Set(parsed.map(s => String(s).toLowerCase()));
+      }
+    } catch {}
+    // Back-compat: if the old single "seeded" flag is set but the new
+    // per-default set is empty, mark every existing list as already-seeded
+    // so we don't aggressively re-add things the user may have deleted.
+    let oldSeeded = false;
+    try { oldSeeded = localStorage.getItem('personal-focus-5-defaults-seeded') === '1'; } catch {}
+    if (oldSeeded && seededDefaults.size === 0) {
+      focus5State.lists.forEach(l => {
+        seededDefaults.add((l.name || '').trim().toLowerCase());
+      });
+    }
     const existingNames = new Set(focus5State.lists.map(l => (l.name || '').trim().toLowerCase()));
     let dirty = false;
     PRIORITY_DEFAULTS.forEach(def => {
-      if (existingNames.has(def.name.toLowerCase())) return;
+      const lower = def.name.toLowerCase();
+      // User already has a list with this name — mark seeded and move on.
+      if (existingNames.has(lower)) {
+        if (!seededDefaults.has(lower)) { seededDefaults.add(lower); dirty = true; }
+        return;
+      }
+      // User has explicitly deleted this default before — don't re-add.
+      if (seededDefaults.has(lower)) return;
+      // First time seeing this default → seed it.
       focus5State.lists.push({
         id: focus5MakeId(),
         name: def.name,
         taskIds: [],
         routine: def.routine
       });
+      seededDefaults.add(lower);
       dirty = true;
     });
-    if (dirty || !seeded) {
+    if (dirty) {
       if (!focus5State.activeListId && focus5State.lists.length > 0) {
         focus5State.activeListId = focus5State.lists[0].id;
       }
       saveFocus5();
-      try { localStorage.setItem(seededKey, '1'); } catch {}
+      try { localStorage.setItem(seededDefaultsKey, JSON.stringify([...seededDefaults])); } catch {}
     }
   }
   // Get the priority lists (priority-named lists, in display order). Falls
