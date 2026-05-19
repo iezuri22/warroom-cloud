@@ -704,6 +704,12 @@
   .pt-focus-mini-tab.complete .ct { background: rgba(74,222,128,.16); color: #4ADE80 }
 
   /* ============ FOCUS 5 VIEW — replaces .list contents in focus mode ============ */
+  /* When the body is in Focus 5, hide the job filter bar + ECM status chips.
+     Those filters describe the All list and have nothing to do with the
+     priority lists; surfacing them here just adds noise. */
+  body.in-focus5 #filterBarSlot,
+  body.in-focus5 .job-filter-bar,
+  body.in-focus5 .ecm-status-bar { display: none !important }
   .focus5-view {
     display: flex; flex-direction: column; gap: 12px;
     padding: 4px 4px 80px;
@@ -5964,6 +5970,9 @@ const VOICE = {
     const progressFill = document.getElementById('progressFill');
     const progressInfo = document.getElementById('progressInfo');
     const clearBtn = document.getElementById('clearBtn');
+    // Out of Focus 5 — drop the body class so the job filter bar + ECM
+    // status chips show again for normal task views.
+    document.body.classList.remove('in-focus5');
     updateTotalTimeDisplay();
     if (loading) {
       list.innerHTML = '<div class="loading">Loading...</div>';
@@ -8796,13 +8805,15 @@ const VOICE = {
       if (e.key === 'Enter') { e.preventDefault(); doManualAdd(); }
     });
     manualBtn.addEventListener('click', doManualAdd);
-    // Routine-aware filter:
-    //   Morning/Night list → ONLY recurring tasks (the daily things that make
-    //     a routine work).
-    //   Anytime list → HIDES recurring tasks.
+    // Routine vs priority list:
+    //   Routine lists (Morning/Night) → ALL non-done tasks. Routines often mix
+    //     recurring (workout, journal) with one-off morning to-dos. The user
+    //     gets to decide what counts as routine; we don't gatekeep.
+    //   Priority lists → hide recurring tasks so the routine work doesn't clog
+    //     the priority queue.
     const isRoutineList = _focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night';
     let basePool = todos.filter(t => !t.done);
-    basePool = isRoutineList ? basePool.filter(t => !!t.fromTemplate) : basePool.filter(t => !t.fromTemplate);
+    if (!isRoutineList) basePool = basePool.filter(t => !t.fromTemplate);
     // Dedupe: recurring tasks materialize daily, so the same template can have
     // multiple pending instances across days. Dedupe by templateId so each
     // routine task shows up once. Also dedupe by text (case/space-insensitive)
@@ -9027,9 +9038,7 @@ const VOICE = {
     });
 
     if (pool.length === 0) {
-      const msg = isRoutineList
-        ? `No recurring tasks${_focus5PickerJobFilter !== 'all' ? ' in this job' : ''} yet. Set tasks to repeat (Daily, Weekdays) and they'll show up here.`
-        : `No open tasks${_focus5PickerJobFilter !== 'all' ? ' in this job' : ''} to pick.`;
+      const msg = `No open tasks${_focus5PickerJobFilter !== 'all' ? ' in this job' : ''} to pick.`;
       body.innerHTML = `<div class="focus5-picker-empty">${msg}</div>`;
     } else {
       pool.forEach(t => {
@@ -9138,6 +9147,9 @@ const VOICE = {
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
+    // Body class lets CSS hide the job filter bar + ECM status chips while in
+    // Focus 5 — they're irrelevant when you're staring at the 5 you committed to.
+    document.body.classList.add('in-focus5');
     list.innerHTML = '';
     const activeList = focus5ActiveList();
     const tasks = focus5Tasks();
