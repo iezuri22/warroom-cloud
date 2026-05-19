@@ -2328,14 +2328,18 @@ function renderStatusBar(){
     __no_completion_date__: issueScope.filter(isMissingCompletionDate).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
-  // Build chip groups: Open statuses → separator → Parked → separator →
-  // Completed → separator → Issue chips. Dev-only statuses skipped entirely.
+  // Chip layout: All / Open / specific open statuses (Pending IR, Ticket Sent)
+  // → Parked (single chip) → Completed → Issues.
+  // Requested + To-Do + In Progress have no individual chips — they all
+  // roll up into the Open umbrella. Same with parked sub-statuses.
   const chips = [
     { id: 'all', label: 'All', count: counts.all, kind: 'meta' },
     { id: '__open__', label: 'Open', count: counts.__open__, kind: 'meta' }
   ];
-  // Open-status chips (excludes parked + done + dev-only)
+  // Statuses rolled fully into Open — no individual chips for these.
+  const ROLLED_INTO_OPEN = new Set(['Requested', 'To-Do', 'In Progress']);
   SS_STATUSES.forEach(s => {
+    if (ROLLED_INTO_OPEN.has(s)) return;
     if (ECM_DONE_STATUSES.has(s)) return;
     if (ECM_PARKED_STATUSES.has(s)) return;
     if (ECM_DEV_ONLY_STATUSES.has(s)) return;
@@ -2344,18 +2348,10 @@ function renderStatusBar(){
       chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: n, kind: 'status' });
     }
   });
-  // Parked section
-  const hasParked = counts.__parked__ > 0 || ECM_PARKED_STATUSES.has(filterStatus);
-  if (hasParked) {
+  // Parked section — single bucket chip, no individual sub-chips.
+  if (counts.__parked__ > 0 || filterStatus === '__parked__') {
     chips.push({ id: '__sep__', kind: 'sep' });
     chips.push({ id: '__parked__', label: 'Parked', count: counts.__parked__, kind: 'meta' });
-    SS_STATUSES.forEach(s => {
-      if (!ECM_PARKED_STATUSES.has(s)) return;
-      const n = counts[s] || 0;
-      if (n > 0 || filterStatus === s) {
-        chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: n, kind: 'status' });
-      }
-    });
   }
   // Completed section
   const hasDone = (counts['Completed'] || 0) > 0 || (counts['Not feasible - close ticket'] || 0) > 0
