@@ -1065,6 +1065,16 @@
     color: #F87171;
   }
 
+  /* Jump-target flash — when user jumps from Links to a row, briefly
+     highlight the row so they can see where they landed. */
+  @keyframes rowJumpFlash {
+    0%   { box-shadow: 0 0 0 0 rgba(107,168,255,.55), 0 0 24px rgba(107,168,255,.35) inset; background: rgba(107,168,255,.12); }
+    100% { box-shadow: 0 0 0 0 rgba(107,168,255,0); background: transparent; }
+  }
+  .row.row-jump-flash, .dr-card.row-jump-flash {
+    animation: rowJumpFlash 1.6s ease-out;
+  }
+
   .row-check:hover { border-color: rgba(74,158,255,.6) }
   .row-check.checked {
     background: #6BA8FF; border-color: #6BA8FF;
@@ -3068,6 +3078,48 @@ function populateProgramSelect(){
 // Dev + reporting items are tagged via the Smartsheets "Request Type" column.
 // Match common variants so the user doesn't need to keep this list synced —
 // "Dev", "Development", "Reporting", "Report", "Bug" etc. all count.
+// Jump to a row from anywhere (Links view, Linked-items modal, Suggestions).
+// Picks the right view based on the row type and CLEARS any filter that would
+// hide the row — otherwise the user clicks and nothing visible happens because
+// the row was silently dropped by the All-view filter pipeline. Then expands
+// the row's drawer and scrolls it into view.
+function jumpToRow(rowId){
+  const id = String(rowId || '');
+  const r = rows.find(x => String(x.id) === id);
+  if (!r) return;
+  // Dev / Report rows are excluded from All — send the user to Dev/Reports.
+  const targetView = isDevOrReportRow(r) ? 'dev' : 'all';
+  currentView = targetView;
+  document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === targetView));
+  document.body.classList.remove('view-links', 'view-notif');
+  document.body.classList.toggle('view-dev', targetView === 'dev');
+  // Clear filters that could swallow the row. Search filter especially can
+  // narrow the pool down to nothing matching the row's task text.
+  if (targetView === 'all') {
+    filterSearch = '';
+    filterStatus = 'all';
+    filterOwner = '';
+    filterProgram = '';
+    const searchEl = document.getElementById('searchInput');
+    if (searchEl) searchEl.value = '';
+    const ownerEl = document.getElementById('ownerSelect');
+    if (ownerEl) ownerEl.value = '';
+    const programEl = document.getElementById('programSelect');
+    if (programEl) programEl.value = '';
+  }
+  expandedId = id;
+  render();
+  setTimeout(() => {
+    const row = document.querySelector(`.row[data-id="${id}"], .dr-card[data-id="${id}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Flash highlight so the user can see exactly where they landed.
+      row.classList.add('row-jump-flash');
+      setTimeout(() => row.classList.remove('row-jump-flash'), 1600);
+    }
+  }, 60);
+}
+
 function isDevOrReportRow(r){
   if (!r) return false;
   const rt = (r.requestType || '').toString().toLowerCase();
@@ -4300,21 +4352,13 @@ function renderLinks(){
   });
   html.push('</div>');
   list.innerHTML = html.join('');
-  // Wire row jumps → opens drawer in All view
+  // Wire row jumps → smart jump: picks right view + clears filters that
+  // would hide the target row.
   list.querySelectorAll('[data-jump-row]').forEach(b => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = b.getAttribute('data-jump-row');
-      if (!id) return;
-      currentView = 'all';
-      document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
-      document.body.classList.remove('view-links');
-      expandedId = id;
-      render();
-      setTimeout(() => {
-        const row = document.querySelector(`.row[data-id="${id}"]`);
-        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 50);
+      if (id) jumpToRow(id);
     });
   });
   // Unify-ticket buttons → open the linked-rows modal for that group
@@ -4573,21 +4617,13 @@ function _renderLinkedRowsModal(){
   body.querySelectorAll('a').forEach(a => {
     a.addEventListener('click', e => e.stopPropagation());
   });
-  // Wire row click → close modal, jump to All view, expand that row's drawer
+  // Wire row click → close modal then jump to that row (smart-routed).
   body.querySelectorAll('[data-lr-jump]').forEach(rowEl => {
     rowEl.addEventListener('click', () => {
       const id = rowEl.getAttribute('data-lr-jump');
       if (!id) return;
       closeLinkedRowsModal();
-      currentView = 'all';
-      document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
-      document.body.classList.remove('view-links', 'view-notif', 'view-dev');
-      expandedId = id;
-      render();
-      setTimeout(() => {
-        const row = document.querySelector(`.row[data-id="${id}"]`);
-        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 50);
+      jumpToRow(id);
     });
   });
 }
