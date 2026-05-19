@@ -621,7 +621,113 @@
   body.view-dev .status-bar,
   body.view-notif .owner-acks,
   body.view-notif .search-row,
-  body.view-notif .status-bar { display: none !important }
+  body.view-notif .status-bar,
+  body.view-links .owner-acks,
+  body.view-links .search-row,
+  body.view-links .status-bar { display: none !important }
+
+  /* Links view — surfaces every linked group as a card. Within each card
+     the rows show in creation order (oldest first cascading down) so the
+     original ticket and its siblings/children are easy to spot. */
+  .links-list {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 8px 20px 20px;
+  }
+  .links-group {
+    border-radius: 14px;
+    background: rgba(167,139,250,.06);
+    border: 1px solid rgba(167,139,250,.30);
+    overflow: hidden;
+  }
+  .links-group-head {
+    padding: 12px 14px;
+    background: rgba(167,139,250,.08);
+    border-bottom: 1px solid rgba(167,139,250,.18);
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+  }
+  .links-group-title {
+    font-size: 11px; font-weight: 900; letter-spacing: .6px;
+    text-transform: uppercase;
+    color: #C4B5FD;
+    flex: 1;
+  }
+  .links-group-meta {
+    font-size: 11px; font-weight: 600;
+    color: rgba(255,255,255,.5);
+  }
+  .links-unify-btn {
+    padding: 5px 11px; border-radius: 99px;
+    background: rgba(167,139,250,.18);
+    border: 1px solid rgba(167,139,250,.45);
+    color: #C4B5FD;
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .links-unify-btn:hover { background: rgba(167,139,250,.28); color: #fff; border-color: #C4B5FD }
+  .links-rows {
+    display: flex; flex-direction: column;
+  }
+  .links-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-top: 1px solid rgba(255,255,255,.04);
+    transition: background .12s;
+  }
+  .links-row:first-child { border-top: none }
+  .links-row:hover { background: rgba(255,255,255,.03) }
+  .links-row.original {
+    background: rgba(167,139,250,.04);
+  }
+  .links-row-rank {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,.06);
+    color: rgba(255,255,255,.55);
+    font-size: 10px; font-weight: 900;
+    font-variant-numeric: tabular-nums;
+  }
+  .links-row.original .links-row-rank {
+    background: rgba(167,139,250,.30);
+    color: #fff;
+  }
+  .links-row-task {
+    flex: 1; min-width: 0;
+    font-size: 13px; font-weight: 600;
+    color: rgba(255,255,255,.92);
+    line-height: 1.3;
+  }
+  .links-row-task.original { font-weight: 800 }
+  .links-row-meta {
+    display: flex; gap: 10px; flex-shrink: 0;
+    font-size: 10px;
+    color: rgba(255,255,255,.5);
+  }
+  .links-row-meta .ticket { color: #6BA8FF; font-weight: 700 }
+  .links-row-meta .ticket.missing { color: #F87171 }
+  .links-row-meta .status { font-weight: 700; color: rgba(255,255,255,.7) }
+  .links-row-meta .age { font-variant-numeric: tabular-nums }
+  .links-row-actions { display: flex; gap: 4px; flex-shrink: 0 }
+  .links-row-actions a, .links-row-actions button {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.65);
+    text-decoration: none;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .links-row-actions a:hover, .links-row-actions button:hover {
+    color: #fff;
+    border-color: rgba(255,138,61,.45);
+    background: rgba(255,138,61,.10);
+  }
   .row-check:hover { border-color: rgba(74,158,255,.6) }
   .row-check.checked {
     background: #6BA8FF; border-color: #6BA8FF;
@@ -1556,6 +1662,10 @@
     <button type="button" class="view-tab" data-view="dev">
       Dev / Reports
       <span class="view-tab-ct" id="devReportsCount"></span>
+    </button>
+    <button type="button" class="view-tab" data-view="links">
+      Links
+      <span class="view-tab-ct" id="linksCount"></span>
     </button>
   </div>
   <!-- Per-owner needs-ack counts — auto-populated from rows. Tap to filter. -->
@@ -2681,6 +2791,7 @@ function render(){
   updateBellBadge();
   updateNeedsNotifDot();
   updateDevReportsCount();
+  updateLinksCount();
   // Notifications view — short-circuit out of the row-rendering path.
   if (currentView === 'notif') {
     renderNotifications();
@@ -2689,6 +2800,11 @@ function render(){
   // Dev / Reports view — dedicated layout showing limbo time + last update.
   if (currentView === 'dev') {
     renderDevReports();
+    return;
+  }
+  // Links view — every linked group surfaced as a card, rows in creation order.
+  if (currentView === 'links') {
+    renderLinks();
     return;
   }
   const list = document.getElementById('list');
@@ -3424,6 +3540,149 @@ function renderDevReports(){
   _wireDrFilters(list);
 }
 
+// ----- Links view (full-page list of every linked group) -----
+// Each group renders as a card, rows inside sorted by createdDate ascending
+// (oldest first — the "original" item cascades down to its later siblings).
+function updateLinksCount(){
+  const el = document.getElementById('linksCount');
+  if (!el) return;
+  const groups = _collectLinkedGroups();
+  el.textContent = groups.length > 0 ? String(groups.length) : '';
+}
+// Collect unique groups from the match map. Each group is an array of rows
+// sorted by createdDate ascending. Returned in oldest-first order (first
+// row in each group = original).
+function _collectLinkedGroups(){
+  const matchMap = _computeRowMatches();
+  const seen = new Set();
+  const groups = [];
+  // Iterate all rows that have at least one peer
+  for (const rowId of matchMap.keys()) {
+    if (seen.has(rowId)) continue;
+    // BFS to collect the transitive cluster
+    const cluster = new Set([rowId]);
+    const queue = [rowId];
+    while (queue.length) {
+      const cur = queue.shift();
+      const peers = matchMap.get(cur);
+      if (!peers) continue;
+      for (const p of peers) {
+        if (!cluster.has(p)) { cluster.add(p); queue.push(p); }
+      }
+    }
+    for (const id of cluster) seen.add(id);
+    // Resolve to rows and sort by createdDate asc (oldest first)
+    const rowsInCluster = [...cluster]
+      .map(id => rows.find(r => String(r.id) === String(id)))
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ta = Date.parse(a.createdDate) || 0;
+        const tb = Date.parse(b.createdDate) || 0;
+        return ta - tb;
+      });
+    if (rowsInCluster.length >= 2) groups.push(rowsInCluster);
+  }
+  // Sort groups so biggest clusters surface first; ties by oldest creation
+  groups.sort((a, b) => {
+    if (a.length !== b.length) return b.length - a.length;
+    return (Date.parse(a[0].createdDate) || 0) - (Date.parse(b[0].createdDate) || 0);
+  });
+  return groups;
+}
+function renderLinks(){
+  const list = document.getElementById('list');
+  const metaEl = document.getElementById('metaCount');
+  const groups = _collectLinkedGroups();
+  if (metaEl) metaEl.textContent = `${groups.length} linked group${groups.length === 1 ? '' : 's'}`;
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty">No linked items detected. Items that share a Program and have similar task names will appear here grouped together.</div>`;
+    return;
+  }
+  const fmtAge = (iso) => {
+    const d = _daysSince(iso);
+    if (d < 0) return '—';
+    return `${d}d old`;
+  };
+  const html = ['<div class="links-list">'];
+  groups.forEach(group => {
+    const original = group[0];
+    const program = original.program || 'No program';
+    const tickets = new Set(group.map(r => String(r.ticket || '').replace(/\.0$/, '')).filter(Boolean));
+    const ticketStatus = tickets.size === 0
+      ? '<span style="color:#F87171">no tickets yet</span>'
+      : tickets.size === 1
+        ? `<span style="color:#4ADE80">unified · #${escHtml([...tickets][0])}</span>`
+        : `<span style="color:#FFC84D">${tickets.size} different tickets</span>`;
+    html.push(`
+      <div class="links-group">
+        <div class="links-group-head">
+          <span class="links-group-title">${escHtml(program)} · ${group.length} items</span>
+          <span class="links-group-meta">${ticketStatus}</span>
+          <button type="button" class="links-unify-btn" data-unify="${escHtml(String(original.id))}">Unify ticket</button>
+        </div>
+        <div class="links-rows">
+          ${group.map((r, idx) => {
+            const isOriginal = idx === 0;
+            const ticketStr = r.ticket ? String(r.ticket).replace(/\.0$/, '') : '';
+            const ticketHTML = ticketStr
+              ? `<span class="ticket">#${escHtml(ticketStr)}</span>`
+              : `<span class="ticket missing">no ticket</span>`;
+            const statusHTML = r.status
+              ? `<span class="status">${escHtml(r.status)}</span>`
+              : '';
+            const ageHTML = `<span class="age">${escHtml(fmtAge(r.createdDate))}</span>`;
+            const ssLink = r.permalink
+              ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+              : '';
+            return `
+              <div class="links-row ${isOriginal ? 'original' : ''}" data-jump-row="${escHtml(String(r.id))}">
+                <span class="links-row-rank" title="${isOriginal ? 'Original (oldest)' : 'Linked sibling'}">${idx + 1}</span>
+                <span class="links-row-task ${isOriginal ? 'original' : ''}">${escHtml(r.task || '(untitled)')}</span>
+                <span class="links-row-meta">
+                  ${ticketHTML}
+                  ${statusHTML}
+                  ${ageHTML}
+                </span>
+                <span class="links-row-actions">
+                  <button type="button" data-jump-row="${escHtml(String(r.id))}" title="Open drawer">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                  ${ssLink}
+                </span>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>`);
+  });
+  html.push('</div>');
+  list.innerHTML = html.join('');
+  // Wire row jumps → opens drawer in All view
+  list.querySelectorAll('[data-jump-row]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = b.getAttribute('data-jump-row');
+      if (!id) return;
+      currentView = 'all';
+      document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
+      document.body.classList.remove('view-links');
+      expandedId = id;
+      render();
+      setTimeout(() => {
+        const row = document.querySelector(`.row[data-id="${id}"]`);
+        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+    });
+  });
+  // Unify-ticket buttons → open the linked-rows modal for that group
+  list.querySelectorAll('[data-unify]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = b.getAttribute('data-unify');
+      if (id) openLinkedRowsModal(id);
+    });
+  });
+}
+
 // ----- Linked-rows modal -----
 // Opens when user taps the "Linked N" badge on a row. Shows the matched
 // group side-by-side; user can pick a canonical ticket # (or type a new
@@ -3846,6 +4105,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
     document.body.classList.toggle('view-ack', currentView === 'ack');
     document.body.classList.toggle('view-dev', currentView === 'dev');
     document.body.classList.toggle('view-notif', currentView === 'notif');
+    document.body.classList.toggle('view-links', currentView === 'links');
     if (currentView !== 'ack') {
       selectedAckIds.clear();
       renderBulkBar();
