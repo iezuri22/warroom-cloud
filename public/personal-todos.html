@@ -10062,7 +10062,15 @@ const VOICE = {
   }
   // Seed defaults ONCE per device. After seeding, user is free to rename
   // / delete / reorder — we won't re-seed.
+  //
+  // CRITICAL: This must NOT run before sync-client.js has hydrated
+  // localStorage from the cloud. If it does, an empty localStorage at boot
+  // causes us to seed empty defaults and the sync interceptor queues an
+  // empty-state push that overwrites the cloud's real data. That's how the
+  // user lost their priority list assignments. Guard with the cloud-ready
+  // flag — both call sites below wait for the event before invoking seed.
   function seedDefaultFocus5Lists(){
+    if (!window.__warroomCloudReady) return; // wait for cloud hydration
     try { loadFocus5(); } catch {}
     // Always run the name migration first so old defaults get renamed
     // BEFORE the seed function decides what's missing.
@@ -11352,9 +11360,33 @@ const VOICE = {
       try { closeSidebar(); } catch {}
       showPriorityConfirm(true);
     });
-    // Seed defaults on load. Trigger morning check ~2.5s after page settles
-    // so the goal reminder gets first dibs (1.5s) and we don't pile two modals.
-    try { seedDefaultFocus5Lists(); } catch {}
+    // Seed defaults on load — but ONLY after sync-client.js has loaded cloud
+    // state into localStorage. Running before hydration nukes the user's
+    // real focus5State by saving empty defaults over it. The seed function
+    // itself has a guard, but we also need to actively kick it off when
+    // cloud-ready arrives so first-time users don't hang.
+    function _bootSeed(){
+      try { seedDefaultFocus5Lists(); } catch {}
+      // Re-render so newly-loaded cloud state actually shows.
+      try { loadFocus5(); render(); } catch {}
+    }
+    if (window.__warroomCloudReady) {
+      _bootSeed();
+    } else {
+      document.addEventListener('warroom:cloud-ready', _bootSeed, { once: true });
+      // Safety net: if the cloud-ready event somehow never fires (offline,
+      // login broken), still seed after 5s so the page isn't permanently
+      // stuck without priority lists.
+      setTimeout(() => {
+        if (!window.__warroomCloudReady) {
+          // Force the flag so the seed function will actually run, but
+          // accept that without cloud sync we might be writing to a clean
+          // local state. Better than no priority lists at all.
+          window.__warroomCloudReady = true;
+          _bootSeed();
+        }
+      }, 5000);
+    }
     setTimeout(() => { try { maybeShowPriorityConfirm(); } catch {} }, 2500);
     // Re-check every 5 min while page is open — covers the case where user
     // leaves War Room open and the next slot opens.
