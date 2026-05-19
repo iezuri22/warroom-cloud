@@ -9235,6 +9235,23 @@ const VOICE = {
 
     // ---- Empty list (lists exist but this one has no tasks) ----
     if (tasks.length === 0) {
+      // Recovery hint: any priority lists empty AND user has priority-flagged
+      // open tasks that aren't in any list? Show a Restore button that pulls
+      // them in. Covers the case where the sync race wiped focus5State.
+      const priorityChainIds = new Set();
+      try {
+        _priorityChain().forEach(l => (l.taskIds || []).forEach(id => priorityChainIds.add(id)));
+      } catch {}
+      const recoverable = todos.filter(t =>
+        !t.done && t.priority && !priorityChainIds.has(t.id)
+      ).sort((a, b) => {
+        const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+        const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+        return tb - ta;
+      });
+      const restoreHTML = recoverable.length > 0
+        ? `<button class="focus5-btn" id="focus5RestoreBtn" type="button" style="margin-left:8px;background:rgba(255,138,61,.14);border:1px solid rgba(255,138,61,.45);color:#FF8A3D">Restore ${recoverable.length} priority task${recoverable.length === 1 ? '' : 's'}</button>`
+        : '';
       const empty = document.createElement('div');
       empty.className = 'focus5-celebrate';
       empty.innerHTML = `
@@ -9242,6 +9259,7 @@ const VOICE = {
         <div class="focus5-celebrate-sub">No tasks in this list yet. Add up to 5.</div>
         <div class="focus5-celebrate-actions">
           <button class="focus5-btn primary" id="focus5FillBtn" type="button">Pick tasks</button>
+          ${restoreHTML}
         </div>`;
       view.appendChild(empty);
       list.appendChild(view);
@@ -9250,6 +9268,18 @@ const VOICE = {
         // slot+card layout (Pick 5 / + Routines on every list at once).
         try { showPriorityConfirm(true); } catch { openFocus5Picker(activeList.id); }
       });
+      const restoreBtn = empty.querySelector('#focus5RestoreBtn');
+      if (restoreBtn) {
+        restoreBtn.addEventListener('click', () => {
+          // Bulk-add recoverable tasks. cascadeAddTaskToList handles overflow
+          // per the priority chain rule (cap at 5 for First/Second, last is
+          // unlimited).
+          recoverable.forEach(t => {
+            try { cascadeAddTaskToList(t.id, activeList.id, 'end'); } catch {}
+          });
+          try { saveFocus5(); render(); } catch {}
+        });
+      }
       return;
     }
     const done = tasks.filter(t => t.done).length;
