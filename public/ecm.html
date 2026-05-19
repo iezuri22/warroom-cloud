@@ -774,6 +774,12 @@
     scrollbar-width: none;
   }
   .status-bar::-webkit-scrollbar { display: none }
+  .status-chip-sep {
+    flex-shrink: 0;
+    width: 1px; height: 20px;
+    background: rgba(255,255,255,.12);
+    margin: 0 4px;
+  }
   .status-chip {
     flex-shrink: 0;
     display: inline-flex; align-items: center; gap: 6px;
@@ -1880,6 +1886,14 @@ function _readTeamToken(){
 const _teamToken = _readTeamToken();
 _teamMode = !!_teamToken;
 const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Not feasible - close ticket','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT','Completed'];
+// Status buckets for the All rows view. Mirrors the Dev/Reports bucketing
+// model so the user gets the same Open / Parked / Completed mental model
+// everywhere.
+const ECM_DONE_STATUSES = new Set(['Completed', 'Not feasible - close ticket']);
+const ECM_PARKED_STATUSES = new Set(['On Hold', 'Waitlisted', 'Further discussion']);
+// Dev-only statuses — hidden from the All rows status chip strip because
+// dev work lives on the Dev/Reports tab and shouldn't pollute this view.
+const ECM_DEV_ONLY_STATUSES = new Set(['Verified on PRE', 'Verified on UAT', 'Discussed with Dev']);
 // Shorter labels for the horizontally-scrolling chip strip; the drawer
 // dropdown still shows the full names so picking is unambiguous.
 const SS_STATUS_SHORT = {
@@ -2205,14 +2219,18 @@ function isInternalRow(r){
   if (internalFlags && internalFlags[r.id]) return true;
   return false;
 }
-// Issue filter predicates — keep these named so we can reuse in counts + filter
+// Issue filter predicates — keep these named so we can reuse in counts + filter.
+// Dev/report items are tracked on their own tab; don't flag them as data-
+// quality issues on the All rows view.
 function isMissingTicket(r){
   if (isInternalRow(r)) return false;
+  if (isDevOrReportRow(r)) return false;
   const t = (r.ticket == null ? '' : String(r.ticket)).trim();
   return !t;
 }
 function isMissingCompletionDate(r){
   if (isInternalRow(r)) return false;
+  if (isDevOrReportRow(r)) return false;
   const closed = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
   const cd = (r.completionDate == null ? '' : String(r.completionDate)).trim();
   return closed && !cd;
@@ -2234,7 +2252,12 @@ function applyFilters(){
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
   if (filterStatus !== 'all') {
     if (filterStatus === '__open__') {
-      pool = pool.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket');
+      // "Open" = active in-flight work. Excludes Completed/Not feasible AND
+      // the parked statuses (Hold, Waitlisted, Further discussion) so the
+      // user sees only what's actually moving.
+      pool = pool.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status));
+    } else if (filterStatus === '__parked__') {
+      pool = pool.filter(r => ECM_PARKED_STATUSES.has(r.status));
     } else if (filterStatus === '__no_ticket__') {
       pool = pool.filter(isMissingTicket);
     } else if (filterStatus === '__no_completion_date__') {
@@ -2285,36 +2308,67 @@ function applyFilters(){
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
   // Count statuses across rows that match owner + program (the "scope") so
-  // status-chip counts always reflect what you're looking at.
-  let scoped = rows;
+  // status-chip counts always reflect what you're looking at. Dev/report
+  // items live on their own tab so we exclude them from the scope here.
+  let scoped = rows.filter(r => !isDevOrReportRow(r));
   if (filterOwner) scoped = scoped.filter(r => r.owner === filterOwner);
   if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
   const counts = {
     all: scoped.length,
-    __open__: scoped.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length,
+    __open__: scoped.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status)).length,
+    __parked__: scoped.filter(r => ECM_PARKED_STATUSES.has(r.status)).length,
     __no_ticket__: scoped.filter(isMissingTicket).length,
     __no_completion_date__: scoped.filter(isMissingCompletionDate).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
+  // Build chip groups: Open statuses → separator → Parked → separator →
+  // Completed → separator → Issue chips. Dev-only statuses skipped entirely.
   const chips = [
     { id: 'all', label: 'All', count: counts.all, kind: 'meta' },
     { id: '__open__', label: 'Open', count: counts.__open__, kind: 'meta' }
   ];
-  // Only show statuses that have at least one row in the current scope.
-  // 0-count statuses are noise — they make the chip strip harder to scan,
-  // and the active status filter chip (if it goes to 0 after a filter
-  // change) is rare enough that we'd rather hide it than dim it.
+  // Open-status chips (excludes parked + done + dev-only)
   SS_STATUSES.forEach(s => {
+    if (ECM_DONE_STATUSES.has(s)) return;
+    if (ECM_PARKED_STATUSES.has(s)) return;
+    if (ECM_DEV_ONLY_STATUSES.has(s)) return;
     const n = counts[s] || 0;
     if (n > 0 || filterStatus === s) {
       chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: n, kind: 'status' });
     }
   });
-  // Issue chips — data-quality filters at the end of the strip. Styled
-  // amber/red so they stand out as "things to fix" rather than statuses.
+  // Parked section
+  const hasParked = counts.__parked__ > 0 || ECM_PARKED_STATUSES.has(filterStatus);
+  if (hasParked) {
+    chips.push({ id: '__sep__', kind: 'sep' });
+    chips.push({ id: '__parked__', label: 'Parked', count: counts.__parked__, kind: 'meta' });
+    SS_STATUSES.forEach(s => {
+      if (!ECM_PARKED_STATUSES.has(s)) return;
+      const n = counts[s] || 0;
+      if (n > 0 || filterStatus === s) {
+        chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: n, kind: 'status' });
+      }
+    });
+  }
+  // Completed section
+  const hasDone = (counts['Completed'] || 0) > 0 || (counts['Not feasible - close ticket'] || 0) > 0
+    || ECM_DONE_STATUSES.has(filterStatus);
+  if (hasDone) {
+    chips.push({ id: '__sep__', kind: 'sep' });
+    SS_STATUSES.forEach(s => {
+      if (!ECM_DONE_STATUSES.has(s)) return;
+      const n = counts[s] || 0;
+      if (n > 0 || filterStatus === s) {
+        chips.push({ id: s, label: SS_STATUS_SHORT[s] || s, count: n, kind: 'status' });
+      }
+    });
+  }
+  // Issue chips — data-quality filters at the end of the strip.
+  chips.push({ id: '__sep__', kind: 'sep' });
   chips.push({ id: '__no_ticket__', label: 'No ticket', count: counts.__no_ticket__, kind: 'issue' });
   chips.push({ id: '__no_completion_date__', label: 'Missing date', count: counts.__no_completion_date__, kind: 'issue' });
   bar.innerHTML = chips.map(c => {
+    if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;
     const muted = c.count === 0 && c.kind === 'status' ? 'muted' : '';
     const kindCls = c.kind === 'issue' ? 'issue' : '';
     return `<button class="status-chip ${kindCls} ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
