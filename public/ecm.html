@@ -2072,7 +2072,11 @@ const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','W
 // Fuzzy-matches rows by Program + normalized title similarity so the user
 // can spot duplicates / related items that should share a ticket number.
 // Groups are computed once per render and memo'd on `rows` via a hash.
-const _STOPWORDS = new Set(['a','an','the','to','of','for','and','or','on','in','at','is','it','with','by','from','as','be','need','add','update','fix','issue','ticket','request']);
+//
+// Stopwords kept short — only true filler words. Action verbs (add, fix,
+// update, etc.) STAY because they often differentiate (e.g. "Add Account"
+// vs "Update Account" are different work).
+const _STOPWORDS = new Set(['a','an','the','to','of','for','and','or','on','in','at','is','it','with','by','from','as','be']);
 function _normalizeTitle(s){
   return (s || '').toString()
     .toLowerCase()
@@ -2083,16 +2087,26 @@ function _normalizeTitle(s){
 function _titleTokens(s){
   return _normalizeTitle(s)
     .split(' ')
-    .filter(w => w.length >= 3 && !_STOPWORDS.has(w));
+    // 2+ chars (was 3+) so "QC", "IR", "ID" etc. count
+    .filter(w => w.length >= 2 && !_STOPWORDS.has(w));
 }
+// Returns a match score 0..1. Combines Jaccard with a "shared tokens"
+// bonus so a couple strong overlapping words still surfaces the link
+// even when one title is much longer.
 function _titleSimilarity(a, b){
   const ta = new Set(_titleTokens(a));
   const tb = new Set(_titleTokens(b));
   if (ta.size === 0 || tb.size === 0) return 0;
   let inter = 0;
   for (const w of ta) if (tb.has(w)) inter++;
+  if (inter === 0) return 0;
   const union = ta.size + tb.size - inter;
-  return inter / union;
+  const jaccard = inter / union;
+  // Overlap coefficient: how much of the smaller title is contained in
+  // the larger. Catches subset titles ("DOH Bulk Add" inside "DOH Bulk
+  // Add Accounts + Bulk Deny Portal") that Jaccard penalizes.
+  const overlap = inter / Math.min(ta.size, tb.size);
+  return Math.max(jaccard, overlap * 0.75);
 }
 // Returns Map<rowId, Set<relatedRowId>> grouping rows that look related.
 // Match rule: same Program (case-insensitive, trimmed) + Jaccard token
@@ -2114,12 +2128,16 @@ function _computeRowMatches(){
     if (!byProgram.has(p)) byProgram.set(p, []);
     byProgram.get(p).push(r);
   });
+  // 0.35 threshold — lenient enough that 2-3 strong shared keywords across
+  // longer titles surface, but high enough that random word overlap doesn't
+  // create noise. Tune up if too many false positives, down if too few.
+  const SIM_THRESHOLD = 0.35;
   for (const list of byProgram.values()) {
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
         const sim = _titleSimilarity(a.task, b.task);
-        if (sim < 0.5) continue;
+        if (sim < SIM_THRESHOLD) continue;
         if (!groups.has(a.id)) groups.set(a.id, new Set());
         if (!groups.has(b.id)) groups.set(b.id, new Set());
         groups.get(a.id).add(b.id);
@@ -2128,8 +2146,17 @@ function _computeRowMatches(){
     }
   }
   _rowMatchGroups = groups;
+  // Diagnostic — confirm matching ran and surfaces what it found. Look in
+  // the browser console if "Linked N" badges aren't appearing.
+  try {
+    const pairs = [...groups.values()].reduce((s, set) => s + set.size, 0) / 2;
+    console.log('[ECM] linked-rows: scanned', rows.length, 'rows ·', groups.size, 'rows with at least one peer ·', pairs, 'pairs');
+  } catch {}
   return groups;
 }
+// Expose so you can poke at it from devtools — `window._ecmMatches()` returns
+// the current Map.
+window._ecmMatches = _computeRowMatches;
 // Expand a row's match set into the full transitive group (so if A↔B and
 // B↔C are matched, opening A's panel shows A, B, and C).
 function _expandMatchGroup(rowId){
