@@ -1925,12 +1925,23 @@ function populateProgramSelect(){
   sel.innerHTML = `<option value="">All programs</option>` + programs.map(p => `<option value="${escHtml(p)}" ${p === filterProgram ? 'selected' : ''}>${escHtml(p)}</option>`).join('');
 }
 
+// Internal items live outside the customer ticket flow — they don't need a
+// Smartsheets ticket # or a completion date. Skip them in the issue filters
+// and the red-Missing marker so the data-quality view isn't polluted.
+function isInternalRow(r){
+  if (!r) return false;
+  if (r.internalSS) return true;
+  if (internalFlags && internalFlags[r.id]) return true;
+  return false;
+}
 // Issue filter predicates — keep these named so we can reuse in counts + filter
 function isMissingTicket(r){
+  if (isInternalRow(r)) return false;
   const t = (r.ticket == null ? '' : String(r.ticket)).trim();
   return !t;
 }
 function isMissingCompletionDate(r){
+  if (isInternalRow(r)) return false;
   const closed = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
   const cd = (r.completionDate == null ? '' : String(r.completionDate)).trim();
   return closed && !cd;
@@ -2071,11 +2082,16 @@ function render(){
     //   - ticket # always (open or closed)
     //   - completion date when status is Completed
     const isClosedStatus = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
+    const rowInternal = isInternalRow(r);
     const missingIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    // Ticket — show #number or red MISSING
+    // Ticket — show #number, or red MISSING for customer-facing items.
+    // Internal items don't need a Smartsheets ticket so just render a quiet
+    // em-dash placeholder.
     const ticketSlotInner = r.ticket
       ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
-      : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`;
+      : (rowInternal
+          ? `<span class="row-slot-empty">—</span>`
+          : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`);
     // Sub-Type — show or invisible placeholder
     const subTypeSlotInner = r.subType
       ? `<span class="row-subtype">${escHtml(r.subType)}</span>`
@@ -2087,14 +2103,15 @@ function render(){
       ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
       : `<span class="row-slot-empty">—</span>`;
     // Completed date — green pill when present, red MISSING when status is
-    // Completed and the date is empty, invisible placeholder otherwise
+    // Completed and the date is empty, invisible placeholder otherwise.
+    // Internal items skip the MISSING marker entirely.
     const completedSlotInner = (() => {
       if (r.completionDate) {
         const abs = fmtAbsoluteDate(r.completionDate);
         const checkIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
         return `<span class="row-sub-completed" title="Completed ${escHtml(abs || r.completionDate)}">${checkIcon}${escHtml(abs)}</span>`;
       }
-      if (r.status === 'Completed') {
+      if (r.status === 'Completed' && !rowInternal) {
         return `<span class="row-missing" title="No completion date — status is Completed">${missingIcon}Missing</span>`;
       }
       return `<span class="row-slot-empty">—</span>`;
