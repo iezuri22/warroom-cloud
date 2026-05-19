@@ -2231,9 +2231,13 @@ function _titleSimilarity(a, b){
   return Math.max(jaccard, overlap * 0.75);
 }
 // Returns Map<rowId, Set<relatedRowId>> grouping rows that look related.
-// Match rule: same Program (case-insensitive, trimmed) + Jaccard token
-// similarity ≥ 0.5 on normalized titles. Closed rows still participate so
-// you can see when a completed item should have been tied to an open one.
+// Match rule: same Program + meaningful token overlap on normalized titles.
+//
+// Noise control: for each program, we derive PROGRAM-SPECIFIC stopwords —
+// any token that shows up in >35% of titles in that program is treated as
+// filler (e.g. "DOH", "HRP", "app", "delete" inside the DOH program). These
+// get stripped before similarity is measured, so the residual signal is
+// actual differentiating content.
 let _rowMatchGroups = null;
 let _rowMatchSignature = null;
 function _computeRowMatches(){
@@ -2250,15 +2254,48 @@ function _computeRowMatches(){
     if (!byProgram.has(p)) byProgram.set(p, []);
     byProgram.get(p).push(r);
   });
-  // 0.35 threshold — lenient enough that 2-3 strong shared keywords across
-  // longer titles surface, but high enough that random word overlap doesn't
-  // create noise. Tune up if too many false positives, down if too few.
-  const SIM_THRESHOLD = 0.35;
+  // Tightened to 0.5 — required because per-program stopwords let real
+  // signal carry more weight. Also enforce a hard floor: 2 shared
+  // meaningful tokens. Single-word overlaps create too many false
+  // positives even at high similarity scores.
+  const SIM_THRESHOLD = 0.5;
+  const MIN_SHARED_TOKENS = 2;
   for (const list of byProgram.values()) {
+    if (list.length < 2) continue;
+    // Build per-program stopwords from tokens that appear in >35% of
+    // titles. This kills program-name boilerplate ("DOH", "HRP") and
+    // category words ("app", "delete") that would otherwise pull
+    // unrelated items into the same group.
+    const tokenFreq = new Map();
+    list.forEach(r => {
+      const uniq = new Set(_titleTokens(r.task));
+      for (const t of uniq) tokenFreq.set(t, (tokenFreq.get(t) || 0) + 1);
+    });
+    const cutoff = Math.max(2, Math.floor(list.length * 0.35));
+    const programStopwords = new Set();
+    for (const [t, n] of tokenFreq) {
+      if (n >= cutoff) programStopwords.add(t);
+    }
+    // Tokenize each row once with the program stopwords applied
+    const rowTokens = new Map();
+    list.forEach(r => {
+      const filtered = _titleTokens(r.task).filter(w => !programStopwords.has(w));
+      rowTokens.set(r.id, new Set(filtered));
+    });
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
-        const sim = _titleSimilarity(a.task, b.task);
+        const ta = rowTokens.get(a.id);
+        const tb = rowTokens.get(b.id);
+        if (!ta || !tb || ta.size === 0 || tb.size === 0) continue;
+        // Count shared meaningful tokens
+        let inter = 0;
+        for (const w of ta) if (tb.has(w)) inter++;
+        if (inter < MIN_SHARED_TOKENS) continue;
+        const union = ta.size + tb.size - inter;
+        const jaccard = inter / union;
+        const overlap = inter / Math.min(ta.size, tb.size);
+        const sim = Math.max(jaccard, overlap * 0.75);
         if (sim < SIM_THRESHOLD) continue;
         if (!groups.has(a.id)) groups.set(a.id, new Set());
         if (!groups.has(b.id)) groups.set(b.id, new Set());
@@ -2268,8 +2305,6 @@ function _computeRowMatches(){
     }
   }
   _rowMatchGroups = groups;
-  // Diagnostic — confirm matching ran and surfaces what it found. Look in
-  // the browser console if "Linked N" badges aren't appearing.
   try {
     const pairs = [...groups.values()].reduce((s, set) => s + set.size, 0) / 2;
     console.log('[ECM] linked-rows: scanned', rows.length, 'rows ·', groups.size, 'rows with at least one peer ·', pairs, 'pairs');
@@ -3651,12 +3686,28 @@ function _collectLinkedGroups(){
       });
     if (rowsInCluster.length >= 2) groups.push(rowsInCluster);
   }
+  // Surface only groups that need user attention:
+  //   - Skip groups where every item is closed (Completed / Not feasible).
+  //     A done cluster is history — nothing to unify.
+  //   - Skip groups already unified (every non-empty ticket matches AND
+  //     every row has a ticket). Nothing to fix.
+  const filtered = groups.filter(group => {
+    const allClosed = group.every(r =>
+      r.status === 'Completed' || r.status === 'Not feasible - close ticket'
+    );
+    if (allClosed) return false;
+    const tickets = group.map(r => String(r.ticket || '').replace(/\.0$/, '').trim());
+    const allHaveTicket = tickets.every(t => t.length > 0);
+    const uniqueTickets = new Set(tickets.filter(Boolean));
+    if (allHaveTicket && uniqueTickets.size === 1) return false; // already unified
+    return true;
+  });
   // Sort groups so biggest clusters surface first; ties by oldest creation
-  groups.sort((a, b) => {
+  filtered.sort((a, b) => {
     if (a.length !== b.length) return b.length - a.length;
     return (Date.parse(a[0].createdDate) || 0) - (Date.parse(b[0].createdDate) || 0);
   });
-  return groups;
+  return filtered;
 }
 function renderLinks(){
   const list = document.getElementById('list');
