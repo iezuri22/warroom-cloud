@@ -6843,16 +6843,11 @@ const VOICE = {
       }
     }
     // Smartsheets row link — small open-in-new icon next to the ticket pill
-    // for any row synced from Smartsheets. Stops propagation so tapping the
-    // icon doesn't toggle the drawer. Uses the row permalink if we have it
-    // (populated on sync); falls back to the sheet URL constructed from
-    // sheetId so the icon always works even before the next sync runs.
-    let ssLinkHref = todo.smartsheetPermalink || '';
-    if (!ssLinkHref && todo.smartsheetSheetId) {
-      ssLinkHref = `https://app.smartsheet.com/sheets/${encodeURIComponent(todo.smartsheetSheetId)}`;
-    }
-    const ssLinkHTML = (todo.smartsheetRowId && ssLinkHref)
-      ? ` <a class="todo-ss-link" href="${escHtml(ssLinkHref)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+    // for any row synced from Smartsheets. Only rendered when we actually
+    // have a permalink stored (no broken fallbacks). Sync populates the
+    // permalink on every run, so this fills in after the first sync.
+    const ssLinkHTML = todo.smartsheetPermalink
+      ? ` <a class="todo-ss-link" href="${escHtml(todo.smartsheetPermalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
       : '';
     // Period pill (morning/afternoon/evening). If it was auto-shifted from
     // an earlier period, show the original alongside.
@@ -7725,9 +7720,18 @@ const VOICE = {
       //                        after being synced to this user's Personal list.
       const incomplete = [];
       const byRowIdAllStatuses = new Map();
+      // Sheet permalink is the URL-friendly form (matches what Smartsheets
+      // uses in its own UI links). Per-row permalinks aren't always set by
+      // the API, so we fall back to ${sheetPermalink}?rowId={id} the same
+      // way the ECM page does — that's the link that actually works against
+      // the user's Smartsheets session.
+      const sheetPermalink = (sheet && sheet.permalink) || '';
       (sheet.rows || []).forEach(r => {
         const o = (ssCellValue(r, colOwner.id) || '').toString().toLowerCase();
         const s = (ssCellValue(r, colStatus.id) || '').toString();
+        if (!r.permalink && sheetPermalink) {
+          r.permalink = `${sheetPermalink}?rowId=${r.id}`;
+        }
         byRowIdAllStatuses.set(String(r.id), { row: r, status: s });
         if (o === ownerName && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
@@ -7765,6 +7769,19 @@ const VOICE = {
           completedAt: new Date().toISOString(),
           smartsheetStatus: found.status
         };
+        Object.assign(t, patch);
+        try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
+        closedFromSheet++;
+      }
+      // Safety net — if a previous sync wrote smartsheetStatus = Completed
+      // but somehow left done = false (race, partial update), reconcile here.
+      // This catches the "marked Completed on ECM but still shows on Personal"
+      // case even when the row id mapping is fine.
+      for (const t of todos) {
+        if (t.done) continue;
+        if (!t.smartsheetRowId) continue;
+        if (!SS_CLOSED.has(t.smartsheetStatus || '')) continue;
+        const patch = { done: true, completedAt: t.completedAt || new Date().toISOString() };
         Object.assign(t, patch);
         try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
         closedFromSheet++;
