@@ -1,5 +1,10 @@
 // War Room Cloud Sync Client
-// Intercepts localStorage so existing code writes to both local (fast) and cloud (persistent)
+// Cloud is the source of truth. localStorage is just a cache. App code can
+// read/write localStorage normally — but writes that happen BEFORE the cloud
+// has finished hydrating are held back from the cloud sync queue. After
+// hydration, any pre-bootstrap write whose key was authoritative in the
+// cloud is dropped (cloud wins). This prevents the empty-defaults-clobber-cloud
+// race that wiped priority lists before.
 (function() {
   'use strict';
 
@@ -18,6 +23,17 @@
   const pending = new Map();   // key -> value (latest pending write)
   let syncTimer = null;
   let lastSyncedAt = null;
+
+  // Race-protection state. Until bootstrap finishes, app writes are queued
+  // into _preBootstrapWrites instead of being pushed to the cloud immediately.
+  // After bootstrap: any key the cloud already hydrated is treated as "cloud
+  // wins" and the pre-bootstrap write is silently dropped from the cloud
+  // sync queue (the local read-after-write still worked because we DID
+  // write to localStorage). Any key NOT in the cloud falls through to a
+  // normal sync.
+  let _bootstrapped = false;
+  const _preBootstrapWrites = new Map(); // key -> value
+  const _hydratedKeys = new Set();       // keys the cloud authoritatively wrote during bootstrap
 
   const origSetItem    = Storage.prototype.setItem;
   const origRemoveItem = Storage.prototype.removeItem;
@@ -59,29 +75,51 @@
     }
   }
 
-  // Override localStorage methods
+  // Override localStorage methods.
+  //
+  // The interceptor ALWAYS writes to localStorage (so read-after-write keeps
+  // working for app code). The difference is the cloud-sync queue: before
+  // bootstrap, writes go into a holding pen. After bootstrap, if the cloud
+  // hydrated the same key, the holding-pen entry is discarded (cloud wins).
+  // Otherwise it's pushed to the regular sync queue.
   Storage.prototype.setItem = function(key, value) {
     origSetItem.call(this, key, value);
-    if (this === window.localStorage) queueSync(key, value);
+    if (this !== window.localStorage) return;
+    if (!_bootstrapped) {
+      _preBootstrapWrites.set(key, value);
+      return;
+    }
+    queueSync(key, value);
   };
   Storage.prototype.removeItem = function(key) {
     origRemoveItem.call(this, key);
-    if (this === window.localStorage) queueSync(key, null);
+    if (this !== window.localStorage) return;
+    if (!_bootstrapped) {
+      _preBootstrapWrites.set(key, null);
+      return;
+    }
+    queueSync(key, null);
   };
   Storage.prototype.clear = function() {
     if (this === window.localStorage) {
       // Sync clear by queuing null for every known key
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k) queueSync(k, null);
+        if (k) {
+          if (_bootstrapped) queueSync(k, null);
+          else _preBootstrapWrites.set(k, null);
+        }
       }
     }
     origClear.call(this);
   };
 
-  // Flush on page hide (good for mobile where tab switch loses state)
+  // Flush on page hide (good for mobile where tab switch loses state).
+  // Only flushes post-bootstrap writes — pre-bootstrap writes are still
+  // in the holding pen and we don't want to push them up if cloud is the
+  // source of truth.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && pending.size > 0) {
+    if (document.visibilityState === 'hidden' && pending.size > 0 && _bootstrapped) {
       // Use sendBeacon for reliability when page is closing
       const updates = [...pending.entries()].map(([key, value]) => ({ key, value }));
       pending.clear();
@@ -93,6 +131,30 @@
       } catch {}
     }
   });
+
+  // After bootstrap finishes (success OR fail), flip the gate, then decide
+  // what to do with any pre-bootstrap writes that piled up.
+  //   - If the cloud authoritatively hydrated a key, drop the pre-bootstrap
+  //     write entirely (cloud wins; the app's empty defaults / stale value
+  //     never makes it to the cloud).
+  //   - If the cloud had no data for that key (new account, or key isn't
+  //     synced), push the pre-bootstrap write up as a normal sync.
+  function finalizePreBootstrapWrites() {
+    for (const [key, value] of _preBootstrapWrites) {
+      if (_hydratedKeys.has(key)) {
+        // Cloud was authoritative for this key. The pre-bootstrap localStorage
+        // write was already overwritten by the cloud hydration step (which
+        // used origSetItem to clobber localStorage with the cloud value). So
+        // localStorage is consistent. We just need to NOT push the stale
+        // value back up.
+        continue;
+      }
+      // Cloud doesn't have data for this key → app's pre-bootstrap value
+      // is the latest. Push it.
+      queueSync(key, value);
+    }
+    _preBootstrapWrites.clear();
+  }
 
   // ----- Initial load: pull cloud state into localStorage before app code runs -----
   async function bootstrap() {
@@ -107,24 +169,36 @@
       if (!res.ok) throw new Error('Load failed: ' + res.status);
       const { state } = await res.json();
 
-      // Merge cloud state into localStorage (cloud wins for now - last-write-wins policy)
+      // Merge cloud state into localStorage. Cloud always wins — track which
+      // keys the cloud authoritatively wrote so we can drop matching
+      // pre-bootstrap writes from the sync queue.
       for (const [key, entry] of Object.entries(state || {})) {
         if (SKIP_SYNC.has(key)) continue; // don't pull ephemeral state from cloud
         const val = typeof entry.value === 'string'
           ? entry.value
           : JSON.stringify(entry.value);
         origSetItem.call(localStorage, key, val);
+        _hydratedKeys.add(key);
       }
       // Always clear any local active-task on fresh page load (stale timer prevention)
       origRemoveItem.call(localStorage, 'active-task');
       lastSyncedAt = Date.now();
       updateSyncIndicator('synced');
+      _bootstrapped = true;
+      finalizePreBootstrapWrites();
       window.__warroomCloudReady = true;
       document.dispatchEvent(new Event('warroom:cloud-ready'));
     } catch (e) {
       console.error('[sync] bootstrap failed', e);
       updateSyncIndicator('offline');
-      // Still let the app load - localStorage is the fallback
+      // Offline / bootstrap failed: don't lose the user's work. Promote any
+      // pre-bootstrap writes to the normal sync queue (they'll retry once
+      // the network recovers). Cloud-ready still fires so the app proceeds.
+      _bootstrapped = true;
+      for (const [key, value] of _preBootstrapWrites) {
+        queueSync(key, value);
+      }
+      _preBootstrapWrites.clear();
       window.__warroomCloudReady = true;
       document.dispatchEvent(new Event('warroom:cloud-ready'));
     }
