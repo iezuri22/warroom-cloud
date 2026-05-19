@@ -7687,17 +7687,17 @@ const VOICE = {
       const ownerName = (c.owner || '').toLowerCase();
       // Two views of the same sheet:
       //   incomplete         — owner's still-open rows (drives new-task creation)
-      //   byRowIdAllStatuses — every row keyed by id, used to detect status flips
-      //                        on rows we previously synced (so Completed in
-      //                        Smartsheets propagates to done=true here).
+      //   byRowIdAllStatuses — EVERY row on the sheet keyed by id. We track
+      //                        all rows (not just owner's) so completion
+      //                        propagates even when a row gets reassigned
+      //                        after being synced to this user's Personal list.
       const incomplete = [];
       const byRowIdAllStatuses = new Map();
       (sheet.rows || []).forEach(r => {
         const o = (ssCellValue(r, colOwner.id) || '').toString().toLowerCase();
-        if (o !== ownerName) return;
         const s = (ssCellValue(r, colStatus.id) || '').toString();
         byRowIdAllStatuses.set(String(r.id), { row: r, status: s });
-        if (SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
+        if (o === ownerName && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
       // Dedupe map: smartsheetRowId → existing todo
       const byRowId = new Map();
@@ -7893,15 +7893,28 @@ const VOICE = {
       const d = ev && ev.data;
       if (d && d.type === 'warroom:smartsheets-config-changed') ssShowSyncBtn();
     });
-    // Daily auto-sync — runs once per Chicago day on first load if opted in
+    // Auto-sync on page load — fires if Smartsheets is configured and the
+    // last sync is stale (>5min) or hasn't happened today. This catches
+    // completions made on the ECM page that haven't propagated back yet.
+    // Defaults ON; opt out with autoSync === false in config.
     setTimeout(() => {
       const c = ssGetConfig();
-      if (!c.autoSync || !ssIsConfigured()) return;
-      const last = c.lastSyncAt ? new Date(c.lastSyncAt) : null;
+      if (c.autoSync === false || !ssIsConfigured()) return;
+      const last = c.lastSyncAt ? new Date(c.lastSyncAt).getTime() : 0;
+      const stale = Date.now() - last > 5 * 60 * 1000;
       const today = todayKey();
-      const lastDay = last ? dkey(last) : '';
-      if (lastDay !== today) ssSync();
+      const lastDay = c.lastSyncAt ? dkey(new Date(c.lastSyncAt)) : '';
+      if (stale || lastDay !== today) ssSync();
     }, 1500); // small delay so the page settles + todos load first
+    // Re-sync when the tab becomes visible again after being hidden long
+    // enough for completions on the ECM page to drift out of sync.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      const c = ssGetConfig();
+      if (c.autoSync === false || !ssIsConfigured()) return;
+      const last = c.lastSyncAt ? new Date(c.lastSyncAt).getTime() : 0;
+      if (Date.now() - last > 5 * 60 * 1000) ssSync();
+    });
   })();
 
   // Initial render. If state has a saved vibe, attach a one-shot listener that
