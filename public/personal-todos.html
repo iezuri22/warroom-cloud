@@ -7726,28 +7726,60 @@ const VOICE = {
       // way the ECM page does — that's the link that actually works against
       // the user's Smartsheets session.
       const sheetPermalink = (sheet && sheet.permalink) || '';
+      // Owner cells can be plain string OR a Contact object {name,email} OR
+      // an array of contact objects (multi-contact column). Normalize to a
+      // lowercased comma-joined name string so the comparison is consistent.
+      const normalizeOwnerCell = (row) => {
+        const cell = (row.cells || []).find(c => c.columnId === colOwner.id);
+        if (!cell) return '';
+        if (cell.displayValue) return String(cell.displayValue).toLowerCase();
+        const v = cell.value;
+        if (v == null) return '';
+        if (typeof v === 'string') return v.toLowerCase();
+        if (Array.isArray(v)) return v.map(x => (x && x.name) || '').filter(Boolean).join(', ').toLowerCase();
+        if (typeof v === 'object' && v.name) return String(v.name).toLowerCase();
+        return String(v).toLowerCase();
+      };
       (sheet.rows || []).forEach(r => {
-        const o = (ssCellValue(r, colOwner.id) || '').toString().toLowerCase();
+        const o = normalizeOwnerCell(r);
         const s = (ssCellValue(r, colStatus.id) || '').toString();
         if (!r.permalink && sheetPermalink) {
           r.permalink = `${sheetPermalink}?rowId=${r.id}`;
         }
         byRowIdAllStatuses.set(String(r.id), { row: r, status: s, owner: o });
-        if (o === ownerName && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
+        // Incomplete pool: user is one of the owners (handles multi-contact)
+        const isOwner = o.split(/[,;]+/).map(s => s.trim()).includes(ownerName);
+        if (isOwner && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
       // Reassignment sweep — if a synced todo is on a row that's now owned by
-      // someone else, drop the local copy. It's not my work anymore. We only
-      // delete when we can confirm the row exists with a different owner;
-      // missing-from-sheet rows are left alone (could be a partial fetch).
+      // someone else (and not me), drop the local copy. Handles multi-contact
+      // owner columns: cell may be a comma-separated list of names, so we
+      // split + look for the user's name in the list. Rows missing from the
+      // current fetch are left alone (could be a partial fetch).
+      const ownerInCell = (cellOwner) => {
+        if (!cellOwner) return false;
+        const parts = String(cellOwner).toLowerCase().split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+        return parts.includes(ownerName);
+      };
       let reassignedOut = 0;
       const toRemove = [];
       for (const t of todos) {
         if (!t.smartsheetRowId) continue;
         const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
         if (!found) continue; // row not in current fetch, leave alone
-        if (found.owner && found.owner !== ownerName) toRemove.push(t);
+        // Skip if user is still in the owner list (multi-owner case)
+        if (ownerInCell(found.owner)) continue;
+        // Only remove when we actually see a non-empty owner field that's
+        // someone else. An empty owner means it was unassigned — could be a
+        // momentary state, so we hold off.
+        if (found.owner) {
+          toRemove.push({ todo: t, newOwner: found.owner });
+        }
       }
-      for (const t of toRemove) {
+      if (toRemove.length) {
+        console.log('[ECM sync] reassigning out:', toRemove.map(x => ({ task: x.todo.text, newOwner: x.newOwner })));
+      }
+      for (const { todo: t } of toRemove) {
         try { await deleteDoc(doc(db, 'tv_todos', t.id)); } catch (e) { console.warn('delete reassigned failed', e); }
         const idx = todos.findIndex(x => x.id === t.id);
         if (idx >= 0) todos.splice(idx, 1);
