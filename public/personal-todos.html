@@ -10003,19 +10003,70 @@ const VOICE = {
   })();
 
   // ============ MORNING PRIORITY CONFIRM ============
-  // Pops up 3x in the morning to lock in today's priorities across the 4
-  // default Focus 5 lists. Auto-seeds the defaults if the user has fewer
-  // than 4 lists and hasn't been seeded before.
+  // Pops up 3x in the morning to lock in today's priorities across the
+  // default Focus 5 lists. Auto-seeds the defaults if the user hasn't been
+  // seeded before. New default scheme: First/Second/Third Priority — three
+  // ordered priority lists that cascade overflow down the chain (only the
+  // last can exceed 5). Morning Routine lives separately as a routine list.
   const PRIORITY_DEFAULTS = [
-    { name: 'Morning routine', routine: 'morning', color: '#FFB84D' },
-    { name: '9-5 priorities',  routine: null,      color: '#FF8A3D' },
-    { name: 'EZRK build',      routine: null,      color: '#A78BFA' },
-    { name: 'Evening / personal', routine: 'night', color: '#6BA8FF' }
+    { name: 'First Priority',  routine: null, color: '#FF8A3D' },
+    { name: 'Second Priority', routine: null, color: '#A78BFA' },
+    { name: 'Third Priority',  routine: null, color: '#6BA8FF' }
   ];
+  // Migration: rename legacy priority list names from the old scheme
+  // ("9-5 priorities" / "EZRK build" / "Evening / personal") to the new
+  // First/Second/Third Priority scheme. Preserves taskIds. Runs once per
+  // device, but the migration key syncs across devices so it self-heals if
+  // the cloud has stale state.
+  function _migratePriorityListNames(){
+    const MIG_KEY = 'personal-priority-rename-mig-v1';
+    try { if (localStorage.getItem(MIG_KEY) === '1') return; } catch {}
+    const renameMap = {
+      '9-5 priorities':     'First Priority',
+      'ezrk build':         'Second Priority',
+      'evening / personal': 'Third Priority'
+    };
+    if (!Array.isArray(focus5State.lists)) return;
+    const byNewName = new Map();
+    focus5State.lists.forEach(l => {
+      byNewName.set((l.name || '').trim().toLowerCase(), l);
+    });
+    let changed = false;
+    focus5State.lists.forEach(l => {
+      const lower = (l.name || '').trim().toLowerCase();
+      const newName = renameMap[lower];
+      if (!newName) return;
+      const existing = byNewName.get(newName.toLowerCase());
+      if (existing && existing !== l) {
+        // Already have a list with the new name — merge taskIds into it
+        // (dedup) and mark the legacy list for removal.
+        l.taskIds.forEach(id => {
+          if (!existing.taskIds.includes(id)) existing.taskIds.push(id);
+        });
+        l._migrateRemove = true;
+        changed = true;
+      } else {
+        l.name = newName;
+        // Old "Evening / personal" had routine='night' — drop that since
+        // priority lists aren't routine-flagged.
+        if (l.routine === 'night' || l.routine === 'morning') l.routine = null;
+        byNewName.set(newName.toLowerCase(), l);
+        changed = true;
+      }
+    });
+    if (changed) {
+      focus5State.lists = focus5State.lists.filter(l => !l._migrateRemove);
+      saveFocus5();
+    }
+    try { localStorage.setItem(MIG_KEY, '1'); } catch {}
+  }
   // Seed defaults ONCE per device. After seeding, user is free to rename
   // / delete / reorder — we won't re-seed.
   function seedDefaultFocus5Lists(){
     try { loadFocus5(); } catch {}
+    // Always run the name migration first so old defaults get renamed
+    // BEFORE the seed function decides what's missing.
+    try { _migratePriorityListNames(); } catch {}
     const seededKey = 'personal-focus-5-defaults-seeded';
     let seeded = false;
     try { seeded = localStorage.getItem(seededKey) === '1'; } catch {}
@@ -10041,10 +10092,14 @@ const VOICE = {
       try { localStorage.setItem(seededKey, '1'); } catch {}
     }
   }
-  // Get the 4 priority lists (defaults first, then any extras user added).
+  // Get the priority lists (priority-named lists, in display order). Falls
+  // back to the first 4 lists if none match the priority naming convention
+  // (defensive — covers users who have custom lists they want treated as
+  // priorities).
   function getPriorityLists(){
     seedDefaultFocus5Lists();
-    return focus5State.lists.slice(0, 4);
+    const priority = focus5State.lists.filter(_isPriorityList);
+    return priority.length > 0 ? priority : focus5State.lists.slice(0, 4);
   }
   // Add a taskId to a list. If the list is already full (5 items), the item
   // at the bottom (position 4) is bumped to the END of the next list. If THAT
