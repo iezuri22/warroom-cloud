@@ -3059,6 +3059,22 @@
     border-color: #FF8A3D;
     color: #fff;
   }
+  /* Routine list buttons — warm amber tint to read separately from priorities */
+  .add-sheet-priority-btn.routine {
+    color: #FFD08A;
+    border-color: rgba(255,184,77,.30);
+    background: rgba(255,184,77,.06);
+  }
+  .add-sheet-priority-btn.routine:hover {
+    color: #fff;
+    border-color: rgba(255,184,77,.65);
+  }
+  .add-sheet-priority-btn.routine.active {
+    background: rgba(255,184,77,.28);
+    border-color: #FFB84D;
+    color: #fff;
+  }
+  .add-sheet-priority-label-routines { margin-top: 4px }
   /* FAB hidden — the sticky + Add chip in the filter bar is the primary path
      and stays visible regardless of scroll position. */
   .add-fab { display: none !important; }
@@ -4357,10 +4373,14 @@
       <button class="add-btn" id="addBtn">Add</button>
     </div>
     <!-- Priority-list selector — optionally also drop the new task into one
-         of the Focus 5 priority lists. Empty (none selected) = just add. -->
+         of the Focus 5 priority lists. Empty (none selected) = just add.
+         Routine lists (Morning Routine, etc.) get their own labeled row so
+         they don't get folded into the priority chain. -->
     <div class="add-sheet-priority" id="addSheetPriority">
       <span class="add-sheet-priority-label">Also add to priority list</span>
       <div class="add-sheet-priority-row" id="addSheetPriorityRow"></div>
+      <span class="add-sheet-priority-label add-sheet-priority-label-routines" id="addSheetRoutineLabel" style="display:none">Or routine</span>
+      <div class="add-sheet-priority-row" id="addSheetRoutineRow"></div>
     </div>
   </div>
 </div>
@@ -7275,22 +7295,45 @@ const VOICE = {
   function _renderAddSheetPriorityPicker(){
     const row = document.getElementById('addSheetPriorityRow');
     const wrap = document.getElementById('addSheetPriority');
+    const routineRow = document.getElementById('addSheetRoutineRow');
+    const routineLabel = document.getElementById('addSheetRoutineLabel');
     if (!row || !wrap) return;
-    // Only show the priority picker if there are priority lists set up.
-    const lists = (typeof getPriorityLists === 'function') ? getPriorityLists() : (focus5State && focus5State.lists ? focus5State.lists.filter(l => !l.routine) : []);
-    if (!lists || lists.length === 0) { wrap.style.display = 'none'; return; }
+    // Priority lists (First, Second, Third) — these are the cascade chain.
+    const priorityLists = (typeof getPriorityLists === 'function')
+      ? getPriorityLists()
+      : (focus5State && focus5State.lists ? focus5State.lists.filter(l => !l.routine) : []);
+    // Routine lists (Morning Routine, etc.) — kept separate so they don't get
+    // folded into the priority chain.
+    const routineLists = (focus5State && focus5State.lists)
+      ? focus5State.lists.filter(l => !!l.routine)
+      : [];
+    if ((!priorityLists || priorityLists.length === 0) && routineLists.length === 0) {
+      wrap.style.display = 'none';
+      return;
+    }
     wrap.style.display = '';
-    const noneBtn = `<button type="button" class="add-sheet-priority-btn ${!_addSheetPriorityListId ? 'active' : ''}" data-list-id="">None</button>`;
-    const btns = lists.map(l => {
-      const filled = (l.taskIds || []).filter(id => {
-        // Count only IDs that resolve to real (non-done) tasks.
-        return todos.find(t => t.id === id && !t.done);
-      }).length;
+    const renderBtn = (l, options = {}) => {
+      const filled = (l.taskIds || []).filter(id => todos.find(t => t.id === id && !t.done)).length;
       const isActive = _addSheetPriorityListId === l.id;
-      return `<button type="button" class="add-sheet-priority-btn ${isActive ? 'active' : ''}" data-list-id="${escHtml(l.id)}">${escHtml(l.name || 'List')} <span style="opacity:.55;margin-left:4px;font-weight:700">${filled}/5</span></button>`;
-    }).join('');
-    row.innerHTML = noneBtn + btns;
-    row.querySelectorAll('[data-list-id]').forEach(b => {
+      const routineCls = l.routine ? ` routine routine-${l.routine}` : '';
+      const cap = options.uncapped ? '' : ` <span style="opacity:.55;margin-left:4px;font-weight:700">${filled}/5</span>`;
+      return `<button type="button" class="add-sheet-priority-btn${routineCls} ${isActive ? 'active' : ''}" data-list-id="${escHtml(l.id)}">${escHtml(l.name || 'List')}${cap}</button>`;
+    };
+    const noneBtn = `<button type="button" class="add-sheet-priority-btn ${!_addSheetPriorityListId ? 'active' : ''}" data-list-id="">None</button>`;
+    row.innerHTML = noneBtn + priorityLists.map(l => renderBtn(l)).join('');
+    if (routineRow && routineLabel) {
+      if (routineLists.length > 0) {
+        routineLabel.style.display = '';
+        routineRow.style.display = '';
+        // Routine lists aren't capped — show count without /5.
+        routineRow.innerHTML = routineLists.map(l => renderBtn(l, { uncapped: true })).join('');
+      } else {
+        routineLabel.style.display = 'none';
+        routineRow.style.display = 'none';
+        routineRow.innerHTML = '';
+      }
+    }
+    wrap.querySelectorAll('[data-list-id]').forEach(b => {
       b.addEventListener('click', () => {
         const id = b.getAttribute('data-list-id') || '';
         _addSheetPriorityListId = id || null;
@@ -10367,10 +10410,11 @@ const VOICE = {
     const lists = focus5State.lists;
     const startIdx = lists.findIndex(l => l.id === targetListId);
     if (startIdx < 0 || !taskId) return false;
+    const targetList = lists[startIdx];
     // Stamp priorityAt on the todo if the target list is a priority list.
     // Drives the "active this week" stat — once a task has touched a
     // priority list this week, it counts as an active priority all week.
-    if (_isPriorityList(lists[startIdx])) {
+    if (_isPriorityList(targetList)) {
       const t = (typeof taskId === 'string' && taskId.startsWith('tpl:'))
         ? null
         : todos.find(x => x.id === taskId);
@@ -10385,6 +10429,16 @@ const VOICE = {
       const at = l.taskIds.indexOf(taskId);
       if (at >= 0) l.taskIds.splice(at, 1);
     });
+    // Routine lists (Morning Routine, etc.) are terminal — they accept the
+    // task and don't cascade into the priority chain. They're uncapped.
+    if (targetList.routine) {
+      const existing = targetList.taskIds.indexOf(taskId);
+      if (existing >= 0) targetList.taskIds.splice(existing, 1);
+      if (position === 'top') targetList.taskIds.unshift(taskId);
+      else targetList.taskIds.push(taskId);
+      saveFocus5();
+      return true;
+    }
     // Insert into target, then cascade overflow.
     let i = startIdx;
     let incoming = [taskId];
