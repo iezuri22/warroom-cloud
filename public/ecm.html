@@ -261,6 +261,43 @@
   }
   .notif-actions .primary:hover { background: rgba(255,138,61,.26); color: #fff; border-color: #FF8A3D }
 
+  /* Inbox / Archive toggle on the Notifications view */
+  .notif-toggle-row {
+    display: inline-flex; gap: 4px;
+    margin: 0 20px 12px;
+    padding: 4px;
+    border-radius: 99px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    width: fit-content;
+  }
+  .notif-toggle-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 99px;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,.6);
+    font-family: inherit; font-size: 12px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: color .12s, background .12s;
+  }
+  .notif-toggle-btn:hover { color: #fff }
+  .notif-toggle-btn.active {
+    background: rgba(255,138,61,.18);
+    color: #fff;
+  }
+  .notif-toggle-btn .ct {
+    font-size: 10px; font-weight: 900;
+    padding: 1px 7px; border-radius: 99px;
+    background: rgba(255,255,255,.08);
+    color: rgba(255,255,255,.75);
+  }
+  .notif-toggle-btn.active .ct {
+    background: rgba(255,138,61,.32);
+    color: #fff;
+  }
+
   /* Count badge on view tabs */
   .view-tab-ct {
     display: inline-block; margin-left: 6px;
@@ -1504,6 +1541,9 @@ window._ecmInternal = { markInternal, unmarkInternal };
 // Snapshot of last-seen owner state lives in localStorage so detection only
 // fires on actual transitions (not on every page load).
 let notifications = []; // sorted desc by createdAt — full list, filtered later
+// Notifications view toggle — when false, acked notifications are hidden from
+// the list (clean inbox vibe). User flips it on to see the archive.
+let _showArchivedNotifs = false;
 let notifsUnsub = null;
 const LAST_SEEN_KEY = 'ecm-seen-rows';
 function subscribeNotifications(){
@@ -2165,6 +2205,11 @@ function isMissingCompletionDate(r){
 }
 function applyFilters(){
   let pool = rows.slice();
+  // Dev + Reporting items live on the dedicated Dev/Reports tab — exclude
+  // them from the All rows / Acks views so per-owner queues don't get
+  // clogged with work that's tracked elsewhere (Talha had a huge queue
+  // because most dev work was assigned to him).
+  pool = pool.filter(r => !isDevOrReportRow(r));
   // Ack view: hide already-acked rows by default so the queue clears as you go.
   // Acked tasks remain visible if filter is on All status (so you can still
   // see them — but the dot indicator only counts unacked).
@@ -2636,7 +2681,9 @@ function renderBulkBar(){
 function updateNeedsAckDot(){
   const dot = document.getElementById('needsAckDot');
   if (!dot) return;
-  const needsCount = rows.filter(r => !acks[r.id]).length;
+  // Exclude dev/report items — they live on the Dev/Reports tab and don't
+  // count as standard ECM ack work.
+  const needsCount = rows.filter(r => !acks[r.id] && !isDevOrReportRow(r)).length;
   dot.classList.toggle('show', needsCount > 0);
 }
 // Per-owner pending-ack counts — small avatar pills showing each owner with
@@ -2646,11 +2693,14 @@ function renderOwnerAcks(){
   const el = document.getElementById('ownerAcks');
   if (!el) return;
   // Count un-acked open rows per owner. "Open" = not Completed / Not feasible.
+  // Exclude dev/report items from the count — they're tracked on the
+  // Dev/Reports tab so they shouldn't inflate the standard owner queue.
   const counts = {};
   rows.forEach(r => {
     if (!r.owner) return;
     if (acks[r.id]) return;
     if (r.status === 'Completed' || r.status === 'Not feasible - close ticket') return;
+    if (isDevOrReportRow(r)) return;
     counts[r.owner] = (counts[r.owner] || 0) + 1;
   });
   const owners = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
@@ -3003,13 +3053,34 @@ function renderNotifications(){
     return;
   }
   const mine = notifications.filter(n => n.targetUser === _userName);
-  const unread = mine.filter(n => !n.ackedBy).length;
-  if (metaEl) metaEl.textContent = unread > 0 ? `${unread} unread · ${mine.length} total` : `${mine.length} total`;
-  if (!mine.length) {
-    list.innerHTML = `<div class="empty">No notifications. New or reassigned tasks for <strong>${escHtml(_userName)}</strong> will appear here.</div>`;
+  const unread = mine.filter(n => !n.ackedBy);
+  const archived = mine.filter(n => !!n.ackedBy);
+  // Default view = unread only (clean inbox). Toggle shows archived.
+  const visible = _showArchivedNotifs ? archived : unread;
+  if (metaEl) metaEl.textContent = unread.length > 0
+    ? `${unread.length} unread · ${archived.length} archived`
+    : (archived.length > 0 ? `0 unread · ${archived.length} archived` : 'No notifications');
+  // Header row: toggle between Inbox (unread) and Archive
+  const toggleHTML = `
+    <div class="notif-toggle-row">
+      <button type="button" class="notif-toggle-btn ${!_showArchivedNotifs ? 'active' : ''}" data-notif-tab="inbox">
+        Inbox <span class="ct">${unread.length}</span>
+      </button>
+      <button type="button" class="notif-toggle-btn ${_showArchivedNotifs ? 'active' : ''}" data-notif-tab="archive">
+        Archive <span class="ct">${archived.length}</span>
+      </button>
+    </div>`;
+  if (!visible.length) {
+    const emptyMsg = _showArchivedNotifs
+      ? 'No archived notifications yet. Items you mark as read land here.'
+      : (mine.length === 0
+          ? `No notifications. New or reassigned tasks for <strong>${escHtml(_userName)}</strong> will appear here.`
+          : 'Inbox is clear. Tap Archive above to see what you\'ve already read.');
+    list.innerHTML = toggleHTML + `<div class="empty">${emptyMsg}</div>`;
+    _wireNotifToggle(list);
     return;
   }
-  list.innerHTML = mine.map(n => {
+  list.innerHTML = toggleHTML + visible.map(n => {
     const isAcked = !!n.ackedBy;
     const kindLabel = n.kind === 'reassign' ? 'Reassigned to you' : 'New task';
     const kindCls = n.kind === 'reassign' ? 'reassign' : 'new';
@@ -3071,6 +3142,15 @@ function renderNotifications(){
       e.stopPropagation();
       const url = b.getAttribute('data-notif-open') || '';
       if (url) window.open(url, '_blank', 'noopener');
+    });
+  });
+  _wireNotifToggle(list);
+}
+function _wireNotifToggle(root){
+  root.querySelectorAll('[data-notif-tab]').forEach(b => {
+    b.addEventListener('click', () => {
+      _showArchivedNotifs = (b.getAttribute('data-notif-tab') === 'archive');
+      renderNotifications();
     });
   });
 }
