@@ -740,6 +740,121 @@
     border-color: rgba(255,138,61,.45);
     background: rgba(255,138,61,.10);
   }
+
+  /* Suggestions — actionable proposals for untickted rows that look like
+     they belong to an existing ticket. Orange accent to stand apart from
+     the purple linked-group cards. */
+  .links-suggestions-head {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 4px 4px 2px;
+    flex-wrap: wrap;
+  }
+  .links-sugg-title {
+    font-size: 11px; font-weight: 900; letter-spacing: .8px;
+    text-transform: uppercase;
+    color: #FFC84D;
+  }
+  .links-sugg-sub {
+    font-size: 11px; font-weight: 500;
+    color: rgba(255,255,255,.45);
+  }
+  .links-sugg-card {
+    border-radius: 14px;
+    background: rgba(255,200,77,.05);
+    border: 1px solid rgba(255,200,77,.28);
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .links-sugg-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.06);
+    flex-wrap: wrap;
+  }
+  .links-sugg-row.peer {
+    background: rgba(167,139,250,.05);
+    border-color: rgba(167,139,250,.22);
+  }
+  .links-sugg-label {
+    flex-shrink: 0;
+    font-size: 9px; font-weight: 900; letter-spacing: 1px;
+    padding: 3px 8px; border-radius: 99px;
+    background: rgba(255,200,77,.16);
+    color: #FFC84D;
+  }
+  .links-sugg-row.peer .links-sugg-label {
+    background: rgba(167,139,250,.18);
+    color: #C4B5FD;
+  }
+  .links-sugg-task {
+    flex: 1; min-width: 0;
+    font-size: 13px; font-weight: 700;
+    color: rgba(255,255,255,.92);
+    line-height: 1.3;
+  }
+  .links-sugg-meta {
+    flex-shrink: 0;
+    font-size: 10px; font-weight: 600;
+    color: rgba(255,255,255,.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .links-sugg-arrow {
+    text-align: center;
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    color: rgba(255,255,255,.35);
+    text-transform: lowercase;
+    padding: 2px 0;
+  }
+  .links-sugg-actions {
+    display: flex; align-items: center; gap: 8px;
+    padding-top: 4px;
+  }
+  .links-sugg-accept {
+    padding: 7px 13px; border-radius: 99px;
+    background: rgba(255,200,77,.20);
+    border: 1px solid rgba(255,200,77,.50);
+    color: #FFC84D;
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .links-sugg-accept:hover {
+    background: rgba(255,200,77,.32);
+    color: #fff;
+    border-color: #FFC84D;
+  }
+  .links-sugg-dismiss {
+    padding: 7px 11px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.55);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .links-sugg-dismiss:hover {
+    color: rgba(255,255,255,.9);
+    border-color: rgba(255,255,255,.30);
+    background: rgba(255,255,255,.04);
+  }
+  .links-section-divider {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 8px;
+    padding: 4px 4px 2px;
+    font-size: 11px; font-weight: 900; letter-spacing: .8px;
+    text-transform: uppercase;
+    color: #C4B5FD;
+  }
+  .links-section-divider span {
+    font-size: 10px; font-weight: 700;
+    color: rgba(255,255,255,.4);
+    background: rgba(167,139,250,.10);
+    padding: 2px 8px; border-radius: 99px;
+  }
+
   .row-check:hover { border-color: rgba(74,158,255,.6) }
   .row-check.checked {
     background: #6BA8FF; border-color: #6BA8FF;
@@ -2230,42 +2345,75 @@ function _titleSimilarity(a, b){
   const overlap = inter / Math.min(ta.size, tb.size);
   return Math.max(jaccard, overlap * 0.75);
 }
-// Returns Map<rowId, Set<relatedRowId>> grouping rows that look related.
-// Match rule: same Program + meaningful token overlap on normalized titles.
+// Links are now strict ticket-number equality. Two rows are "linked" if
+// they share the same Ticket #. No fuzzy title matching for confirmed
+// links — only the ticket # establishes the relationship.
 //
-// Noise control: for each program, we derive PROGRAM-SPECIFIC stopwords —
-// any token that shows up in >35% of titles in that program is treated as
-// filler (e.g. "DOH", "HRP", "app", "delete" inside the DOH program). These
-// get stripped before similarity is measured, so the residual signal is
-// actual differentiating content.
+// For NEW items without a ticket (or with a unique ticket that doesn't
+// match anything yet), the suggestions engine (_computeLinkSuggestions)
+// proposes which existing ticket # they might belong to based on title
+// similarity to a known-ticketed row.
 let _rowMatchGroups = null;
 let _rowMatchSignature = null;
+function _normalizeTicket(t){
+  return String(t == null ? '' : t).replace(/\.0$/, '').trim();
+}
 function _computeRowMatches(){
   // Cheap signature so we only recompute when the rows change.
-  const sig = rows.length + ':' + rows.map(r => r.id + (r.task || '').slice(0, 24)).join('|');
+  const sig = rows.length + ':' + rows.map(r => r.id + ':' + _normalizeTicket(r.ticket)).join('|');
   if (sig === _rowMatchSignature && _rowMatchGroups) return _rowMatchGroups;
   _rowMatchSignature = sig;
   const groups = new Map();
-  // Bucket by normalized program to keep the O(n²) pairing cheap.
+  // Bucket by ticket #. Only tickets with 2+ rows form a group.
+  const byTicket = new Map();
+  rows.forEach(r => {
+    const t = _normalizeTicket(r.ticket);
+    if (!t) return;
+    if (!byTicket.has(t)) byTicket.set(t, []);
+    byTicket.get(t).push(r);
+  });
+  for (const list of byTicket.values()) {
+    if (list.length < 2) continue;
+    for (let i = 0; i < list.length; i++) {
+      if (!groups.has(list[i].id)) groups.set(list[i].id, new Set());
+      for (let j = 0; j < list.length; j++) {
+        if (i === j) continue;
+        groups.get(list[i].id).add(list[j].id);
+      }
+    }
+  }
+  _rowMatchGroups = groups;
+  try {
+    const pairs = [...groups.values()].reduce((s, set) => s + set.size, 0) / 2;
+    console.log('[ECM] linked-rows: scanned', rows.length, 'rows ·', groups.size, 'rows with at least one peer ·', pairs, 'pairs');
+  } catch {}
+  return groups;
+}
+// Suggestion engine — for each row WITHOUT a ticket (or whose ticket only
+// it has, i.e. an unmatched singleton), find the best-match ticketed row
+// based on Program + title similarity. Returns an array of
+// { row, suggestedTicket, peerRow, score } for surfacing on the Links tab.
+let _linkSuggestions = null;
+let _linkSuggestionsSignature = null;
+function _computeLinkSuggestions(){
+  const sig = rows.length + ':' + rows.map(r => r.id + ':' + _normalizeTicket(r.ticket) + ':' + (r.task || '').slice(0, 24)).join('|');
+  if (sig === _linkSuggestionsSignature && _linkSuggestions) return _linkSuggestions;
+  _linkSuggestionsSignature = sig;
+  // Bucket by program; build the same auto-stopword table per program
   const byProgram = new Map();
   rows.forEach(r => {
     const p = (r.program || '').trim().toLowerCase();
-    if (!p) return; // no program → no match candidates (matches need same program)
+    if (!p) return;
     if (!byProgram.has(p)) byProgram.set(p, []);
     byProgram.get(p).push(r);
   });
-  // Tightened to 0.5 — required because per-program stopwords let real
-  // signal carry more weight. Also enforce a hard floor: 2 shared
-  // meaningful tokens. Single-word overlaps create too many false
-  // positives even at high similarity scores.
-  const SIM_THRESHOLD = 0.5;
+  const suggestions = [];
+  const SIM_THRESHOLD = 0.55;
   const MIN_SHARED_TOKENS = 2;
   for (const list of byProgram.values()) {
     if (list.length < 2) continue;
-    // Build per-program stopwords from tokens that appear in >35% of
-    // titles. This kills program-name boilerplate ("DOH", "HRP") and
-    // category words ("app", "delete") that would otherwise pull
-    // unrelated items into the same group.
+    // Per-program stopwords (same as before — anything in >35% of titles
+    // is filler for this program).
     const tokenFreq = new Map();
     list.forEach(r => {
       const uniq = new Set(_titleTokens(r.task));
@@ -2276,40 +2424,54 @@ function _computeRowMatches(){
     for (const [t, n] of tokenFreq) {
       if (n >= cutoff) programStopwords.add(t);
     }
-    // Tokenize each row once with the program stopwords applied
     const rowTokens = new Map();
     list.forEach(r => {
-      const filtered = _titleTokens(r.task).filter(w => !programStopwords.has(w));
-      rowTokens.set(r.id, new Set(filtered));
+      rowTokens.set(r.id, new Set(_titleTokens(r.task).filter(w => !programStopwords.has(w))));
     });
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i], b = list[j];
-        const ta = rowTokens.get(a.id);
-        const tb = rowTokens.get(b.id);
-        if (!ta || !tb || ta.size === 0 || tb.size === 0) continue;
-        // Count shared meaningful tokens
+    // For each row without a ticket, find the best-scoring ticketed peer
+    // in the same program.
+    list.forEach(candidate => {
+      const candTicket = _normalizeTicket(candidate.ticket);
+      if (candTicket) return; // already has a ticket — not a suggestion candidate
+      const ct = rowTokens.get(candidate.id);
+      if (!ct || ct.size === 0) return;
+      let best = null;
+      for (const peer of list) {
+        if (peer.id === candidate.id) continue;
+        const peerTicket = _normalizeTicket(peer.ticket);
+        if (!peerTicket) continue; // only suggest from peers that DO have a ticket
+        const pt = rowTokens.get(peer.id);
+        if (!pt || pt.size === 0) continue;
         let inter = 0;
-        for (const w of ta) if (tb.has(w)) inter++;
+        for (const w of ct) if (pt.has(w)) inter++;
         if (inter < MIN_SHARED_TOKENS) continue;
-        const union = ta.size + tb.size - inter;
+        const union = ct.size + pt.size - inter;
         const jaccard = inter / union;
-        const overlap = inter / Math.min(ta.size, tb.size);
-        const sim = Math.max(jaccard, overlap * 0.75);
-        if (sim < SIM_THRESHOLD) continue;
-        if (!groups.has(a.id)) groups.set(a.id, new Set());
-        if (!groups.has(b.id)) groups.set(b.id, new Set());
-        groups.get(a.id).add(b.id);
-        groups.get(b.id).add(a.id);
+        const overlap = inter / Math.min(ct.size, pt.size);
+        const score = Math.max(jaccard, overlap * 0.75);
+        if (score < SIM_THRESHOLD) continue;
+        if (!best || score > best.score) best = { peerRow: peer, score, suggestedTicket: peerTicket };
       }
-    }
+      if (best) {
+        suggestions.push({
+          row: candidate,
+          suggestedTicket: best.suggestedTicket,
+          peerRow: best.peerRow,
+          score: best.score
+        });
+      }
+    });
   }
-  _rowMatchGroups = groups;
+  // Drop user-dismissed suggestions
+  let dismissed = new Set();
   try {
-    const pairs = [...groups.values()].reduce((s, set) => s + set.size, 0) / 2;
-    console.log('[ECM] linked-rows: scanned', rows.length, 'rows ·', groups.size, 'rows with at least one peer ·', pairs, 'pairs');
+    const raw = localStorage.getItem('ecm-link-sugg-dismissed');
+    if (raw) dismissed = new Set(JSON.parse(raw));
   } catch {}
-  return groups;
+  const final = suggestions.filter(s => !dismissed.has(String(s.row.id)));
+  final.sort((a, b) => b.score - a.score);
+  _linkSuggestions = final;
+  return final;
 }
 // Expose so you can poke at it from devtools — `window._ecmMatches()` returns
 // the current Map.
@@ -3686,23 +3848,13 @@ function _collectLinkedGroups(){
       });
     if (rowsInCluster.length >= 2) groups.push(rowsInCluster);
   }
-  // Surface only groups that need user attention:
-  //   - Skip groups where every item is closed (Completed / Not feasible).
-  //     A done cluster is history — nothing to unify.
-  //   - Skip groups already unified (every non-empty ticket matches AND
-  //     every row has a ticket). Nothing to fix.
+  // Hide fully-closed groups — done history isn't actionable.
   const filtered = groups.filter(group => {
-    const allClosed = group.every(r =>
+    return !group.every(r =>
       r.status === 'Completed' || r.status === 'Not feasible - close ticket'
     );
-    if (allClosed) return false;
-    const tickets = group.map(r => String(r.ticket || '').replace(/\.0$/, '').trim());
-    const allHaveTicket = tickets.every(t => t.length > 0);
-    const uniqueTickets = new Set(tickets.filter(Boolean));
-    if (allHaveTicket && uniqueTickets.size === 1) return false; // already unified
-    return true;
   });
-  // Sort groups so biggest clusters surface first; ties by oldest creation
+  // Sort: biggest clusters first, ties by oldest creation
   filtered.sort((a, b) => {
     if (a.length !== b.length) return b.length - a.length;
     return (Date.parse(a[0].createdDate) || 0) - (Date.parse(b[0].createdDate) || 0);
@@ -3713,13 +3865,16 @@ function renderLinks(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   const groups = _collectLinkedGroups();
-  // Landing on this view = user is reviewing the current matches. Stamp
-  // the current pair set as "seen" so the NEW indicator clears. New
-  // matches that show up after this will light it up again.
+  const suggestions = _computeLinkSuggestions();
   _markLinksSeen();
-  if (metaEl) metaEl.textContent = `${groups.length} linked group${groups.length === 1 ? '' : 's'}`;
-  if (!groups.length) {
-    list.innerHTML = `<div class="empty">No linked items detected. Items that share a Program and have similar task names will appear here grouped together.</div>`;
+  if (metaEl) {
+    const parts = [];
+    if (groups.length) parts.push(`${groups.length} linked group${groups.length === 1 ? '' : 's'}`);
+    if (suggestions.length) parts.push(`${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}`);
+    metaEl.textContent = parts.join(' · ') || 'No links yet';
+  }
+  if (!groups.length && !suggestions.length) {
+    list.innerHTML = `<div class="empty">No linked items. Rows that share a ticket # will appear here grouped together. Suggestions surface when a new untickted row looks like it belongs to an existing one.</div>`;
     return;
   }
   const fmtAge = (iso) => {
@@ -3728,6 +3883,45 @@ function renderLinks(){
     return `${d}d old`;
   };
   const html = ['<div class="links-list">'];
+  // Suggestions first — these are actionable proposals from new items.
+  if (suggestions.length) {
+    html.push(`
+      <div class="links-suggestions-head">
+        <span class="links-sugg-title">Suggested matches</span>
+        <span class="links-sugg-sub">${suggestions.length} untickted item${suggestions.length === 1 ? '' : 's'} look like they belong to an existing ticket</span>
+      </div>`);
+    suggestions.forEach(s => {
+      const r = s.row;
+      const peer = s.peerRow;
+      const ssLink = r.permalink
+        ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+        : '';
+      html.push(`
+        <div class="links-sugg-card">
+          <div class="links-sugg-row">
+            <span class="links-sugg-label">NEW ITEM</span>
+            <span class="links-sugg-task">${escHtml(r.task || '(untitled)')}</span>
+            <span class="links-sugg-meta">${escHtml(r.program || '')} · ${escHtml(fmtAge(r.createdDate))}</span>
+          </div>
+          <div class="links-sugg-arrow">↓ looks like it belongs to ↓</div>
+          <div class="links-sugg-row peer">
+            <span class="links-sugg-label">EXISTING</span>
+            <span class="links-sugg-task">${escHtml(peer.task || '(untitled)')}</span>
+            <span class="links-sugg-meta">#${escHtml(_normalizeTicket(peer.ticket))} · ${escHtml(peer.status || '')}</span>
+          </div>
+          <div class="links-sugg-actions">
+            <button type="button" class="links-sugg-accept" data-accept-sugg="${escHtml(String(r.id))}" data-accept-ticket="${escHtml(s.suggestedTicket)}">Apply #${escHtml(s.suggestedTicket)}</button>
+            <button type="button" class="links-sugg-dismiss" data-dismiss-sugg="${escHtml(String(r.id))}">Dismiss</button>
+            ${ssLink ? `<span style="margin-left:auto">${ssLink}</span>` : ''}
+          </div>
+        </div>`);
+    });
+  }
+  if (groups.length) {
+    if (suggestions.length) {
+      html.push(`<div class="links-section-divider">Linked groups <span>${groups.length}</span></div>`);
+    }
+  }
   groups.forEach(group => {
     const original = group[0];
     const program = original.program || 'No program';
@@ -3803,6 +3997,52 @@ function renderLinks(){
       e.stopPropagation();
       const id = b.getAttribute('data-unify');
       if (id) openLinkedRowsModal(id);
+    });
+  });
+  // Suggestion accept → push the suggested ticket # to the row
+  list.querySelectorAll('[data-accept-sugg]').forEach(b => {
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const rowId = b.getAttribute('data-accept-sugg');
+      const ticket = b.getAttribute('data-accept-ticket');
+      if (!rowId || !ticket) return;
+      const r = rows.find(x => String(x.id) === String(rowId));
+      if (!r) return;
+      b.disabled = true;
+      b.textContent = 'Applying…';
+      try {
+        const ok = await ssPushFields(r, { 'Ticket #': ticket });
+        if (ok) {
+          r.ticket = ticket;
+          // Force re-detection of links + suggestions
+          _rowMatchSignature = null;
+          _linkSuggestionsSignature = null;
+          render();
+        } else {
+          b.disabled = false;
+          b.textContent = 'Retry';
+        }
+      } catch (err) {
+        console.error('accept suggestion failed', err);
+        b.disabled = false;
+        b.textContent = 'Retry';
+      }
+    });
+  });
+  // Suggestion dismiss → stash the rowId in a "dismissed" set so we
+  // don't suggest the same link again
+  list.querySelectorAll('[data-dismiss-sugg]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rowId = b.getAttribute('data-dismiss-sugg');
+      if (!rowId) return;
+      try {
+        const dismissed = JSON.parse(localStorage.getItem('ecm-link-sugg-dismissed') || '[]');
+        if (!dismissed.includes(rowId)) dismissed.push(rowId);
+        localStorage.setItem('ecm-link-sugg-dismissed', JSON.stringify(dismissed));
+      } catch {}
+      _linkSuggestionsSignature = null;
+      render();
     });
   });
 }
