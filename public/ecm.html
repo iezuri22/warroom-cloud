@@ -2698,17 +2698,49 @@ function _daysSince(iso){
   if (!t) return -1;
   return Math.floor((Date.now() - t) / 86400000);
 }
+// Status buckets for the Dev/Reports view. Open = active in-flight work;
+// Parked = paused/blocked but not closed; Completed = done.
+const DR_OPEN_STATUSES = new Set([
+  'Verified on UAT', 'Verified on PRE', 'Ticket Sent',
+  'Pending IR', 'Discussed with Dev', 'In Progress',
+  'To-Do', 'Requested'
+]);
+const DR_PARKED_STATUSES = new Set([
+  'On Hold', 'Waitlisted', 'Further discussion',
+  'Not feasible - close ticket'
+]);
+// Status sort priority within the Open bucket — closer to done = higher rank
+// (smaller number floats to the top). User's ordering: UAT > PRE > Ticket
+// Sent > Pending IR > Discussed > In Progress > To-Do > Requested.
+const DR_STATUS_RANK = {
+  'Verified on UAT': 1,
+  'Verified on PRE': 2,
+  'Ticket Sent': 3,
+  'Pending IR': 4,
+  'Discussed with Dev': 5,
+  'In Progress': 6,
+  'To-Do': 7,
+  'Requested': 8
+};
+function drStatusBucket(status){
+  if (!status) return 'open'; // treat blank as open by default
+  if (status === 'Completed') return 'completed';
+  if (DR_PARKED_STATUSES.has(status)) return 'parked';
+  return 'open';
+}
 function updateDevReportsCount(){
   const el = document.getElementById('devReportsCount');
   if (!el) return;
-  const openDev = rows.filter(r => isDevOrReportRow(r) && r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length;
+  // Tab badge = items in the Open bucket. Parked and Completed don't count
+  // as "needs attention right now".
+  const openDev = rows.filter(r => isDevOrReportRow(r) && drStatusBucket(r.status) === 'open').length;
   el.textContent = openDev > 0 ? String(openDev) : '';
 }
-// Dev/Reports view local filter state. Resets when you navigate away —
-// this view is for "what's stale right now" and shouldn't carry filters.
+// Dev/Reports view local filter state. Resets when you navigate away.
 let _drTypeFilter = 'all';     // 'all' | 'dev' | 'report'
-let _drStatusFilter = 'open';  // 'open' | 'all' | <specific status>
+let _drStatusFilter = 'open';  // 'open' | 'parked' | 'completed' | 'all' | <specific status>
 let _drProgramFilter = 'all';  // 'all' | <program name>
+let _drSortBy = 'status';      // 'status' | 'created'
 function _wireDrFilters(root){
   const typeSel = root.querySelector('#drTypeSel');
   if (typeSel) typeSel.addEventListener('change', () => { _drTypeFilter = typeSel.value || 'all'; renderDevReports(); });
@@ -2716,11 +2748,14 @@ function _wireDrFilters(root){
   if (statusSel) statusSel.addEventListener('change', () => { _drStatusFilter = statusSel.value || 'open'; renderDevReports(); });
   const programSel = root.querySelector('#drProgramSel');
   if (programSel) programSel.addEventListener('change', () => { _drProgramFilter = programSel.value || 'all'; renderDevReports(); });
+  const sortSel = root.querySelector('#drSortSel');
+  if (sortSel) sortSel.addEventListener('change', () => { _drSortBy = sortSel.value || 'status'; renderDevReports(); });
   const resetBtn = root.querySelector('#drFilterReset');
   if (resetBtn) resetBtn.addEventListener('click', () => {
     _drTypeFilter = 'all';
     _drStatusFilter = 'open';
     _drProgramFilter = 'all';
+    _drSortBy = 'status';
     renderDevReports();
   });
   root.querySelectorAll('[data-dr-open]').forEach(b => {
@@ -2748,10 +2783,14 @@ function renderDevReports(){
   let pool = all.slice();
   if (_drTypeFilter === 'dev') pool = pool.filter(r => devOrReportKind(r) === 'dev');
   else if (_drTypeFilter === 'report') pool = pool.filter(r => devOrReportKind(r) === 'report');
-  // Status filter: 'open' = any non-closed, 'all' = no filter, anything else
-  // = exact status match.
+  // Status filter: bucket buckets ('open'/'parked'/'completed'), 'all' = no
+  // filter, anything else = exact status match.
   if (_drStatusFilter === 'open') {
-    pool = pool.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket');
+    pool = pool.filter(r => drStatusBucket(r.status) === 'open');
+  } else if (_drStatusFilter === 'parked') {
+    pool = pool.filter(r => drStatusBucket(r.status) === 'parked');
+  } else if (_drStatusFilter === 'completed') {
+    pool = pool.filter(r => drStatusBucket(r.status) === 'completed');
   } else if (_drStatusFilter !== 'all') {
     pool = pool.filter(r => r.status === _drStatusFilter);
   }
@@ -2765,19 +2804,20 @@ function renderDevReports(){
       (r.details || '').toLowerCase().includes(q)
     );
   }
-  // Counts (from full unfiltered set) for the dropdown labels.
+  // Counts for dropdown labels (from full unfiltered set).
   const devCt = all.filter(r => devOrReportKind(r) === 'dev').length;
   const reportCt = all.filter(r => devOrReportKind(r) === 'report').length;
   const programCounts = new Map();
   const statusCounts = new Map();
+  let openCt = 0, parkedCt = 0, completedCt = 0;
   all.forEach(r => {
     if (r.program) programCounts.set(r.program, (programCounts.get(r.program) || 0) + 1);
     if (r.status) statusCounts.set(r.status, (statusCounts.get(r.status) || 0) + 1);
+    const b = drStatusBucket(r.status);
+    if (b === 'open') openCt++;
+    else if (b === 'parked') parkedCt++;
+    else if (b === 'completed') completedCt++;
   });
-  // Open count = non-closed
-  const openCt = all.filter(r => r.status !== 'Completed' && r.status !== 'Not feasible - close ticket').length;
-  // Build status options in the canonical SS_STATUSES order so the UI
-  // matches the rest of the app (Requested → To-Do → ... → Completed).
   const statusOptions = SS_STATUSES.filter(s => statusCounts.has(s)).map(s =>
     `<option value="${escHtml(s)}" ${_drStatusFilter === s ? 'selected' : ''}>${escHtml(s)} (${statusCounts.get(s)})</option>`
   ).join('');
@@ -2786,9 +2826,10 @@ function renderDevReports(){
     `<option value="${escHtml(name)}" ${_drProgramFilter === name ? 'selected' : ''}>${escHtml(name)} (${ct})</option>`
   ).join('');
   const typeCls = _drTypeFilter !== 'all' ? 'active' : '';
-  const statusCls = _drStatusFilter !== 'all' ? 'active' : '';
+  const statusCls = _drStatusFilter !== 'open' ? 'active' : '';
   const programCls = _drProgramFilter !== 'all' ? 'active' : '';
-  const anyFilterActive = _drTypeFilter !== 'all' || _drStatusFilter !== 'open' || _drProgramFilter !== 'all';
+  const sortCls = _drSortBy !== 'status' ? 'active' : '';
+  const anyFilterActive = _drTypeFilter !== 'all' || _drStatusFilter !== 'open' || _drProgramFilter !== 'all' || _drSortBy !== 'status';
   const filtersHTML = `
     <div class="dr-filters">
       <select class="dr-filter-select ${typeCls}" id="drTypeSel">
@@ -2798,28 +2839,49 @@ function renderDevReports(){
       </select>
       <select class="dr-filter-select ${statusCls}" id="drStatusSel">
         <option value="open" ${_drStatusFilter === 'open' ? 'selected' : ''}>Open (${openCt})</option>
-        <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All statuses</option>
+        <option value="parked" ${_drStatusFilter === 'parked' ? 'selected' : ''}>Parked (${parkedCt})</option>
+        <option value="completed" ${_drStatusFilter === 'completed' ? 'selected' : ''}>Completed (${completedCt})</option>
+        <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All (${all.length})</option>
         ${statusOptions}
       </select>
       <select class="dr-filter-select ${programCls}" id="drProgramSel">
         <option value="all" ${_drProgramFilter === 'all' ? 'selected' : ''}>All programs</option>
         ${programOptions}
       </select>
+      <select class="dr-filter-select ${sortCls}" id="drSortSel" title="Sort">
+        <option value="status" ${_drSortBy === 'status' ? 'selected' : ''}>Sort: Status</option>
+        <option value="created" ${_drSortBy === 'created' ? 'selected' : ''}>Sort: Newest</option>
+      </select>
       ${anyFilterActive ? `<button type="button" class="dr-filter-reset" id="drFilterReset">Reset</button>` : ''}
       <span class="dr-filter-meta">${pool.length} of ${all.length}</span>
     </div>`;
-  // Split into Dev vs Reports for the section headers
-  const devs = [], reportsArr = [];
-  pool.forEach(r => (devOrReportKind(r) === 'report' ? reportsArr : devs).push(r));
-  // Sort each group: open items first (oldest in limbo at top), closed last
-  const sortLimbo = (a, b) => {
-    const aClosed = a.status === 'Completed' || a.status === 'Not feasible - close ticket';
-    const bClosed = b.status === 'Completed' || b.status === 'Not feasible - close ticket';
-    if (aClosed !== bClosed) return aClosed ? 1 : -1;
-    return _daysSince(b.createdDate) - _daysSince(a.createdDate);
-  };
-  devs.sort(sortLimbo);
-  reportsArr.sort(sortLimbo);
+  // Group by status bucket so the layout matches the user's mental model:
+  // Open work at the top (most actionable), Parked in the middle (paused),
+  // Completed at the bottom (history).
+  const buckets = { open: [], parked: [], completed: [] };
+  pool.forEach(r => {
+    const b = drStatusBucket(r.status);
+    if (buckets[b]) buckets[b].push(r);
+  });
+  // Sort within each bucket.
+  //   - Sort by Status (Open default): higher status rank = closer to done = top.
+  //     Ties break by newest created.
+  //   - Sort by Created: newest first across all statuses in the bucket.
+  // Parked + Completed always sort by newest (status priority isn't
+  // meaningful when items are paused/done).
+  function sortByCreated(a, b){
+    return (Date.parse(b.createdDate) || 0) - (Date.parse(a.createdDate) || 0);
+  }
+  function sortByStatusThenCreated(a, b){
+    const ra = DR_STATUS_RANK[a.status] || 99;
+    const rb = DR_STATUS_RANK[b.status] || 99;
+    if (ra !== rb) return ra - rb;
+    return sortByCreated(a, b);
+  }
+  const openSort = _drSortBy === 'created' ? sortByCreated : sortByStatusThenCreated;
+  buckets.open.sort(openSort);
+  buckets.parked.sort(sortByCreated);
+  buckets.completed.sort(sortByCreated);
   if (metaEl) metaEl.textContent = `${all.length} dev / report item${all.length === 1 ? '' : 's'}`;
   if (!pool.length) {
     list.innerHTML = filtersHTML + `<div class="empty">${all.length === 0 ? 'No dev or report items found. Make sure the <strong>Request Type</strong> column has Dev / Reporting values set in Smartsheets.' : 'No items match the current filters.'}</div>`;
@@ -2883,13 +2945,17 @@ function renderDevReports(){
   const sectionHeadHTML = (title, count) =>
     `<div class="dr-section-head"><h3>${escHtml(title)}</h3><span class="ct">${count}</span></div>`;
   const html = [filtersHTML, '<div class="dr-list">'];
-  if (devs.length) {
-    html.push(sectionHeadHTML('Dev', devs.length));
-    devs.forEach(r => html.push(cardHTML(r)));
+  if (buckets.open.length) {
+    html.push(sectionHeadHTML('Open', buckets.open.length));
+    buckets.open.forEach(r => html.push(cardHTML(r)));
   }
-  if (reportsArr.length) {
-    html.push(sectionHeadHTML('Reporting', reportsArr.length));
-    reportsArr.forEach(r => html.push(cardHTML(r)));
+  if (buckets.parked.length) {
+    html.push(sectionHeadHTML('Parked', buckets.parked.length));
+    buckets.parked.forEach(r => html.push(cardHTML(r)));
+  }
+  if (buckets.completed.length) {
+    html.push(sectionHeadHTML('Completed', buckets.completed.length));
+    buckets.completed.forEach(r => html.push(cardHTML(r)));
   }
   html.push('</div>');
   list.innerHTML = html.join('');
