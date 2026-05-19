@@ -7732,9 +7732,37 @@ const VOICE = {
         if (!r.permalink && sheetPermalink) {
           r.permalink = `${sheetPermalink}?rowId=${r.id}`;
         }
-        byRowIdAllStatuses.set(String(r.id), { row: r, status: s });
+        byRowIdAllStatuses.set(String(r.id), { row: r, status: s, owner: o });
         if (o === ownerName && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
+      // Reassignment sweep — if a synced todo is on a row that's now owned by
+      // someone else, drop the local copy. It's not my work anymore. We only
+      // delete when we can confirm the row exists with a different owner;
+      // missing-from-sheet rows are left alone (could be a partial fetch).
+      let reassignedOut = 0;
+      const toRemove = [];
+      for (const t of todos) {
+        if (!t.smartsheetRowId) continue;
+        const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
+        if (!found) continue; // row not in current fetch, leave alone
+        if (found.owner && found.owner !== ownerName) toRemove.push(t);
+      }
+      for (const t of toRemove) {
+        try { await deleteDoc(doc(db, 'tv_todos', t.id)); } catch (e) { console.warn('delete reassigned failed', e); }
+        const idx = todos.findIndex(x => x.id === t.id);
+        if (idx >= 0) todos.splice(idx, 1);
+        // Also yank from any Focus 5 list so it doesn't ghost a slot
+        try {
+          if (focus5State && focus5State.lists) {
+            focus5State.lists.forEach(l => {
+              const at = l.taskIds.indexOf(t.id);
+              if (at >= 0) l.taskIds.splice(at, 1);
+            });
+            saveFocus5();
+          }
+        } catch {}
+        reassignedOut++;
+      }
       // Dedupe map: smartsheetRowId → existing todo
       const byRowId = new Map();
       todos.forEach(t => { if (t.smartsheetRowId) byRowId.set(String(t.smartsheetRowId), t); });
@@ -7842,6 +7870,7 @@ const VOICE = {
         if (added) parts.push(`+${added}`);
         if (updated) parts.push(`~${updated}`);
         if (closedFromSheet) parts.push(`✓${closedFromSheet}`);
+        if (reassignedOut) parts.push(`−${reassignedOut}`);
         if (flushed) parts.push(`↑${flushed}`);
         count.textContent = parts.length ? parts.join(' · ') : 'no change';
         count.style.display = '';
