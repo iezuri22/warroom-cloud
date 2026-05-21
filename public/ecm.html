@@ -2084,6 +2084,35 @@
      Shows the matched group side-by-side with the option to unify ticket #
      across all of them. Each row keeps its own status / completion so the
      items stay separate but linked. -->
+<!-- Mark-complete modal — opens from the Notifications tab. User confirms /
+     backdates the completion date, then we push Status + Completion Date to
+     Smartsheets in one call. -->
+<div class="lr-backdrop" id="completeRowBackdrop" aria-hidden="true">
+  <div class="lr-modal complete-row-modal" role="dialog" aria-modal="true" aria-labelledby="completeRowTitle" style="max-width:440px">
+    <div class="lr-head">
+      <div>
+        <div class="lr-title" id="completeRowTitle">Mark complete</div>
+        <div class="lr-sub">Sets Status to Completed in Smartsheets and stamps the completion date.</div>
+      </div>
+      <button type="button" class="lr-close" id="completeRowClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="lr-body" style="gap:14px">
+      <div style="font-size:14px;font-weight:700;color:rgba(255,255,255,.95);line-height:1.3" id="completeRowTask"></div>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.55)">
+        Completion date
+        <input type="date" id="completeRowDate" class="lr-ticket-input" style="font-family:inherit;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums">
+      </label>
+    </div>
+    <div class="lr-foot">
+      <div class="lr-ticket-row">
+        <button type="button" id="completeRowCancel" class="lr-pick-canonical" style="background:transparent">Cancel</button>
+        <button type="button" id="completeRowApply" class="lr-apply">Mark complete</button>
+      </div>
+      <div class="lr-status" id="completeRowStatus"></div>
+    </div>
+  </div>
+</div>
+
 <div class="lr-backdrop" id="linkedRowsBackdrop" aria-hidden="true">
   <div class="lr-modal" role="dialog" aria-modal="true" aria-labelledby="lrTitle">
     <div class="lr-head">
@@ -4778,7 +4807,11 @@ function renderNotifications(){
       : '';
     const ackBtn = isAcked
       ? `<button type="button" data-notif-unack-row="${escHtml(String(r.id))}">Mark unread</button>`
-      : `<button type="button" class="primary" data-notif-ack-row="${escHtml(String(r.id))}">Mark as read</button>`;
+      : `<button type="button" data-notif-ack-row="${escHtml(String(r.id))}">Mark as read</button>`;
+    // Complete button — opens a date-picker popup so the user can confirm /
+    // backdate the completion date before we push Status + Completion Date
+    // up to Smartsheets in one shot.
+    const completeBtn = `<button type="button" class="primary" data-notif-complete="${escHtml(String(r.id))}">Mark complete</button>`;
     return `
       <div class="notif-row ${isAcked ? '' : 'unread'}">
         <div class="notif-head">
@@ -4793,6 +4826,7 @@ function renderNotifications(){
           ${programBit}
         </div>
         <div class="notif-actions">
+          ${completeBtn}
           ${ackBtn}
           ${permaBtn}
         </div>
@@ -4820,7 +4854,82 @@ function renderNotifications(){
       if (url) window.open(url, '_blank', 'noopener');
     });
   });
+  list.querySelectorAll('[data-notif-complete]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = b.getAttribute('data-notif-complete');
+      if (id) openCompleteRowModal(id);
+    });
+  });
   _wireNotifToggle(list);
+}
+
+// ----- Mark-complete modal -----
+// Confirms the completion date before pushing Status=Completed +
+// Completion Date back to Smartsheets. Default = today (Chicago time).
+let _completeRowId = null;
+function _todayChicagoISO(){
+  // Build a YYYY-MM-DD string for "today" in America/Chicago. Avoids server-
+  // timezone weirdness if the user is on the road.
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Chicago',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+function openCompleteRowModal(rowId){
+  const r = rows.find(x => String(x.id) === String(rowId));
+  if (!r) return;
+  _completeRowId = String(rowId);
+  const bd = document.getElementById('completeRowBackdrop');
+  if (!bd) return;
+  bd.classList.add('show');
+  bd.setAttribute('aria-hidden', 'false');
+  const taskEl = document.getElementById('completeRowTask');
+  if (taskEl) taskEl.textContent = r.task || '(untitled)';
+  const dateInput = document.getElementById('completeRowDate');
+  if (dateInput) {
+    dateInput.value = _todayChicagoISO();
+    setTimeout(() => { try { dateInput.focus(); } catch {} }, 50);
+  }
+  const status = document.getElementById('completeRowStatus');
+  if (status) { status.textContent = ''; status.className = 'lr-status'; }
+  const btn = document.getElementById('completeRowApply');
+  if (btn) { btn.disabled = false; btn.textContent = 'Mark complete'; }
+}
+function closeCompleteRowModal(){
+  const bd = document.getElementById('completeRowBackdrop');
+  if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+  _completeRowId = null;
+}
+async function applyCompleteRow(){
+  if (!_completeRowId) return;
+  const r = rows.find(x => String(x.id) === _completeRowId);
+  if (!r) return;
+  const dateInput = document.getElementById('completeRowDate');
+  const status = document.getElementById('completeRowStatus');
+  const btn = document.getElementById('completeRowApply');
+  const date = (dateInput && dateInput.value) || _todayChicagoISO();
+  if (!date) {
+    if (status) { status.textContent = 'Pick a completion date first.'; status.className = 'lr-status err'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Pushing to Smartsheets…'; }
+  // Push Status=Completed AND Completion Date in one PUT — ssPushFields
+  // hits /sheets/{id}/rows and mirrors r.status / r.completionDate locally.
+  const ok = await ssPushFields(r, { 'Status': 'Completed', 'Completion Date': date });
+  if (!ok) {
+    if (status) { status.textContent = 'Push failed. Try again or open the row in Smartsheets.'; status.className = 'lr-status err'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    return;
+  }
+  try { render(); } catch {}
+  closeCompleteRowModal();
 }
 function _wireNotifToggle(root){
   root.querySelectorAll('[data-notif-tab]').forEach(b => {
@@ -5072,6 +5181,25 @@ if (bulkClearBtn) bulkClearBtn.addEventListener('click', () => {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && bd && bd.classList.contains('show')) closeLinkedRowsModal();
+  });
+})();
+
+// Mark-complete modal wiring (Notifications → Mark complete)
+(function wireCompleteRowModal(){
+  const bd = document.getElementById('completeRowBackdrop');
+  const closeBtn = document.getElementById('completeRowClose');
+  const cancelBtn = document.getElementById('completeRowCancel');
+  const applyBtn = document.getElementById('completeRowApply');
+  const dateInput = document.getElementById('completeRowDate');
+  if (closeBtn) closeBtn.addEventListener('click', closeCompleteRowModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeCompleteRowModal);
+  if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeCompleteRowModal(); });
+  if (applyBtn) applyBtn.addEventListener('click', applyCompleteRow);
+  if (dateInput) dateInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); applyCompleteRow(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && bd && bd.classList.contains('show')) closeCompleteRowModal();
   });
 })();
 
