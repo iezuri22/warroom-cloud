@@ -4619,6 +4619,37 @@
   </div>
 </div>
 
+<!-- Skip modal — opens from a Focus 5 card's Skip button. Two options:
+     defer to another day (task disappears, returns top of First Priority on
+     that day) or remove from priorities entirely. -->
+<div class="priority-confirm-backdrop" id="skipBackdrop" aria-hidden="true">
+  <div class="priority-confirm" role="dialog" aria-modal="true" aria-labelledby="skipTitle" style="max-width:440px">
+    <div class="pc-head">
+      <div class="pc-title" id="skipTitle">Skip this task</div>
+      <div class="pc-sub" id="skipTaskName">—</div>
+    </div>
+    <div class="pc-body" style="padding:18px 22px 0;display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.55)">Skip to a day</span>
+        <div class="add-sheet-reminder-row">
+          <input type="date" id="skipDate" class="add-sheet-reminder-input" autocomplete="off">
+          <button type="button" class="add-sheet-reminder-quick" data-skip-quick="tomorrow">Tomorrow</button>
+          <button type="button" class="add-sheet-reminder-quick" data-skip-quick="next-week">+7d</button>
+          <button type="button" class="add-sheet-reminder-quick" data-skip-quick="two-weeks">+14d</button>
+        </div>
+        <button class="pc-ok" id="skipApplyDate" type="button" style="margin-top:4px">Skip to this day</button>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:14px;display:flex;flex-direction:column;gap:8px">
+        <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.55)">Or</span>
+        <button class="pc-snooze" id="skipRemove" type="button" style="width:100%">Remove from priorities</button>
+      </div>
+    </div>
+    <div class="pc-foot">
+      <button class="pc-snooze" id="skipCancel" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Morning Priority Confirm — popup to lock in today's 4 Focus 5 lists -->
 <div class="priority-confirm-backdrop" id="priorityConfirmBackdrop" aria-hidden="true">
   <div class="priority-confirm" role="dialog" aria-modal="true" aria-labelledby="pcTitle">
@@ -8950,6 +8981,101 @@ const VOICE = {
       focus5Remove(taskId);
     }
   }
+  // ----- Skip modal -----
+  // Defer to another day (reuses the reminder system: stamp remindOn, drop
+  // from current priority lists, hide until that day, then auto-bump to
+  // slot 1 of First Priority) OR remove from priorities entirely.
+  let _skipTaskId = null;
+  function openSkipModal(taskId){
+    _skipTaskId = taskId;
+    const todo = todos.find(t => t.id === taskId);
+    const bd = document.getElementById('skipBackdrop');
+    if (!bd) { try { focus5SkipOrRemove(taskId); } catch {} return; }
+    bd.classList.add('show');
+    bd.setAttribute('aria-hidden', 'false');
+    const nameEl = document.getElementById('skipTaskName');
+    if (nameEl) nameEl.textContent = (todo && todo.text) || 'this task';
+    const dateInput = document.getElementById('skipDate');
+    if (dateInput) {
+      // Default to tomorrow — most common skip-to.
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      const yyyy = t.getFullYear();
+      const mm = String(t.getMonth() + 1).padStart(2, '0');
+      const dd = String(t.getDate()).padStart(2, '0');
+      dateInput.value = `${yyyy}-${mm}-${dd}`;
+    }
+  }
+  function closeSkipModal(){
+    const bd = document.getElementById('skipBackdrop');
+    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+    _skipTaskId = null;
+  }
+  async function applySkipToDate(){
+    if (!_skipTaskId) return;
+    const dateInput = document.getElementById('skipDate');
+    const date = (dateInput && dateInput.value) || '';
+    if (!date) return;
+    const t = todos.find(x => x.id === _skipTaskId);
+    if (!t) { closeSkipModal(); return; }
+    // Patch the reminder fields. Since the date is in the future,
+    // _isPendingReminder() will hide the task everywhere until then.
+    t.remindOn = date;
+    t.reminderFiredAt = '';
+    try { await updateDoc(doc(db, 'tv_todos', t.id), { remindOn: date, reminderFiredAt: '' }); } catch {}
+    // Drop the task from every Focus 5 list so it doesn't ghost a slot
+    // (the reminder sweep will re-insert it at top of First Priority on day-of).
+    try {
+      if (focus5State && focus5State.lists) {
+        focus5State.lists.forEach(l => {
+          const at = l.taskIds.indexOf(t.id);
+          if (at >= 0) l.taskIds.splice(at, 1);
+        });
+        saveFocus5();
+      }
+    } catch {}
+    // If the date is today, fire immediately to land it at slot 1 of First.
+    try { checkRemindersDueToday(); } catch {}
+    closeSkipModal();
+    try { render(); } catch {}
+  }
+  function applySkipRemove(){
+    if (!_skipTaskId) { closeSkipModal(); return; }
+    try { focus5SkipOrRemove(_skipTaskId); } catch {}
+    closeSkipModal();
+  }
+  (function wireSkipModal(){
+    const bd = document.getElementById('skipBackdrop');
+    const cancel = document.getElementById('skipCancel');
+    const apply = document.getElementById('skipApplyDate');
+    const remove = document.getElementById('skipRemove');
+    const dateInput = document.getElementById('skipDate');
+    if (cancel) cancel.addEventListener('click', closeSkipModal);
+    if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeSkipModal(); });
+    if (apply) apply.addEventListener('click', applySkipToDate);
+    if (remove) remove.addEventListener('click', applySkipRemove);
+    if (dateInput) dateInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applySkipToDate(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && bd && bd.classList.contains('show')) closeSkipModal();
+    });
+    // Quick-pick chips
+    document.querySelectorAll('[data-skip-quick]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.preventDefault();
+        const kind = b.getAttribute('data-skip-quick');
+        const d = new Date();
+        if (kind === 'tomorrow') d.setDate(d.getDate() + 1);
+        else if (kind === 'next-week') d.setDate(d.getDate() + 7);
+        else if (kind === 'two-weeks') d.setDate(d.getDate() + 14);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        if (dateInput) dateInput.value = `${yyyy}-${mm}-${dd}`;
+      });
+    });
+  })();
   function focus5SetEditMode(on){
     _focus5EditMode = !!on;
     document.body.classList.toggle('focus5-editing', _focus5EditMode);
@@ -10043,9 +10169,10 @@ const VOICE = {
       });
       if (skipBtn) skipBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Routine → skip for today only (returns tomorrow).
-        // One-off → hard remove from the list (existing Skip semantic).
-        try { focus5SkipOrRemove(todo.id); } catch {}
+        // Open the skip modal: defer to another day OR remove from priorities.
+        // Routine tasks still get the "skip for today only" semantic via
+        // Remove (since they regenerate tomorrow on their own).
+        try { openSkipModal(todo.id); } catch { try { focus5SkipOrRemove(todo.id); } catch {} }
       });
       if (raceBtn) raceBtn.addEventListener('click', (e) => {
         e.stopPropagation();
