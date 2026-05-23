@@ -3125,6 +3125,45 @@
     color: #fff;
   }
   .add-sheet-priority-label-routines { margin-top: 4px }
+  /* Reminder row — date input + quick-pick chips. Lives in the add sheet
+     so reminders are first-class on every new task. */
+  .add-sheet-reminder-row {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  }
+  .add-sheet-reminder-input {
+    flex: 1; min-width: 140px;
+    padding: 6px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.92);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .add-sheet-reminder-input:focus { border-color: rgba(74,158,255,.5); outline: none }
+  .add-sheet-reminder-quick {
+    padding: 6px 10px; border-radius: 99px;
+    background: rgba(74,158,255,.08);
+    border: 1px solid rgba(74,158,255,.25);
+    color: #6BA8FF;
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .add-sheet-reminder-quick:hover {
+    background: rgba(74,158,255,.18);
+    color: #fff;
+    border-color: rgba(74,158,255,.55);
+  }
+  .add-sheet-reminder-clear {
+    padding: 6px 10px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.14);
+    color: rgba(255,255,255,.55);
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer;
+  }
+  .add-sheet-reminder-clear:hover { color: #fff; border-color: rgba(255,255,255,.30) }
   /* FAB hidden — the sticky + Add chip in the filter bar is the primary path
      and stays visible regardless of scroll position. */
   .add-fab { display: none !important; }
@@ -4450,6 +4489,18 @@
       <span class="add-sheet-priority-label add-sheet-priority-label-routines" id="addSheetRoutineLabel" style="display:none">Or routine</span>
       <div class="add-sheet-priority-row" id="addSheetRoutineRow"></div>
     </div>
+    <!-- Reminder date — when set, the task auto-bumps to slot 1 of First
+         Priority on the chosen day (or any past day if it's already overdue). -->
+    <div class="add-sheet-priority" id="addSheetReminder">
+      <span class="add-sheet-priority-label">Remind me on</span>
+      <div class="add-sheet-reminder-row">
+        <input type="date" id="addSheetReminderInput" class="add-sheet-reminder-input" autocomplete="off">
+        <button type="button" class="add-sheet-reminder-quick" data-rem-quick="today">Today</button>
+        <button type="button" class="add-sheet-reminder-quick" data-rem-quick="tomorrow">Tomorrow</button>
+        <button type="button" class="add-sheet-reminder-quick" data-rem-quick="next-week">+7d</button>
+        <button type="button" class="add-sheet-reminder-clear" id="addSheetReminderClear" style="display:none">Clear</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -5270,6 +5321,9 @@ const VOICE = {
     }
     // Materialize recurring-task instances for this day
     try { await materializeRecurringForDay(dkey(currentDate)); } catch {}
+    // Fire any reminders whose date has arrived — bumps them to slot 1 of
+    // First Priority. Defer slightly so focus5State is fully loaded.
+    setTimeout(() => { try { checkRemindersDueToday(); } catch {} }, 200);
     // One-time dedup of goal-sourced tasks. Prior versions could push the
     // same goal task multiple times when the pushedToPersonal flag got
     // cleared by cross-device sync. Keep the first non-done copy per
@@ -7338,6 +7392,11 @@ const VOICE = {
     if (!text) return;
     const sel = document.getElementById('freqSelect');
     const freq = sel ? sel.value : 'once';
+    // Reminder date from the add sheet — when set, we patch it onto the new
+    // todo and let checkRemindersDueToday() decide whether to bump to slot 1
+    // of First Priority right now (or wait until the date).
+    const remInput = document.getElementById('addSheetReminderInput');
+    const remindOn = (remInput && remInput.value) || '';
     let newTaskId = null;
     if (freq === 'once' || !freq) {
       newTaskId = await addTodoItem(text);
@@ -7361,12 +7420,70 @@ const VOICE = {
         }
       }
     }
+    // Stamp the reminder date onto the new todo, then run the due-today
+    // sweep so it auto-bumps to First Priority if the reminder is for today
+    // or already past.
+    if (newTaskId && remindOn) {
+      const t = todos.find(x => x.id === newTaskId);
+      if (t) {
+        t.remindOn = remindOn;
+        t.reminderFiredAt = '';
+        try { await updateDoc(doc(db, 'tv_todos', newTaskId), { remindOn, reminderFiredAt: '' }); } catch {}
+      }
+    }
     // Priority-list assignment from the add sheet picker.
     if (newTaskId && _addSheetPriorityListId) {
       try { interactiveAddToPriorityList(newTaskId, _addSheetPriorityListId); } catch (e) { console.warn('priority add failed', e); }
     }
+    // After the new task is in todos, check for due reminders.
+    try { checkRemindersDueToday(); } catch {}
     _addSheetPriorityListId = null;
+    if (remInput) remInput.value = '';
+    const clrBtn = document.getElementById('addSheetReminderClear');
+    if (clrBtn) clrBtn.style.display = 'none';
     input.value = ''; input.focus();
+  }
+  // ---- Reminder sweep ----
+  // Walks every todo with a remindOn date that hasn't fired yet. If the date
+  // is today or earlier (Chicago), insert the task at slot 1 of First
+  // Priority (the top of the priority chain) and mark it fired so we don't
+  // keep re-inserting. Recurring instances are handled by their template's
+  // own logic; reminders are for one-off bumps.
+  function checkRemindersDueToday(){
+    try {
+      const today = todayKey(); // YYYY-MM-DD in Chicago
+      const due = todos.filter(t =>
+        !t.done &&
+        t.remindOn &&
+        t.remindOn <= today &&
+        !t.reminderFiredAt
+      );
+      if (!due.length) return;
+      const chain = (typeof _priorityChain === 'function') ? _priorityChain() : [];
+      const first = chain[0];
+      if (!first) return; // no priority lists configured yet
+      due.forEach(t => {
+        try {
+          // Drop any existing presence in any list, then unshift to slot 1.
+          if (focus5State && focus5State.lists) {
+            focus5State.lists.forEach(l => {
+              const at = l.taskIds.indexOf(t.id);
+              if (at >= 0) l.taskIds.splice(at, 1);
+            });
+            const idx = first.taskIds.indexOf(t.id);
+            if (idx >= 0) first.taskIds.splice(idx, 1);
+            first.taskIds.unshift(t.id);
+            // Cascade overflow in case First was already at 5.
+            if (typeof _cascadePriorityOverflow === 'function') _cascadePriorityOverflow(first);
+          }
+        } catch (e) { console.warn('reminder insert failed', e); }
+        // Mark fired so we don't re-bump on the next render or refresh.
+        t.reminderFiredAt = new Date().toISOString();
+        try { updateDoc(doc(db, 'tv_todos', t.id), { reminderFiredAt: t.reminderFiredAt }); } catch {}
+      });
+      try { saveFocus5(); } catch {}
+      try { render(); } catch {}
+    } catch (e) { console.warn('reminder sweep failed', e); }
   }
   // ---- FAB / Add-task sheet ----
   function _renderAddSheetPriorityPicker(){
@@ -7425,11 +7542,54 @@ const VOICE = {
     // prior add doesn't silently bind the next task to a list.
     _addSheetPriorityListId = null;
     _renderAddSheetPriorityPicker();
+    // Reset reminder picker too — every new add starts clean.
+    const remInput = document.getElementById('addSheetReminderInput');
+    if (remInput) remInput.value = '';
+    const remClear = document.getElementById('addSheetReminderClear');
+    if (remClear) remClear.style.display = 'none';
     setTimeout(() => {
       const inp = document.getElementById('todoInput');
       if (inp) inp.focus();
     }, 60);
   }
+  // Wire reminder quick-pick buttons (Today / Tomorrow / +7d / Clear). Lives
+  // outside any per-open handler so it only attaches once.
+  (function wireReminderQuickPicks(){
+    const input = document.getElementById('addSheetReminderInput');
+    const clear = document.getElementById('addSheetReminderClear');
+    if (!input) return;
+    const fmt = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${dd}`;
+    };
+    const setVal = (v) => {
+      input.value = v;
+      if (clear) clear.style.display = v ? '' : 'none';
+    };
+    document.querySelectorAll('[data-rem-quick]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.preventDefault();
+        const kind = b.getAttribute('data-rem-quick');
+        const today = new Date();
+        if (kind === 'today') setVal(fmt(today));
+        else if (kind === 'tomorrow') {
+          const d = new Date(today); d.setDate(d.getDate() + 1); setVal(fmt(d));
+        }
+        else if (kind === 'next-week') {
+          const d = new Date(today); d.setDate(d.getDate() + 7); setVal(fmt(d));
+        }
+      });
+    });
+    input.addEventListener('change', () => {
+      if (clear) clear.style.display = input.value ? '' : 'none';
+    });
+    if (clear) clear.addEventListener('click', (e) => {
+      e.preventDefault();
+      setVal('');
+    });
+  })();
   function closeAddSheet(){
     const bd = document.getElementById('addSheetBackdrop');
     if (bd) bd.classList.remove('show');
@@ -7751,36 +7911,43 @@ const VOICE = {
         const isOwner = o.split(/[,;]+/).map(s => s.trim()).includes(ownerName);
         if (isOwner && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
       });
-      // Reassignment sweep — if a synced todo is on a row that's now owned by
-      // someone else (and not me), drop the local copy. Handles multi-contact
-      // owner columns: cell may be a comma-separated list of names, so we
-      // split + look for the user's name in the list. Rows missing from the
-      // current fetch are left alone (could be a partial fetch).
+      // Reassignment + deletion sweep — drop the local copy if:
+      //   1) Sheet row exists but is owned by someone else (and not me)
+      //   2) Sheet row was deleted entirely from Smartsheets
+      // Multi-contact owner columns split on comma/semicolon and check if
+      // the user is anywhere in the list.
       const ownerInCell = (cellOwner) => {
         if (!cellOwner) return false;
         const parts = String(cellOwner).toLowerCase().split(/[,;]+/).map(s => s.trim()).filter(Boolean);
         return parts.includes(ownerName);
       };
       let reassignedOut = 0;
+      let deletedFromSheet = 0;
       const toRemove = [];
       for (const t of todos) {
         if (!t.smartsheetRowId) continue;
         const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
-        if (!found) continue; // row not in current fetch, leave alone
+        if (!found) {
+          // Row no longer on the sheet — was deleted or moved off this sheet.
+          // Drop the local ghost. Full-sheet GET isn't paginated by default,
+          // so a missing row is a real miss, not a fetch artifact.
+          toRemove.push({ todo: t, reason: 'deleted' });
+          continue;
+        }
         // Skip if user is still in the owner list (multi-owner case)
         if (ownerInCell(found.owner)) continue;
         // Only remove when we actually see a non-empty owner field that's
         // someone else. An empty owner means it was unassigned — could be a
         // momentary state, so we hold off.
         if (found.owner) {
-          toRemove.push({ todo: t, newOwner: found.owner });
+          toRemove.push({ todo: t, reason: 'reassigned', newOwner: found.owner });
         }
       }
       if (toRemove.length) {
-        console.log('[ECM sync] reassigning out:', toRemove.map(x => ({ task: x.todo.text, newOwner: x.newOwner })));
+        console.log('[ECM sync] removing:', toRemove.map(x => ({ task: x.todo.text, reason: x.reason, newOwner: x.newOwner || null })));
       }
-      for (const { todo: t } of toRemove) {
-        try { await deleteDoc(doc(db, 'tv_todos', t.id)); } catch (e) { console.warn('delete reassigned failed', e); }
+      for (const { todo: t, reason } of toRemove) {
+        try { await deleteDoc(doc(db, 'tv_todos', t.id)); } catch (e) { console.warn('delete failed', e); }
         const idx = todos.findIndex(x => x.id === t.id);
         if (idx >= 0) todos.splice(idx, 1);
         // Also yank from any Focus 5 list so it doesn't ghost a slot
@@ -7793,7 +7960,8 @@ const VOICE = {
             saveFocus5();
           }
         } catch {}
-        reassignedOut++;
+        if (reason === 'deleted') deletedFromSheet++;
+        else reassignedOut++;
       }
       // Dedupe map: smartsheetRowId → existing todo
       const byRowId = new Map();
@@ -7902,7 +8070,7 @@ const VOICE = {
         if (added) parts.push(`+${added}`);
         if (updated) parts.push(`~${updated}`);
         if (closedFromSheet) parts.push(`✓${closedFromSheet}`);
-        if (reassignedOut) parts.push(`−${reassignedOut}`);
+        if (reassignedOut || deletedFromSheet) parts.push(`−${reassignedOut + deletedFromSheet}`);
         if (flushed) parts.push(`↑${flushed}`);
         count.textContent = parts.length ? parts.join(' · ') : 'no change';
         count.style.display = '';
@@ -8033,15 +8201,47 @@ const VOICE = {
       const lastDay = c.lastSyncAt ? dkey(new Date(c.lastSyncAt)) : '';
       if (stale || lastDay !== today) ssSync();
     }, 1500); // small delay so the page settles + todos load first
-    // Re-sync when the tab becomes visible again after being hidden long
-    // enough for completions on the ECM page to drift out of sync.
+    // Re-sync when the tab becomes visible again. Aggressive 30-second
+    // threshold so flipping between the ECM page and Personal nearly always
+    // refreshes (reassignments + completions land within one toggle).
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       const c = ssGetConfig();
       if (c.autoSync === false || !ssIsConfigured()) return;
       const last = c.lastSyncAt ? new Date(c.lastSyncAt).getTime() : 0;
-      if (Date.now() - last > 5 * 60 * 1000) ssSync();
+      if (Date.now() - last > 30 * 1000) ssSync();
     });
+    // Manual debug helpers — call from DevTools console:
+    //   warroomSync()         → force a sync now, returns the result
+    //   warroomGhosts()       → list all ECM-synced todos with their stored row id
+    //   warroomDropGhost(id)  → delete a specific Personal todo by id
+    window.warroomSync = () => ssSync();
+    window.warroomGhosts = () => {
+      const list = todos.filter(t => t.smartsheetRowId);
+      console.table(list.map(t => ({
+        id: t.id,
+        task: t.text,
+        rowId: t.smartsheetRowId,
+        ticket: t.smartsheetTicket,
+        status: t.smartsheetStatus,
+        done: t.done
+      })));
+      return list;
+    };
+    window.warroomDropGhost = async (todoId) => {
+      try { await deleteDoc(doc(db, 'tv_todos', todoId)); } catch (e) { console.error(e); return false; }
+      const idx = todos.findIndex(t => t.id === todoId);
+      if (idx >= 0) todos.splice(idx, 1);
+      try {
+        focus5State.lists.forEach(l => {
+          const at = l.taskIds.indexOf(todoId);
+          if (at >= 0) l.taskIds.splice(at, 1);
+        });
+        saveFocus5();
+      } catch {}
+      try { render(); } catch {}
+      return true;
+    };
   })();
 
   // Initial render. If state has a saved vibe, attach a one-shot listener that
