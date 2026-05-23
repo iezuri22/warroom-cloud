@@ -6119,7 +6119,8 @@ const VOICE = {
       list.appendChild(empty);
       return;
     }
-    let pending = todos.filter(t => !t.done);
+    // Hide future reminders — they reappear when their date arrives.
+    let pending = todos.filter(t => !t.done && !_isPendingReminder(t));
     const done = todos.filter(t => t.done);
     // Apply job filter to pending list (keep Completed unfiltered so users
     // can still see what they wrapped up today regardless of filter).
@@ -6358,7 +6359,7 @@ const VOICE = {
 
     // View filter as a compact inline dropdown — appended to the right end
     // of the job filter bar so it doesn't take its own row.
-    const pendingAll = todos.filter(t => !t.done);
+    const pendingAll = todos.filter(t => !t.done && !_isPendingReminder(t));
     const todayK = todayKey();
     const wkStart = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return dkey(d); })();
     const vCounts = {
@@ -7420,9 +7421,10 @@ const VOICE = {
         }
       }
     }
-    // Stamp the reminder date onto the new todo, then run the due-today
-    // sweep so it auto-bumps to First Priority if the reminder is for today
-    // or already past.
+    // Stamp the reminder date onto the new todo. The sweep below decides
+    // whether to bump to slot 1 of First Priority right now (date is today
+    // or past) or stash it invisibly until the reminder date arrives.
+    const isFutureReminder = !!remindOn && remindOn > todayKey();
     if (newTaskId && remindOn) {
       const t = todos.find(x => x.id === newTaskId);
       if (t) {
@@ -7431,17 +7433,30 @@ const VOICE = {
         try { await updateDoc(doc(db, 'tv_todos', newTaskId), { remindOn, reminderFiredAt: '' }); } catch {}
       }
     }
-    // Priority-list assignment from the add sheet picker.
-    if (newTaskId && _addSheetPriorityListId) {
+    // Priority-list assignment from the add sheet picker. Skip when the
+    // reminder is in the future — the whole point is to NOT see this task
+    // until the day comes. checkRemindersDueToday() will insert it later.
+    if (newTaskId && _addSheetPriorityListId && !isFutureReminder) {
       try { interactiveAddToPriorityList(newTaskId, _addSheetPriorityListId); } catch (e) { console.warn('priority add failed', e); }
     }
-    // After the new task is in todos, check for due reminders.
+    // After the new task is in todos, check for due reminders (only fires
+    // today / past dates; future ones stay hidden).
     try { checkRemindersDueToday(); } catch {}
     _addSheetPriorityListId = null;
     if (remInput) remInput.value = '';
     const clrBtn = document.getElementById('addSheetReminderClear');
     if (clrBtn) clrBtn.style.display = 'none';
     input.value = ''; input.focus();
+  }
+  // Future reminders are invisible in every task pool. A task counts as a
+  // pending reminder when it has a remindOn date strictly after today and
+  // hasn't fired yet. Past/today reminders show normally (the sweep already
+  // bumped them to First Priority).
+  function _isPendingReminder(t){
+    if (!t || t.done) return false;
+    if (!t.remindOn) return false;
+    if (t.reminderFiredAt) return false;
+    return t.remindOn > todayKey();
   }
   // ---- Reminder sweep ----
   // Walks every todo with a remindOn date that hasn't fired yet. If the date
@@ -9216,7 +9231,8 @@ const VOICE = {
     //   Priority lists hide recurring tasks so routine work doesn't clog the
     //     priority queue.
     const isRoutineList = _focus5PickerRoutine === 'morning' || _focus5PickerRoutine === 'night';
-    let basePool = todos.filter(t => !t.done);
+    // Hide future reminders from the picker — they're stashed for their date.
+    let basePool = todos.filter(t => !t.done && !_isPendingReminder(t));
     if (isRoutineList) {
       if (_focus5PickerRoutineMode === 'routine') basePool = basePool.filter(t => !!t.fromTemplate);
       // 'all' mode → no filter on fromTemplate
@@ -9255,8 +9271,8 @@ const VOICE = {
       // morning tasks).
       let routineToggleHTML = '';
       if (isRoutineList) {
-        const allNonDone = todos.filter(t => !t.done).length;
-        const recurringOnly = todos.filter(t => !t.done && !!t.fromTemplate).length;
+        const allNonDone = todos.filter(t => !t.done && !_isPendingReminder(t)).length;
+        const recurringOnly = todos.filter(t => !t.done && !!t.fromTemplate && !_isPendingReminder(t)).length;
         routineToggleHTML = `
           <button type="button" class="focus5-routine-toggle ${_focus5PickerRoutineMode === 'routine' ? 'active' : ''}" data-rmode="routine" title="Show only recurring tasks">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
