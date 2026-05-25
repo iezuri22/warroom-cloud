@@ -10595,8 +10595,43 @@ function _pdLoadGoalWeek(){
 }
 function _pdSaveGoalWeek(v){ try { localStorage.setItem(PD_GOAL_WEEK_KEY, String(v)); } catch {} }
 function _pdToday(){
-  const d = new Date();
+  return _pdDayKey(new Date());
+}
+function _pdDayKey(d){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Split a [startMs, endMs] session into per-day second buckets keyed by
+// local-calendar day. Handles overnight + multi-day sessions cleanly.
+// Example: 9pm Mon → 9am Tue returns { 'Mon': 10800, 'Tue': 32400 }.
+function _pdSplitByDay(startMs, endMs){
+  const out = {};
+  if (endMs <= startMs) return out;
+  let cur = new Date(startMs);
+  while (cur.getTime() < endMs) {
+    const dayKey = _pdDayKey(cur);
+    // Midnight of the next local day = end of current day's segment
+    const nextMidnight = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1, 0, 0, 0, 0).getTime();
+    const segmentEnd = Math.min(nextMidnight, endMs);
+    const segmentSec = Math.floor((segmentEnd - cur.getTime()) / 1000);
+    if (segmentSec > 0) out[dayKey] = (out[dayKey] || 0) + segmentSec;
+    cur = new Date(segmentEnd);
+  }
+  return out;
+}
+// Seconds of an active session that fall within today's calendar day.
+// Used for live banner + analytics rendering while a session is running.
+function _pdActiveTodaySec(active){
+  if (!active) return 0;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const sliceStart = Math.max(active.startedAt, todayStart.getTime());
+  return Math.max(0, Math.floor((Date.now() - sliceStart) / 1000));
+}
+// Seconds of an active session that fall on the given day key.
+function _pdActiveSecForDay(active, dayKey){
+  if (!active) return 0;
+  const split = _pdSplitByDay(active.startedAt, Date.now());
+  return split[dayKey] || 0;
 }
 function _pdLoadActive(){ try { return JSON.parse(localStorage.getItem(PD_ACTIVE_KEY) || 'null'); } catch { return null; } }
 function _pdSaveActive(v){ try { v ? localStorage.setItem(PD_ACTIVE_KEY, JSON.stringify(v)) : localStorage.removeItem(PD_ACTIVE_KEY); } catch {} }
@@ -10636,23 +10671,38 @@ function _pdFmtClockLong(d){
   const opts = { weekday: 'short', month: 'short', day: 'numeric' };
   return `${time} ${d.toLocaleDateString(undefined, opts)}`;
 }
-function _pdWeekTotal(log){
+function _pdWeekKeys(){
   const now = new Date();
   const start = new Date(now); start.setDate(now.getDate() - now.getDay());
   const keys = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
-    keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+    keys.push(_pdDayKey(d));
   }
-  return keys.reduce((sum, k) => sum + (log[k] || 0), 0);
+  return keys;
+}
+function _pdWeekTotal(log){
+  return _pdWeekKeys().reduce((sum, k) => sum + (log[k] || 0), 0);
+}
+function _pdWeekTotalWithActive(log, active){
+  const keys = _pdWeekKeys();
+  const stored = keys.reduce((sum, k) => sum + (log[k] || 0), 0);
+  if (!active) return stored;
+  // Add the slice of the active session that falls inside any day in this week
+  const split = _pdSplitByDay(active.startedAt, Date.now());
+  const live = keys.reduce((sum, k) => sum + (split[k] || 0), 0);
+  return stored + live;
 }
 function _pdRender(){
   const active = _pdLoadActive();
   const log = _pdLoadLog();
   const todayKey = _pdToday();
   const stored = log[todayKey] || 0;
+  // Total elapsed for the active session (drives the live countdown)
   const liveSec = active ? Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000)) : 0;
-  const todaySec = stored + liveSec;
+  // Only the portion of the active session that's IN today (drives today's tally)
+  const liveTodaySec = _pdActiveTodaySec(active);
+  const todaySec = stored + liveTodaySec;
   _pdEls.bar.classList.toggle('on', !!active);
   if (active) {
     const targetMs = active.startedAt + (active.targetMins || 0) * 60 * 1000;
@@ -10678,7 +10728,10 @@ function _pdRender(){
   }
   const goalDayH = _pdLoadGoalDay();
   const goalWeekH = _pdLoadGoalWeek();
-  const weekSec = _pdWeekTotal(log) + liveSec;
+  // For week: take stored week buckets + per-day slice of any active session
+  // that falls inside this week. Naively adding liveSec would double-count
+  // for overnight sessions that started last week.
+  const weekSec = _pdWeekTotalWithActive(log, active);
   _pdEls.meta.innerHTML = `<strong>${_pdFmtHM(todaySec)}</strong>/ ${goalDayH}h today · <strong>${_pdFmtHM(weekSec)}</strong>/ ${goalWeekH}h this week`;
   // Re-render analytics modal if it's open so it stays live
   if (_pdEls.anModal && _pdEls.anModal.classList.contains('show')) {
@@ -10729,21 +10782,29 @@ async function _pdStart(){
 async function _pdStop(){
   const active = _pdLoadActive();
   if (!active) return;
-  const sec = Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000));
+  const endedAt = Date.now();
+  const sec = Math.max(0, Math.floor((endedAt - active.startedAt) / 1000));
   if (sec < 5) { _pdSaveActive(null); _pdRender(); return; } // fat-finger guard
+  // Split across day boundaries so overnight + multi-day sessions credit
+  // each calendar day correctly. Locking 9pm Mon → 9am Tue = Mon +3h, Tue +9h.
+  const split = _pdSplitByDay(active.startedAt, endedAt);
   const log = _pdLoadLog();
-  const key = _pdToday();
-  log[key] = (log[key] || 0) + sec;
+  for (const [k, s] of Object.entries(split)) {
+    log[k] = (log[k] || 0) + s;
+  }
   _pdSaveLog(log);
   _pdSaveActive(null);
   _pdRender();
   try {
     await addDoc(_pdCol, {
       startedAt: new Date(active.startedAt).toISOString(),
-      endedAt: new Date().toISOString(),
+      endedAt: new Date(endedAt).toISOString(),
       seconds: sec,
       targetMins: active.targetMins || 0,
-      day: key
+      // Per-day breakdown so Analytics tab (when we add it) can recompute
+      // without re-splitting. Primary `day` = day the session started.
+      day: _pdDayKey(new Date(active.startedAt)),
+      byDay: split
     });
   } catch (e) { console.warn('phone-down log failed', e); }
 }
@@ -10752,9 +10813,11 @@ function _pdRenderAnalytics(){
   const log = _pdLoadLog();
   const active = _pdLoadActive();
   const todayKey = _pdToday();
-  const liveSec = active ? Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000)) : 0;
-  const todaySec = (log[todayKey] || 0) + liveSec;
-  const weekSec = _pdWeekTotal(log) + liveSec;
+  // Use day-split for the live session so overnight sessions credit each
+  // day correctly here too (matches what _pdStop will save).
+  const liveSplit = active ? _pdSplitByDay(active.startedAt, Date.now()) : {};
+  const todaySec = (log[todayKey] || 0) + (liveSplit[todayKey] || 0);
+  const weekSec = _pdWeekTotalWithActive(log, active);
   const goalDayH = _pdLoadGoalDay();
   const goalWeekH = _pdLoadGoalWeek();
   // Goal inputs reflect current values
@@ -10774,12 +10837,12 @@ function _pdRenderAnalytics(){
   _pdEls.anWeekVal.classList.toggle('over', weekOver);
   _pdEls.anWeekFill.style.width = weekPct + '%';
   _pdEls.anWeekFill.classList.toggle('over', weekOver);
-  // Last 7 days chart
+  // Last 7 days chart — credits each day with any active-session slice
   const days = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    const k = _pdDayKey(d);
+    const sec = (log[k] || 0) + (liveSplit[k] || 0);
     days.push({ key: k, date: d, sec, isToday: k === todayKey });
   }
   const maxSec = Math.max(goalDayH * 3600, ...days.map(d => d.sec)) || 3600;
@@ -10806,8 +10869,8 @@ function _pdRenderAnalytics(){
   let best30 = 0;
   for (let i = 0; i < 30; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    const k = _pdDayKey(d);
+    const sec = (log[k] || 0) + (liveSplit[k] || 0);
     if (sec > best30) best30 = sec;
   }
   _pdEls.anBest.textContent = _pdFmtHM(best30);
@@ -10816,8 +10879,8 @@ function _pdRenderAnalytics(){
   const goalDaySec = goalDayH * 3600;
   for (let i = 0; i < 90; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    const k = _pdDayKey(d);
+    const sec = (log[k] || 0) + (liveSplit[k] || 0);
     if (sec >= goalDaySec) streak++;
     else break;
   }
