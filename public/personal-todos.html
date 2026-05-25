@@ -5667,6 +5667,13 @@ const VOICE = {
       if (extra && extra.startDate) payload.startDate = extra.startDate;
       if (extra && extra.sourceGoalId) payload.sourceGoalId = extra.sourceGoalId;
       if (extra && extra.sourceGoalTaskId) payload.sourceGoalTaskId = extra.sourceGoalTaskId;
+      // Reminder date — baked into the initial payload so the very first
+      // render already hides the task (via _isPendingReminder). Without
+      // this, the task flashes visible in priorities until the patch lands.
+      if (extra && extra.remindOn) {
+        payload.remindOn = extra.remindOn;
+        payload.reminderFiredAt = '';
+      }
       // Auto-bucket by current Chicago time when no explicit period given.
       // Only when adding for today's date — don't auto-tag tasks scheduled
       // for other days.
@@ -5686,6 +5693,7 @@ const VOICE = {
       if (extra && extra.startDate) newTodo.startDate = extra.startDate;
       if (extra && extra.sourceGoalId) newTodo.sourceGoalId = extra.sourceGoalId;
       if (extra && extra.sourceGoalTaskId) newTodo.sourceGoalTaskId = extra.sourceGoalTaskId;
+      if (extra && extra.remindOn) { newTodo.remindOn = extra.remindOn; newTodo.reminderFiredAt = ''; }
       if (job) newTodo.job = job;
       if (period) newTodo.period = period;
       todos.push(newTodo);
@@ -7430,13 +7438,17 @@ const VOICE = {
     const remInput = document.getElementById('addSheetReminderInput');
     const remindOn = (remInput && remInput.value) || '';
     let newTaskId = null;
+    // Pass remindOn into addTodoItem's `extra` so it's part of the very first
+    // payload — guarantees the hide-from-pending filter kicks in before any
+    // render runs. Without this, the task briefly flashes visible.
+    const extraForAdd = remindOn ? { remindOn } : undefined;
     if (freq === 'once' || !freq) {
-      newTaskId = await addTodoItem(text);
+      newTaskId = await addTodoItem(text, null, extraForAdd);
     } else {
       const opts = Object.assign({ freq }, _mainFreqReader.read());
       // Guard: custom without any picked day → treat as one-off
       if (freq === 'custom' && (!Array.isArray(opts.weekdays) || !opts.weekdays.length)) {
-        newTaskId = await addTodoItem(text);
+        newTaskId = await addTodoItem(text, null, extraForAdd);
       } else {
         const tplId = await addRecurring(text, opts);
         if (tplId && shouldRecurOn(recurringTasks.find(t => t.id === tplId), dkey(currentDate))) {
@@ -7559,8 +7571,8 @@ const VOICE = {
       const cap = options.uncapped ? '' : ` <span style="opacity:.55;margin-left:4px;font-weight:700">${filled}/5</span>`;
       return `<button type="button" class="add-sheet-priority-btn${routineCls} ${isActive ? 'active' : ''}" data-list-id="${escHtml(l.id)}">${escHtml(l.name || 'List')}${cap}</button>`;
     };
-    const noneBtn = `<button type="button" class="add-sheet-priority-btn ${!_addSheetPriorityListId ? 'active' : ''}" data-list-id="">None</button>`;
-    row.innerHTML = noneBtn + priorityLists.map(l => renderBtn(l)).join('');
+    // No "None" — every new task lands in a priority list. Default = First.
+    row.innerHTML = priorityLists.map(l => renderBtn(l)).join('');
     if (routineRow && routineLabel) {
       if (routineLists.length > 0) {
         routineLabel.style.display = '';
@@ -7584,9 +7596,10 @@ const VOICE = {
   function openAddSheet(){
     const bd = document.getElementById('addSheetBackdrop');
     if (bd) bd.classList.add('show');
-    // Reset priority pick each time the sheet opens so a stale choice from a
-    // prior add doesn't silently bind the next task to a list.
-    _addSheetPriorityListId = null;
+    // Default the priority pick to First Priority every time the sheet
+    // opens. Most tasks belong in priorities; user can switch if needed.
+    const _priList = (typeof getPriorityLists === 'function') ? getPriorityLists() : [];
+    _addSheetPriorityListId = (_priList[0] && _priList[0].id) || null;
     _renderAddSheetPriorityPicker();
     // Reset reminder picker too — every new add starts clean.
     const remInput = document.getElementById('addSheetReminderInput');
