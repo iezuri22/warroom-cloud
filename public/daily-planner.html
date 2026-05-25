@@ -10124,5 +10124,315 @@ body.iframe-tab .main > div{margin:0}
   </div>
 </div>
 
+<!-- ============ PHONE DOWN — floating bottom-right pill ============
+     Tap to start a phone-free session. Timer ticks visibly. Tap again to
+     stop and log to Firebase (analytics_events collection). Persists
+     across reloads via localStorage so refreshing the tab doesn't lose
+     state. Long-press / right-click opens settings (daily goal). -->
+<style>
+.pdpill{
+  position:fixed; right:14px; bottom:14px; z-index:9000;
+  display:inline-flex; align-items:center; gap:8px;
+  padding:9px 14px 9px 12px; border-radius:999px;
+  background:rgba(20,20,24,.85);
+  border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.92);
+  font-family:'Plus Jakarta Sans','Outfit',system-ui,sans-serif;
+  font-size:12px; font-weight:800; letter-spacing:.3px;
+  cursor:pointer; user-select:none;
+  backdrop-filter:saturate(140%) blur(12px);
+  -webkit-backdrop-filter:saturate(140%) blur(12px);
+  box-shadow:0 10px 30px rgba(0,0,0,.4);
+  transition:transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.pdpill:hover{ transform:translateY(-1px) }
+.pdpill.on{
+  background:linear-gradient(135deg, rgba(34,197,94,.22), rgba(34,197,94,.12));
+  border-color:rgba(74,222,128,.55);
+  color:#86efac;
+}
+.pdpill .pd-icon{ font-size:14px; line-height:1 }
+.pdpill .pd-time{
+  font-variant-numeric:tabular-nums; font-weight:900;
+  min-width:42px; text-align:right;
+}
+.pdpill .pd-bar{
+  position:absolute; left:8px; right:8px; bottom:3px; height:2px;
+  background:rgba(255,255,255,.06); border-radius:99px; overflow:hidden;
+}
+.pdpill .pd-bar-fill{
+  height:100%; background:linear-gradient(90deg, #4ADE80, #22C55E);
+  border-radius:99px; transition:width .35s ease; width:0;
+}
+.pdpill.over .pd-bar-fill{ background:linear-gradient(90deg, #FFB84D, #FF8A3D) }
+.pdpill .pd-settings-dot{
+  width:4px; height:4px; border-radius:50%;
+  background:rgba(255,255,255,.35);
+}
+@keyframes pdPulse {
+  0%,100% { box-shadow:0 10px 30px rgba(0,0,0,.4), 0 0 0 0 rgba(74,222,128,0) }
+  50%     { box-shadow:0 10px 30px rgba(0,0,0,.4), 0 0 0 8px rgba(74,222,128,.10) }
+}
+.pdpill.on{ animation:pdPulse 2.4s ease-in-out infinite }
+
+/* Settings popover */
+.pd-pop{
+  position:fixed; right:14px; bottom:60px; z-index:9001;
+  width:260px; padding:14px;
+  background:rgba(20,20,24,.95);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:14px;
+  color:rgba(255,255,255,.92);
+  font-family:'Plus Jakarta Sans','Outfit',system-ui,sans-serif;
+  font-size:12px;
+  backdrop-filter:saturate(140%) blur(14px);
+  -webkit-backdrop-filter:saturate(140%) blur(14px);
+  box-shadow:0 16px 50px rgba(0,0,0,.55);
+  display:none;
+}
+.pd-pop.show{ display:block }
+.pd-pop h4{ margin:0 0 8px; font-size:11px; font-weight:900; letter-spacing:.7px; text-transform:uppercase; color:#86efac }
+.pd-pop .pd-row{ display:flex; align-items:center; gap:8px; margin:6px 0 }
+.pd-pop label{ flex:1; color:rgba(255,255,255,.7); font-weight:700; font-size:11px }
+.pd-pop input[type="number"]{
+  width:64px; padding:5px 8px; border-radius:8px;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.14);
+  color:#fff; font-family:inherit; font-size:12px; font-weight:800;
+  font-variant-numeric:tabular-nums; text-align:right;
+}
+.pd-pop .pd-stats{
+  margin-top:10px; padding-top:10px;
+  border-top:1px solid rgba(255,255,255,.08);
+  display:grid; grid-template-columns:1fr 1fr; gap:10px;
+}
+.pd-pop .pd-stat{ font-size:11px; color:rgba(255,255,255,.55) }
+.pd-pop .pd-stat strong{ display:block; font-size:18px; color:#fff; font-weight:900; font-variant-numeric:tabular-nums }
+.pd-pop .pd-actions{
+  margin-top:10px; display:flex; gap:6px;
+}
+.pd-pop button.pd-btn{
+  flex:1; padding:7px; border-radius:8px;
+  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.85);
+  font-family:inherit; font-size:11px; font-weight:800;
+  cursor:pointer;
+}
+.pd-pop button.pd-btn:hover{ background:rgba(255,255,255,.10); color:#fff }
+.pd-pop button.pd-btn.danger:hover{ background:rgba(239,68,68,.18); color:#fca5a5; border-color:rgba(239,68,68,.4) }
+</style>
+
+<button class="pdpill" id="phoneDownPill" type="button" title="Phone down — tap to start / stop. Right-click for settings." aria-pressed="false">
+  <span class="pd-icon" aria-hidden="true">📵</span>
+  <span class="pd-label" id="pdLabel">Phone down</span>
+  <span class="pd-time" id="pdTime" style="display:none">00:00</span>
+  <span class="pd-bar"><span class="pd-bar-fill" id="pdBarFill"></span></span>
+</button>
+
+<div class="pd-pop" id="pdPop" role="dialog" aria-label="Phone Down settings">
+  <h4>Phone Down</h4>
+  <div class="pd-row">
+    <label for="pdGoalInput">Daily goal (hours)</label>
+    <input type="number" id="pdGoalInput" min="0.5" max="24" step="0.5" value="4">
+  </div>
+  <div class="pd-stats">
+    <div class="pd-stat"><strong id="pdStatToday">0m</strong>today</div>
+    <div class="pd-stat"><strong id="pdStatWeek">0m</strong>this week</div>
+  </div>
+  <div class="pd-actions">
+    <button class="pd-btn" type="button" id="pdCloseBtn">Close</button>
+    <button class="pd-btn danger" type="button" id="pdResetBtn" title="Wipe today's phone-down log">Reset today</button>
+  </div>
+</div>
+
+<script type="module">
+// ---- Phone Down tracker ----
+// Two stores:
+//   localStorage 'pd-active' → { startedAt: epoch } | null  (live session)
+//   localStorage 'pd-log'    → { 'YYYY-MM-DD': totalSeconds, ... } daily totals
+// Firebase is also used so the Analytics tab can read history across devices,
+// but the pill itself works offline and syncs opportunistically.
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, addDoc, query, where, getDocs } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+const _pdFirebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "601729498303",
+  appId: "1:601729498303:web:b9d3604bb6c5e6e7adf8db"
+};
+const _pdApp = (window.__pdApp ||= initializeApp(_pdFirebaseConfig, 'pd-app'));
+const _pdDb = getFirestore(_pdApp);
+const _pdCol = collection(_pdDb, 'phone_down_sessions');
+
+const PD_ACTIVE_KEY = 'pd-active';
+const PD_LOG_KEY = 'pd-log';
+const PD_GOAL_KEY = 'pd-goal-hours';
+const _pdEls = {
+  pill: document.getElementById('phoneDownPill'),
+  label: document.getElementById('pdLabel'),
+  time: document.getElementById('pdTime'),
+  bar: document.getElementById('pdBarFill'),
+  pop: document.getElementById('pdPop'),
+  goal: document.getElementById('pdGoalInput'),
+  today: document.getElementById('pdStatToday'),
+  week: document.getElementById('pdStatWeek'),
+  close: document.getElementById('pdCloseBtn'),
+  reset: document.getElementById('pdResetBtn'),
+};
+function _pdToday(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function _pdLoadActive(){ try { return JSON.parse(localStorage.getItem(PD_ACTIVE_KEY) || 'null'); } catch { return null; } }
+function _pdSaveActive(v){ try { v ? localStorage.setItem(PD_ACTIVE_KEY, JSON.stringify(v)) : localStorage.removeItem(PD_ACTIVE_KEY); } catch {} }
+function _pdLoadLog(){ try { return JSON.parse(localStorage.getItem(PD_LOG_KEY) || '{}'); } catch { return {}; } }
+function _pdSaveLog(o){ try { localStorage.setItem(PD_LOG_KEY, JSON.stringify(o)); } catch {} }
+function _pdLoadGoal(){
+  const v = parseFloat(localStorage.getItem(PD_GOAL_KEY) || '4');
+  return Number.isFinite(v) && v > 0 ? v : 4;
+}
+function _pdSaveGoal(v){ try { localStorage.setItem(PD_GOAL_KEY, String(v)); } catch {} }
+function _pdFmt(sec){
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+function _pdFmtTimer(sec){
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    const rm = m % 60;
+    return `${h}:${String(rm).padStart(2,'0')}`;
+  }
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+function _pdWeekTotal(log){
+  const now = new Date();
+  const start = new Date(now); start.setDate(now.getDate() - now.getDay());
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  }
+  return keys.reduce((sum, k) => sum + (log[k] || 0), 0);
+}
+function _pdRender(){
+  const active = _pdLoadActive();
+  const log = _pdLoadLog();
+  const todayKey = _pdToday();
+  const stored = log[todayKey] || 0;
+  const liveSec = active ? Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000)) : 0;
+  const todaySec = stored + liveSec;
+  const goalH = _pdLoadGoal();
+  const goalSec = goalH * 3600;
+  // Pill state
+  _pdEls.pill.classList.toggle('on', !!active);
+  _pdEls.pill.classList.toggle('over', todaySec >= goalSec);
+  _pdEls.pill.setAttribute('aria-pressed', active ? 'true' : 'false');
+  if (active) {
+    _pdEls.label.textContent = 'Phone down';
+    _pdEls.time.style.display = '';
+    _pdEls.time.textContent = _pdFmtTimer(liveSec);
+  } else {
+    // Idle: show today's total inline (e.g. "Phone down · 1h 12m")
+    _pdEls.label.textContent = todaySec > 0 ? `Phone down · ${_pdFmt(todaySec)}` : 'Phone down';
+    _pdEls.time.style.display = 'none';
+  }
+  // Progress bar reflects goal coverage
+  const pct = Math.min(100, Math.round((todaySec / goalSec) * 100));
+  _pdEls.bar.style.width = pct + '%';
+  // Settings popover stats
+  _pdEls.today.textContent = _pdFmt(todaySec);
+  _pdEls.week.textContent = _pdFmt(_pdWeekTotal(log) + liveSec);
+}
+async function _pdStart(){
+  if (_pdLoadActive()) return;
+  _pdSaveActive({ startedAt: Date.now() });
+  _pdRender();
+}
+async function _pdStop(){
+  const active = _pdLoadActive();
+  if (!active) return;
+  const sec = Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000));
+  if (sec < 5) { // ignore taps under 5 seconds — fat-finger guard
+    _pdSaveActive(null);
+    _pdRender();
+    return;
+  }
+  // Add to today's localStorage tally
+  const log = _pdLoadLog();
+  const key = _pdToday();
+  log[key] = (log[key] || 0) + sec;
+  _pdSaveLog(log);
+  _pdSaveActive(null);
+  _pdRender();
+  // Best-effort write to Firebase so Analytics + other devices see it
+  try {
+    await addDoc(_pdCol, {
+      startedAt: new Date(active.startedAt).toISOString(),
+      endedAt: new Date().toISOString(),
+      seconds: sec,
+      day: key
+    });
+  } catch (e) { console.warn('phone-down log failed', e); }
+}
+// Toggle on click
+_pdEls.pill.addEventListener('click', (e) => {
+  // Right-click handled below; treat normal left-click as toggle
+  if (e.button !== 0) return;
+  if (_pdLoadActive()) _pdStop();
+  else _pdStart();
+});
+// Settings popover
+function _pdTogglePop(force){
+  const show = typeof force === 'boolean' ? force : !_pdEls.pop.classList.contains('show');
+  _pdEls.pop.classList.toggle('show', show);
+  if (show) _pdEls.goal.value = _pdLoadGoal();
+}
+_pdEls.pill.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  _pdTogglePop();
+});
+// Long-press on mobile = settings
+let _pdLongPress = null;
+_pdEls.pill.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch') return;
+  _pdLongPress = setTimeout(() => { _pdTogglePop(true); _pdLongPress = null; }, 550);
+});
+_pdEls.pill.addEventListener('pointerup', () => { if (_pdLongPress) { clearTimeout(_pdLongPress); _pdLongPress = null; } });
+_pdEls.pill.addEventListener('pointercancel', () => { if (_pdLongPress) { clearTimeout(_pdLongPress); _pdLongPress = null; } });
+_pdEls.close.addEventListener('click', () => _pdTogglePop(false));
+_pdEls.reset.addEventListener('click', () => {
+  if (!confirm('Wipe today\'s phone-down log? This only clears today.')) return;
+  const log = _pdLoadLog();
+  delete log[_pdToday()];
+  _pdSaveLog(log);
+  _pdSaveActive(null);
+  _pdRender();
+});
+_pdEls.goal.addEventListener('change', () => {
+  const v = parseFloat(_pdEls.goal.value);
+  if (Number.isFinite(v) && v > 0) { _pdSaveGoal(v); _pdRender(); }
+});
+// Close popover when clicking outside
+document.addEventListener('click', (e) => {
+  if (!_pdEls.pop.classList.contains('show')) return;
+  if (e.target === _pdEls.pill || _pdEls.pill.contains(e.target)) return;
+  if (e.target === _pdEls.pop || _pdEls.pop.contains(e.target)) return;
+  _pdTogglePop(false);
+});
+// Tick the live timer every second
+setInterval(_pdRender, 1000);
+// Refresh on tab focus so we catch external clock changes
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _pdRender();
+});
+_pdRender();
+</script>
+
 </body>
 </html>
