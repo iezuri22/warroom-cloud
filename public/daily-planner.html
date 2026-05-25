@@ -2374,12 +2374,37 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   color:rgba(255,255,255,.85);
 }
 .pd-bar-btn.stop:hover{ background:rgba(239,68,68,.20); color:#fca5a5; border-color:rgba(239,68,68,.45) }
-.pd-bar-cog{
+.pd-bar-cog,
+.pd-bar-toggle{
   background:transparent; border:none; cursor:pointer;
   color:rgba(255,255,255,.40); padding:4px;
   display:inline-flex; align-items:center;
 }
-.pd-bar-cog:hover{ color:#fff }
+.pd-bar-cog:hover,
+.pd-bar-toggle:hover{ color:#fff }
+.pd-bar-toggle svg{ transition:transform .18s ease }
+
+/* Collapsed state — slim strip with just icon (+ tiny countdown if active).
+   Tap anywhere on the strip to expand. */
+.pd-bar-top.collapsed{
+  padding:3px 12px; gap:8px;
+  cursor:pointer;
+}
+.pd-bar-top.collapsed .pd-bar-title,
+.pd-bar-top.collapsed .pd-bar-meta,
+.pd-bar-top.collapsed .pd-bar-cog,
+.pd-bar-top.collapsed #pdStartBtn,
+.pd-bar-top.collapsed #pdStopBtn{ display:none !important }
+.pd-bar-top.collapsed .pd-bar-status{
+  font-size:11px; font-weight:700;
+  color:rgba(255,255,255,.55);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.pd-bar-top.collapsed.on .pd-bar-status{ color:#86efac }
+.pd-bar-top.collapsed.over .pd-bar-status{ color:#FFB84D }
+.pd-bar-top.collapsed .pd-bar-toggle svg{ transform:rotate(180deg) }
+.pd-bar-top.collapsed .pd-bar-icon{ font-size:12px }
+
 @media (max-width: 600px) {
   .pd-bar-top{ padding:7px 12px; gap:8px }
   .pd-bar-meta{ display:none }
@@ -2513,6 +2538,9 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <span class="pd-bar-meta" id="pdMeta"></span>
   <button type="button" class="pd-bar-btn" id="pdStartBtn">Start</button>
   <button type="button" class="pd-bar-btn stop" id="pdStopBtn" style="display:none">Stop</button>
+  <button type="button" class="pd-bar-toggle" id="pdToggleBtn" title="Hide bar">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+  </button>
   <button type="button" class="pd-bar-cog" id="pdCogBtn" title="Settings">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
   </button>
@@ -10553,6 +10581,7 @@ const PD_ACTIVE_KEY = 'pd-active';
 const PD_LOG_KEY = 'pd-log';
 const PD_GOAL_DAY_KEY = 'pd-goal-hours';      // hours per day target
 const PD_GOAL_WEEK_KEY = 'pd-goal-hours-week'; // hours per week target
+const PD_COLLAPSED_KEY = 'pd-collapsed';      // banner collapsed?
 const $ = (id) => document.getElementById(id);
 const _pdEls = {
   bar: $('pdBar'),
@@ -10561,6 +10590,7 @@ const _pdEls = {
   startBtn: $('pdStartBtn'),
   stopBtn: $('pdStopBtn'),
   cog: $('pdCogBtn'),
+  toggle: $('pdToggleBtn'),
   modal: $('pdModal'),
   chips: $('pdChips'),
   custom: $('pdCustomHours'),
@@ -10693,6 +10723,8 @@ function _pdWeekTotalWithActive(log, active){
   const live = keys.reduce((sum, k) => sum + (split[k] || 0), 0);
   return stored + live;
 }
+function _pdLoadCollapsed(){ return localStorage.getItem(PD_COLLAPSED_KEY) === '1'; }
+function _pdSaveCollapsed(v){ try { v ? localStorage.setItem(PD_COLLAPSED_KEY, '1') : localStorage.removeItem(PD_COLLAPSED_KEY); } catch {} }
 function _pdRender(){
   const active = _pdLoadActive();
   const log = _pdLoadLog();
@@ -10703,6 +10735,7 @@ function _pdRender(){
   // Only the portion of the active session that's IN today (drives today's tally)
   const liveTodaySec = _pdActiveTodaySec(active);
   const todaySec = stored + liveTodaySec;
+  _pdEls.bar.classList.toggle('collapsed', _pdLoadCollapsed());
   _pdEls.bar.classList.toggle('on', !!active);
   if (active) {
     const targetMs = active.startedAt + (active.targetMins || 0) * 60 * 1000;
@@ -10711,7 +10744,12 @@ function _pdRender(){
     _pdEls.bar.classList.toggle('over', isOver);
     const targetDate = new Date(targetMs);
     const targetLabel = _pdFmtClockLong(targetDate);
-    if (isOver) {
+    if (_pdLoadCollapsed()) {
+      // Tight one-liner when collapsed — just the countdown / overage
+      _pdEls.status.textContent = isOver
+        ? `📵 ${_pdFmtCountdown(remainingSec)} over`
+        : `📵 ${_pdFmtCountdown(remainingSec)} left · until ${targetLabel}`;
+    } else if (isOver) {
       _pdEls.status.innerHTML = `<span class="when">Past target (${targetLabel}) ·</span> <span class="countdown">${_pdFmtCountdown(remainingSec)}</span> over`;
     } else {
       _pdEls.status.innerHTML = `<span class="when">Until ${targetLabel} ·</span> <span class="countdown">${_pdFmtCountdown(remainingSec)}</span> left`;
@@ -10720,9 +10758,15 @@ function _pdRender(){
     _pdEls.stopBtn.style.display = '';
   } else {
     _pdEls.bar.classList.remove('over');
-    _pdEls.status.textContent = todaySec > 0
-      ? `Last session ended. Tap Start when you lock the box again.`
-      : `Tap Start when you lock the box.`;
+    if (_pdLoadCollapsed()) {
+      _pdEls.status.textContent = todaySec > 0
+        ? `📵 ${_pdFmtHM(todaySec)} today`
+        : `Phone Down`;
+    } else {
+      _pdEls.status.textContent = todaySec > 0
+        ? `Last session ended. Tap Start when you lock the box again.`
+        : `Tap Start when you lock the box.`;
+    }
     _pdEls.startBtn.style.display = '';
     _pdEls.stopBtn.style.display = 'none';
   }
@@ -10899,6 +10943,20 @@ _pdEls.stopBtn.addEventListener('click', () => {
   if (confirm('End phone-down session?')) _pdStop();
 });
 _pdEls.cog.addEventListener('click', _pdOpenAnalytics);
+// Toggle hide/show
+_pdEls.toggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  _pdSaveCollapsed(!_pdLoadCollapsed());
+  _pdRender();
+});
+// When collapsed, tapping anywhere on the bar expands it
+_pdEls.bar.addEventListener('click', (e) => {
+  if (!_pdLoadCollapsed()) return;
+  // Don't fire on the toggle button itself (it handles its own click)
+  if (e.target.closest('#pdToggleBtn')) return;
+  _pdSaveCollapsed(false);
+  _pdRender();
+});
 _pdEls.anClose.addEventListener('click', _pdCloseAnalytics);
 _pdEls.anModal.addEventListener('click', (e) => { if (e.target === _pdEls.anModal) _pdCloseAnalytics(); });
 _pdEls.anGoalDay.addEventListener('change', () => {
