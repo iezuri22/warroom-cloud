@@ -2552,6 +2552,176 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </div>
 </div>
 
+<!-- Phone Down analytics modal — goals, progress, last-7-days, streak -->
+<style>
+.pd-an-modal{
+  width:min(560px, calc(100vw - 32px));
+  max-height:calc(100vh - 60px);
+  overflow-y:auto;
+}
+.pd-an-section{
+  margin-top:16px; padding-top:16px;
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.pd-an-section:first-of-type{ margin-top:0; padding-top:0; border-top:none }
+.pd-an-section h4{
+  margin:0 0 10px; font-size:11px; font-weight:900;
+  letter-spacing:.7px; text-transform:uppercase;
+  color:rgba(255,255,255,.55);
+}
+.pd-goal-row{
+  display:flex; align-items:center; gap:10px;
+  margin-bottom:10px;
+}
+.pd-goal-label{ flex:1; font-size:13px; font-weight:700; color:rgba(255,255,255,.9) }
+.pd-goal-input{
+  width:64px; padding:7px 10px; border-radius:8px;
+  background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.14);
+  color:#fff; font-family:inherit; font-size:13px; font-weight:800;
+  font-variant-numeric:tabular-nums; text-align:right;
+  outline:none;
+}
+.pd-goal-input:focus{ border-color:rgba(74,222,128,.55) }
+.pd-goal-unit{ font-size:11px; color:rgba(255,255,255,.45); font-weight:700 }
+.pd-progress-row{
+  margin-bottom:14px;
+}
+.pd-progress-head{
+  display:flex; justify-content:space-between; align-items:baseline;
+  margin-bottom:6px;
+  font-size:12px; font-weight:700;
+}
+.pd-progress-head .lbl{ color:rgba(255,255,255,.65) }
+.pd-progress-head .val{ color:#86efac; font-weight:900; font-variant-numeric:tabular-nums }
+.pd-progress-head .val.over{ color:#FFB84D }
+.pd-progress-track{
+  height:8px; border-radius:99px;
+  background:rgba(255,255,255,.06); overflow:hidden;
+}
+.pd-progress-fill{
+  height:100%; border-radius:99px;
+  background:linear-gradient(90deg, #4ADE80, #22C55E);
+  transition:width .4s ease;
+}
+.pd-progress-fill.over{ background:linear-gradient(90deg, #FFB84D, #FF8A3D) }
+.pd-stats-grid{
+  display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;
+}
+.pd-stat-card{
+  padding:10px 12px; border-radius:10px;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);
+  text-align:center;
+}
+.pd-stat-card .v{
+  font-size:18px; font-weight:900; color:#fff;
+  font-variant-numeric:tabular-nums; line-height:1.1;
+}
+.pd-stat-card .l{
+  font-size:10px; font-weight:700; color:rgba(255,255,255,.50);
+  text-transform:uppercase; letter-spacing:.4px; margin-top:3px;
+}
+.pd-week-chart{
+  display:flex; align-items:flex-end; justify-content:space-between;
+  gap:6px; height:120px; padding:0 4px;
+  margin-top:6px;
+}
+.pd-bar-col{
+  flex:1; display:flex; flex-direction:column; align-items:center; gap:6px;
+}
+.pd-bar-vis{
+  width:100%; max-width:36px; flex:1;
+  background:rgba(255,255,255,.04);
+  border-radius:6px;
+  display:flex; align-items:flex-end; justify-content:center;
+  overflow:hidden;
+}
+.pd-bar-fill-col{
+  width:100%;
+  background:linear-gradient(180deg, #86efac, #22C55E);
+  border-radius:6px;
+  transition:height .4s ease;
+}
+.pd-bar-col.today .pd-bar-vis{ border:1px solid rgba(74,222,128,.55) }
+.pd-bar-col.empty .pd-bar-fill-col{ background:rgba(255,255,255,.10) }
+.pd-bar-meta{
+  display:flex; flex-direction:column; align-items:center; gap:1px;
+  font-size:9px; font-weight:700; color:rgba(255,255,255,.45);
+  text-transform:uppercase; letter-spacing:.3px;
+}
+.pd-bar-meta .day{ color:rgba(255,255,255,.65) }
+.pd-bar-meta .amt{
+  font-size:9px; font-variant-numeric:tabular-nums; color:#86efac;
+  font-weight:900;
+}
+.pd-bar-col.today .pd-bar-meta .day{ color:#86efac }
+.pd-an-close{
+  margin-top:18px;
+  width:100%; padding:11px; border-radius:10px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.14);
+  color:rgba(255,255,255,.85);
+  font-family:inherit; font-size:13px; font-weight:800;
+  cursor:pointer;
+}
+.pd-an-close:hover{ background:rgba(255,255,255,.10); color:#fff }
+</style>
+
+<div class="pd-modal-bd" id="pdAnalyticsModal" role="dialog" aria-modal="true" aria-labelledby="pdAnTitle">
+  <div class="pd-modal pd-an-modal">
+    <h3 id="pdAnTitle">Phone Down · Analytics</h3>
+    <div class="pd-modal-sub">Goals, progress, last-7-day trend.</div>
+
+    <div class="pd-an-section">
+      <h4>Goals</h4>
+      <div class="pd-goal-row">
+        <span class="pd-goal-label">Daily goal</span>
+        <input type="number" id="pdAnGoalDay" class="pd-goal-input" min="0.5" max="24" step="0.5" value="4">
+        <span class="pd-goal-unit">hrs</span>
+      </div>
+      <div class="pd-goal-row">
+        <span class="pd-goal-label">Weekly goal</span>
+        <input type="number" id="pdAnGoalWeek" class="pd-goal-input" min="1" max="168" step="1" value="28">
+        <span class="pd-goal-unit">hrs</span>
+      </div>
+    </div>
+
+    <div class="pd-an-section">
+      <h4>Progress</h4>
+      <div class="pd-progress-row">
+        <div class="pd-progress-head">
+          <span class="lbl">Today</span>
+          <span class="val" id="pdAnTodayVal">0m / 4h</span>
+        </div>
+        <div class="pd-progress-track"><div class="pd-progress-fill" id="pdAnTodayFill" style="width:0%"></div></div>
+      </div>
+      <div class="pd-progress-row">
+        <div class="pd-progress-head">
+          <span class="lbl">This week</span>
+          <span class="val" id="pdAnWeekVal">0h / 28h</span>
+        </div>
+        <div class="pd-progress-track"><div class="pd-progress-fill" id="pdAnWeekFill" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <div class="pd-an-section">
+      <h4>Last 7 days</h4>
+      <div class="pd-week-chart" id="pdAnWeekChart"></div>
+    </div>
+
+    <div class="pd-an-section">
+      <h4>Stats</h4>
+      <div class="pd-stats-grid">
+        <div class="pd-stat-card"><div class="v" id="pdAnAvg">0m</div><div class="l">Avg / day (7d)</div></div>
+        <div class="pd-stat-card"><div class="v" id="pdAnBest">0m</div><div class="l">Best day (30d)</div></div>
+        <div class="pd-stat-card"><div class="v" id="pdAnStreak">0</div><div class="l">Day streak</div></div>
+      </div>
+    </div>
+
+    <button type="button" class="pd-an-close" id="pdAnCloseBtn">Done</button>
+  </div>
+</div>
+
 <!-- BUILD: 2026-05-17-v14-drop-no-project -->
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
@@ -10381,6 +10551,8 @@ const _pdCol = collection(_pdDb, 'phone_down_sessions');
 
 const PD_ACTIVE_KEY = 'pd-active';
 const PD_LOG_KEY = 'pd-log';
+const PD_GOAL_DAY_KEY = 'pd-goal-hours';      // hours per day target
+const PD_GOAL_WEEK_KEY = 'pd-goal-hours-week'; // hours per week target
 const $ = (id) => document.getElementById(id);
 const _pdEls = {
   bar: $('pdBar'),
@@ -10398,7 +10570,30 @@ const _pdEls = {
   reset: $('pdResetBtn'),
   today: $('pdStatToday'),
   week: $('pdStatWeek'),
+  // Analytics modal
+  anModal: $('pdAnalyticsModal'),
+  anClose: $('pdAnCloseBtn'),
+  anGoalDay: $('pdAnGoalDay'),
+  anGoalWeek: $('pdAnGoalWeek'),
+  anTodayVal: $('pdAnTodayVal'),
+  anTodayFill: $('pdAnTodayFill'),
+  anWeekVal: $('pdAnWeekVal'),
+  anWeekFill: $('pdAnWeekFill'),
+  anChart: $('pdAnWeekChart'),
+  anAvg: $('pdAnAvg'),
+  anBest: $('pdAnBest'),
+  anStreak: $('pdAnStreak'),
 };
+function _pdLoadGoalDay(){
+  const v = parseFloat(localStorage.getItem(PD_GOAL_DAY_KEY) || '4');
+  return Number.isFinite(v) && v > 0 ? v : 4;
+}
+function _pdSaveGoalDay(v){ try { localStorage.setItem(PD_GOAL_DAY_KEY, String(v)); } catch {} }
+function _pdLoadGoalWeek(){
+  const v = parseFloat(localStorage.getItem(PD_GOAL_WEEK_KEY) || String(_pdLoadGoalDay() * 7));
+  return Number.isFinite(v) && v > 0 ? v : 28;
+}
+function _pdSaveGoalWeek(v){ try { localStorage.setItem(PD_GOAL_WEEK_KEY, String(v)); } catch {} }
 function _pdToday(){
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -10481,7 +10676,14 @@ function _pdRender(){
     _pdEls.startBtn.style.display = '';
     _pdEls.stopBtn.style.display = 'none';
   }
-  _pdEls.meta.innerHTML = `<strong>${_pdFmtHM(todaySec)}</strong>today · <strong>${_pdFmtHM(_pdWeekTotal(log) + liveSec)}</strong>this week`;
+  const goalDayH = _pdLoadGoalDay();
+  const goalWeekH = _pdLoadGoalWeek();
+  const weekSec = _pdWeekTotal(log) + liveSec;
+  _pdEls.meta.innerHTML = `<strong>${_pdFmtHM(todaySec)}</strong>/ ${goalDayH}h today · <strong>${_pdFmtHM(weekSec)}</strong>/ ${goalWeekH}h this week`;
+  // Re-render analytics modal if it's open so it stays live
+  if (_pdEls.anModal && _pdEls.anModal.classList.contains('show')) {
+    try { _pdRenderAnalytics(); } catch {}
+  }
   // Update modal stats if the modal happens to be open
   if (_pdEls.today) _pdEls.today.textContent = _pdFmtHM(todaySec);
   if (_pdEls.week) _pdEls.week.textContent = _pdFmtHM(_pdWeekTotal(log) + liveSec);
@@ -10545,12 +10747,105 @@ async function _pdStop(){
     });
   } catch (e) { console.warn('phone-down log failed', e); }
 }
+// ---- Analytics modal ----
+function _pdRenderAnalytics(){
+  const log = _pdLoadLog();
+  const active = _pdLoadActive();
+  const todayKey = _pdToday();
+  const liveSec = active ? Math.max(0, Math.floor((Date.now() - active.startedAt) / 1000)) : 0;
+  const todaySec = (log[todayKey] || 0) + liveSec;
+  const weekSec = _pdWeekTotal(log) + liveSec;
+  const goalDayH = _pdLoadGoalDay();
+  const goalWeekH = _pdLoadGoalWeek();
+  // Goal inputs reflect current values
+  if (_pdEls.anGoalDay && document.activeElement !== _pdEls.anGoalDay) _pdEls.anGoalDay.value = goalDayH;
+  if (_pdEls.anGoalWeek && document.activeElement !== _pdEls.anGoalWeek) _pdEls.anGoalWeek.value = goalWeekH;
+  // Today progress
+  const todayPct = Math.min(100, Math.round((todaySec / (goalDayH * 3600)) * 100));
+  const todayOver = todaySec >= goalDayH * 3600;
+  _pdEls.anTodayVal.textContent = `${_pdFmtHM(todaySec)} / ${goalDayH}h`;
+  _pdEls.anTodayVal.classList.toggle('over', todayOver);
+  _pdEls.anTodayFill.style.width = todayPct + '%';
+  _pdEls.anTodayFill.classList.toggle('over', todayOver);
+  // Week progress
+  const weekPct = Math.min(100, Math.round((weekSec / (goalWeekH * 3600)) * 100));
+  const weekOver = weekSec >= goalWeekH * 3600;
+  _pdEls.anWeekVal.textContent = `${_pdFmtHM(weekSec)} / ${goalWeekH}h`;
+  _pdEls.anWeekVal.classList.toggle('over', weekOver);
+  _pdEls.anWeekFill.style.width = weekPct + '%';
+  _pdEls.anWeekFill.classList.toggle('over', weekOver);
+  // Last 7 days chart
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    days.push({ key: k, date: d, sec, isToday: k === todayKey });
+  }
+  const maxSec = Math.max(goalDayH * 3600, ...days.map(d => d.sec)) || 3600;
+  _pdEls.anChart.innerHTML = days.map(d => {
+    const pct = Math.round((d.sec / maxSec) * 100);
+    const dayShort = d.date.toLocaleDateString(undefined, { weekday: 'short' });
+    const isEmpty = d.sec === 0;
+    return `
+      <div class="pd-bar-col ${d.isToday ? 'today' : ''} ${isEmpty ? 'empty' : ''}" title="${d.date.toLocaleDateString()} · ${_pdFmtHM(d.sec)}">
+        <div class="pd-bar-vis">
+          <div class="pd-bar-fill-col" style="height:${Math.max(pct, isEmpty ? 4 : 4)}%"></div>
+        </div>
+        <div class="pd-bar-meta">
+          <span class="amt">${d.sec > 0 ? _pdFmtHM(d.sec) : '—'}</span>
+          <span class="day">${dayShort}</span>
+        </div>
+      </div>`;
+  }).join('');
+  // Stats
+  const last7 = days.map(d => d.sec);
+  const avg7 = last7.reduce((s, n) => s + n, 0) / 7;
+  _pdEls.anAvg.textContent = _pdFmtHM(Math.round(avg7));
+  // Best day (30d)
+  let best30 = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    if (sec > best30) best30 = sec;
+  }
+  _pdEls.anBest.textContent = _pdFmtHM(best30);
+  // Streak: consecutive days back from today where day hit the daily goal
+  let streak = 0;
+  const goalDaySec = goalDayH * 3600;
+  for (let i = 0; i < 90; i++) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const sec = (log[k] || 0) + (k === todayKey ? liveSec : 0);
+    if (sec >= goalDaySec) streak++;
+    else break;
+  }
+  _pdEls.anStreak.textContent = String(streak);
+}
+function _pdOpenAnalytics(){
+  _pdEls.anModal.classList.add('show');
+  _pdRenderAnalytics();
+}
+function _pdCloseAnalytics(){
+  _pdEls.anModal.classList.remove('show');
+}
 // Wire up
 _pdEls.startBtn.addEventListener('click', _pdOpenModal);
 _pdEls.stopBtn.addEventListener('click', () => {
   if (confirm('End phone-down session?')) _pdStop();
 });
-_pdEls.cog.addEventListener('click', _pdOpenModal); // settings = same modal (stats live in foot)
+_pdEls.cog.addEventListener('click', _pdOpenAnalytics);
+_pdEls.anClose.addEventListener('click', _pdCloseAnalytics);
+_pdEls.anModal.addEventListener('click', (e) => { if (e.target === _pdEls.anModal) _pdCloseAnalytics(); });
+_pdEls.anGoalDay.addEventListener('change', () => {
+  const v = parseFloat(_pdEls.anGoalDay.value);
+  if (Number.isFinite(v) && v > 0) { _pdSaveGoalDay(v); _pdRender(); _pdRenderAnalytics(); }
+});
+_pdEls.anGoalWeek.addEventListener('change', () => {
+  const v = parseFloat(_pdEls.anGoalWeek.value);
+  if (Number.isFinite(v) && v > 0) { _pdSaveGoalWeek(v); _pdRenderAnalytics(); }
+});
 _pdEls.chips.querySelectorAll('[data-mins]').forEach(b => {
   b.addEventListener('click', () => _pdSetMins(parseInt(b.dataset.mins, 10), 'chip'));
 });
@@ -10572,7 +10867,9 @@ _pdEls.reset.addEventListener('click', () => {
 // Close modal on backdrop / Esc
 _pdEls.modal.addEventListener('click', (e) => { if (e.target === _pdEls.modal) _pdCloseModal(); });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && _pdEls.modal.classList.contains('show')) _pdCloseModal();
+  if (e.key !== 'Escape') return;
+  if (_pdEls.modal.classList.contains('show')) _pdCloseModal();
+  if (_pdEls.anModal && _pdEls.anModal.classList.contains('show')) _pdCloseAnalytics();
 });
 // Tick once a second so the countdown updates live
 setInterval(_pdRender, 1000);
