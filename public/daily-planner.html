@@ -10657,7 +10657,7 @@ body.iframe-tab .main > div{margin:0}
 //   localStorage 'pd-log'    → { 'YYYY-MM-DD': totalSeconds, ... }
 // Sessions get written to Firestore on stop so Analytics can render history.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-import { getFirestore, collection, addDoc, doc, deleteDoc, getDocs, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+import { getFirestore, collection, addDoc, doc, setDoc, deleteDoc, getDocs, onSnapshot, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 const _pdCfg = {
   apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
   authDomain: "tv-todos.firebaseapp.com",
@@ -10669,6 +10669,13 @@ const _pdCfg = {
 const _pdApp = (window.__pdApp ||= initializeApp(_pdCfg, 'pd-app'));
 const _pdDb = getFirestore(_pdApp);
 const _pdCol = collection(_pdDb, 'phone_down_sessions');
+// Singleton doc that mirrors the live session state across devices. When a
+// device starts a session, this doc gets { startedAt, targetMins }. When it
+// stops, we delete the doc. onSnapshot below keeps every device in sync.
+const _pdActiveDoc = doc(_pdDb, 'phone_down_state', 'me');
+// Flag to avoid feedback loops: when WE write to Firestore, the snapshot
+// callback fires back at us. We use a token to ignore that echo.
+let _pdRemoteWriteId = null;
 
 const PD_ACTIVE_KEY = 'pd-active';
 const PD_LOG_KEY = 'pd-log';
@@ -10921,16 +10928,34 @@ function _pdCloseModal(){
 }
 async function _pdStart(){
   if (!_pdSelectedMins || _pdSelectedMins <= 0) return;
-  _pdSaveActive({ startedAt: Date.now(), targetMins: _pdSelectedMins });
+  const state = { startedAt: Date.now(), targetMins: _pdSelectedMins };
+  _pdSaveActive(state);
   _pdCloseModal();
   _pdRender();
+  // Mirror to Firestore so other devices live-sync this session
+  try {
+    _pdRemoteWriteId = Date.now() + ':start';
+    await setDoc(_pdActiveDoc, { ...state, writeId: _pdRemoteWriteId });
+  } catch (e) { console.warn('phone-down state push failed', e); }
+}
+async function _pdClearRemoteState(){
+  try {
+    _pdRemoteWriteId = Date.now() + ':stop';
+    await deleteDoc(_pdActiveDoc);
+  } catch (e) { console.warn('phone-down state clear failed', e); }
+}
+async function _pdDiscard(){
+  // Cancel the active session entirely — no logging, no Firestore session doc
+  _pdSaveActive(null);
+  _pdRender();
+  await _pdClearRemoteState();
 }
 async function _pdStop(){
   const active = _pdLoadActive();
   if (!active) return;
   const endedAt = Date.now();
   const sec = Math.max(0, Math.floor((endedAt - active.startedAt) / 1000));
-  if (sec < 5) { _pdSaveActive(null); _pdRender(); return; } // fat-finger guard
+  if (sec < 5) { _pdSaveActive(null); _pdRender(); _pdClearRemoteState(); return; } // fat-finger guard
   // Split across day boundaries so overnight + multi-day sessions credit
   // each calendar day correctly. Locking 9pm Mon → 9am Tue = Mon +3h, Tue +9h.
   const split = _pdSplitByDay(active.startedAt, endedAt);
@@ -11136,10 +11161,10 @@ _pdEls.stopBtn.addEventListener('click', () => {
   if (!choice) return; // cancelled
   const c = choice.trim().toLowerCase();
   if (c === 'discard' || c === 'd') {
-    // Wipe the active session without logging anywhere
+    // Wipe the active session without logging anywhere — also clear the
+    // cross-device state doc so it stops on every device.
     if (confirm('Discard this session? Nothing will be recorded.')) {
-      _pdSaveActive(null);
-      _pdRender();
+      _pdDiscard();
     }
     return;
   }
@@ -11201,6 +11226,31 @@ setInterval(_pdRender, 1000);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') _pdRender();
 });
+// ---- Cross-device live sync ----
+// Listen for changes to the singleton state doc. When another device starts,
+// stops, or discards a session, we mirror that into localStorage here and
+// re-render. The writeId echo guard prevents our own writes from causing
+// extra UI flashes (the local state is already updated before the round-trip).
+onSnapshot(_pdActiveDoc, (snap) => {
+  const remote = snap.exists() ? snap.data() : null;
+  // Ignore the echo of our own write
+  if (remote && remote.writeId && remote.writeId === _pdRemoteWriteId) return;
+  const local = _pdLoadActive();
+  if (!remote) {
+    // Remote cleared → stop locally (without logging — the other device
+    // already handled logging if it called _pdStop)
+    if (local) {
+      _pdSaveActive(null);
+      _pdRender();
+    }
+    return;
+  }
+  // Remote has an active session — adopt it locally if different
+  if (!local || local.startedAt !== remote.startedAt) {
+    _pdSaveActive({ startedAt: remote.startedAt, targetMins: remote.targetMins || 0 });
+    _pdRender();
+  }
+}, (err) => console.warn('phone-down state subscribe failed', err));
 _pdRender();
 </script>
 
