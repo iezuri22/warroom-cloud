@@ -11231,26 +11231,43 @@ document.addEventListener('visibilitychange', () => {
 // stops, or discards a session, we mirror that into localStorage here and
 // re-render. The writeId echo guard prevents our own writes from causing
 // extra UI flashes (the local state is already updated before the round-trip).
-onSnapshot(_pdActiveDoc, (snap) => {
+//
+// Stale-session safety: if the remote session has been running for more than
+// 48 hours, treat it as abandoned, auto-clear, and don't adopt it. Prevents
+// "ghost" sessions from haunting the app forever if a device crashed mid-session.
+const PD_STALE_MS = 48 * 60 * 60 * 1000;
+onSnapshot(_pdActiveDoc, async (snap) => {
   const remote = snap.exists() ? snap.data() : null;
-  // Ignore the echo of our own write
   if (remote && remote.writeId && remote.writeId === _pdRemoteWriteId) return;
   const local = _pdLoadActive();
   if (!remote) {
-    // Remote cleared → stop locally (without logging — the other device
-    // already handled logging if it called _pdStop)
-    if (local) {
-      _pdSaveActive(null);
-      _pdRender();
-    }
+    if (local) { _pdSaveActive(null); _pdRender(); }
     return;
   }
-  // Remote has an active session — adopt it locally if different
+  // Stale-session check
+  if (remote.startedAt && (Date.now() - remote.startedAt) > PD_STALE_MS) {
+    console.warn('[pd] discarding stale session, started', new Date(remote.startedAt).toISOString());
+    if (local) { _pdSaveActive(null); _pdRender(); }
+    try { _pdRemoteWriteId = Date.now() + ':stale-clear'; await deleteDoc(_pdActiveDoc); } catch (e) { console.warn(e); }
+    return;
+  }
+  // Adopt active remote session
   if (!local || local.startedAt !== remote.startedAt) {
     _pdSaveActive({ startedAt: remote.startedAt, targetMins: remote.targetMins || 0 });
     _pdRender();
   }
 }, (err) => console.warn('phone-down state subscribe failed', err));
+// Debug nuke: clears local + remote + reloads. Run from DevTools console
+// when a ghost session needs to die: pdNuke()
+window.pdNuke = async function(){
+  try { localStorage.removeItem('pd-active'); } catch {}
+  try {
+    _pdRemoteWriteId = Date.now() + ':nuke';
+    await deleteDoc(_pdActiveDoc);
+    console.log('[pd] cleared local + remote state');
+  } catch (e) { console.warn('[pd] remote clear failed', e); }
+  setTimeout(() => location.reload(), 200);
+};
 _pdRender();
 </script>
 
