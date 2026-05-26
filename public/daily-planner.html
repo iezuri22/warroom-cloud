@@ -2710,6 +2710,65 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   font-weight:900;
 }
 .pd-bar-col.today .pd-bar-meta .day{ color:#86efac }
+.pd-sessions{
+  display:flex; flex-direction:column; gap:4px;
+  max-height:220px; overflow-y:auto;
+  border-radius:10px;
+  background:rgba(0,0,0,.18);
+  border:1px solid rgba(255,255,255,.06);
+  padding:4px;
+}
+.pd-sessions-loading,
+.pd-sessions-empty{
+  font-size:12px; font-weight:600;
+  color:rgba(255,255,255,.45);
+  padding:14px; text-align:center;
+}
+.pd-session-row{
+  display:flex; align-items:center; gap:10px;
+  padding:8px 10px; border-radius:8px;
+  background:rgba(255,255,255,.03);
+  border:1px solid transparent;
+  transition:background .12s;
+}
+.pd-session-row:hover{ background:rgba(255,255,255,.06) }
+.pd-session-info{
+  flex:1; min-width:0;
+  display:flex; flex-direction:column; gap:2px;
+}
+.pd-session-when{
+  font-size:11px; font-weight:700;
+  color:rgba(255,255,255,.85);
+  font-variant-numeric:tabular-nums;
+}
+.pd-session-detail{
+  font-size:10px; font-weight:600;
+  color:rgba(255,255,255,.45);
+}
+.pd-session-dur{
+  font-size:13px; font-weight:900;
+  color:#86efac;
+  font-variant-numeric:tabular-nums;
+  flex-shrink:0;
+}
+.pd-session-del{
+  flex-shrink:0;
+  width:28px; height:28px;
+  display:inline-flex; align-items:center; justify-content:center;
+  border-radius:6px;
+  background:transparent;
+  border:1px solid rgba(255,255,255,.10);
+  color:rgba(255,255,255,.45);
+  cursor:pointer;
+  transition:all .12s;
+}
+.pd-session-del:hover{
+  background:rgba(239,68,68,.18);
+  border-color:rgba(239,68,68,.45);
+  color:#fca5a5;
+}
+.pd-session-del svg{ width:13px; height:13px }
+
 .pd-an-close{
   margin-top:18px;
   width:100%; padding:11px; border-radius:10px;
@@ -2770,6 +2829,13 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
         <div class="pd-stat-card"><div class="v" id="pdAnAvg">0m</div><div class="l">Avg / day (7d)</div></div>
         <div class="pd-stat-card"><div class="v" id="pdAnBest">0m</div><div class="l">Best day (30d)</div></div>
         <div class="pd-stat-card"><div class="v" id="pdAnStreak">0</div><div class="l">Day streak</div></div>
+      </div>
+    </div>
+
+    <div class="pd-an-section">
+      <h4>Recent sessions</h4>
+      <div class="pd-sessions" id="pdAnSessions">
+        <div class="pd-sessions-loading">Loading…</div>
       </div>
     </div>
 
@@ -10591,7 +10657,7 @@ body.iframe-tab .main > div{margin:0}
 //   localStorage 'pd-log'    → { 'YYYY-MM-DD': totalSeconds, ... }
 // Sessions get written to Firestore on stop so Analytics can render history.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-import { getFirestore, collection, addDoc } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+import { getFirestore, collection, addDoc, doc, deleteDoc, getDocs, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 const _pdCfg = {
   apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
   authDomain: "tv-todos.firebaseapp.com",
@@ -10640,7 +10706,11 @@ const _pdEls = {
   anAvg: $('pdAnAvg'),
   anBest: $('pdAnBest'),
   anStreak: $('pdAnStreak'),
+  anSessions: $('pdAnSessions'),
 };
+// In-memory cache of recently loaded sessions so the delete handler can find
+// the corresponding Firestore doc + per-day breakdown.
+let _pdSessionCache = [];
 function _pdLoadGoalDay(){
   const v = parseFloat(localStorage.getItem(PD_GOAL_DAY_KEY) || '4');
   return Number.isFinite(v) && v > 0 ? v : 4;
@@ -10965,6 +11035,90 @@ function _pdRenderAnalytics(){
 function _pdOpenAnalytics(){
   _pdEls.anModal.classList.add('show');
   _pdRenderAnalytics();
+  _pdLoadSessions(); // async — paints "Loading…" first, then the list
+}
+// ---- Recent sessions list (with delete) ----
+async function _pdLoadSessions(){
+  if (!_pdEls.anSessions) return;
+  _pdEls.anSessions.innerHTML = '<div class="pd-sessions-loading">Loading…</div>';
+  try {
+    const q = query(_pdCol, orderBy('endedAt', 'desc'), limit(25));
+    const snap = await getDocs(q);
+    const sessions = [];
+    snap.forEach(d => sessions.push({ id: d.id, ...d.data() }));
+    _pdSessionCache = sessions;
+    _pdRenderSessions(sessions);
+  } catch (e) {
+    console.warn('phone-down session load failed', e);
+    _pdEls.anSessions.innerHTML = '<div class="pd-sessions-empty">Could not load sessions.</div>';
+  }
+}
+function _pdRenderSessions(sessions){
+  if (!sessions.length) {
+    _pdEls.anSessions.innerHTML = '<div class="pd-sessions-empty">No sessions yet. Tap Start when you lock the box.</div>';
+    return;
+  }
+  const fmtDate = (iso) => {
+    const d = new Date(iso);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const yest = new Date(today); yest.setDate(today.getDate() - 1);
+    const isSameDay = d.toDateString() === new Date().toDateString();
+    const isYest = d.toDateString() === yest.toDateString();
+    let h = d.getHours(); const m = d.getMinutes();
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if (h === 0) h = 12;
+    const time = `${h}:${String(m).padStart(2,'0')} ${ampm}`;
+    if (isSameDay) return `Today · ${time}`;
+    if (isYest) return `Yesterday · ${time}`;
+    return `${d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })} · ${time}`;
+  };
+  _pdEls.anSessions.innerHTML = sessions.map(s => {
+    const when = fmtDate(s.endedAt || s.startedAt);
+    const targetMins = s.targetMins || 0;
+    const detail = targetMins ? `Target ${_pdFmtHM(targetMins * 60)}` : 'No target';
+    return `
+      <div class="pd-session-row" data-pd-sid="${s.id}">
+        <div class="pd-session-info">
+          <span class="pd-session-when">${when}</span>
+          <span class="pd-session-detail">${detail}</span>
+        </div>
+        <span class="pd-session-dur">${_pdFmtHM(s.seconds || 0)}</span>
+        <button type="button" class="pd-session-del" data-pd-del="${s.id}" title="Delete this session">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1.5 14.4A2 2 0 0 1 15.5 22h-7a2 2 0 0 1-2-1.6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+  _pdEls.anSessions.querySelectorAll('[data-pd-del]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sid = b.getAttribute('data-pd-del');
+      _pdDeleteSession(sid);
+    });
+  });
+}
+async function _pdDeleteSession(sid){
+  const s = _pdSessionCache.find(x => x.id === sid);
+  if (!s) return;
+  if (!confirm(`Delete this ${_pdFmtHM(s.seconds || 0)} session? Tally for the affected day(s) will be reduced.`)) return;
+  // Subtract from local day log using the stored byDay breakdown (or fall
+  // back to dumping everything into the start-day if older docs don't have it).
+  const log = _pdLoadLog();
+  if (s.byDay && typeof s.byDay === 'object') {
+    for (const [day, sec] of Object.entries(s.byDay)) {
+      log[day] = Math.max(0, (log[day] || 0) - (sec || 0));
+    }
+  } else {
+    const day = s.day || _pdDayKey(new Date(s.startedAt));
+    log[day] = Math.max(0, (log[day] || 0) - (s.seconds || 0));
+  }
+  _pdSaveLog(log);
+  // Best-effort delete from Firestore. If it fails, we still keep the local
+  // adjustment so the user sees their tally drop — they can retry deletion later.
+  try { await deleteDoc(doc(_pdDb, 'phone_down_sessions', sid)); } catch (e) { console.warn('delete failed', e); }
+  _pdSessionCache = _pdSessionCache.filter(x => x.id !== sid);
+  _pdRenderSessions(_pdSessionCache);
+  _pdRender();
+  _pdRenderAnalytics();
 }
 function _pdCloseAnalytics(){
   _pdEls.anModal.classList.remove('show');
@@ -10972,7 +11126,25 @@ function _pdCloseAnalytics(){
 // Wire up
 _pdEls.startBtn.addEventListener('click', _pdOpenModal);
 _pdEls.stopBtn.addEventListener('click', () => {
-  if (confirm('End phone-down session?')) _pdStop();
+  // Three choices: OK = log + stop · Cancel = keep running · Shift-click = discard.
+  // We use a two-step prompt so accidental sessions can be wiped without
+  // adding to today's tally.
+  const choice = window.prompt(
+    'End phone-down session?\n\nType "save" to log it, or "discard" if this was accidental.',
+    'save'
+  );
+  if (!choice) return; // cancelled
+  const c = choice.trim().toLowerCase();
+  if (c === 'discard' || c === 'd') {
+    // Wipe the active session without logging anywhere
+    if (confirm('Discard this session? Nothing will be recorded.')) {
+      _pdSaveActive(null);
+      _pdRender();
+    }
+    return;
+  }
+  // Default = save
+  _pdStop();
 });
 _pdEls.cog.addEventListener('click', _pdOpenAnalytics);
 // Toggle hide/show
