@@ -17,7 +17,12 @@
     'cal-last-synced',   // ephemeral timestamp
     'active-task',       // running timer state is device-specific, shouldn't sync
     'carry-collapsed',   // UI toggle
-    'cal-alerts-setting' // per-device setting
+    'cal-alerts-setting', // per-device setting
+    // Phone Down live state lives in Firestore (phone_down_state/me) with its
+    // own onSnapshot listener. Routing it through here too would restore
+    // stale values on bootstrap and fight the live listener.
+    'pd-active',
+    'pd-collapsed'       // banner expand/collapse is a per-device preference
   ]);
 
   const pending = new Map();   // key -> value (latest pending write)
