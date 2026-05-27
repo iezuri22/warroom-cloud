@@ -15,11 +15,14 @@ export default async function handler(req, res) {
   }
 
   const sql = neon(process.env.DATABASE_URL);
-  try {
-    // Upsert each key. JSONB stored as-is.
-    for (const u of updates) {
-      if (!u.key || typeof u.key !== 'string') continue;
-      // Parse the value. It's sent as a string from localStorage; try JSON, fall back to string.
+  // Per-item try/catch: one bad row should not kill the whole batch.
+  // We return both success + failure lists so the client can drop bad
+  // keys from its retry queue instead of looping forever.
+  const ok = [];
+  const failed = [];
+  for (const u of updates) {
+    if (!u.key || typeof u.key !== 'string') continue;
+    try {
       let parsed = u.value;
       if (typeof u.value === 'string') {
         try { parsed = JSON.parse(u.value); } catch { parsed = u.value; }
@@ -34,10 +37,12 @@ export default async function handler(req, res) {
           DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
         `;
       }
+      ok.push(u.key);
+    } catch (e) {
+      console.error('sync row failed', { key: u.key, err: e && e.message });
+      failed.push({ key: u.key, error: (e && e.message) ? e.message.slice(0, 240) : 'unknown' });
     }
-    res.status(200).json({ ok: true, count: updates.length, ts: Date.now() });
-  } catch (e) {
-    console.error('sync error', e);
-    res.status(500).json({ error: 'Database error: ' + e.message });
   }
+  // 200 even with partial failures — client uses the `failed` list to stop retrying bad keys.
+  res.status(200).json({ ok: true, applied: ok.length, failed, ts: Date.now() });
 }

@@ -51,8 +51,28 @@
     syncTimer = setTimeout(flushSync, 800); // debounce 800ms
   }
 
+  // Keys we've decided to permanently stop syncing because the server keeps
+  // rejecting them (e.g., a value too large for jsonb). Stored in localStorage
+  // so the ban persists across reloads; otherwise we'd be back to the retry
+  // loop on every page load.
+  const POISON_KEY = '__sync_poisoned_keys';
+  function loadPoisoned(){
+    try { return new Set(JSON.parse(localStorage.getItem(POISON_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function savePoisoned(s){
+    try { localStorage.setItem(POISON_KEY, JSON.stringify([...s])); } catch {}
+  }
   async function flushSync() {
     if (pending.size === 0) return;
+    // Drop any keys we've previously banned from syncing.
+    const poisoned = loadPoisoned();
+    if (poisoned.size) {
+      for (const k of [...pending.keys()]) {
+        if (poisoned.has(k)) pending.delete(k);
+      }
+      if (pending.size === 0) return;
+    }
     const updates = [...pending.entries()].map(([key, value]) => ({ key, value }));
     pending.clear();
     try {
@@ -67,11 +87,24 @@
         return;
       }
       if (!res.ok) throw new Error('Sync failed: ' + res.status);
+      // The new server returns { ok, applied, failed: [{key, error}, ...] }.
+      // Permanently ban any key that failed so we don't retry-loop on it.
+      let body = null;
+      try { body = await res.json(); } catch {}
+      if (body && Array.isArray(body.failed) && body.failed.length) {
+        const poisonedNow = loadPoisoned();
+        body.failed.forEach(f => {
+          if (f && f.key) {
+            poisonedNow.add(f.key);
+            console.warn('[sync] poisoning key (server keeps rejecting):', f.key, f.error);
+          }
+        });
+        savePoisoned(poisonedNow);
+      }
       lastSyncedAt = Date.now();
       updateSyncIndicator('synced');
     } catch (e) {
       console.warn('[sync] failed, will retry', e);
-      // Put items back into pending to retry
       for (const u of updates) {
         if (!pending.has(u.key)) pending.set(u.key, u.value);
       }
@@ -79,6 +112,14 @@
       setTimeout(flushSync, 5000);
     }
   }
+  // Debug helpers for the sync poison list.
+  window.warroomSyncPoisoned = () => [...loadPoisoned()];
+  window.warroomSyncUnpoison = (key) => {
+    const s = loadPoisoned();
+    if (key) s.delete(key); else s.clear();
+    savePoisoned(s);
+    console.log('[sync] poisoned now:', [...s]);
+  };
 
   // Override localStorage methods.
   //
