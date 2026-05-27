@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
+import { isTransientDbError, isQuotaError } from './_db-errors.js';
 
 // Vercel serverless functions cap response payloads ~4.5MB. To stay well
 // under that we filter giant rows at the SQL level (Neon never ships them
@@ -40,8 +41,17 @@ export default async function handler(req, res) {
       ORDER BY octet_length(value::text) ASC
     `;
   } catch (e) {
-    console.error('load db error', e && e.message);
-    return res.status(500).json({ error: 'Database error', detail: (e && e.message) || '' });
+    const transient = isTransientDbError(e);
+    const quotaExceeded = isQuotaError(e);
+    console.error('load db error', e && e.message, { transient, quotaExceeded });
+    // 503 for transient (quota / 5xx / network) so the client knows this is
+    // worth retrying and does NOT treat it as a permanent failure.
+    return res.status(transient ? 503 : 500).json({
+      error: quotaExceeded ? 'quota_exceeded' : (transient ? 'database_unavailable' : 'Database error'),
+      detail: (e && e.message) || '',
+      transient,
+      quotaExceeded
+    });
   }
 
   // ----- Step 3: assemble response with cumulative cap -----

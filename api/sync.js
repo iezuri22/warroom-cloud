@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
+import { isTransientDbError, isQuotaError } from './_db-errors.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -17,9 +18,12 @@ export default async function handler(req, res) {
   const sql = neon(process.env.DATABASE_URL);
   // Per-item try/catch: one bad row should not kill the whole batch.
   // We return both success + failure lists so the client can drop bad
-  // keys from its retry queue instead of looping forever.
+  // keys from its retry queue instead of looping forever — EXCEPT when
+  // the failure is transient (Neon quota / 5xx / network), in which case
+  // we mark it `transient: true` so the client retries instead of poisoning.
   const ok = [];
   const failed = [];
+  let quotaHit = false;
   for (const u of updates) {
     if (!u.key || typeof u.key !== 'string') continue;
     try {
@@ -39,10 +43,26 @@ export default async function handler(req, res) {
       }
       ok.push(u.key);
     } catch (e) {
-      console.error('sync row failed', { key: u.key, err: e && e.message });
-      failed.push({ key: u.key, error: (e && e.message) ? e.message.slice(0, 240) : 'unknown' });
+      const msg = (e && e.message) || 'unknown';
+      const transient = isTransientDbError(e);
+      if (isQuotaError(e)) quotaHit = true;
+      console.error('sync row failed', { key: u.key, err: msg, transient });
+      failed.push({ key: u.key, error: msg.slice(0, 240), transient });
     }
   }
-  // 200 even with partial failures — client uses the `failed` list to stop retrying bad keys.
-  res.status(200).json({ ok: true, applied: ok.length, failed, ts: Date.now() });
+  // If literally nothing succeeded AND every failure was transient (e.g. quota
+  // hit blocked the whole batch), return 503 so the client retries the whole
+  // batch with backoff instead of just inspecting the `failed` list.
+  if (ok.length === 0 && failed.length > 0 && failed.every(f => f.transient)) {
+    return res.status(503).json({
+      ok: false,
+      applied: 0,
+      failed,
+      quotaExceeded: quotaHit,
+      ts: Date.now()
+    });
+  }
+  // 200 even with partial failures — client uses `transient` flag on each
+  // failed row to decide retry vs poison.
+  res.status(200).json({ ok: true, applied: ok.length, failed, quotaExceeded: quotaHit, ts: Date.now() });
 }
