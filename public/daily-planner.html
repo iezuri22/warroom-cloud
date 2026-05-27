@@ -4928,11 +4928,20 @@ function applyHourGoals(d){
     // Per-day total log — includes plain-timer time, sprint time, and any
     // other source the hour-goals computation rolls up. Keyed by today's
     // Chicago date so PR Day/Week stays accurate across reloads.
+    //
+    // Diff-then-write: applyHourGoals receives a postMessage on every render
+    // tick from the personal-todos iframe (60s cadence), so unconditional
+    // setItem here was driving /api/sync every minute. Only write when the
+    // day's running max actually advanced.
     try {
       const today = _statsDateKey();
       const log = JSON.parse(localStorage.getItem('personal-daily-time-log') || '{}') || {};
-      log[today] = Math.max(Number(log[today] || 0), Number(d.dailySecs || 0));
-      localStorage.setItem('personal-daily-time-log', JSON.stringify(log));
+      const prevToday = Number(log[today] || 0);
+      const newToday = Math.max(prevToday, Number(d.dailySecs || 0));
+      if (newToday > prevToday) {
+        log[today] = newToday;
+        localStorage.setItem('personal-daily-time-log', JSON.stringify(log));
+      }
     } catch {}
     const prVal = document.getElementById('prWeekVal');
     if (prVal) prVal.textContent = prWeekTime > 0 ? fmtHM(prWeekTime) : '—';
@@ -5005,8 +5014,10 @@ function _statsCombinedDailyTimeMap(){
 function backfillTimePRsFromHistory(){
   try {
     const dailyMap = _statsCombinedDailyTimeMap();
-    let prDay = parseInt(localStorage.getItem('personal-pr-day-time-secs') || '0', 10) || 0;
-    let prWeek = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
+    const prevDay = parseInt(localStorage.getItem('personal-pr-day-time-secs') || '0', 10) || 0;
+    const prevWeek = parseInt(localStorage.getItem('personal-pr-week-time-secs') || '0', 10) || 0;
+    let prDay = prevDay;
+    let prWeek = prevWeek;
     Object.values(dailyMap).forEach(n => { if (n > prDay) prDay = n; });
     const weeks = {};
     Object.entries(dailyMap).forEach(([dk, n]) => {
@@ -5015,8 +5026,11 @@ function backfillTimePRsFromHistory(){
       weeks[wk] = (weeks[wk] || 0) + n;
     });
     Object.values(weeks).forEach(n => { if (n > prWeek) prWeek = n; });
-    localStorage.setItem('personal-pr-day-time-secs', String(prDay));
-    localStorage.setItem('personal-pr-week-time-secs', String(prWeek));
+    // Diff-then-write: this runs twice on every page load (cloud-ready +
+    // 8s safety net), so unconditional setItem was producing 4 spurious
+    // /api/sync row updates per page load even when PRs didn't change.
+    if (prDay !== prevDay) localStorage.setItem('personal-pr-day-time-secs', String(prDay));
+    if (prWeek !== prevWeek) localStorage.setItem('personal-pr-week-time-secs', String(prWeek));
     return { prDay, prWeek };
   } catch (e) { console.warn('backfill PR time failed', e); return { prDay: 0, prWeek: 0 }; }
 }
@@ -10606,11 +10620,16 @@ body.iframe-tab .main > div{margin:0}
       }
       const bigTotal = document.getElementById('focusBigTotal');
       if(bigTotal) bigTotal.textContent = fmtT(liveTotal);
-      // Persist live total to the task every 5 seconds so timeSpent
+      // Persist live total to the task every 30 seconds so timeSpent
       // accumulates even if the user never formally ends the session.
       // plan storage shape: { "YYYY-MM-DD": [items] } — flat per-date array.
+      //
+      // Was every 5s, which fired 12 writes/min through /api/sync during a
+      // session and was a major contributor to keeping Neon awake. 30s matches
+      // the plain-task-timer cadence and `finish()` always does an
+      // authoritative final write via patchTask, so no data is lost at end.
       // During break: do NOT persist (liveTotal is static anyway, skip disk hit).
-      if(!inBreak && elapsedSec > 0 && elapsedSec % 5 === 0){
+      if(!inBreak && elapsedSec > 0 && elapsedSec % 30 === 0){
         try{
           const plan = JSON.parse(localStorage.getItem('daily-plan') || '{}');
           let wrote = false;

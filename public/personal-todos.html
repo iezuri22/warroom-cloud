@@ -6084,6 +6084,13 @@ const VOICE = {
   function render() {
     // Cache open todos to localStorage so other War Room pages (Sprint, etc.)
     // can read them without hitting Firestore. Only writes a slim shape.
+    //
+    // IDEMPOTENT WRITE: render() fires from a 60s setInterval, so previously
+    // this was bumping `updatedAt: Date.now()` every minute → triggering a
+    // /api/sync round-trip → keeping Neon's compute alive 24/7. Now we diff
+    // the meaningful payload (dateKey + items) against the cached value and
+    // skip setItem entirely if nothing changed. `updatedAt` only advances on
+    // a genuine change. Sprint doesn't consume `updatedAt`, so this is safe.
     try {
       if (Array.isArray(todos)) {
         const open = todos
@@ -6099,11 +6106,19 @@ const VOICE = {
             // (or startDate if no end) as the effective due date.
             date: t.date || t.endDate || t.startDate || ''
           }));
-        localStorage.setItem('personal-todos-cache', JSON.stringify({
-          updatedAt: Date.now(),
-          dateKey: dkey(currentDate),
-          items: open
-        }));
+        const newCore = JSON.stringify({ dateKey: dkey(currentDate), items: open });
+        let oldCore = '';
+        try {
+          const prev = JSON.parse(localStorage.getItem('personal-todos-cache') || '{}') || {};
+          oldCore = JSON.stringify({ dateKey: prev.dateKey, items: prev.items });
+        } catch {}
+        if (newCore !== oldCore) {
+          localStorage.setItem('personal-todos-cache', JSON.stringify({
+            updatedAt: Date.now(),
+            dateKey: dkey(currentDate),
+            items: open
+          }));
+        }
       }
     } catch {}
     // Refresh hour-goal progress bars on every render (tasks check off,
@@ -10949,8 +10964,17 @@ const VOICE = {
     Object.values(weekTotals).forEach(n => {
       if (n > storedPRWeek) storedPRWeek = n;
     });
-    try { localStorage.setItem('personal-pr-done-day', String(storedPRDay)); } catch {}
-    try { localStorage.setItem('personal-pr-done-week', String(storedPRWeek)); } catch {}
+    // Only write when the PR actually moved — `_computeFocusStats` runs on
+    // every render (incl. the 60s tick), so unconditional writes were
+    // triggering a /api/sync every minute and keeping Neon awake.
+    try {
+      const onDisk = parseInt(localStorage.getItem('personal-pr-done-day') || '0', 10) || 0;
+      if (storedPRDay !== onDisk) localStorage.setItem('personal-pr-done-day', String(storedPRDay));
+    } catch {}
+    try {
+      const onDisk = parseInt(localStorage.getItem('personal-pr-done-week') || '0', 10) || 0;
+      if (storedPRWeek !== onDisk) localStorage.setItem('personal-pr-done-week', String(storedPRWeek));
+    } catch {}
     return { doneToday, doneWeek, activeWeek, prDay: storedPRDay, prWeek: storedPRWeek };
   }
   // Render the compact stats pills inline in the Focus 5 header.
@@ -11291,11 +11315,20 @@ const VOICE = {
           : rawJob;
         openByProject[job] = (openByProject[job] || 0) + 1;
       });
+      // Diff-then-write: this function runs on every Focus 5 render (which
+      // fires on the 60s render-loop tick), so blind setItems were sending
+      // 4 keys per minute through /api/sync → Neon never scales to zero.
+      // Now we only write keys whose serialized value actually changed.
       try {
-        localStorage.setItem('personal-done-log', JSON.stringify(log));
-        localStorage.setItem('personal-completed-lifetime', String(projectDoneCount));
-        localStorage.setItem('personal-done-by-project', JSON.stringify(byProject));
-        localStorage.setItem('personal-open-by-project', JSON.stringify(openByProject));
+        const writeIfChanged = (key, valStr) => {
+          if (localStorage.getItem(key) !== valStr) {
+            localStorage.setItem(key, valStr);
+          }
+        };
+        writeIfChanged('personal-done-log', JSON.stringify(log));
+        writeIfChanged('personal-completed-lifetime', String(projectDoneCount));
+        writeIfChanged('personal-done-by-project', JSON.stringify(byProject));
+        writeIfChanged('personal-open-by-project', JSON.stringify(openByProject));
       } catch {}
       // Update DOM directly so user sees fresh numbers without a re-render
       try { _renderFocusStatsPills(); } catch {}
@@ -12124,7 +12157,13 @@ const VOICE = {
   setInterval(updateClock, 60000);
   // Re-check period shifts every minute when viewing today (e.g. clock crosses
   // noon → morning tasks bump to afternoon without needing a refresh).
+  //
+  // Visibility gate: when the page (or its parent shell tab) is hidden, skip
+  // the render. Render's downstream writes are now idempotent so a skipped
+  // tick costs nothing, and this lets Neon's 5-min idle window actually
+  // close when the user has the app open in a background tab.
   setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
     if (!isToday()) return;
     shiftStalePeriods().then(() => render()).catch(() => {});
   }, 60000);
