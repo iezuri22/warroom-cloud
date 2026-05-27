@@ -30,8 +30,27 @@
   ]);
 
   const pending = new Map();   // key -> value (latest pending write)
-  let syncTimer = null;
+  let syncTimer = null;        // single shared timer for both debounce + retry
   let lastSyncedAt = null;
+  // Exponential-backoff retry state. retryAttempt starts at 0 and increments
+  // each time flushSync hits a transient error (503, network). On success it
+  // resets to 0. While > 0 we're in a backoff window — queueSync stops
+  // scheduling 800ms debounce flushes so the backoff timer is the only thing
+  // that can fire a sync. Cap delay at 5 minutes so we don't strand writes
+  // indefinitely.
+  let retryAttempt = 0;
+  const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 180_000, 300_000];
+
+  function scheduleFlush(ms) {
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => { syncTimer = null; flushSync(); }, ms);
+  }
+  function scheduleRetry(reason) {
+    retryAttempt++;
+    const delay = RETRY_DELAYS_MS[Math.min(retryAttempt - 1, RETRY_DELAYS_MS.length - 1)];
+    console.warn('[sync] backing off ' + Math.round(delay/1000) + 's (attempt ' + retryAttempt + ', ' + reason + ')');
+    scheduleFlush(delay);
+  }
 
   // Race-protection state. Until bootstrap finishes, app writes are queued
   // into _preBootstrapWrites instead of being pushed to the cloud immediately.
@@ -51,8 +70,20 @@
   function queueSync(key, value) {
     if (SKIP_SYNC.has(key)) return;
     pending.set(key, value);
-    if (syncTimer) clearTimeout(syncTimer);
-    syncTimer = setTimeout(flushSync, 800); // debounce 800ms
+    // One-timer rule: if a flush is already pending (whether debounce or
+    // backoff retry), don't reschedule — let the existing timer fire when
+    // it does. This prevents the parallel-timers cascade that used to make
+    // /api/sync get hit dozens of times per minute during a Neon outage.
+    if (syncTimer) return;
+    // If we know the backend is unhappy (retryAttempt was pre-seated by
+    // bootstrap, or a prior sync failed but no timer is currently pending),
+    // schedule using the backoff curve instead of the snappy 800ms debounce.
+    if (retryAttempt > 0) {
+      const delay = RETRY_DELAYS_MS[Math.min(retryAttempt - 1, RETRY_DELAYS_MS.length - 1)];
+      scheduleFlush(delay);
+      return;
+    }
+    scheduleFlush(800);
   }
 
   // Keys we've decided to permanently stop syncing because the server keeps
@@ -123,19 +154,19 @@
         return;
       }
       // 503 = backend temporarily unavailable (Neon quota, 5xx). Re-queue
-      // everything and retry — do NOT poison anything.
+      // everything and retry with exponential backoff — do NOT poison.
       if (res.status === 503) {
         let body = null; try { body = await res.json(); } catch {}
         if (body && body.quotaExceeded) {
-          console.warn('[sync] Neon compute quota exceeded — will retry. Resolve the quota in Neon or wait for reset.');
+          console.warn('[sync] Neon compute quota exceeded — will retry with backoff. Resolve the quota in Neon or wait for reset.');
         } else {
-          console.warn('[sync] backend unavailable (503), will retry');
+          console.warn('[sync] backend unavailable (503), will retry with backoff');
         }
         for (const u of updates) {
           if (!pending.has(u.key)) pending.set(u.key, u.value);
         }
         updateSyncIndicator('error');
-        setTimeout(flushSync, 5000);
+        scheduleRetry(body && body.quotaExceeded ? 'quota' : '503');
         return;
       }
       if (!res.ok) throw new Error('Sync failed: ' + res.status);
@@ -168,23 +199,37 @@
         });
         if (poisonedCount) savePoisoned(poisonedNow);
         if (requeuedCount) {
-          console.warn('[sync] ' + requeuedCount + ' key(s) failed transiently — will retry');
+          console.warn('[sync] ' + requeuedCount + ' key(s) failed transiently — will retry with backoff');
           updateSyncIndicator('error');
-          setTimeout(flushSync, 5000);
+          scheduleRetry('partial-transient');
           return;
         }
       }
+      // Full success — clear the backoff counter so the next user write
+      // syncs with the normal 800ms debounce instead of a stale backoff.
+      retryAttempt = 0;
       lastSyncedAt = Date.now();
       updateSyncIndicator('synced');
     } catch (e) {
-      console.warn('[sync] failed, will retry', e);
+      console.warn('[sync] failed, will retry with backoff', e);
       for (const u of updates) {
         if (!pending.has(u.key)) pending.set(u.key, u.value);
       }
       updateSyncIndicator('error');
-      setTimeout(flushSync, 5000);
+      scheduleRetry('network');
     }
   }
+  // When the page returns to the foreground, give sync one immediate retry.
+  // Lets the user "wake" the sync sooner than the backoff if e.g. they
+  // resolved the Neon quota in another tab and came back.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (retryAttempt === 0) return;
+    if (pending.size === 0) return;
+    console.log('[sync] page visible — resetting backoff and trying once');
+    retryAttempt = 0;
+    scheduleFlush(0);
+  });
   // Debug helpers for the sync poison list.
   window.warroomSyncPoisoned = () => [...loadPoisoned()];
   window.warroomSyncUnpoison = (key) => {
@@ -293,6 +338,12 @@
         try { detail = await res.json(); } catch {}
         if (detail && detail.quotaExceeded) {
           console.error('[sync] Neon compute quota exceeded — bootstrap aborted. Upgrade the plan or wait for reset; the app will use the last-known localStorage state until sync recovers.');
+          // Pre-seat the backoff counter so we don't hammer /api/sync with
+          // pre-bootstrap writes immediately. retryAttempt=3 puts the first
+          // attempt at the 60s tier of RETRY_DELAYS_MS — visibility-change
+          // still lets the user manually wake sync sooner if they resolve
+          // the quota and come back to the tab.
+          retryAttempt = 3;
         } else if (detail) {
           console.error('[sync] load failed (' + res.status + ')', detail);
         }
