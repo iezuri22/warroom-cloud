@@ -213,7 +213,19 @@
 
       const res = await fetch(LOAD_ENDPOINT, { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Load failed: ' + res.status);
-      const { state } = await res.json();
+      const body = await res.json();
+      const state = body.state || {};
+      // Server now reports any keys it skipped (oversized/erroring). Surface
+      // them to the console + auto-poison them so we don't try to push the
+      // same broken values back up.
+      if (Array.isArray(body.skipped) && body.skipped.length) {
+        console.warn('[sync] server skipped keys on load:', body.skipped);
+        try {
+          const poisonedNow = loadPoisoned();
+          body.skipped.forEach(s => { if (s && s.key) poisonedNow.add(s.key); });
+          savePoisoned(poisonedNow);
+        } catch {}
+      }
 
       // Merge cloud state into localStorage. Cloud always wins — track which
       // keys the cloud authoritatively wrote so we can drop matching
