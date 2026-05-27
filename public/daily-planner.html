@@ -2573,6 +2573,52 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </button>
 </div>
 
+<!-- Phone Down floating reminder — only visible while a session is running.
+     Persistent corner pill so you never forget the timer is rolling. Tap to
+     stop. Pulses softly to catch peripheral vision without blocking the app. -->
+<button type="button" class="pd-float" id="pdFloat" title="Phone down is running — tap to stop" aria-live="polite">
+  <span class="pd-float-icon" aria-hidden="true">📵</span>
+  <span class="pd-float-time" id="pdFloatTime">00:00</span>
+</button>
+<style>
+.pd-float{
+  position:fixed; right:16px; bottom:16px; z-index:9400;
+  display:none; align-items:center; gap:8px;
+  padding:9px 14px; border-radius:999px;
+  background:linear-gradient(135deg, rgba(34,197,94,.95), rgba(22,163,74,.95));
+  border:1px solid rgba(134,239,172,.6);
+  color:#06210f;
+  font-family:'Plus Jakarta Sans','Outfit',system-ui,sans-serif;
+  font-size:13px; font-weight:900; letter-spacing:.3px;
+  cursor:pointer;
+  box-shadow:0 8px 28px rgba(34,197,94,.35);
+  animation:pdFloatPulse 2.6s ease-in-out infinite;
+  -webkit-tap-highlight-color:transparent;
+}
+.pd-float.show{ display:inline-flex }
+.pd-float.over{
+  background:linear-gradient(135deg, rgba(255,184,77,.95), rgba(255,138,61,.95));
+  border-color:rgba(255,206,128,.7);
+  color:#2a1400;
+  box-shadow:0 8px 28px rgba(255,138,61,.4);
+}
+.pd-float-icon{ font-size:15px; line-height:1; filter:grayscale(.1) }
+.pd-float-time{ font-variant-numeric:tabular-nums; min-width:46px; text-align:left }
+@keyframes pdFloatPulse{
+  0%,100%{ box-shadow:0 8px 28px rgba(34,197,94,.35), 0 0 0 0 rgba(34,197,94,.45) }
+  50%    { box-shadow:0 8px 28px rgba(34,197,94,.35), 0 0 0 10px rgba(34,197,94,0) }
+}
+.pd-float.over{ animation:pdFloatPulseOver 2.6s ease-in-out infinite }
+@keyframes pdFloatPulseOver{
+  0%,100%{ box-shadow:0 8px 28px rgba(255,138,61,.4), 0 0 0 0 rgba(255,138,61,.5) }
+  50%    { box-shadow:0 8px 28px rgba(255,138,61,.4), 0 0 0 10px rgba(255,138,61,0) }
+}
+/* On mobile, lift it above the bottom tab bar so it doesn't overlap */
+@media (max-width: 760px){
+  .pd-float{ bottom:calc(70px + env(safe-area-inset-bottom)); right:12px }
+}
+</style>
+
 <!-- Phone Down duration picker modal -->
 <div class="pd-modal-bd" id="pdModal" role="dialog" aria-modal="true" aria-labelledby="pdModalTitle">
   <div class="pd-modal">
@@ -10733,6 +10779,8 @@ const _pdEls = {
   stopBtn: $('pdStopBtn'),
   cog: $('pdCogBtn'),
   toggle: $('pdToggleBtn'),
+  float: $('pdFloat'),
+  floatTime: $('pdFloatTime'),
   modal: $('pdModal'),
   chips: $('pdChips'),
   custom: $('pdCustomHours'),
@@ -10907,6 +10955,16 @@ function _pdRender(){
     }
     _pdEls.startBtn.style.display = 'none';
     _pdEls.stopBtn.style.display = '';
+    // Floating reminder — always visible while running, even if banner is
+    // collapsed or scrolled past. Shows the countdown (or +overage).
+    if (_pdEls.float) {
+      _pdEls.float.classList.add('show');
+      _pdEls.float.classList.toggle('over', isOver);
+      _pdEls.float.title = isOver
+        ? 'Phone down — past your target. Tap to stop.'
+        : 'Phone down is running. Tap to stop.';
+    }
+    if (_pdEls.floatTime) _pdEls.floatTime.textContent = _pdFmtCountdown(remainingSec);
   } else {
     _pdEls.bar.classList.remove('over');
     if (_pdLoadCollapsed()) {
@@ -10920,6 +10978,8 @@ function _pdRender(){
     }
     _pdEls.startBtn.style.display = '';
     _pdEls.stopBtn.style.display = 'none';
+    // Hide the floating reminder when no session is running
+    if (_pdEls.float) _pdEls.float.classList.remove('show', 'over');
   }
   const goalDayH = _pdLoadGoalDay();
   const goalWeekH = _pdLoadGoalWeek();
@@ -11192,10 +11252,8 @@ function _pdCloseAnalytics(){
 }
 // Wire up
 _pdEls.startBtn.addEventListener('click', _pdOpenModal);
-_pdEls.stopBtn.addEventListener('click', () => {
-  // Three choices: OK = log + stop · Cancel = keep running · Shift-click = discard.
-  // We use a two-step prompt so accidental sessions can be wiped without
-  // adding to today's tally.
+function _pdHandleStopClick(){
+  // Three choices: OK = log + stop · Cancel = keep running · type "discard" = wipe.
   const choice = window.prompt(
     'End phone-down session?\n\nType "save" to log it, or "discard" if this was accidental.',
     'save'
@@ -11203,16 +11261,16 @@ _pdEls.stopBtn.addEventListener('click', () => {
   if (!choice) return; // cancelled
   const c = choice.trim().toLowerCase();
   if (c === 'discard' || c === 'd') {
-    // Wipe the active session without logging anywhere — also clear the
-    // cross-device state doc so it stops on every device.
     if (confirm('Discard this session? Nothing will be recorded.')) {
       _pdDiscard();
     }
     return;
   }
-  // Default = save
   _pdStop();
-});
+}
+_pdEls.stopBtn.addEventListener('click', _pdHandleStopClick);
+// Floating reminder pill → same stop flow
+if (_pdEls.float) _pdEls.float.addEventListener('click', _pdHandleStopClick);
 _pdEls.cog.addEventListener('click', _pdOpenAnalytics);
 // Toggle hide/show
 _pdEls.toggle.addEventListener('click', (e) => {
