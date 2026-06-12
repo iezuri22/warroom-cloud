@@ -2245,7 +2245,7 @@
   .wk-section.week .wk-section-head h3 { color: var(--blue) }
   .wk-section.next .wk-section-head h3 { color: var(--teal2) }
   .wk-row {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; flex-direction: column; gap: 8px;
     padding: 10px 12px;
     border-radius: 12px;
     background: var(--w03);
@@ -2255,6 +2255,12 @@
     min-width: 0;
   }
   .wk-row:hover { background: var(--w05); border-color: var(--w14) }
+  .wk-row.expanded {
+    background: rgba(74,158,255,.05);
+    border-color: rgba(74,158,255,.3);
+    cursor: default;
+  }
+  .wk-row .drawer { display: flex; margin-top: 4px }
   .wk-row.overdue { border-left: 3px solid rgba(248,113,113,.6); padding-left: 10px }
   .wk-row.due-today { border-left: 3px solid rgba(255,200,77,.65); padding-left: 10px }
   .wk-row-task {
@@ -2342,7 +2348,9 @@
   .wk-fd-btn svg { flex-shrink: 0; opacity: .7 }
   .wk-fd-wrap.open .wk-fd-btn svg { transform: rotate(180deg) }
   /* Popover opens UPWARD — the No-deadline header usually sits near the
-     bottom of the viewport, so dropping down would clip. */
+     bottom of the viewport, so dropping down would clip. The Priorities
+     panel instance sits at the top, so .down flips it. */
+  .wk-fd-wrap.down .wk-fd-pop { top: calc(100% + 6px); bottom: auto }
   .wk-fd-pop {
     position: absolute;
     bottom: calc(100% + 6px); right: 0;
@@ -2497,7 +2505,7 @@
     .wk-filters { flex-basis: 100%; margin-left: 0 }
     .wk-fd-pop { left: 0; right: auto }
     /* Line 1: status + title (truncated, same line). Line 2: meta + controls. */
-    .wk-row { flex-wrap: wrap; row-gap: 8px }
+    .wk-row { row-gap: 8px }
     .wk-row-side {
       flex-basis: 100%;
       margin-left: 0;
@@ -2655,7 +2663,11 @@
   </div>
   <!-- View toggle: All rows / Acks / Notifications. -->
   <div class="view-toggle">
-    <button type="button" class="view-tab active" data-view="all">All rows</button>
+    <button type="button" class="view-tab active" data-view="all">Non-Dev / Reports</button>
+    <button type="button" class="view-tab" data-view="dev">
+      Dev / Reports
+      <span class="view-tab-ct" id="devReportsCount"></span>
+    </button>
     <button type="button" class="view-tab" data-view="weekly">
       This Week
       <span class="view-tab-ct" id="weeklyCount"></span>
@@ -2663,10 +2675,6 @@
     <button type="button" class="view-tab" data-view="notif">
       Notifications
       <span class="needs-ack-dot" id="needsNotifDot" aria-hidden="true"></span>
-    </button>
-    <button type="button" class="view-tab" data-view="dev">
-      Dev / Reports
-      <span class="view-tab-ct" id="devReportsCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="links">
       Links
@@ -4207,6 +4215,241 @@ function renderStatusBar(){
   });
 }
 
+// ---- Shared row drawer ----
+// The full edit drawer (fields, ack, internal, priority link, actions).
+// Used by the Non-Dev/Reports list AND the Weekly view's inline expand.
+function _drawerHTML(r){
+  const ack = acks[r.id];
+  const isInternal = !!internalFlags[r.id];
+  const isClosedStatus = _rowClosed(r);
+  return `
+      <div class="drawer">
+        <div class="field">
+          <span class="lbl">Task name</span>
+          <input class="input" data-field="Task Name" value="${escHtml(r.task || '')}" placeholder="Task name" style="font-weight:700">
+        </div>
+        <div class="field">
+          <span class="lbl">Description</span>
+          <textarea class="textarea" data-field="Details" placeholder="Context for this task…">${escHtml(r.details || '')}</textarea>
+        </div>
+        <!-- One-row strip: Owner · Status · Ticket · Completion · Internal -->
+        <div class="field-row">
+          <div class="field">
+            <span class="lbl">Owner / Assignee</span>
+            <select class="select" data-field="Owner">
+              ${(function(){
+                // Build options from all known owners across the sheet, plus the
+                // current value (in case it's a typo'd one that isn't in the set).
+                const knownOwners = Array.from(new Set(rows.map(r2 => r2.owner).filter(Boolean))).sort();
+                if (r.owner && !knownOwners.includes(r.owner)) knownOwners.unshift(r.owner);
+                const opts = ['<option value="">— Unassigned —</option>']
+                  .concat(knownOwners.map(o => `<option value="${escHtml(o)}" ${o === (r.owner || '') ? 'selected' : ''}>${escHtml(o)}</option>`));
+                return opts.join('');
+              })()}
+            </select>
+          </div>
+          <div class="field">
+            <span class="lbl">Status</span>
+            <select class="select" data-field="Status">
+              ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <span class="lbl">Ticket #</span>
+            <input class="input" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
+          </div>
+          <div class="field">
+            <span class="lbl">Completion${r.status === 'Completed' && !r.completionDate ? ' <span style="color:var(--red);font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
+            <input class="input" type="date" data-field="Completion Date" value="${escHtml((r.completionDate || '').slice(0, 10))}">
+          </div>
+          ${ecmDueCol() ? `
+          <div class="field">
+            <span class="lbl">Due date</span>
+            <input class="input" type="date" data-field="Due Date" value="${escHtml(_isoDayString(r.dueDate))}">
+          </div>` : ''}
+          <div class="field">
+            <span class="lbl">Weekly priority</span>
+            <select class="select" data-prio-pick="${escHtml(String(r.id))}">
+              <option value="">— None —</option>
+              ${activePriorities().map(p => `<option value="${escHtml(p._id)}" ${Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id)) ? 'selected' : ''}>${escHtml(p.title)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field field-compact">
+            <span class="lbl">Internal</span>
+            <button type="button" class="internal-toggle ${isInternal ? 'on' : ''}" data-internal="${escHtml(String(r.id))}" title="${isInternal && internalFlags[r.id]?.markedBy ? 'Flagged by ' + escHtml(internalFlags[r.id].markedBy) : 'Mark as internal-only — not customer-facing'}">
+              <span class="box"></span>
+              <span class="label-text">${isInternal ? 'Internal only' : 'Mark internal'}</span>
+            </button>
+          </div>
+          <div class="field">
+            <span class="lbl">Ack ${ack ? ' (acked)' : ''}</span>
+            ${ack ? `
+              <div style="display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 14px;border-radius:10px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:var(--green);font-size:12px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
+                <span>✓ ${escHtml(ack.ackedBy || 'Acked')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}</span>
+                <button type="button" data-unack="${escHtml(String(r.id))}" style="padding:3px 9px;border-radius:99px;border:1px solid var(--w18);background:transparent;color:var(--w60);font:inherit;font-size:10px;font-weight:800;letter-spacing:.5px;cursor:pointer">UN-ACK</button>
+              </div>
+            ` : `
+              <div style="display:flex;align-items:center;gap:8px">
+                <select class="select ack-as-select" data-row-id="${escHtml(String(r.id))}" style="flex:1">
+                  ${(function(){
+                    const known = new Set();
+                    rows.forEach(rr => { if (rr.owner) known.add(rr.owner); });
+                    if (_userName) known.add(_userName);
+                    if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
+                    const sorted = Array.from(known).sort();
+                    if (sorted.length === 0) sorted.push('Me');
+                    return sorted.map(n => `<option value="${escHtml(n)}" ${n === (_userName || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
+                  })()}
+                </select>
+                <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:42px">Ack</button>
+              </div>
+            `}
+          </div>
+        </div>
+        <details class="field-collapsible"${r.outcome ? ' open' : ''}>
+          <summary>
+            <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            <span>${r.outcome ? 'Outcome' : 'Add outcome'}</span>
+          </summary>
+          <div class="field field-body">
+            <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
+          </div>
+        </details>
+        <div class="drawer-actions-row">
+          ${canPushToMyDay() && !isClosedStatus ? `
+          <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            Push to my priorities
+          </button>` : ''}
+          ${!isClosedStatus ? `
+          <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Mark complete
+          </button>` : ''}
+        </div>
+        <div class="drawer-foot">
+          <span class="saved" data-saved></span>
+          ${r.permalink ? `<a class="ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Smartsheets</a>` : ''}
+          <button data-collapse>Close</button>
+        </div>
+      </div>`;
+}
+// Wire every control inside an expanded row's drawer. onCollapse runs
+// when the user hits Close — each view decides what collapsing means.
+function _wireDrawer(row, r, onCollapse){
+    // Wire field handlers
+    row.querySelectorAll('[data-field]').forEach(el => {
+      el.addEventListener('click', e => e.stopPropagation());
+      const fieldName = el.dataset.field;
+      const isSelect = el.tagName === 'SELECT';
+      const evt = isSelect ? 'change' : 'blur';
+      el.addEventListener(evt, async () => {
+        const v = el.value;
+        // Detect if value actually changed
+        const local = (fieldName === 'Status') ? r.status
+                    : fieldName === 'Ticket #' ? String(r.ticket || '').replace(/\.0$/, '')
+                    : fieldName === 'Details' ? r.details
+                    : fieldName === 'Outcome Details' ? r.outcome
+                    : fieldName === 'Task Name' ? r.task
+                    : fieldName === 'Owner' ? r.owner
+                    : fieldName === 'Completion Date' ? (r.completionDate || '').slice(0, 10)
+                    : fieldName === 'Due Date' ? _isoDayString(r.dueDate)
+                    : '';
+        if ((local || '') === (v || '')) return;
+        await pushField(r, fieldName, v, row);
+      });
+    });
+    row.querySelector('[data-collapse]').addEventListener('click', (e) => {
+      e.stopPropagation(); onCollapse();
+    });
+    // Weekly-priority picker — single-select convenience: linking via the
+    // drawer moves the row to the chosen priority (removes it from others).
+    // Multi-linking is still possible from the priority card's picker.
+    row.querySelectorAll('[data-prio-pick]').forEach(sel => {
+      sel.addEventListener('click', e => e.stopPropagation());
+      sel.addEventListener('change', async () => {
+        const rid = String(r.id);
+        const targetId = sel.value;
+        try {
+          for (const p of activePriorities()) {
+            const has = Array.isArray(p.rowIds) && p.rowIds.includes(rid);
+            if (has && p._id !== targetId) {
+              p.rowIds = p.rowIds.filter(x => x !== rid);
+              await updatePriority(p._id, { rowIds: p.rowIds });
+            }
+          }
+          if (targetId) {
+            const p = priorities.find(x => x._id === targetId);
+            if (p && !(Array.isArray(p.rowIds) && p.rowIds.includes(rid))) {
+              p.rowIds = (p.rowIds || []).concat(rid);
+              await updatePriority(targetId, { rowIds: p.rowIds });
+            }
+            toast('Linked to weekly priority.', 'ok');
+          } else {
+            toast('Removed from weekly priorities.');
+          }
+          render();
+        } catch (e2) {
+          console.error('priority link failed', e2);
+          toast('Couldn\'t update the priority link.', 'err');
+        }
+      });
+    });
+    row.querySelectorAll('[data-push-myday]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      pushRowToMyDay(r.id).finally(() => { b.disabled = false; });
+    }));
+    row.querySelectorAll('[data-complete-row]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCompleteRowModal(r.id);
+    }));
+    // Drawer-level Acknowledge / Un-ack buttons
+    row.querySelectorAll('[data-ack]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleAck(r.id);
+    }));
+    // "Ack as <selected>" — reads the adjacent dropdown's value so the user
+    // can ack on someone else's behalf without switching identity.
+    row.querySelectorAll('[data-ack-with]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sel = row.querySelector('.ack-as-select');
+      const pickedName = sel ? sel.value.trim() : '';
+      handleAck(r.id, pickedName || _userName || '');
+    }));
+    row.querySelectorAll('[data-unack]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleUnack(r.id);
+    }));
+    // Internal-only toggle — writes BOTH to Firestore (fast team sync) and
+    // to the Smartsheets "Internal Only" checkbox column (durable source of
+    // truth). Either write failing doesn't roll back the other; user can
+    // re-toggle to retry.
+    row.querySelectorAll('[data-internal]').forEach(b => b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = r.id;
+      const wasOn = !!internalFlags[id];
+      if (wasOn) {
+        delete internalFlags[id];
+        r.internalSS = false;
+        render();
+        try { await window._ecmInternal.unmarkInternal(id); }
+        catch (err) { console.error('unmark internal failed', err); }
+        try { await pushInternalToSheet(r, false); }
+        catch (err) { console.error('unmark internal SS push failed', err); }
+      } else {
+        const name = ensureUserName();
+        internalFlags[id] = { internal: true, markedBy: name || '', markedAt: new Date().toISOString() };
+        r.internalSS = true;
+        render();
+        try { await window._ecmInternal.markInternal(id, name); }
+        catch (err) { console.error('mark internal failed', err); }
+        try { await pushInternalToSheet(r, true); }
+        catch (err) { console.error('mark internal SS push failed', err); }
+      }
+    }));
+}
+
 function render(){
   renderStatusBar();
   updateNeedsAckDot();
@@ -4356,116 +4599,7 @@ function render(){
           ${quickHTML}
         </span>
       </div>
-      <div class="drawer">
-        <div class="field">
-          <span class="lbl">Task name</span>
-          <input class="input" data-field="Task Name" value="${escHtml(r.task || '')}" placeholder="Task name" style="font-weight:700">
-        </div>
-        <div class="field">
-          <span class="lbl">Description</span>
-          <textarea class="textarea" data-field="Details" placeholder="Context for this task…">${escHtml(r.details || '')}</textarea>
-        </div>
-        <!-- One-row strip: Owner · Status · Ticket · Completion · Internal -->
-        <div class="field-row">
-          <div class="field">
-            <span class="lbl">Owner / Assignee</span>
-            <select class="select" data-field="Owner">
-              ${(function(){
-                // Build options from all known owners across the sheet, plus the
-                // current value (in case it's a typo'd one that isn't in the set).
-                const knownOwners = Array.from(new Set(rows.map(r2 => r2.owner).filter(Boolean))).sort();
-                if (r.owner && !knownOwners.includes(r.owner)) knownOwners.unshift(r.owner);
-                const opts = ['<option value="">— Unassigned —</option>']
-                  .concat(knownOwners.map(o => `<option value="${escHtml(o)}" ${o === (r.owner || '') ? 'selected' : ''}>${escHtml(o)}</option>`));
-                return opts.join('');
-              })()}
-            </select>
-          </div>
-          <div class="field">
-            <span class="lbl">Status</span>
-            <select class="select" data-field="Status">
-              ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field">
-            <span class="lbl">Ticket #</span>
-            <input class="input" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
-          </div>
-          <div class="field">
-            <span class="lbl">Completion${r.status === 'Completed' && !r.completionDate ? ' <span style="color:var(--red);font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
-            <input class="input" type="date" data-field="Completion Date" value="${escHtml((r.completionDate || '').slice(0, 10))}">
-          </div>
-          ${ecmDueCol() ? `
-          <div class="field">
-            <span class="lbl">Due date</span>
-            <input class="input" type="date" data-field="Due Date" value="${escHtml(_isoDayString(r.dueDate))}">
-          </div>` : ''}
-          <div class="field">
-            <span class="lbl">Weekly priority</span>
-            <select class="select" data-prio-pick="${escHtml(String(r.id))}">
-              <option value="">— None —</option>
-              ${activePriorities().map(p => `<option value="${escHtml(p._id)}" ${Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id)) ? 'selected' : ''}>${escHtml(p.title)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field field-compact">
-            <span class="lbl">Internal</span>
-            <button type="button" class="internal-toggle ${isInternal ? 'on' : ''}" data-internal="${escHtml(String(r.id))}" title="${isInternal && internalFlags[r.id]?.markedBy ? 'Flagged by ' + escHtml(internalFlags[r.id].markedBy) : 'Mark as internal-only — not customer-facing'}">
-              <span class="box"></span>
-              <span class="label-text">${isInternal ? 'Internal only' : 'Mark internal'}</span>
-            </button>
-          </div>
-          <div class="field">
-            <span class="lbl">Ack ${ack ? ' (acked)' : ''}</span>
-            ${ack ? `
-              <div style="display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 14px;border-radius:10px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:var(--green);font-size:12px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
-                <span>✓ ${escHtml(ack.ackedBy || 'Acked')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}</span>
-                <button type="button" data-unack="${escHtml(String(r.id))}" style="padding:3px 9px;border-radius:99px;border:1px solid var(--w18);background:transparent;color:var(--w60);font:inherit;font-size:10px;font-weight:800;letter-spacing:.5px;cursor:pointer">UN-ACK</button>
-              </div>
-            ` : `
-              <div style="display:flex;align-items:center;gap:8px">
-                <select class="select ack-as-select" data-row-id="${escHtml(String(r.id))}" style="flex:1">
-                  ${(function(){
-                    const known = new Set();
-                    rows.forEach(rr => { if (rr.owner) known.add(rr.owner); });
-                    if (_userName) known.add(_userName);
-                    if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
-                    const sorted = Array.from(known).sort();
-                    if (sorted.length === 0) sorted.push('Me');
-                    return sorted.map(n => `<option value="${escHtml(n)}" ${n === (_userName || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
-                  })()}
-                </select>
-                <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:42px">Ack</button>
-              </div>
-            `}
-          </div>
-        </div>
-        <details class="field-collapsible"${r.outcome ? ' open' : ''}>
-          <summary>
-            <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-            <span>${r.outcome ? 'Outcome' : 'Add outcome'}</span>
-          </summary>
-          <div class="field field-body">
-            <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
-          </div>
-        </details>
-        <div class="drawer-actions-row">
-          ${canPushToMyDay() && !isClosedStatus ? `
-          <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-            Push to my priorities
-          </button>` : ''}
-          ${!isClosedStatus ? `
-          <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            Mark complete
-          </button>` : ''}
-        </div>
-        <div class="drawer-foot">
-          <span class="saved" data-saved></span>
-          ${r.permalink ? `<a class="ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Smartsheets</a>` : ''}
-          <button data-collapse>Close</button>
-        </div>
-      </div>
+${_drawerHTML(r)}
     `;
     row.addEventListener('click', (e) => {
       if (e.target.closest('.drawer')) return; // clicks inside the drawer don't toggle
@@ -4517,119 +4651,7 @@ function render(){
       }
       setExpanded(r.id);
     });
-    if (isExpandedRow(r.id)) {
-      // Wire field handlers
-      row.querySelectorAll('[data-field]').forEach(el => {
-        el.addEventListener('click', e => e.stopPropagation());
-        const fieldName = el.dataset.field;
-        const isSelect = el.tagName === 'SELECT';
-        const evt = isSelect ? 'change' : 'blur';
-        el.addEventListener(evt, async () => {
-          const v = el.value;
-          // Detect if value actually changed
-          const local = (fieldName === 'Status') ? r.status
-                      : fieldName === 'Ticket #' ? String(r.ticket || '').replace(/\.0$/, '')
-                      : fieldName === 'Details' ? r.details
-                      : fieldName === 'Outcome Details' ? r.outcome
-                      : fieldName === 'Task Name' ? r.task
-                      : fieldName === 'Owner' ? r.owner
-                      : fieldName === 'Completion Date' ? (r.completionDate || '').slice(0, 10)
-                      : fieldName === 'Due Date' ? _isoDayString(r.dueDate)
-                      : '';
-          if ((local || '') === (v || '')) return;
-          await pushField(r, fieldName, v, row);
-        });
-      });
-      row.querySelector('[data-collapse]').addEventListener('click', (e) => {
-        e.stopPropagation(); setExpanded(r.id);
-      });
-      // Weekly-priority picker — single-select convenience: linking via the
-      // drawer moves the row to the chosen priority (removes it from others).
-      // Multi-linking is still possible from the priority card's picker.
-      row.querySelectorAll('[data-prio-pick]').forEach(sel => {
-        sel.addEventListener('click', e => e.stopPropagation());
-        sel.addEventListener('change', async () => {
-          const rid = String(r.id);
-          const targetId = sel.value;
-          try {
-            for (const p of activePriorities()) {
-              const has = Array.isArray(p.rowIds) && p.rowIds.includes(rid);
-              if (has && p._id !== targetId) {
-                p.rowIds = p.rowIds.filter(x => x !== rid);
-                await updatePriority(p._id, { rowIds: p.rowIds });
-              }
-            }
-            if (targetId) {
-              const p = priorities.find(x => x._id === targetId);
-              if (p && !(Array.isArray(p.rowIds) && p.rowIds.includes(rid))) {
-                p.rowIds = (p.rowIds || []).concat(rid);
-                await updatePriority(targetId, { rowIds: p.rowIds });
-              }
-              toast('Linked to weekly priority.', 'ok');
-            } else {
-              toast('Removed from weekly priorities.');
-            }
-            render();
-          } catch (e2) {
-            console.error('priority link failed', e2);
-            toast('Couldn\'t update the priority link.', 'err');
-          }
-        });
-      });
-      row.querySelectorAll('[data-push-myday]').forEach(b => b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        b.disabled = true;
-        pushRowToMyDay(r.id).finally(() => { b.disabled = false; });
-      }));
-      row.querySelectorAll('[data-complete-row]').forEach(b => b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openCompleteRowModal(r.id);
-      }));
-      // Drawer-level Acknowledge / Un-ack buttons
-      row.querySelectorAll('[data-ack]').forEach(b => b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleAck(r.id);
-      }));
-      // "Ack as <selected>" — reads the adjacent dropdown's value so the user
-      // can ack on someone else's behalf without switching identity.
-      row.querySelectorAll('[data-ack-with]').forEach(b => b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const sel = row.querySelector('.ack-as-select');
-        const pickedName = sel ? sel.value.trim() : '';
-        handleAck(r.id, pickedName || _userName || '');
-      }));
-      row.querySelectorAll('[data-unack]').forEach(b => b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleUnack(r.id);
-      }));
-      // Internal-only toggle — writes BOTH to Firestore (fast team sync) and
-      // to the Smartsheets "Internal Only" checkbox column (durable source of
-      // truth). Either write failing doesn't roll back the other; user can
-      // re-toggle to retry.
-      row.querySelectorAll('[data-internal]').forEach(b => b.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const id = r.id;
-        const wasOn = !!internalFlags[id];
-        if (wasOn) {
-          delete internalFlags[id];
-          r.internalSS = false;
-          render();
-          try { await window._ecmInternal.unmarkInternal(id); }
-          catch (err) { console.error('unmark internal failed', err); }
-          try { await pushInternalToSheet(r, false); }
-          catch (err) { console.error('unmark internal SS push failed', err); }
-        } else {
-          const name = ensureUserName();
-          internalFlags[id] = { internal: true, markedBy: name || '', markedAt: new Date().toISOString() };
-          r.internalSS = true;
-          render();
-          try { await window._ecmInternal.markInternal(id, name); }
-          catch (err) { console.error('mark internal failed', err); }
-          try { await pushInternalToSheet(r, true); }
-          catch (err) { console.error('mark internal SS push failed', err); }
-        }
-      }));
-    }
+    if (isExpandedRow(r.id)) _wireDrawer(row, r, () => setExpanded(r.id));
     list.appendChild(row);
   });
 }
@@ -5700,14 +5722,38 @@ let _wkShowNoDate = false;
 // owner/program dropdowns (those drive All rows) — switching tabs shouldn't
 // silently re-scope the weekly picture. Empty set = everyone / all programs.
 // Persisted per device.
-let _wkOpenFilter = null; // 'owner' | 'program' | null — which popover is open
+let _wkOpenFilter = null; // 'owner' | 'program' | 'prio-prog' | null — open popover
 let wkOwnerSel = (function(){ try { return new Set(JSON.parse(localStorage.getItem('ecm-wk-owners') || '[]')); } catch { return new Set(); } })();
 let wkProgramSel = (function(){ try { return new Set(JSON.parse(localStorage.getItem('ecm-wk-programs') || '[]')); } catch { return new Set(); } })();
+// Program filter for the Priorities panel — independent of the task filters.
+let prioProgramSel = (function(){ try { return new Set(JSON.parse(localStorage.getItem('ecm-prio-programs') || '[]')); } catch { return new Set(); } })();
+function _wkSelFor(kind){
+  return kind === 'owner' ? wkOwnerSel : kind === 'prio-prog' ? prioProgramSel : wkProgramSel;
+}
 function _wkSaveFilterSel(){
   try {
     localStorage.setItem('ecm-wk-owners', JSON.stringify([...wkOwnerSel]));
     localStorage.setItem('ecm-wk-programs', JSON.stringify([...wkProgramSel]));
+    localStorage.setItem('ecm-prio-programs', JSON.stringify([...prioProgramSel]));
   } catch {}
+}
+// Inline expansion on the Weekly view — same drawer as the main list, opened
+// in place instead of bouncing the user to another tab.
+let _wkExpandedId = null;
+function _wkRevealRow(id){
+  const r = rows.find(x => String(x.id) === String(id));
+  // Closed rows aren't in the weekly pool — show those in the main list.
+  if (!r || _rowClosed(r)) { jumpToRow(id); return; }
+  _wkExpandedId = String(id);
+  if (!r.dueDate && !_wkShowNoDate) _wkShowNoDate = true;
+  render();
+  setTimeout(() => {
+    const el = document.querySelector(`[data-wk-row="${String(id)}"]`);
+    if (!el) { jumpToRow(id); return; } // filtered out of the weekly view
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('row-jump-flash');
+    setTimeout(() => el.classList.remove('row-jump-flash'), 1600);
+  }, 60);
 }
 // Close any open filter popover when clicking elsewhere.
 document.addEventListener('click', (e) => {
@@ -5881,6 +5927,55 @@ function _wkFilterDropHTML(kind){
     </span>`;
 }
 
+// ---- Priorities panel program filter ----
+// A priority "belongs" to the programs of its linked tasks.
+function _prioPrograms(p){
+  const set = new Set();
+  (Array.isArray(p.rowIds) ? p.rowIds : []).forEach(id => {
+    const r = rows.find(x => String(x.id) === String(id));
+    if (r && r.program) set.add(r.program);
+  });
+  return set;
+}
+function _prioMatchesProg(p){
+  if (!prioProgramSel.size) return true;
+  const progs = _prioPrograms(p);
+  for (const x of prioProgramSel) if (progs.has(x)) return true;
+  return false;
+}
+function _prioProgDropHTML(){
+  const act = activePriorities();
+  const counts = new Map();
+  act.forEach(p => _prioPrograms(p).forEach(name => counts.set(name, (counts.get(name) || 0) + 1)));
+  prioProgramSel.forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
+  if (!counts.size && !prioProgramSel.size) return '';
+  const opts = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const sel = prioProgramSel;
+  const btnText = sel.size === 0 ? 'Program: All'
+    : sel.size === 1 ? `Program: ${[...sel][0]}`
+    : `Program: ${sel.size} selected`;
+  const open = _wkOpenFilter === 'prio-prog';
+  const optHTML = `
+    <button type="button" class="wk-fd-opt all ${sel.size === 0 ? 'on' : ''}" data-wkf-all="prio-prog">
+      <span class="box">${sel.size === 0 ? '✓' : ''}</span>
+      <span class="t">All programs</span>
+    </button>` + opts.map(([v, n]) => `
+    <button type="button" class="wk-fd-opt ${sel.has(v) ? 'on' : ''}" data-wkf="prio-prog" data-val="${escHtml(v)}">
+      <span class="box">${sel.has(v) ? '✓' : ''}</span>
+      <span class="dot" style="background:${programColor(v).fg}"></span>
+      <span class="t">${escHtml(v)}</span>
+      <span class="n">${n}</span>
+    </button>`).join('');
+  return `
+    <span class="wk-fd-wrap down ${open ? 'open' : ''}">
+      <button type="button" class="wk-fd-btn ${sel.size ? 'active' : ''}" data-wkf-toggle="prio-prog" title="Filter priorities by program">
+        ${escHtml(btnText)}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      ${open ? `<div class="wk-fd-pop">${optHTML}</div>` : ''}
+    </span>`;
+}
+
 function _wkRowHTML(r, bucket){
   const d = _parseDateOnly(r.dueDate);
   const stCls = bucket === 'overdue' ? 'overdue' : (bucket === 'today' ? 'due-today' : '');
@@ -5911,24 +6006,28 @@ function _wkRowHTML(r, bucket){
   const ssLink = r.permalink
     ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
     : '';
+  const expanded = _wkExpandedId != null && String(_wkExpandedId) === String(r.id);
   return `
-    <div class="wk-row ${stCls}" data-wk-row="${escHtml(String(r.id))}">
-      <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
-      <span class="wk-row-task" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>
-      <span class="wk-row-side">
-        ${prioDots}
-        ${typeHTML}
-        ${programHTML}
-        ${createdHTML}
-        ${ownerHTML}
-        <span class="wk-due-rel">${escHtml(_wkRelLabel(d))}</span>
-        <input type="date" class="wk-due-input" data-wk-due="${escHtml(String(r.id))}" value="${escHtml(_isoDayString(r.dueDate))}" title="Due date — saves to Smartsheets">
-        <span class="wk-quick">
-          <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
-          ${pushBtn}
-          ${ssLink}
+    <div class="wk-row ${stCls} ${expanded ? 'expanded' : ''}" data-wk-row="${escHtml(String(r.id))}">
+      <div class="row-line">
+        <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
+        <span class="wk-row-task" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>
+        <span class="wk-row-side">
+          ${prioDots}
+          ${typeHTML}
+          ${programHTML}
+          ${createdHTML}
+          ${ownerHTML}
+          <span class="wk-due-rel">${escHtml(_wkRelLabel(d))}</span>
+          <input type="date" class="wk-due-input" data-wk-due="${escHtml(String(r.id))}" value="${escHtml(_isoDayString(r.dueDate))}" title="Due date — saves to Smartsheets">
+          <span class="wk-quick">
+            <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+            ${pushBtn}
+            ${ssLink}
+          </span>
         </span>
-      </span>
+      </div>
+      ${expanded ? _drawerHTML(r) : ''}
     </div>`;
 }
 
@@ -5998,18 +6097,23 @@ function renderWeekly(){
       <button type="button" id="wkAddDueCol">Add Due Date column</button>
     </div>` : '';
 
-  const act = activePriorities();
+  const actAll = activePriorities();
+  const act = actAll.filter(_prioMatchesProg);
+  const hiddenByProg = actAll.length - act.length;
   const prioListHTML = act.length
     ? act.map(_wkPrioCardHTML).join('')
-    : `<div class="wk-prio-empty">No priorities yet. Write what actually matters this week — e.g. <em>“Close out CDPH reporting backlog”</em> — then link the related tasks to it.</div>`;
+    : (actAll.length
+        ? `<div class="wk-prio-empty">No priorities match the program filter${hiddenByProg ? ` (${hiddenByProg} hidden)` : ''}.</div>`
+        : `<div class="wk-prio-empty">No priorities yet. Write what actually matters this week — e.g. <em>“Close out CDPH reporting backlog”</em> — then link the related tasks to it.</div>`);
   const prioHTML = `
     <div class="wk-prio-panel">
       <div class="wk-prio-head">
         <span class="wk-prio-title">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          Weekly priorities
+          Priorities
         </span>
-        <span class="wk-prio-sub">What matters this week — link tasks so the busywork rolls up to the goal.</span>
+        <span class="wk-prio-sub">What matters this week — link tasks so the busywork rolls up to the goal.${hiddenByProg ? ` <strong>${hiddenByProg} hidden by program filter.</strong>` : ''}</span>
+        <span class="wk-filters" style="flex-basis:auto;margin-left:0">${_prioProgDropHTML()}</span>
       </div>
       <div class="wk-prio-add-row">
         <input type="text" class="wk-prio-input" id="wkPrioInput" placeholder="Add a priority for this week…" maxlength="120" autocomplete="off">
@@ -6112,17 +6216,15 @@ function _wireWeekly(list){
   }));
   list.querySelectorAll('[data-wkf]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
-    const k = b.getAttribute('data-wkf');
+    const sel = _wkSelFor(b.getAttribute('data-wkf'));
     const v = b.getAttribute('data-val') || '';
-    const sel = k === 'owner' ? wkOwnerSel : wkProgramSel;
     if (sel.has(v)) sel.delete(v); else sel.add(v);
     _wkSaveFilterSel();
     render();
   }));
   list.querySelectorAll('[data-wkf-all]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
-    const k = b.getAttribute('data-wkf-all');
-    (k === 'owner' ? wkOwnerSel : wkProgramSel).clear();
+    _wkSelFor(b.getAttribute('data-wkf-all')).clear();
     _wkSaveFilterSel();
     render();
   }));
@@ -6163,14 +6265,22 @@ function _wireWeekly(list){
     deletePriority(id);
   }));
   list.querySelectorAll('[data-prio-link]').forEach(b => b.addEventListener('click', () => openPrioLinkPicker(b.getAttribute('data-prio-link'))));
-  list.querySelectorAll('[data-wk-jump]').forEach(b => b.addEventListener('click', () => jumpToRow(b.getAttribute('data-wk-jump'))));
+  // Priority task chips reveal the task inline in this view.
+  list.querySelectorAll('[data-wk-jump]').forEach(b => b.addEventListener('click', () => _wkRevealRow(b.getAttribute('data-wk-jump'))));
 
-  // Deadline rows
+  // Deadline rows — click expands/collapses the full edit drawer in place.
   list.querySelectorAll('[data-wk-row]').forEach(rowEl => {
+    const id = rowEl.getAttribute('data-wk-row');
     rowEl.addEventListener('click', (e) => {
-      if (e.target.closest('input, button, a')) return;
-      jumpToRow(rowEl.getAttribute('data-wk-row'));
+      if (e.target.closest('.drawer')) return;
+      if (e.target.closest('input, button, a, select, textarea')) return;
+      _wkExpandedId = (_wkExpandedId != null && String(_wkExpandedId) === String(id)) ? null : String(id);
+      render();
     });
+    if (_wkExpandedId != null && String(_wkExpandedId) === String(id)) {
+      const r = rows.find(x => String(x.id) === String(id));
+      if (r) _wireDrawer(rowEl, r, () => { _wkExpandedId = null; render(); });
+    }
   });
   list.querySelectorAll('[data-wk-due]').forEach(inp => {
     inp.addEventListener('click', e => e.stopPropagation());
