@@ -1040,6 +1040,93 @@
   }
   .focus5-quick-add button:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(255,138,61,.4) }
   .focus5-quick-add button:active { transform: scale(.96) }
+  /* Apple Notes-style capture row — empty circle + borderless line. Type,
+     Enter, type, Enter: focus never leaves the input, so dumping ten
+     priorities is ten keystroke runs and zero clicks. */
+  .focus5-quick-add.notes {
+    align-items: center; gap: 10px;
+    padding: 4px 6px 4px 14px;
+    border-radius: 14px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.08);
+    transition: border-color .12s, background .12s;
+  }
+  .focus5-quick-add.notes:focus-within {
+    border-color: rgba(255,138,61,.45);
+    background: rgba(255,138,61,.05);
+  }
+  .focus5-quick-add.notes .qa-circle {
+    flex-shrink: 0;
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.6px solid rgba(255,255,255,.28);
+    transition: border-color .12s;
+  }
+  .focus5-quick-add.notes:focus-within .qa-circle { border-color: rgba(255,138,61,.7) }
+  .focus5-quick-add.notes input {
+    flex: 1; min-width: 0;
+    padding: 13px 4px;
+    background: transparent;
+    border: none; border-radius: 0;
+    color: rgba(255,255,255,.94);
+    font-family: inherit; font-size: 15px; font-weight: 600;
+    outline: none;
+  }
+  .focus5-quick-add.notes input:focus { background: transparent; border: none }
+  .focus5-quick-add.notes input::placeholder { color: rgba(255,255,255,.30); font-weight: 500 }
+  .focus5-quick-add.notes .qa-hint {
+    flex-shrink: 0;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+    color: rgba(255,255,255,.26);
+    white-space: nowrap;
+    display: none;
+  }
+  .focus5-quick-add.notes:focus-within .qa-hint { display: inline }
+  .focus5-quick-add.notes .qa-bulk,
+  .focus5-quick-add.notes .qa-bulk:hover {
+    width: auto; height: 38px;
+    transform: none; box-shadow: none;
+  }
+  .focus5-quick-add.notes .qa-bulk {
+    padding: 0 14px;
+    border-radius: 10px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.55);
+    font-family: inherit; font-size: 12px; font-weight: 800;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .focus5-quick-add.notes .qa-bulk:hover {
+    color: #FF8A3D;
+    border-color: rgba(255,138,61,.45);
+    background: rgba(255,138,61,.08);
+  }
+  @media (max-width: 560px) {
+    .focus5-quick-add.notes .qa-hint { display: none !important }
+    .focus5-quick-add.notes .qa-bulk span { display: none } /* icon-only on phones */
+  }
+
+  /* Brain dump — bulk capture textarea (modal reuses the pof- chrome) */
+  .f5dump-text {
+    width: 100%; min-height: 260px; resize: vertical;
+    padding: 16px 18px; border-radius: 14px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.94);
+    font-family: inherit; font-size: 15px; font-weight: 600; line-height: 1.9;
+    outline: none;
+  }
+  .f5dump-text:focus { border-color: rgba(255,138,61,.5) }
+  .f5dump-text::placeholder { color: rgba(255,255,255,.25) }
+  .f5dump-count { font-size: 12.5px; font-weight: 800; color: rgba(255,138,61,.9) }
+  .f5dump-go {
+    padding: 10px 20px; border-radius: 99px;
+    background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
+    border: none; color: #fff;
+    font-family: inherit; font-size: 13px; font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(255,138,61,.3);
+  }
+  .f5dump-go:disabled { opacity: .4; cursor: default; box-shadow: none }
 
   /* The "up next" — biggest card */
   .focus5-card.active {
@@ -4631,6 +4718,25 @@
     <div class="pof-body" id="pofBody"></div>
     <div class="pof-foot">
       <button class="pof-cancel" id="pofCancel" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Brain dump — Apple Notes-style bulk capture into a priority list.
+     One line per task; lines land in order via the silent cascade. -->
+<div class="priority-overflow-backdrop" id="f5DumpBackdrop" aria-hidden="true">
+  <div class="priority-overflow" role="dialog" aria-modal="true" aria-labelledby="f5DumpTitle" style="max-width:560px">
+    <div class="pof-head">
+      <div class="pof-title" id="f5DumpTitle">Brain dump</div>
+      <div class="pof-sub" id="f5DumpSub">Type or paste like a note — one line per task.</div>
+    </div>
+    <div class="pof-body">
+      <textarea class="f5dump-text" id="f5DumpText" placeholder="Take mirror off dresser&#10;Stock dresser with clothes&#10;Clean up bedroom&#10;…" spellcheck="false"></textarea>
+    </div>
+    <div class="pof-foot" style="align-items:center">
+      <span class="f5dump-count" id="f5DumpCount" style="margin-right:auto"></span>
+      <button class="pof-cancel" id="f5DumpCancel" type="button">Cancel</button>
+      <button class="f5dump-go" id="f5DumpGo" type="button" disabled>Add tasks</button>
     </div>
   </div>
 </div>
@@ -8701,6 +8807,11 @@ const VOICE = {
   // taps stick — otherwise every render would yank them back to the
   // time-appropriate list (which feels broken when you just clicked away).
   let _focus5AutoSelected = false;
+  // Apple Notes-style quick capture: the uncommitted text lives here so the
+  // constant re-renders (60s timer, Firestore snapshots) rebuild the input
+  // with the half-typed line intact instead of wiping it.
+  let _f5QuickText = '';
+  let _f5DumpListId = null;   // which list the Brain dump modal commits into
   // Time-of-day → routine flag. Chicago hours.
   function focus5CurrentRoutine(){
     try {
@@ -8844,6 +8955,9 @@ const VOICE = {
     if (!focus5State.lists.some(l => l.id === listId)) return;
     focus5State.activeListId = listId;
     _focus5EditMode = false;
+    // Uncommitted quick-capture text belongs to the list it was typed under —
+    // don't carry it across an explicit list switch.
+    _f5QuickText = '';
     document.body.classList.remove('focus5-editing');
     saveFocus5();
     render();
@@ -9763,9 +9877,139 @@ const VOICE = {
   }
 
   // -------- VIEW (renders inside .list when focus mode is active) --------
+  // ---- Apple Notes-style quick capture ----
+  // Splits a pasted/typed note into task lines, stripping the bullets and
+  // numbering that ride along when copying from Notes/Messages/etc.
+  function _f5SplitLines(text){
+    return String(text || '')
+      .split(/\r?\n/)
+      .map(s => s.replace(/^\s*(?:[-–—•*◦▪‣]|\d+[.)])?\s*/, '').trim())
+      .filter(Boolean);
+  }
+  // Creates one task per line and drops each into the list via the SILENT
+  // cascade — the overflow prompt would break the typing flow mid-dump.
+  // Serialized through a queue so rapid Enter presses can't interleave
+  // position stamps or cascade writes.
+  let _f5QuickQueue = Promise.resolve();
+  function _f5QuickCommit(lines, listId){
+    _f5QuickQueue = _f5QuickQueue.then(async () => {
+      for (const text of lines) {
+        try {
+          const id = await addTodoItem(text);
+          if (id) cascadeAddTaskToList(id, listId, 'end');
+        } catch (e) { console.warn('quick capture failed', e); }
+      }
+      try { render(); } catch {}
+    });
+    return _f5QuickQueue;
+  }
+  // Builds the capture row: empty circle + borderless input. Enter commits
+  // the line and keeps focus (re-render refocus happens in renderFocus5View);
+  // a multi-line paste fans out into one task per line.
+  function _buildF5QuickAdd(activeList){
+    const el = document.createElement('form');
+    el.className = 'focus5-quick-add notes';
+    el.innerHTML = `
+      <span class="qa-circle" aria-hidden="true"></span>
+      <input type="text" id="focus5QuickInput" placeholder="Add to ${escHtml(activeList.name)} — Enter adds the next…" maxlength="200" autocomplete="off">
+      <span class="qa-hint">↵ next</span>
+      <button type="button" class="qa-bulk" id="focus5BulkBtn" title="Paste or type a whole list — one line per task">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+        <span>Bulk</span>
+      </button>
+      <button type="submit" style="display:none" aria-hidden="true" tabindex="-1"></button>
+    `;
+    const inp = el.querySelector('input');
+    inp.value = _f5QuickText;
+    inp.addEventListener('input', () => { _f5QuickText = inp.value; });
+    inp.addEventListener('paste', (e) => {
+      let txt = '';
+      try { txt = (e.clipboardData || window.clipboardData).getData('text') || ''; } catch {}
+      if (!/\r?\n/.test(txt.trim())) return; // single-line paste behaves normally
+      e.preventDefault();
+      const head = (inp.value || '').trim();
+      const lines = _f5SplitLines(txt);
+      inp.value = ''; _f5QuickText = '';
+      _f5QuickCommit(head ? [head, ...lines] : lines, activeList.id);
+    });
+    el.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = (inp.value || '').trim();
+      if (!text) return;
+      inp.value = ''; _f5QuickText = '';
+      _f5QuickCommit([text], activeList.id);
+    });
+    el.querySelector('#focus5BulkBtn').addEventListener('click', () => openF5Dump(activeList.id));
+    return el;
+  }
+  // ---- Brain dump modal ----
+  function openF5Dump(listId){
+    _f5DumpListId = listId;
+    const l = focus5State.lists.find(x => x.id === listId);
+    const sub = document.getElementById('f5DumpSub');
+    if (sub) sub.textContent = `One line per task — they land in “${l ? l.name : 'this list'}” in order.`;
+    const ta = document.getElementById('f5DumpText');
+    if (ta) ta.value = '';
+    _f5DumpUpdateCount();
+    const bd = document.getElementById('f5DumpBackdrop');
+    if (bd) bd.classList.add('show');
+    setTimeout(() => { try { ta.focus(); } catch {} }, 60);
+  }
+  function closeF5Dump(){
+    const bd = document.getElementById('f5DumpBackdrop');
+    if (bd) bd.classList.remove('show');
+    _f5DumpListId = null;
+  }
+  function _f5DumpUpdateCount(){
+    const ta = document.getElementById('f5DumpText');
+    const n = _f5SplitLines(ta ? ta.value : '').length;
+    const el = document.getElementById('f5DumpCount');
+    if (el) el.textContent = n ? `${n} task${n === 1 ? '' : 's'}` : '';
+    const go = document.getElementById('f5DumpGo');
+    if (go) go.disabled = n === 0;
+  }
+  (function wireF5Dump(){
+    const bd = document.getElementById('f5DumpBackdrop');
+    if (!bd) return;
+    const ta = document.getElementById('f5DumpText');
+    const cancel = document.getElementById('f5DumpCancel');
+    const go = document.getElementById('f5DumpGo');
+    if (cancel) cancel.addEventListener('click', closeF5Dump);
+    bd.addEventListener('click', (e) => { if (e.target === bd) closeF5Dump(); });
+    if (ta) {
+      ta.addEventListener('input', _f5DumpUpdateCount);
+      // Cmd/Ctrl+Enter commits — plain Enter keeps making lines, like a note.
+      ta.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); if (go) go.click(); }
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && bd.classList.contains('show')) closeF5Dump();
+    });
+    if (go) go.addEventListener('click', () => {
+      const lines = _f5SplitLines(ta ? ta.value : '');
+      const listId = _f5DumpListId;
+      if (!lines.length || !listId) return;
+      closeF5Dump();
+      _f5QuickCommit(lines, listId);
+    });
+  })();
+
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
+    // Capture BEFORE the wipe: was the user mid-typing in the capture row?
+    // If so, the rebuilt input gets focus (and its caret) back — this is what
+    // makes type-Enter-type-Enter work despite full re-renders per add.
+    const _prevQuick = document.getElementById('focus5QuickInput');
+    const _quickHadFocus = !!_prevQuick && document.activeElement === _prevQuick;
+    const _refocusQuick = (el) => {
+      if (!el || !_quickHadFocus) return;
+      const ni = el.querySelector('input');
+      if (!ni) return;
+      ni.focus();
+      try { ni.setSelectionRange(ni.value.length, ni.value.length); } catch {}
+    };
     list.innerHTML = '';
     const activeList = focus5ActiveList();
     const tasks = focus5Tasks();
@@ -9904,6 +10148,10 @@ const VOICE = {
     });
     view.appendChild(tools);
 
+    // Notes-style capture row — built for every non-edit render, appended
+    // under the empty-state hint or after the task cards.
+    const quickAddEl = _focus5EditMode ? null : _buildF5QuickAdd(activeList);
+
     // ---- Empty list (lists exist but this one has no tasks) ----
     if (tasks.length === 0) {
       // Recovery hint: any priority lists empty AND user has priority-flagged
@@ -9927,12 +10175,13 @@ const VOICE = {
       empty.className = 'focus5-celebrate focus5-empty';
       empty.innerHTML = `
         <div class="focus5-celebrate-title">${escHtml(activeList.name)}</div>
-        <div class="focus5-celebrate-sub">No tasks in this list yet. Add up to 5.</div>
+        <div class="focus5-celebrate-sub">Nothing here yet — pick from existing tasks, or just start typing below like a note.</div>
         <div class="focus5-celebrate-actions">
           <button class="focus5-btn primary" id="focus5FillBtn" type="button">Pick tasks</button>
           ${restoreHTML}
         </div>`;
       view.appendChild(empty);
+      if (quickAddEl) view.appendChild(quickAddEl);
       list.appendChild(view);
       empty.querySelector('#focus5FillBtn').addEventListener('click', () => {
         // Routine list → single-list picker. Priority list → side-by-side
@@ -9951,6 +10200,7 @@ const VOICE = {
           try { saveFocus5(); render(); } catch {}
         });
       }
+      _refocusQuick(quickAddEl);
       return;
     }
     const done = tasks.filter(t => t.done).length;
@@ -9980,32 +10230,6 @@ const VOICE = {
       catch { focus5SetEditMode(!_focus5EditMode); }
     });
 
-
-    // Quick-add row — built here, appended at the END of the view after the
-    // task cards render so it doesn't push the active card off-screen.
-    let quickAddEl = null;
-    if (!_focus5EditMode) {
-      quickAddEl = document.createElement('form');
-      quickAddEl.className = 'focus5-quick-add';
-      quickAddEl.innerHTML = `
-        <input type="text" placeholder="+ Quick add to ${escHtml(activeList.name)}..." maxlength="200" autocomplete="off">
-        <button type="submit" aria-label="Add task">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-      `;
-      quickAddEl.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const inp = quickAddEl.querySelector('input');
-        const text = (inp.value || '').trim();
-        if (!text) return;
-        inp.value = '';
-        try {
-          const newId = await addTodoItem(text);
-          if (newId) interactiveAddToPriorityList(newId, activeList.id);
-        } catch (err) { console.warn('focus5 quick-add failed', err); }
-        render();
-      });
-    }
 
     // Edit mode: render in stored order so the user can rearrange explicitly.
     // Ignore the done/pending split — that visual would fight the reorder UX.
@@ -10084,6 +10308,7 @@ const VOICE = {
     // Quick-add at the BOTTOM — out of the way of the active "Up next" card.
     if (quickAddEl) view.appendChild(quickAddEl);
     list.appendChild(view);
+    _refocusQuick(quickAddEl);
   }
   function buildFocus5Card(todo, idx, isActive, isDone, taskNumber, editing, totalCount){
     const card = document.createElement('div');
