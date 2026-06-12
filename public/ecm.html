@@ -679,6 +679,7 @@
   body.view-dev .search-row,
   body.view-dev .status-bar,
   body.view-notif .status-bar { display: none !important }
+  body.view-starred .status-bar { display: none !important }
   /* Acknowledge view keeps the owner pills + search (they scope the queue)
      and shows the bulk-select checkboxes. */
   body.view-notif .row-check { display: inline-flex }
@@ -2101,6 +2102,7 @@
   .ackp-checklist .tick { color: var(--green); font-weight: 900; margin-right: 6px }
 
   /* Star — shared bookmark to reference a task later */
+  .row.is-closed-star { opacity: .6 }
   .q-star.on, .wk-quick .q-star.on { color: var(--amber); border-color: rgba(255,200,77,.5); background: rgba(255,200,77,.10) }
   .q-star:hover { color: var(--amber) !important; border-color: rgba(255,200,77,.5) !important }
   .status-chip.star { border-color: rgba(255,200,77,.32); color: var(--amber) }
@@ -2265,6 +2267,10 @@
     <button type="button" class="view-tab" data-view="notif">
       Acknowledge
       <span class="view-tab-ct" id="ackTabCount"></span>
+    </button>
+    <button type="button" class="view-tab" data-view="starred">
+      ★ Starred
+      <span class="view-tab-ct" id="starredCount"></span>
     </button>
   </div>
   <div class="search-row">
@@ -3377,7 +3383,7 @@ function jumpToRow(rowId){
   const targetView = isDevOrReportRow(r) ? 'dev' : 'all';
   currentView = targetView;
   document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === targetView));
-  document.body.classList.remove('view-notif', 'view-weekly');
+  document.body.classList.remove('view-notif', 'view-weekly', 'view-starred');
   document.body.classList.toggle('view-dev', targetView === 'dev');
   // Clear filters that could swallow the row. Search filter especially can
   // narrow the pool down to nothing matching the row's task text.
@@ -3451,7 +3457,7 @@ function applyFilters(){
   // work that's tracked elsewhere. EXCEPT when the data-quality filters
   // (No ticket / Missing date) are active — those are global hygiene
   // problems that need visibility no matter the type.
-  const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__' || filterStatus === '__starred__';
+  const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__';
   if (!isIssueFilter) {
     // The currently-expanded row is exempt — the Dev/Reports "open drawer"
     // jump lands here, and the row must be visible for the drawer to open.
@@ -3477,8 +3483,6 @@ function applyFilters(){
       pool = pool.filter(isMissingTicket);
     } else if (filterStatus === '__no_completion_date__') {
       pool = pool.filter(isMissingCompletionDate);
-    } else if (filterStatus === '__starred__') {
-      pool = pool.filter(r => stars[String(r.id)]);
     } else {
       pool = pool.filter(r => r.status === filterStatus);
     }
@@ -3540,8 +3544,7 @@ function renderStatusBar(){
     __open__: scoped.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status)).length,
     __parked__: scoped.filter(r => ECM_PARKED_STATUSES.has(r.status)).length,
     __no_ticket__: issueScope.filter(isMissingTicket).length,
-    __no_completion_date__: issueScope.filter(isMissingCompletionDate).length,
-    __starred__: issueScope.filter(r => stars[String(r.id)]).length
+    __no_completion_date__: issueScope.filter(isMissingCompletionDate).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   // Chip layout: All / Open / specific open statuses (Pending IR, Ticket Sent)
@@ -3585,13 +3588,10 @@ function renderStatusBar(){
   chips.push({ id: '__sep__', kind: 'sep' });
   chips.push({ id: '__no_ticket__', label: 'No ticket', count: counts.__no_ticket__, kind: 'issue' });
   chips.push({ id: '__no_completion_date__', label: 'Missing date', count: counts.__no_completion_date__, kind: 'issue' });
-  if (counts.__starred__ > 0 || filterStatus === '__starred__') {
-    chips.push({ id: '__starred__', label: '★ Starred', count: counts.__starred__, kind: 'star' });
-  }
   bar.innerHTML = chips.map(c => {
     if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;
     const muted = c.count === 0 && c.kind === 'status' ? 'muted' : '';
-    const kindCls = c.kind === 'issue' ? 'issue' : c.kind === 'star' ? 'star' : '';
+    const kindCls = c.kind === 'issue' ? 'issue' : '';
     return `<button class="status-chip ${kindCls} ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
   }).join('');
   bar.querySelectorAll('.status-chip').forEach(b => {
@@ -3844,6 +3844,7 @@ function render(){
   updateNeedsNotifDot();
   updateDevReportsCount();
   updateWeeklyCount();
+  updateStarredCount();
   // Weekly view — priorities + deadline buckets.
   if (currentView === 'weekly') {
     renderWeekly();
@@ -3852,6 +3853,11 @@ function render(){
   // Acknowledge view — the team-wide "who's on it" queue.
   if (currentView === 'notif') {
     renderAcknowledge();
+    return;
+  }
+  // Starred view — team-shared bookmarks.
+  if (currentView === 'starred') {
+    renderStarred();
     return;
   }
   // Dev / Reports view — dedicated layout showing limbo time + last update.
@@ -4187,7 +4193,7 @@ function _wireDrFilters(root){
       if (!id) return;
       currentView = 'all';
       document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
-      document.body.classList.remove('view-dev', 'view-notif', 'view-weekly');
+      document.body.classList.remove('view-dev', 'view-notif', 'view-weekly', 'view-starred');
       expandedId = id;
       render();
       setTimeout(() => {
@@ -5435,6 +5441,92 @@ function _wireAckToggle(root){
   });
 }
 
+// ----- Starred view -----
+// Team-shared bookmarks, most recently starred first. Rows expand to the
+// full drawer; the ★ button unstars (live snapshot drops it from the list).
+let _starExpandedId = null;
+function updateStarredCount(){
+  const el = document.getElementById('starredCount');
+  if (!el) return;
+  const n = rows.filter(r => (r.task || '').trim() && stars[String(r.id)]).length;
+  el.textContent = n > 0 ? String(n) : '';
+}
+function renderStarred(){
+  const list = document.getElementById('list');
+  const metaEl = document.getElementById('metaCount');
+  let pool = rows.filter(r => (r.task || '').trim() && stars[String(r.id)]);
+  if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    pool = pool.filter(r => _wkSearchMatch(r, q));
+  }
+  pool.sort((a, b) =>
+    (Date.parse((stars[String(b.id)] || {}).starredAt || 0) || 0) -
+    (Date.parse((stars[String(a.id)] || {}).starredAt || 0) || 0));
+  if (metaEl) metaEl.textContent = `${pool.length} starred`;
+  if (!pool.length) {
+    list.innerHTML = `<div class="empty">Nothing starred${filterOwner || filterSearch ? ' in this view' : ' yet'}. Tap the <strong>★</strong> on any task — on any tab — to keep it here for quick reference.</div>`;
+    return;
+  }
+  list.innerHTML = pool.map(r => {
+    const expanded = _starExpandedId != null && String(_starExpandedId) === String(r.id);
+    const closed = _rowClosed(r);
+    const pcol = programColor(r.program);
+    const programHTML = r.program
+      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
+      : '';
+    const typeHTML = r.requestType
+      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
+      : '';
+    const ticketHTML = r.ticket
+      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
+      : '';
+    const starInfo = (stars[String(r.id)] || {}).starredAt;
+    const starredWhen = starInfo
+      ? `<span class="wk-created" title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '')}</span>`
+      : '';
+    const ownerHTML = r.owner
+      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
+      : '';
+    const ssLink = r.permalink
+      ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+      : '';
+    return `
+      <div class="row ${expanded ? 'expanded' : ''} ${closed ? 'is-closed-star' : ''}" data-star-row="${escHtml(String(r.id))}">
+        <div class="row-line">
+          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
+          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
+          <span class="wk-row-side">
+            ${r.deletion ? `<span class="row-missing" title="Marked for deletion in Smartsheets">DELETION</span>` : ''}
+            ${typeHTML}
+            ${programHTML}
+            ${ticketHTML}
+            ${starredWhen}
+            ${ownerHTML}
+            <span class="wk-quick">
+              ${starBtnHTML(r)}
+              ${ssLink}
+            </span>
+          </span>
+        </div>
+        ${expanded ? _drawerHTML(r) : ''}
+      </div>`;
+  }).join('');
+  list.querySelectorAll('[data-star-row]').forEach(rowEl => {
+    const id = rowEl.getAttribute('data-star-row');
+    rowEl.addEventListener('click', (e) => {
+      if (e.target.closest('.drawer')) return;
+      if (e.target.closest('input, button, a, select, textarea')) return;
+      _starExpandedId = (_starExpandedId != null && String(_starExpandedId) === String(id)) ? null : String(id);
+      render();
+    });
+    if (_starExpandedId != null && String(_starExpandedId) === String(id)) {
+      const r = rows.find(x => String(x.id) === String(id));
+      if (r) _wireDrawer(rowEl, r, () => { _starExpandedId = null; render(); });
+    }
+  });
+}
+
 // ----- Ack-on-touch prompt -----
 // The first time someone updates a task that nobody has acknowledged, ask
 // them to claim it (program right? data right? on it?). Acknowledging kills
@@ -5929,6 +6021,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
     document.body.classList.toggle('view-dev', currentView === 'dev');
     document.body.classList.toggle('view-notif', currentView === 'notif');
     document.body.classList.toggle('view-weekly', currentView === 'weekly');
+    document.body.classList.toggle('view-starred', currentView === 'starred');
     if (currentView !== 'ack') {
       selectedAckIds.clear();
       renderBulkBar();
