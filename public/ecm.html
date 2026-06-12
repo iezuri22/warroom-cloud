@@ -2572,6 +2572,17 @@
     color: var(--w50); font-weight: 700;
   }
 
+  /* Ack-on-touch prompt editable fields */
+  .apf-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .apf-grid .field.full { grid-column: 1 / -1 }
+  .apf-grid .textarea { min-height: 54px }
+  @media (max-width: 560px) {
+    .apf-grid { grid-template-columns: 1fr }
+  }
+
   /* Ack-on-touch prompt checklist */
   .ackp-checklist {
     display: flex; flex-direction: column; gap: 7px;
@@ -2808,14 +2819,15 @@
     </div>
     <div class="lr-body" style="gap:12px">
       <div id="ackPromptTask" style="font-size:14px;font-weight:700;line-height:1.35;color:var(--w95)"></div>
-      <div id="ackPromptMeta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
       <div class="ackp-checklist">
         <div><span class="tick">✓</span> The <strong>program</strong> on this row is right</div>
         <div><span class="tick">✓</span> The <strong>data</strong> (ticket, details, owner) looks right</div>
         <div><span class="tick">✓</span> Someone is <strong>actively on it</strong></div>
       </div>
+      <div class="apf-grid" id="ackPromptFields"></div>
     </div>
     <div class="lr-foot">
+      <div class="lr-status" id="ackPromptSaved"></div>
       <div class="lr-ticket-row" style="justify-content:flex-end">
         <button type="button" id="ackPromptNo" class="lr-pick-canonical" style="background:transparent">Not now</button>
         <button type="button" id="ackPromptYes" class="lr-apply">Looks right — acknowledge</button>
@@ -6590,18 +6602,96 @@ function maybePromptAck(rowId){
   _ackPromptRowId = String(rowId);
   const taskEl = document.getElementById('ackPromptTask');
   if (taskEl) taskEl.textContent = r.task || '(untitled)';
-  const metaEl = document.getElementById('ackPromptMeta');
-  if (metaEl) {
-    const pcol = programColor(r.program);
-    metaEl.innerHTML = [
-      r.program ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>` : '',
-      r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '',
-      r.owner ? `<span class="wk-created">Owner: ${escHtml(r.owner)}</span>` : '<span class="row-missing">Unassigned</span>',
-      r.status ? `<span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status)}</span>` : ''
-    ].filter(Boolean).join('');
+  const savedEl = document.getElementById('ackPromptSaved');
+  if (savedEl) { savedEl.textContent = ''; savedEl.className = 'lr-status'; }
+  // Key fields, editable in place — fixing wrong data is the whole point of
+  // the "is this right?" check. Every change saves straight to Smartsheets.
+  const fieldsEl = document.getElementById('ackPromptFields');
+  if (fieldsEl) {
+    const progOpts = (columns['Program'] && Array.isArray(columns['Program'].options) && columns['Program'].options.length)
+      ? columns['Program'].options.slice()
+      : Array.from(new Set(rows.map(x => x.program).filter(Boolean))).sort();
+    if (r.program && !progOpts.includes(r.program)) progOpts.unshift(r.program);
+    const owners = Array.from(new Set(rows.map(x => x.owner).filter(Boolean))).sort();
+    if (r.owner && !owners.includes(r.owner)) owners.unshift(r.owner);
+    fieldsEl.innerHTML = `
+      <div class="field">
+        <span class="lbl">Program</span>
+        <select class="select" data-apf="Program">
+          <option value="">— None —</option>
+          ${progOpts.map(p => `<option value="${escHtml(p)}" ${p === (r.program || '') ? 'selected' : ''}>${escHtml(p)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <span class="lbl">Owner</span>
+        <select class="select" data-apf="Owner">
+          <option value="">— Unassigned —</option>
+          ${owners.map(o => `<option value="${escHtml(o)}" ${o === (r.owner || '') ? 'selected' : ''}>${escHtml(o)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <span class="lbl">Ticket #</span>
+        <input class="input" type="text" data-apf="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
+      </div>
+      ${ecmDueCol() ? `
+      <div class="field">
+        <span class="lbl">Due date</span>
+        <input class="input" type="date" data-apf="Due Date" value="${escHtml(_isoDayString(r.dueDate))}">
+      </div>` : ''}
+      <div class="field full">
+        <span class="lbl">Status</span>
+        <select class="select" data-apf="Status">
+          ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field full">
+        <span class="lbl">Details</span>
+        <textarea class="textarea" data-apf="Details" placeholder="Context for this task…">${escHtml(r.details || '')}</textarea>
+      </div>`;
+    _wireAckPromptFields(r);
   }
   bd.classList.add('show');
   bd.setAttribute('aria-hidden', 'false');
+}
+// Per-field save for the prompt: change/blur → push the single field, show
+// the result on the status line, and keep the page behind in sync.
+function _wireAckPromptFields(r){
+  const box = document.getElementById('ackPromptFields');
+  if (!box) return;
+  const savedEl = document.getElementById('ackPromptSaved');
+  box.querySelectorAll('[data-apf]').forEach(el => {
+    const title = el.getAttribute('data-apf');
+    const evt = el.tagName === 'SELECT' ? 'change' : 'blur';
+    el.addEventListener(evt, async () => {
+      const v = el.value;
+      const cur = title === 'Program' ? (r.program || '')
+        : title === 'Owner' ? (r.owner || '')
+        : title === 'Status' ? (r.status || '')
+        : title === 'Ticket #' ? String(r.ticket || '').replace(/\.0$/, '')
+        : title === 'Due Date' ? _isoDayString(r.dueDate)
+        : title === 'Details' ? (r.details || '')
+        : '';
+      if ((cur || '') === (v || '')) return;
+      if (savedEl) { savedEl.textContent = 'Saving…'; savedEl.className = 'lr-status'; }
+      const ok = await ssPushFields(r, { [title]: v });
+      if (savedEl) {
+        savedEl.textContent = ok ? 'Saved to Smartsheets ✓'
+          : 'Save failed' + (_ssLastPushError ? ' — ' + _ssLastPushError : '');
+        savedEl.className = 'lr-status ' + (ok ? 'ok' : 'err');
+        if (ok) setTimeout(() => {
+          if (savedEl.textContent.startsWith('Saved')) { savedEl.textContent = ''; savedEl.className = 'lr-status'; }
+        }, 2200);
+      }
+      if (ok) {
+        // Setting a closed status makes acknowledging moot — just close.
+        if (title === 'Status' && _rowClosed(r)) { _closeAckPrompt(false); }
+        try { render(); } catch {}
+      } else {
+        // Roll the control back to the value that's actually on the sheet.
+        el.value = cur;
+      }
+    });
+  });
 }
 function _closeAckPrompt(snooze){
   const bd = document.getElementById('ackPromptBackdrop');
@@ -6843,6 +6933,7 @@ async function ssPushFields(r, fields){
       else if (title === 'Outcome Details') r.outcome = raw;
       else if (title === 'Task Name') r.task = raw;
       else if (title === 'Owner') r.owner = raw;
+      else if (title === 'Program') r.program = raw;
       else if (title === 'Completion Date') r.completionDate = raw;
       else if (title === 'Due Date') r.dueDate = raw;
     }
