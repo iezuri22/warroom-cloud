@@ -6284,14 +6284,23 @@ function _wireWeekly(list){
   });
   list.querySelectorAll('[data-wk-due]').forEach(inp => {
     inp.addEventListener('click', e => e.stopPropagation());
-    inp.addEventListener('change', async () => {
+    inp.addEventListener('change', () => {
       const id = inp.getAttribute('data-wk-due');
       const r = rows.find(x => String(x.id) === String(id));
       if (!r) return;
       const v = inp.value || '';
-      const ok = await ssPushFields(r, { 'Due Date': v });
-      if (ok) { toast(v ? 'Deadline saved to Smartsheets.' : 'Deadline cleared.', 'ok'); render(); updateWeeklyCount(); }
-      else toast('Couldn\'t save the deadline' + (_ssLastPushError ? ' — ' + _ssLastPushError : '.'), 'err');
+      // Optimistic — re-bucket immediately, sync in the background, roll
+      // back with the reason if Smartsheets says no.
+      const prev = r.dueDate;
+      r.dueDate = v;
+      render(); updateWeeklyCount();
+      toast(v ? 'Deadline set.' : 'Deadline cleared.', 'ok');
+      ssPushFields(r, { 'Due Date': v }).then(ok => {
+        if (ok) return;
+        r.dueDate = prev;
+        render(); updateWeeklyCount();
+        toast('Deadline didn\'t save' + (_ssLastPushError ? ' — ' + _ssLastPushError : '') + '. Reverted.', 'err');
+      });
     });
   });
   list.querySelectorAll('[data-wk-done]').forEach(b => b.addEventListener('click', (e) => {
@@ -6580,27 +6589,27 @@ async function applyCompleteRow(){
   if (!r) return;
   const dateInput = document.getElementById('completeRowDate');
   const status = document.getElementById('completeRowStatus');
-  const btn = document.getElementById('completeRowApply');
   const date = (dateInput && dateInput.value) || _todayChicagoISO();
   if (!date) {
     if (status) { status.textContent = 'Pick a completion date first.'; status.className = 'lr-status err'; }
     return;
   }
-  if (btn) { btn.disabled = true; btn.textContent = 'Pushing to Smartsheets…'; }
-  // Push Status=Completed AND Completion Date in one PUT — ssPushFields
-  // hits /sheets/{id}/rows and mirrors r.status / r.completionDate locally.
-  const ok = await ssPushFields(r, { 'Status': 'Completed', 'Completion Date': date });
-  if (!ok) {
-    if (status) {
-      status.textContent = 'Push failed' + (_ssLastPushError ? ': ' + _ssLastPushError : '. Try again or open the row in Smartsheets.');
-      status.className = 'lr-status err';
-    }
-    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
-    return;
-  }
-  try { render(); } catch {}
+  // Optimistic: apply locally and close instantly — the Smartsheets PUT runs
+  // in the background. If it fails, roll back and say why, so the UI never
+  // quietly disagrees with the sheet.
+  const prev = { status: r.status, completionDate: r.completionDate };
+  r.status = 'Completed';
+  r.completionDate = date;
   closeCompleteRowModal();
-  toast('Marked complete in Smartsheets.', 'ok');
+  try { render(); } catch {}
+  toast('Marked complete.', 'ok');
+  ssPushFields(r, { 'Status': 'Completed', 'Completion Date': date }).then(ok => {
+    if (ok) return;
+    r.status = prev.status;
+    r.completionDate = prev.completionDate;
+    try { render(); } catch {}
+    toast('Smartsheets rejected the completion' + (_ssLastPushError ? ' — ' + _ssLastPushError : '') + '. Reverted.', 'err');
+  });
 }
 function _wireNotifToggle(root){
   root.querySelectorAll('[data-notif-tab]').forEach(b => {
