@@ -418,29 +418,33 @@
      box was wasting space when most items have no outcome notes. Now the
      notes (or status fallback) live inline as a single line. */
   .dr-list {
-    display: grid; gap: 8px;
+    display: flex; flex-direction: column; gap: 6px;
     padding: 0 20px 20px;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   }
   @media (max-width: 700px) {
-    .dr-list { grid-template-columns: 1fr; padding: 0 16px 20px }
+    .dr-list { padding: 0 16px 20px }
   }
+  /* Dev/Report rows — same single-line language as Weekly / All rows.
+     Stale items get a left-edge accent (amber 14d+, red 30d+) instead of a
+     full tint so the list stays calm. */
   .dr-card {
     padding: 10px 12px;
-    border-radius: 11px;
-    background: var(--w04);
-    border: 1px solid var(--w10);
-    display: flex; flex-direction: column; gap: 6px;
+    border-radius: 12px;
+    background: var(--w03);
+    border: 1px solid var(--w08);
+    display: flex; flex-direction: column; gap: 5px;
     transition: border-color .15s, background .15s;
+    cursor: pointer;
+    min-width: 0;
   }
-  .dr-card:hover { border-color: rgba(255,138,61,.32); background: var(--w06) }
+  .dr-card:hover { background: var(--w05); border-color: var(--w14) }
   .dr-card.stale {
-    border-color: rgba(255,138,61,.32);
-    background: rgba(255,138,61,.04);
+    border-left: 3px solid rgba(255,138,61,.6);
+    padding-left: 10px;
   }
   .dr-card.very-stale {
-    border-color: rgba(220,38,38,.45);
-    background: rgba(220,38,38,.06);
+    border-left: 3px solid rgba(220,38,38,.6);
+    padding-left: 10px;
   }
   .dr-card.closed { opacity: .55 }
   .dr-head {
@@ -484,13 +488,13 @@
     color: var(--w65);
   }
   .dr-notes {
-    font-size: 11px; font-weight: 500;
-    color: var(--w70);
+    font-size: 11.5px; font-weight: 500;
+    color: var(--w55);
     line-height: 1.4;
     word-break: break-word;
-    /* Two-line clamp keeps cards uniform without losing the notes */
+    /* One-line clamp keeps rows tight; full text lives in the tooltip + drawer */
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -1401,7 +1405,7 @@
     background: var(--w03);
     border: 1px solid var(--w08);
     border-radius: 12px;
-    padding: 14px 16px;
+    padding: 10px 12px;
     cursor: pointer;
     transition: background .15s, border-color .15s;
     display: flex; flex-direction: column; gap: 8px;
@@ -1415,7 +1419,12 @@
   /* Acked rows get a subtle green hairline so they're scannable at a glance */
   .row.is-acked {
     border-left: 3px solid rgba(74,222,128,.5);
-    padding-left: 13px;
+    padding-left: 10px;
+  }
+  /* Single-line row layout (matches the Weekly view) */
+  .row-line {
+    display: flex; align-items: center; gap: 10px;
+    min-width: 0;
   }
   .row-head {
     display: flex; align-items: center; gap: 12px;
@@ -1625,11 +1634,13 @@
   .row-status.s-blocked { background: rgba(248,113,113,.14); color: var(--red) }
   .row-text {
     flex: 1; min-width: 0;
-    font-size: 15px; font-weight: 700; line-height: 1.35;
-    color: var(--w95);
-    overflow: hidden; text-overflow: ellipsis;
-    letter-spacing: -.01em;
+    font-size: 13.5px; font-weight: 600; line-height: 1.3;
+    color: var(--w92);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    letter-spacing: -.005em;
   }
+  .row.is-internal { padding-left: 10px }
+  .wk-created.fresh { color: var(--amber) }
   /* Secondary metadata row — fixed-slot layout so each piece stays in the same
      spot row-to-row. Empty slots reserve their space so columns visually align.
      Order: Created · Ticket · Program · Completed. Sub-Type intentionally not
@@ -2003,57 +2014,17 @@
     /* Search row stays single-row; hide sort label inside dropdown to save space */
     .search-row { flex-wrap: nowrap }
     .search-input { font-size: 13px; padding: 9px 12px }
-    /* Row layout below stays as-is from the earlier mobile pass */
-    .row {
-      padding: 14px 16px;
-      gap: 10px;
+    /* Rows: status + title stay on line 1; the side cluster (shared
+       .wk-row-side rules below) wraps to line 2. */
+    .row, .dr-card {
+      padding: 10px 12px;
       border-radius: 12px;
     }
-    .row.is-acked, .row.is-internal {
-      padding-left: 13px;
+    .row.is-acked, .row.is-internal,
+    .dr-card.stale, .dr-card.very-stale {
+      padding-left: 10px;
     }
-    /* Row head: flex-wrap so chips cluster at top, task name flex-basis:100%
-       so it gets its own row below them and gets the full width. */
-    .row-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px 8px;
-    }
-    .row-head .row-check,
-    .row-head .row-status,
-    .row-head .row-internal-badge,
-    .row-head .row-ack-badge { order: 0; flex-shrink: 0 }
-    .row-text {
-      order: 2;
-      flex-basis: 100%;
-      font-size: 16px;
-      line-height: 1.4;
-      font-weight: 800;
-      white-space: normal;
-      overflow: visible;
-      text-overflow: clip;
-      letter-spacing: -.005em;
-      margin-top: 2px;
-    }
-    .row-head .row-ack-btn {
-      order: 1;
-      margin-left: auto;
-      padding: 5px 12px;
-      font-size: 10px;
-    }
-    /* Sub-row: ditch the fixed-column grid, wrap pills as flex */
-    .row-sub {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      align-items: center;
-    }
-    .row-sub-slot {
-      width: auto;
-    }
-    .row-slot-empty { display: none } /* on mobile, hide empty placeholders so the row doesn't look gappy */
-    .row-sub-date,
+    .row-line { flex-wrap: wrap; row-gap: 8px }
     .row-sub-completed,
     .row-ticket,
     .row-program,
@@ -2061,7 +2032,6 @@
       font-size: 10px;
       padding: 3px 7px;
     }
-    .row-sub-date .rel { display: none } /* keep just the absolute date — relative is noise on small screens */
     /* Checkbox tighter, only visible in ack view */
     body:not(.view-ack) .row-check { display: none !important }
     /* Drawer fields stack 100% width since the field-row already wraps; force
@@ -2300,7 +2270,7 @@
     margin-left: auto;
     min-width: 0;
   }
-  .wk-row .row-status { font-size: 8.5px; padding: 4px 8px }
+  .wk-row .row-status, .row-line .row-status { font-size: 8.5px; padding: 4px 8px; flex-shrink: 0 }
   .wk-row .dr-type { flex-shrink: 0 }
   .wk-prog-tag { cursor: pointer; font-family: inherit; transition: transform .1s }
   .wk-prog-tag:hover { transform: translateY(-1px) }
@@ -3758,8 +3728,13 @@ let currentView = 'all';
 // Selected rows in ack view for bulk acknowledge
 const selectedAckIds = new Set();
 
+// Expanded-row identity — IDs arrive as numbers (sheet JSON) or strings
+// (data-* attributes), so all comparisons go through String().
+function isExpandedRow(id){
+  return expandedId != null && String(expandedId) === String(id);
+}
 function setExpanded(id){
-  expandedId = expandedId === id ? null : id;
+  expandedId = isExpandedRow(id) ? null : id;
   render();
 }
 
@@ -4059,7 +4034,8 @@ function isMissingCompletionDate(r){
   return closed && !cd;
 }
 function applyFilters(){
-  let pool = rows.slice();
+  // Blank rows (no task name) are Smartsheet spacer rows — hide everywhere.
+  let pool = rows.filter(r => (r.task || '').trim());
   // Dev + Reporting items live on the dedicated Dev/Reports tab — exclude
   // them from the All rows view so per-owner queues don't get clogged with
   // work that's tracked elsewhere. EXCEPT when the data-quality filters
@@ -4067,7 +4043,9 @@ function applyFilters(){
   // problems that need visibility no matter the type.
   const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__';
   if (!isIssueFilter) {
-    pool = pool.filter(r => !isDevOrReportRow(r));
+    // The currently-expanded row is exempt — the Dev/Reports "open drawer"
+    // jump lands here, and the row must be visible for the drawer to open.
+    pool = pool.filter(r => !isDevOrReportRow(r) || String(r.id) === String(expandedId));
   }
   // Ack view: hide already-acked rows by default so the queue clears as you go.
   // Acked tasks remain visible if filter is on All status (so you can still
@@ -4135,13 +4113,14 @@ function applyFilters(){
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
   // Status counts scope to non-dev/report rows so the All / Open / per-status
-  // chips reflect just standard ECM work.
-  let scoped = rows.filter(r => !isDevOrReportRow(r));
+  // chips reflect just standard ECM work. Blank spacer rows don't count.
+  const named = rows.filter(r => (r.task || '').trim());
+  let scoped = named.filter(r => !isDevOrReportRow(r));
   if (filterOwner) scoped = scoped.filter(r => r.owner === filterOwner);
   if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
-  // Data-quality issue counts scan EVERY row (including dev/report). A
+  // Data-quality issue counts scan EVERY named row (including dev/report). A
   // missing ticket or completion date is a problem no matter the type.
-  let issueScope = rows;
+  let issueScope = named;
   if (filterOwner) issueScope = issueScope.filter(r => r.owner === filterOwner);
   if (filterProgram) issueScope = issueScope.filter(r => r.program === filterProgram);
   const counts = {
@@ -4247,48 +4226,48 @@ function render(){
   list.innerHTML = '';
   pool.forEach(r => {
     const row = document.createElement('div');
-    row.className = `row ${expandedId === r.id ? 'expanded' : ''}`;
+    row.className = `row ${isExpandedRow(r.id) ? 'expanded' : ''}`;
     row.dataset.id = r.id;
+    // Single-line layout matching the Weekly view: status · title · meta
+    // cluster on the right · quick actions. The drawer still opens below.
     const sCls = statusClass(r.status);
-    const statusHTML = r.status ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>` : '';
-    // Reserved slots — each one renders content, an invisible placeholder, or
-    // a red MISSING marker. Reserve markers for things that SHOULD be set:
-    //   - ticket # always (open or closed)
-    //   - completion date when status is Completed
+    const statusHTML = `<span class="row-status ${sCls}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>`;
     const isClosedStatus = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
     const rowInternal = isInternalRow(r);
     const missingIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    // Ticket — show #number, or red MISSING for customer-facing items.
-    // Internal items don't need a Smartsheets ticket so just render a quiet
-    // em-dash placeholder.
-    const ticketSlotInner = r.ticket
+    // Ticket — #number, red MISSING for customer-facing items, nothing for
+    // internal ones (they don't follow the ticket flow).
+    const ticketHTML = r.ticket
       ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
-      : (rowInternal
-          ? `<span class="row-slot-empty">—</span>`
-          : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`);
-    // Sub-Type — show or invisible placeholder
-    const subTypeSlotInner = r.subType
-      ? `<span class="row-subtype">${escHtml(r.subType)}</span>`
-      : `<span class="row-slot-empty">—</span>`;
-    // Program — color tag if present, else invisible placeholder (never red,
-    // red is reserved for missing markers)
+      : (rowInternal ? '' : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`);
     const pcol = programColor(r.program);
-    const programSlotInner = r.program
-      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
-      : `<span class="row-slot-empty">—</span>`;
-    // Completed date — green pill when present, red MISSING when status is
-    // Completed and the date is empty, invisible placeholder otherwise.
-    // Internal items skip the MISSING marker entirely.
-    const completedSlotInner = (() => {
-      if (r.completionDate) {
-        const abs = fmtAbsoluteDate(r.completionDate);
-        const checkIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-        return `<span class="row-sub-completed" title="Completed ${escHtml(abs || r.completionDate)}">${checkIcon}${escHtml(abs)}</span>`;
+    const programHTML = r.program
+      ? `<button type="button" class="row-program wk-prog-tag" data-all-prog="${escHtml(r.program)}" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}" title="Filter to ${escHtml(r.program)}">${escHtml(r.program)}</button>`
+      : '';
+    const typeHTML = r.requestType
+      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
+      : '';
+    // One date badge: closed rows show the completion (or red MISSING),
+    // open rows show the due-date pill with escalating urgency colors.
+    const dateBadgeHTML = (() => {
+      if (isClosedStatus) {
+        if (r.completionDate) {
+          const abs = fmtAbsoluteDate(r.completionDate);
+          const checkIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+          return `<span class="row-sub-completed" title="Completed ${escHtml(abs || r.completionDate)}">${checkIcon}${escHtml(abs)}</span>`;
+        }
+        if (r.status === 'Completed' && !rowInternal) {
+          return `<span class="row-missing" title="No completion date — status is Completed">${missingIcon}Missing</span>`;
+        }
+        return '';
       }
-      if (r.status === 'Completed' && !rowInternal) {
-        return `<span class="row-missing" title="No completion date — status is Completed">${missingIcon}Missing</span>`;
-      }
-      return `<span class="row-slot-empty">—</span>`;
+      if (!r.dueDate) return '';
+      const d = _parseDateOnly(r.dueDate);
+      if (!d) return '';
+      const days = _wkDaysFromToday(d);
+      const cls = days < 0 ? 'overdue' : (days <= 2 ? 'soon' : '');
+      const flagIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`;
+      return `<span class="row-sub-due ${cls}" title="Due ${escHtml(fmtAbsoluteDate(r.dueDate) || r.dueDate)}">${flagIcon}${escHtml(fmtAbsoluteDate(r.dueDate))} · ${escHtml(_wkRelLabel(d))}</span>`;
     })();
     // Ack state for this row
     const ack = acks[r.id];
@@ -4300,14 +4279,8 @@ function render(){
       : '';
     const isChecked = selectedAckIds.has(r.id);
     const checkboxHTML = `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk ack"></span>`;
-    // Ack state is no longer shown inline on the row head — the Notifications
-    // tab is the single home for ack management now. Saves horizontal space
-    // here. Row still gets the is-acked class (used for subtle row styling)
-    // and the ack data is still editable from the drawer.
-    let ackInlineHTML = '';
-    // Created date — primary metadata, rendered as a small pill so it's the
-    // first thing the eye lands on. Items created in the last 2 days get the
-    // amber "fresh" treatment to draw attention to today's incoming work.
+    // Created date — compact, muted; fresh items (≤2 days) flip amber so
+    // today's incoming work still pops.
     const createdHTML = (() => {
       if (!r.createdDate) return '';
       const abs = fmtAbsoluteDate(r.createdDate);
@@ -4319,63 +4292,49 @@ function render(){
           return (Date.now() - t) / 86400000;
         } catch { return 999; }
       })();
-      const freshCls = ageDays <= 2 ? ' fresh' : '';
-      const calIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
-      return `<span class="row-sub-date${freshCls}" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}${rel ? `<span class="rel">· ${escHtml(rel)}</span>` : ''}</span>`;
+      const calIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+      return `<span class="wk-created${ageDays <= 2 ? ' fresh' : ''}" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}</span>`;
     })();
-    // Due-date pill — color escalates as the deadline approaches. Overdue red,
-    // due within 2 days amber, otherwise blue.
-    const dueHTML = (() => {
-      if (!r.dueDate || isClosedStatus) return '';
-      const d = _parseDateOnly(r.dueDate);
-      if (!d) return '';
-      const days = _wkDaysFromToday(d);
-      const cls = days < 0 ? 'overdue' : (days <= 2 ? 'soon' : '');
-      const flagIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`;
-      return `<span class="row-sub-due ${cls}" title="Due ${escHtml(fmtAbsoluteDate(r.dueDate) || r.dueDate)}">${flagIcon}${escHtml(fmtAbsoluteDate(r.dueDate))} · ${escHtml(_wkRelLabel(d))}</span>`;
-    })();
-    // Weekly-priority chips — shows which priorities this row rolls up to.
+    // Weekly-priority dots — tooltip carries the titles.
     const rowPrios = prioritiesForRow(r.id);
-    const prioChipsHTML = rowPrios.map(p =>
-      `<span class="row-prio-chip" title="Weekly priority: ${escHtml(p.title)}"><span class="pd" style="background:${prioColorVar(p)}"></span><span class="t">${escHtml(p.title)}</span></span>`
-    ).join('');
-    // Build sub-row using fixed slots so each piece keeps its position
-    // row-to-row. Order: Created · Ticket · Program · Completed · extras.
-    const subRowHTML = `
-      <div class="row-sub">
-        <span class="row-sub-slot">${createdHTML || '<span class="row-slot-empty">—</span>'}</span>
-        <span class="row-sub-slot">${ticketSlotInner}</span>
-        <span class="row-sub-slot">${programSlotInner}</span>
-        <span class="row-sub-slot">${completedSlotInner}</span>
-        ${dueHTML || prioChipsHTML ? `<span class="row-sub-slot extras">${dueHTML}${prioChipsHTML}</span>` : ''}
-      </div>`;
-    // Inline Smartsheets link — surfaces the per-row permalink on the head
-    // so you don't have to expand the drawer to jump out. onclick stops
-    // propagation so tapping it doesn't also toggle the drawer.
-    const ssQuickLinkHTML = r.permalink
-      ? `<a class="row-ss-quick" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+    const prioDots = rowPrios.length
+      ? `<span class="wk-prio-dots" title="${escHtml(rowPrios.map(p => p.title).join(' · '))}">${rowPrios.map(p => `<span class="pd" style="background:${prioColorVar(p)}"></span>`).join('')}</span>`
       : '';
-    // Linked-items badge — surfaces if this row matched any others via the
-    // program+title fuzzy detector. Click opens a modal listing the peers
-    // so the user can compare and (optionally) unify the ticket # across.
+    const ownerHTML = r.owner
+      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
+      : '';
+    // Linked-items badge — opens the linked-rows modal.
     const peerIds = _expandMatchGroup(r.id);
     const linkedHTML = peerIds.length > 0
       ? `<button type="button" class="row-linked" data-linked="${escHtml(String(r.id))}" title="Linked to ${peerIds.length} similar item${peerIds.length === 1 ? '' : 's'}">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-          Linked ${peerIds.length}
+          ${peerIds.length}
         </button>`
       : '';
+    const quickHTML = `
+      <span class="wk-quick">
+        ${!isClosedStatus ? `<button type="button" class="q-done" data-row-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
+        ${!isClosedStatus && canPushToMyDay() ? `<button type="button" class="q-push" data-row-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>` : ''}
+        ${r.permalink ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
+      </span>`;
     row.innerHTML = `
-      <div class="row-head">
+      <div class="row-line">
         ${checkboxHTML}
         ${statusHTML}
-        <span class="row-text">${escHtml(r.task)}</span>
-        ${internalBadgeHTML}
-        ${linkedHTML}
-        ${ackInlineHTML}
-        ${ssQuickLinkHTML}
+        <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
+        <span class="wk-row-side">
+          ${internalBadgeHTML}
+          ${linkedHTML}
+          ${prioDots}
+          ${typeHTML}
+          ${programHTML}
+          ${ticketHTML}
+          ${createdHTML}
+          ${dateBadgeHTML}
+          ${ownerHTML}
+          ${quickHTML}
+        </span>
       </div>
-      ${subRowHTML}
       <div class="drawer">
         <div class="field">
           <span class="lbl">Task name</span>
@@ -4504,6 +4463,30 @@ function render(){
         handleAck(r.id);
         return;
       }
+      // Quick actions on the row line
+      if (e.target.closest('[data-row-done]')) {
+        e.stopPropagation();
+        openCompleteRowModal(r.id);
+        return;
+      }
+      const pushBtn = e.target.closest('[data-row-push]');
+      if (pushBtn) {
+        e.stopPropagation();
+        pushBtn.disabled = true;
+        pushRowToMyDay(r.id).finally(() => { pushBtn.disabled = false; });
+        return;
+      }
+      // Program tag → set the All-view program filter (synced with topbar)
+      const progBtn = e.target.closest('[data-all-prog]');
+      if (progBtn) {
+        e.stopPropagation();
+        const prog = progBtn.getAttribute('data-all-prog') || '';
+        filterProgram = (filterProgram === prog) ? '' : prog;
+        const sel = document.getElementById('programSelect');
+        if (sel) sel.value = filterProgram;
+        render();
+        return;
+      }
       // Linked-items badge — open the linked-rows modal
       const linkedBtn = e.target.closest('[data-linked]');
       if (linkedBtn) {
@@ -4513,7 +4496,7 @@ function render(){
       }
       setExpanded(r.id);
     });
-    if (expandedId === r.id) {
+    if (isExpandedRow(r.id)) {
       // Wire field handlers
       row.querySelectorAll('[data-field]').forEach(el => {
         el.addEventListener('click', e => e.stopPropagation());
@@ -4819,21 +4802,35 @@ function _wireDrFilters(root){
   });
   root.querySelectorAll('[data-dr-open]').forEach(b => {
     b.addEventListener('click', (e) => {
+      // Quick actions / links inside the row handle themselves.
+      if (e.target.closest('button, a, input')) return;
       e.stopPropagation();
       const id = b.getAttribute('data-dr-open');
       if (!id) return;
       currentView = 'all';
       document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === 'all'));
-      document.body.classList.remove('view-dev');
-      document.body.classList.remove('view-notif');
+      document.body.classList.remove('view-dev', 'view-notif', 'view-links', 'view-weekly');
       expandedId = id;
       render();
       setTimeout(() => {
         const row = document.querySelector(`.row[data-id="${id}"]`);
-        if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (row) {
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          row.classList.add('row-jump-flash');
+          setTimeout(() => row.classList.remove('row-jump-flash'), 1600);
+        }
       }, 50);
     });
   });
+  root.querySelectorAll('[data-dr-done]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openCompleteRowModal(b.getAttribute('data-dr-done'));
+  }));
+  root.querySelectorAll('[data-dr-push]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    pushRowToMyDay(b.getAttribute('data-dr-push')).finally(() => { b.disabled = false; });
+  }));
 }
 function renderDevReports(){
   const list = document.getElementById('list');
@@ -4978,60 +4975,61 @@ function renderDevReports(){
     return;
   }
   function cardHTML(r){
+    // Single-line row matching the Weekly / All-rows look. Outcome notes (the
+    // point of this view) keep a muted second line when present. Clicking the
+    // row opens the full drawer (via the All-view jump); quick actions cover
+    // complete / push / open-in-Smartsheets.
     const isClosed = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
     const ageDays = _daysSince(r.createdDate);
     let cardCls = 'dr-card';
-    // Stale based on limbo time only — modifiedAt is unreliable because the
-    // sync layer touches rows during regular operation, so "days since last
-    // update" doesn't actually reflect human activity. Drop it from the UI.
     if (isClosed) cardCls += ' closed';
     else if (ageDays >= 30) cardCls += ' very-stale';
     else if (ageDays >= 14) cardCls += ' stale';
     const kind = devOrReportKind(r);
     const typeLbl = (r.requestType || (kind === 'report' ? 'Reporting' : 'Dev')).toString();
     const sCls = statusClass(r.status);
-    const statusHTML = r.status
-      ? `<span class="row-status ${sCls}">${escHtml(r.status)}</span>`
-      : `<span class="row-status">No status</span>`;
+    const statusHTML = `<span class="row-status ${sCls}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || 'No status')}</span>`;
     const ticketHTML = r.ticket
       ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
       : '';
     const programHTML = r.program
       ? (() => { const pc = programColor(r.program); return `<span class="row-program" style="background:${pc.bg};border-color:${pc.bd};color:${pc.fg}">${escHtml(r.program)}</span>`; })()
       : '';
-    // "Days open" = days since createdDate. For Parked items it's still
-    // accurate (parked items haven't closed). For Completed, we hide it
-    // since "X days open" doesn't make sense on a closed item.
     const limboCls = ageDays >= 30 ? 'very-stale' : ageDays >= 14 ? 'stale' : '';
     const limboHTML = (ageDays >= 0 && !isClosed)
-      ? `<span class="dr-limbo ${limboCls}" title="Days since this row was created">${ageDays}d open</span>`
+      ? `<span class="dr-limbo ${limboCls}" title="Days since this row was created">${ageDays}d</span>`
       : '';
-    // Only render the notes block if there's actual content. Empty
-    // placeholders just waste vertical space across a dense grid.
+    const createdHTML = r.createdDate
+      ? `<span class="wk-created" title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || r.createdDate)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${escHtml(fmtAbsoluteDate(r.createdDate))}</span>`
+      : '';
+    const ownerHTML = r.owner
+      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
+      : '';
     const notesHTML = (r.outcome && r.outcome.trim())
-      ? `<div class="dr-notes">${escHtml(r.outcome.trim())}</div>`
+      ? `<div class="dr-notes" title="${escHtml(r.outcome.trim())}">${escHtml(r.outcome.trim())}</div>`
       : '';
-    const openInSheetHTML = r.permalink
-      ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets">Smartsheets ↗</a>`
-      : '';
+    const quickHTML = `
+      <span class="wk-quick">
+        ${!isClosed ? `<button type="button" class="q-done" data-dr-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
+        ${!isClosed && canPushToMyDay() ? `<button type="button" class="q-push" data-dr-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>` : ''}
+        ${r.permalink ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
+      </span>`;
     return `
-      <div class="${cardCls}" data-id="${escHtml(String(r.id))}">
-        <div class="dr-head">
-          <span class="dr-type ${kind}">${escHtml(typeLbl)}</span>
+      <div class="${cardCls}" data-id="${escHtml(String(r.id))}" data-dr-open="${escHtml(String(r.id))}">
+        <div class="row-line">
           ${statusHTML}
-          ${ticketHTML}
-          ${programHTML}
+          <span class="row-text" title="${escHtml(r.task || '(untitled)')}">${escHtml(r.task || '(untitled)')}</span>
+          <span class="wk-row-side">
+            <span class="dr-type ${kind}">${escHtml(typeLbl)}</span>
+            ${programHTML}
+            ${ticketHTML}
+            ${createdHTML}
+            ${limboHTML}
+            ${ownerHTML}
+            ${quickHTML}
+          </span>
         </div>
-        <div class="dr-task">${escHtml(r.task || '(untitled)')}</div>
         ${notesHTML}
-        <div class="dr-foot">
-          ${limboHTML}
-          <span class="dr-owner">${escHtml(r.owner || '—')}</span>
-          <div class="dr-actions">
-            <button type="button" data-dr-open="${escHtml(String(r.id))}">Drawer</button>
-            ${openInSheetHTML}
-          </div>
-        </div>
       </div>`;
   }
   const sectionHeadHTML = (title, count) =>
