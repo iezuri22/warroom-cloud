@@ -2100,6 +2100,34 @@
   .ackp-checklist strong { color: var(--w92) }
   .ackp-checklist .tick { color: var(--green); font-weight: 900; margin-right: 6px }
 
+  /* Deletion mark — trash button + flag on the Acknowledge page */
+  .ack-del-btn {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 7px;
+    background: var(--w04);
+    border: 1px solid var(--w10);
+    color: var(--w55);
+    cursor: pointer;
+    transition: all .12s;
+    padding: 0;
+  }
+  .ack-del-btn:hover {
+    color: var(--red);
+    border-color: rgba(248,113,113,.5);
+    background: rgba(248,113,113,.08);
+  }
+  .ack-del-flag {
+    flex-shrink: 0;
+    font-size: 10px; font-weight: 900; letter-spacing: .6px;
+    text-transform: uppercase;
+    color: var(--red);
+    white-space: nowrap;
+  }
+  .ackp-delete { color: var(--red) !important; border-color: rgba(248,113,113,.35) !important }
+  .ackp-delete:hover { border-color: var(--red) !important }
+
   /* Acknowledge page acked-info line */
   .ack-done-info {
     flex-shrink: 0;
@@ -2325,7 +2353,9 @@
     </div>
     <div class="lr-foot">
       <div class="lr-status" id="ackPromptSaved"></div>
-      <div class="lr-ticket-row" style="justify-content:flex-end">
+      <div class="lr-ticket-row">
+        <button type="button" id="ackPromptDelete" class="lr-pick-canonical ackp-delete" style="background:transparent">Mark for deletion</button>
+        <span style="flex:1"></span>
         <button type="button" id="ackPromptNo" class="lr-pick-canonical" style="background:transparent">Not now</button>
         <button type="button" id="ackPromptYes" class="lr-apply">Looks right — acknowledge</button>
       </div>
@@ -2615,6 +2645,7 @@ async function _ecmDetectNotifications(currentRows){
 function needsAck(r){
   if (!r || !(r.task || '').trim()) return false;
   if (_rowClosed(r)) return false;
+  if (r.deletion) return false; // junk pending deletion — nothing to claim
   const a = acks[r.id];
   if (!a) return true;
   if (a.ackOwner && r.owner && a.ackOwner !== r.owner) return true;
@@ -3342,6 +3373,7 @@ async function loadSheet(){
     const colCreated = columns['Created Date'];
     const colCompletion = columns['Completion Date'];
     const colInternal = columns['Internal Only'];
+    const colDeletion = columns['Marked for Deletion'];
     // Deadline column — accept a few common titles so a renamed column keeps
     // working. ecmDueCol() resolves the same way everywhere else.
     const colDue = ecmDueCol();
@@ -3362,6 +3394,7 @@ async function loadSheet(){
       // Smartsheets checkbox cells come back as boolean true/false or empty.
       // Normalize so any truthy non-empty value reads as flagged.
       internalSS: colInternal ? !!cellValue(r, colInternal.id) : false,
+      deletion: colDeletion ? !!cellValue(r, colDeletion.id) : false,
       modifiedAt: r.modifiedAt || '',
       // Per-row permalink — Smartsheets returns this on each row by default,
       // but if it's missing we'll fall back to constructing one from the
@@ -3980,6 +4013,9 @@ function render(){
     const internalBadgeHTML = isInternal
       ? `<span class="row-internal-badge" title="Internal only — not customer-facing"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Internal</span>`
       : '';
+    const deletionBadgeHTML = r.deletion
+      ? `<span class="row-missing" title="Marked for deletion in Smartsheets">DELETION</span>`
+      : '';
     const isChecked = selectedAckIds.has(r.id);
     const checkboxHTML = `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk ack"></span>`;
     // Created date — compact, muted; fresh items (≤2 days) flip amber so
@@ -4026,6 +4062,7 @@ function render(){
         ${statusHTML}
         <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
         <span class="wk-row-side">
+          ${deletionBadgeHTML}
           ${internalBadgeHTML}
           ${linkedHTML}
           ${prioDots}
@@ -4457,6 +4494,7 @@ function renderDevReports(){
           ${statusHTML}
           <span class="row-text" title="${escHtml(r.task || '(untitled)')}">${escHtml(r.task || '(untitled)')}</span>
           <span class="wk-row-side">
+            ${r.deletion ? `<span class="row-missing" title="Marked for deletion in Smartsheets">DELETION</span>` : ''}
             <span class="dr-type ${kind}">${escHtml(typeLbl)}</span>
             ${programHTML}
             ${ticketHTML}
@@ -4763,7 +4801,7 @@ function weeklyPool(){
   // so the totals here match the team's "what's actually open" number.
   // Blank rows (no task name) are Smartsheet spacer rows — never show them.
   // Scoping uses the weekly-only multiselects, NOT the topbar dropdowns.
-  let pool = _wkBaseOpen();
+  let pool = _wkBaseOpen().filter(r => !r.deletion);
   if (wkOwnerSel.size) pool = pool.filter(r => wkOwnerSel.has(r.owner));
   if (wkProgramSel.size) pool = pool.filter(r => wkProgramSel.has(r.program));
   if (filterSearch) {
@@ -5336,7 +5374,7 @@ function _renderPrioLinkResults(){
 // Every open task should be acknowledged by a human ("I'm on this — the
 // program and data are right"). This page is the team-wide queue of tasks
 // nobody has claimed yet, plus an audit trail of what's been acknowledged.
-let _ackShowDone = false;
+let _ackTab = 'needs'; // 'needs' | 'done' | 'del'
 let _ackExpandedId = null;
 function renderAcknowledge(){
   const list = document.getElementById('list');
@@ -5348,25 +5386,38 @@ function renderAcknowledge(){
     pool = pool.filter(r => _wkSearchMatch(r, q));
   }
   const needs = pool.filter(needsAck);
-  const done = pool.filter(r => !needsAck(r));
+  const done = pool.filter(r => !needsAck(r) && !r.deletion);
+  // Deletion pile spans open AND closed rows — anything with the box checked.
+  let delPool = rows.filter(r => (r.task || '').trim() && r.deletion);
+  if (filterOwner) delPool = delPool.filter(r => r.owner === filterOwner);
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    delPool = delPool.filter(r => _wkSearchMatch(r, q));
+  }
   // Needs: newest first (today's intake is the triage). Done: latest ack first.
   needs.sort((a, b) => (_parseDateOnly(b.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0));
   done.sort((a, b) => (Date.parse((acks[b.id] || {}).ackedAt || 0) || 0) - (Date.parse((acks[a.id] || {}).ackedAt || 0) || 0));
-  const visible = _ackShowDone ? done : needs;
-  if (metaEl) metaEl.textContent = `${needs.length} to acknowledge · ${done.length} claimed`;
+  delPool.sort((a, b) => (a.task || '').localeCompare(b.task || ''));
+  const visible = _ackTab === 'done' ? done : _ackTab === 'del' ? delPool : needs;
+  if (metaEl) metaEl.textContent = `${needs.length} to acknowledge · ${done.length} claimed · ${delPool.length} for deletion`;
   const toggleHTML = `
     <div class="notif-toggle-row">
-      <button type="button" class="notif-toggle-btn ${!_ackShowDone ? 'active' : ''}" data-ack-tab="needs">
+      <button type="button" class="notif-toggle-btn ${_ackTab === 'needs' ? 'active' : ''}" data-ack-tab="needs">
         Needs ack <span class="ct">${needs.length}</span>
       </button>
-      <button type="button" class="notif-toggle-btn ${_ackShowDone ? 'active' : ''}" data-ack-tab="done">
+      <button type="button" class="notif-toggle-btn ${_ackTab === 'done' ? 'active' : ''}" data-ack-tab="done">
         Acknowledged <span class="ct">${done.length}</span>
+      </button>
+      <button type="button" class="notif-toggle-btn ${_ackTab === 'del' ? 'active' : ''}" data-ack-tab="del">
+        Deletion <span class="ct">${delPool.length}</span>
       </button>
     </div>`;
   if (!visible.length) {
-    const emptyMsg = _ackShowDone
+    const emptyMsg = _ackTab === 'done'
       ? 'Nothing acknowledged yet in this view.'
-      : (pool.length === 0
+      : _ackTab === 'del'
+        ? 'Nothing marked for deletion. Use the trash button on a task to flag junk/duplicates — it checks the deletion box in Smartsheets.'
+        : (pool.length === 0
           ? 'No open tasks match the current filters.'
           : '<strong>Everything is claimed.</strong> Every open task here has someone on it.');
     list.innerHTML = toggleHTML + `<div class="empty">${emptyMsg}</div>`;
@@ -5393,14 +5444,20 @@ function renderAcknowledge(){
       ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
       : '';
     const isChecked = selectedAckIds.has(r.id);
-    const actionHTML = _ackShowDone
+    const trashBtn = `<button type="button" class="ack-del-btn" data-del-mark="${escHtml(String(r.id))}" title="Mark for deletion — checks the deletion box in Smartsheets"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`;
+    const actionHTML = _ackTab === 'del'
+      ? `<span class="ack-del-flag">Marked for deletion</span>
+         <button type="button" class="row-ack-btn unack" data-del-restore="${escHtml(String(r.id))}">Restore</button>`
+      : _ackTab === 'done'
       ? `<span class="ack-done-info" title="Acknowledged by ${escHtml((a && a.ackedBy) || '')}">✓ ${escHtml((a && a.ackedBy) || 'Claimed')}${a && a.ackedAt ? ' · ' + escHtml(timeAgo(a.ackedAt) || '') : ''}</span>
+         ${trashBtn}
          <button type="button" class="row-ack-btn unack" data-ack-undo="${escHtml(String(r.id))}">Un-ack</button>`
-      : `<button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>`;
+      : `${trashBtn}
+         <button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>`;
     return `
       <div class="row ${expanded ? 'expanded' : ''}" data-ack-row="${escHtml(String(r.id))}">
         <div class="row-line">
-          ${_ackShowDone ? '' : `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk acknowledge"></span>`}
+          ${_ackTab !== 'needs' ? '' : `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk acknowledge"></span>`}
           <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
           <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
           <span class="wk-row-side">
@@ -5449,11 +5506,19 @@ function renderAcknowledge(){
     e.stopPropagation();
     handleUnack(b.getAttribute('data-ack-undo'));
   }));
+  list.querySelectorAll('[data-del-mark]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setRowDeletion(b.getAttribute('data-del-mark'), true);
+  }));
+  list.querySelectorAll('[data-del-restore]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setRowDeletion(b.getAttribute('data-del-restore'), false);
+  }));
 }
 function _wireAckToggle(root){
   root.querySelectorAll('[data-ack-tab]').forEach(b => {
     b.addEventListener('click', () => {
-      _ackShowDone = (b.getAttribute('data-ack-tab') === 'done');
+      _ackTab = b.getAttribute('data-ack-tab') || 'needs';
       _ackExpandedId = null;
       render();
     });
@@ -5591,6 +5656,12 @@ function _closeAckPrompt(snooze){
     if (id) handleAck(id);
   });
   if (no) no.addEventListener('click', () => _closeAckPrompt(true));
+  const del = document.getElementById('ackPromptDelete');
+  if (del) del.addEventListener('click', () => {
+    const id = _ackPromptRowId;
+    _closeAckPrompt(false);
+    if (id) setRowDeletion(id, true);
+  });
   if (close) close.addEventListener('click', () => _closeAckPrompt(true));
   if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) _closeAckPrompt(true); });
   document.addEventListener('keydown', (e) => {
@@ -5693,6 +5764,37 @@ async function pushInternalToSheet(r, isInternal){
     throw new Error(`Smartsheets ${res.status}: ${t.slice(0, 200)}`);
   }
 }
+// Write the "Marked for Deletion" checkbox back to Smartsheets. Boolean
+// cell like Internal Only; silently no-ops if the column doesn't exist.
+async function pushDeletionToSheet(r, flag){
+  const col = columns['Marked for Deletion'];
+  if (!col) return false;
+  const c = getConfig();
+  if (!c.sheetId) return false;
+  const body = [{ id: r.id, cells: [{ columnId: col.id, value: !!flag, strict: false }] }];
+  const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', body);
+  if (res.status === 401 && !_teamMode) { _ecmSessionExpiredRedirect(); return false; }
+  return res.ok;
+}
+// Mark / unmark a row for deletion — optimistic, with rollback on failure.
+async function setRowDeletion(rowId, flag){
+  const r = rows.find(x => String(x.id) === String(rowId));
+  if (!r) return;
+  const prev = !!r.deletion;
+  r.deletion = !!flag;
+  try { render(); } catch {}
+  toast(flag ? 'Marked for deletion — checked in Smartsheets.' : 'Deletion mark removed.', 'ok');
+  try {
+    const ok = await pushDeletionToSheet(r, flag);
+    if (ok) return;
+    throw new Error('push failed');
+  } catch (e) {
+    r.deletion = prev;
+    try { render(); } catch {}
+    toast('Couldn\'t update the deletion checkbox — reverted.', 'err');
+  }
+}
+
 async function pushField(r, fieldTitle, value, rowEl){
   const col = fieldTitle === 'Due Date' ? ecmDueCol() : columns[fieldTitle];
   if (!col) return;
