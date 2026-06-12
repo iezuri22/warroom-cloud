@@ -405,7 +405,7 @@
     el.id = 'wr-sync-indicator';
     el.style.cssText = `
       position:fixed;bottom:12px;right:12px;z-index:9999;
-      font-family:'Outfit',system-ui,sans-serif;font-size:10px;font-weight:700;
+      font-family:'Inter',system-ui,sans-serif;font-size:10px;font-weight:700;
       padding:4px 8px;border-radius:6px;background:rgba(0,0,0,.6);color:#fff;
       opacity:0;transition:opacity .2s ease;pointer-events:none;letter-spacing:.5px;
     `;
