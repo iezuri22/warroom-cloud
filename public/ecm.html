@@ -3738,6 +3738,11 @@ function setExpanded(id){
   render();
 }
 
+// Owner-mode session expiry → bounce through login and come back here.
+function _ecmSessionExpiredRedirect(){
+  window.location.href = '/login.html?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+}
+
 async function ssProxy(path, method, body){
   const c = getConfig();
   if (!c.token) throw new Error('No Smartsheets token configured');
@@ -3846,6 +3851,22 @@ async function loadSheet(){
   btn.classList.add('syncing');
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}`, 'GET');
+    if (res.status === 401) {
+      // 401 from OUR proxy = the gate failed, not Smartsheets itself.
+      // Owner mode: the War Room session cookie expired — bounce through
+      // login and come straight back. Team mode: the magic-link token
+      // didn't check out, which a login page can't fix — explain instead.
+      if (!_teamMode) {
+        _ecmSessionExpiredRedirect();
+        return;
+      }
+      document.getElementById('list').innerHTML = `
+        <div class="nag">
+          <h3>Team access didn't check out</h3>
+          <p>The team token this browser has no longer matches the server. Reopen the magic link you were given (the URL with <code>?team=…</code>), or ping the owner to confirm the <code>TEAM_ACCESS_TOKEN</code> env var on Vercel.</p>
+        </div>`;
+      return;
+    }
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       throw new Error(`Smartsheets ${res.status}: ${t.slice(0,200)}`);
@@ -6519,6 +6540,10 @@ async function pushField(r, fieldTitle, value, rowEl){
   const body = [{ id: r.id, cells }];
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', body);
+    if (res.status === 401 && !_teamMode) {
+      _ecmSessionExpiredRedirect();
+      return;
+    }
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       throw new Error(`${res.status}: ${t.slice(0, 200)}`);
@@ -6590,6 +6615,10 @@ async function ssPushFields(r, fields){
   const dedupedCells = [..._byCol.values()];
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', [{ id: r.id, cells: dedupedCells }]);
+    if (res.status === 401 && !_teamMode) {
+      _ecmSessionExpiredRedirect();
+      return false;
+    }
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       console.warn('ssPushFields failed', res.status, t.slice(0, 200));

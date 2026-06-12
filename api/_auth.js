@@ -32,3 +32,13 @@ export function requireAuth(req, secret) {
   if (age > 30 * 24 * 60 * 60 * 1000) return false;
   return true;
 }
+
+// Age of a VALID session in ms, or null if the session is missing/invalid.
+// Used by /api/me to slide the expiry window for active users.
+export function sessionAgeMs(req, secret) {
+  if (!requireAuth(req, secret)) return null;
+  const raw = req.headers.cookie || '';
+  const match = raw.split(';').map(c => c.trim()).find(c => c.startsWith(COOKIE_NAME + '='));
+  const token = match.slice(COOKIE_NAME.length + 1).split('.')[0];
+  return Date.now() - parseInt(token);
+}
