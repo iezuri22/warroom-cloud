@@ -61,25 +61,28 @@
     --bg-elev: #FFFFFF;
     --bg-glass: rgba(243,244,246,.92);
     --backdrop: rgba(23,25,31,.45);
-    --well: rgba(17,19,24,.06);
-    --well2: rgba(17,19,24,.04);
-    --ink: #16181D;
-    --w03: rgba(17,19,24,.035); --w035: rgba(17,19,24,.04);
-    --w04: rgba(17,19,24,.045); --w05: rgba(17,19,24,.055);
-    --w06: rgba(17,19,24,.06);  --w07: rgba(17,19,24,.07);
-    --w08: rgba(17,19,24,.08);  --w10: rgba(17,19,24,.11);
-    --w12: rgba(17,19,24,.13);  --w14: rgba(17,19,24,.15);
-    --w15: rgba(17,19,24,.16);  --w16: rgba(17,19,24,.17);
-    --w18: rgba(17,19,24,.19);  --w20: rgba(17,19,24,.21);
-    --w22: rgba(17,19,24,.23);  --w25: rgba(17,19,24,.26);
-    --w30: rgba(17,19,24,.34);  --w35: rgba(17,19,24,.42);
-    --w40: rgba(17,19,24,.48);  --w45: rgba(17,19,24,.54);
-    --w50: rgba(17,19,24,.58);  --w55: rgba(17,19,24,.62);
-    --w60: rgba(17,19,24,.66);  --w65: rgba(17,19,24,.70);
-    --w70: rgba(17,19,24,.74);  --w75: rgba(17,19,24,.78);
-    --w80: rgba(17,19,24,.82);  --w85: rgba(17,19,24,.86);
-    --w90: rgba(17,19,24,.90);  --w92: rgba(17,19,24,.92);
-    --w95: rgba(17,19,24,.95);
+    --well: rgba(17,19,24,.07);
+    --well2: rgba(17,19,24,.05);
+    --ink: #111318;
+    /* Light ramp runs noticeably darker than a 1:1 alpha mirror — black on
+       near-white needs more alpha than white on near-black to read equally.
+       Low end (surfaces/borders) gets a smaller bump than text. */
+    --w03: rgba(17,19,24,.05);  --w035: rgba(17,19,24,.055);
+    --w04: rgba(17,19,24,.06);  --w05: rgba(17,19,24,.07);
+    --w06: rgba(17,19,24,.08);  --w07: rgba(17,19,24,.09);
+    --w08: rgba(17,19,24,.10);  --w10: rgba(17,19,24,.14);
+    --w12: rgba(17,19,24,.16);  --w14: rgba(17,19,24,.18);
+    --w15: rgba(17,19,24,.19);  --w16: rgba(17,19,24,.20);
+    --w18: rgba(17,19,24,.22);  --w20: rgba(17,19,24,.24);
+    --w22: rgba(17,19,24,.26);  --w25: rgba(17,19,24,.30);
+    --w30: rgba(17,19,24,.46);  --w35: rgba(17,19,24,.52);
+    --w40: rgba(17,19,24,.58);  --w45: rgba(17,19,24,.62);
+    --w50: rgba(17,19,24,.66);  --w55: rgba(17,19,24,.70);
+    --w60: rgba(17,19,24,.74);  --w65: rgba(17,19,24,.77);
+    --w70: rgba(17,19,24,.80);  --w75: rgba(17,19,24,.83);
+    --w80: rgba(17,19,24,.86);  --w85: rgba(17,19,24,.89);
+    --w90: rgba(17,19,24,.92);  --w92: rgba(17,19,24,.94);
+    --w95: rgba(17,19,24,.96);
     --blue: #2563EB;   --green: #15803D;  --orange: #C2410C;
     --amber: #A16207;  --amber2: #B45309; --violet: #6D28D9;
     --violet2: #7C3AED;--violet3: #6D28D9;--red: #DC2626;
@@ -2310,6 +2313,32 @@
     white-space: nowrap;
   }
   .wk-created svg { opacity: .7 }
+
+  /* Scope banner — shows when filters are narrowing the weekly picture */
+  .wk-scope {
+    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    padding: 9px 13px;
+    border-radius: 11px;
+    background: rgba(107,168,255,.08);
+    border: 1px solid rgba(107,168,255,.30);
+    font-size: 12px; font-weight: 600;
+    color: var(--w70);
+    line-height: 1.4;
+  }
+  .wk-scope svg { color: var(--blue); flex-shrink: 0 }
+  .wk-scope strong { color: var(--ink); font-weight: 800 }
+  .wk-scope button {
+    margin-left: auto;
+    padding: 5px 12px; border-radius: 99px;
+    background: rgba(107,168,255,.16);
+    border: 1px solid rgba(107,168,255,.45);
+    color: var(--blue);
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    letter-spacing: .2px;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .wk-scope button:hover { background: rgba(107,168,255,.26); color: var(--ink) }
 
   /* Program filter strip — one chip per program with live counts */
   .wk-prog-strip {
@@ -5650,9 +5679,10 @@ function _rowClosed(r){
 // included only when they carry a deadline (deferred work with a date still
 // needs to surface — but undated parked stuff shouldn't flood the backlog).
 function weeklyPool(){
+  // Everything open counts — including parked (On Hold / Waitlisted) rows,
+  // so the totals here match the team's "what's actually open" number.
   // Blank rows (no task name) are Smartsheet spacer rows — never show them.
   let pool = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
-  pool = pool.filter(r => r.dueDate || !ECM_PARKED_STATUSES.has(r.status));
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
   if (filterSearch) {
@@ -5790,6 +5820,22 @@ function renderWeekly(){
   const dated = pool.length - b.none.length;
   document.getElementById('metaCount').textContent = `${pool.length} open · ${dated} dated`;
 
+  // Scope banner — the owner filter defaults to the viewer, which is great
+  // for "my queue" but silently shrinks the weekly picture. Whenever any
+  // filter is narrowing the pool, say so out loud with a one-tap reset.
+  const totalOpen = rows.filter(r => (r.task || '').trim() && !_rowClosed(r)).length;
+  const scopeBits = [];
+  if (filterOwner) scopeBits.push(`owner: <strong>${escHtml(filterOwner)}</strong>`);
+  if (filterProgram) scopeBits.push(`program: <strong>${escHtml(filterProgram)}</strong>`);
+  if (filterSearch) scopeBits.push(`search: <strong>“${escHtml(filterSearch)}”</strong>`);
+  const scopeHTML = scopeBits.length
+    ? `<div class="wk-scope">
+         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+         <span>Filtered to ${scopeBits.join(' · ')} — showing <strong>${pool.length}</strong> of <strong>${totalOpen}</strong> open tasks</span>
+         <button type="button" id="wkClearScope">Show everything</button>
+       </div>`
+    : '';
+
   const dueColMissing = !ecmDueCol() && rows.length > 0;
   const bannerHTML = dueColMissing ? `
     <div class="wk-banner">
@@ -5821,7 +5867,6 @@ function renderWeekly(){
   // applied (but after owner/search) so every program stays clickable.
   const progStripHTML = (() => {
     let base = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
-    base = base.filter(r => r.dueDate || !ECM_PARKED_STATUSES.has(r.status));
     if (filterOwner) base = base.filter(r => r.owner === filterOwner);
     if (filterSearch) {
       const q = filterSearch.toLowerCase();
@@ -5883,7 +5928,7 @@ function renderWeekly(){
         : `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Show ${b.none.length} undated task${b.none.length === 1 ? '' : 's'}</button>`}
     </div>` : '';
 
-  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${progStripHTML}${sectionsHTML}${noneHTML}</div>`;
+  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${scopeHTML}${progStripHTML}${sectionsHTML}${noneHTML}</div>`;
   _wireWeekly(list);
 }
 
@@ -5904,6 +5949,16 @@ function _wireWeekly(list){
 
   const noDateToggle = list.querySelector('#wkNoDateToggle');
   if (noDateToggle) noDateToggle.addEventListener('click', () => { _wkShowNoDate = !_wkShowNoDate; render(); });
+
+  // Scope banner reset — clears owner + program + search in one tap.
+  const clearScope = list.querySelector('#wkClearScope');
+  if (clearScope) clearScope.addEventListener('click', () => {
+    filterOwner = ''; filterProgram = ''; filterSearch = '';
+    const os = document.getElementById('ownerSelect'); if (os) os.value = '';
+    const ps = document.getElementById('programSelect'); if (ps) ps.value = '';
+    const si = document.getElementById('searchInput'); if (si) si.value = '';
+    render();
+  });
 
   // Program filter — strip chips and the per-row program tags both set the
   // shared filter (kept in sync with the topbar dropdown).
@@ -5960,7 +6015,7 @@ function _wireWeekly(list){
       const v = inp.value || '';
       const ok = await ssPushFields(r, { 'Due Date': v });
       if (ok) { toast(v ? 'Deadline saved to Smartsheets.' : 'Deadline cleared.', 'ok'); render(); updateWeeklyCount(); }
-      else toast('Couldn\'t save the deadline.', 'err');
+      else toast('Couldn\'t save the deadline' + (_ssLastPushError ? ' — ' + _ssLastPushError : '.'), 'err');
     });
   });
   list.querySelectorAll('[data-wk-done]').forEach(b => b.addEventListener('click', (e) => {
@@ -6260,12 +6315,16 @@ async function applyCompleteRow(){
   // hits /sheets/{id}/rows and mirrors r.status / r.completionDate locally.
   const ok = await ssPushFields(r, { 'Status': 'Completed', 'Completion Date': date });
   if (!ok) {
-    if (status) { status.textContent = 'Push failed. Try again or open the row in Smartsheets.'; status.className = 'lr-status err'; }
+    if (status) {
+      status.textContent = 'Push failed' + (_ssLastPushError ? ': ' + _ssLastPushError : '. Try again or open the row in Smartsheets.');
+      status.className = 'lr-status err';
+    }
     if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
     return;
   }
   try { render(); } catch {}
   closeCompleteRowModal();
+  toast('Marked complete in Smartsheets.', 'ok');
 }
 function _wireNotifToggle(root){
   root.querySelectorAll('[data-notif-tab]').forEach(b => {
@@ -6352,6 +6411,9 @@ async function pushField(r, fieldTitle, value, rowEl){
 // result rather than the UI-feedback dance pushField does. Returns true on
 // HTTP 200, false otherwise. Mirrors local state on success so the next
 // render reflects the change without waiting for a sheet pull.
+// On failure the human-readable cause lands in _ssLastPushError so callers
+// can show WHY instead of a bare "failed".
+let _ssLastPushError = '';
 async function ssPushFields(r, fields){
   const c = getConfig();
   if (!c.token) return false;
@@ -6374,13 +6436,22 @@ async function ssPushFields(r, fields){
     }
   }
   if (cells.length === 0) return false;
+  // Smartsheets rejects a row update that contains two cells for the same
+  // column. Status=Completed auto-stamps Completion Date above, so an
+  // explicit Completion Date in the same call would duplicate it — keep the
+  // LAST cell per column (the explicit value beats the auto-stamp).
+  const _byCol = new Map();
+  cells.forEach(cl => _byCol.set(cl.columnId, cl));
+  const dedupedCells = [..._byCol.values()];
   try {
-    const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', [{ id: r.id, cells }]);
+    const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', [{ id: r.id, cells: dedupedCells }]);
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       console.warn('ssPushFields failed', res.status, t.slice(0, 200));
+      _ssLastPushError = `Smartsheets ${res.status}${t ? ' — ' + t.slice(0, 140) : ''}`;
       return false;
     }
+    _ssLastPushError = '';
     // Mirror local
     for (const [title, raw] of Object.entries(fields)) {
       if (title === 'Status') r.status = raw;
@@ -6395,6 +6466,7 @@ async function ssPushFields(r, fields){
     return true;
   } catch (e) {
     console.error('ssPushFields error', e);
+    _ssLastPushError = (e && e.message) ? e.message.slice(0, 140) : 'network error';
     return false;
   }
 }
