@@ -2340,35 +2340,87 @@
   }
   .wk-scope button:hover { background: rgba(107,168,255,.26); color: var(--ink) }
 
-  /* Program filter strip — one chip per program with live counts */
-  .wk-prog-strip {
-    display: flex; flex-wrap: wrap; gap: 6px;
+  /* Weekly-only Owner/Program multiselect dropdowns — live in the
+     No-deadline section header, independent from the topbar filters. */
+  body.view-weekly .topbar .owner-pick,
+  body.view-weekly .topbar .sort-dir-btn,
+  body.view-weekly .topbar .mobile-filters-btn { display: none !important }
+  .wk-filters {
+    margin-left: auto;
+    display: inline-flex; gap: 6px;
     align-items: center;
   }
-  .wk-prog-chip {
+  .wk-fd-wrap { position: relative; display: inline-flex }
+  .wk-fd-btn {
     display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 12px; border-radius: 99px;
-    background: transparent;
+    padding: 6px 12px; border-radius: 9px;
+    background: var(--w04);
     border: 1px solid var(--w12);
-    color: var(--w60);
+    color: var(--w65);
     font-family: inherit; font-size: 11.5px; font-weight: 700;
     cursor: pointer;
     transition: all .12s;
+    white-space: nowrap;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis;
   }
-  .wk-prog-chip:hover { color: var(--ink); border-color: var(--w25) }
-  .wk-prog-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0 }
-  .wk-prog-chip .ct {
-    font-size: 10px; font-weight: 800;
-    padding: 1px 6px; border-radius: 99px;
-    background: var(--w08); color: var(--w60);
+  .wk-fd-btn:hover { color: var(--ink); border-color: var(--w25) }
+  .wk-fd-btn.active {
+    background: rgba(107,168,255,.12);
+    border-color: rgba(107,168,255,.5);
+    color: var(--blue);
+  }
+  .wk-fd-btn svg { flex-shrink: 0; opacity: .7 }
+  .wk-fd-wrap.open .wk-fd-btn svg { transform: rotate(180deg) }
+  /* Popover opens UPWARD — the No-deadline header usually sits near the
+     bottom of the viewport, so dropping down would clip. */
+  .wk-fd-pop {
+    position: absolute;
+    bottom: calc(100% + 6px); right: 0;
+    z-index: 50;
+    min-width: 210px; max-width: min(280px, 84vw);
+    max-height: 320px; overflow-y: auto;
+    padding: 5px;
+    border-radius: 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--w14);
+    box-shadow: 0 14px 40px rgba(0,0,0,.4);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .wk-fd-opt {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: transparent; border: none;
+    color: var(--w80);
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: background .1s;
+    width: 100%;
+  }
+  .wk-fd-opt:hover { background: var(--w06) }
+  .wk-fd-opt .box {
+    flex-shrink: 0;
+    width: 17px; height: 17px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 5px;
+    background: var(--w04);
+    border: 1px solid var(--w20);
+    color: #fff;
+    font-size: 11px; font-weight: 900;
+    line-height: 1;
+  }
+  .wk-fd-opt.on .box { background: var(--blue); border-color: var(--blue) }
+  .wk-fd-opt .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0 }
+  .wk-fd-opt .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .wk-fd-opt .n {
+    flex-shrink: 0;
+    font-size: 10.5px; font-weight: 800;
+    color: var(--w45);
     font-variant-numeric: tabular-nums;
   }
-  .wk-prog-chip.active { font-weight: 800 }
-  .wk-prog-chip.active .ct { background: var(--w10); color: inherit }
-  .wk-prog-chip.reset {
-    border-style: dashed;
-    color: var(--w50);
-  }
+  .wk-fd-opt.all { border-bottom: 1px solid var(--w08); border-radius: 8px 8px 0 0; margin-bottom: 2px }
+  .wk-fd-opt.all .t { font-weight: 800; color: var(--w90) }
   .wk-owner {
     flex-shrink: 0;
     width: 22px; height: 22px; border-radius: 50%;
@@ -2470,6 +2522,10 @@
   }
   .wk-banner button:hover { background: rgba(255,200,77,.28); color: var(--ink) }
   @media (max-width: 640px) {
+    /* Section heads wrap so the filter dropdowns get their own line */
+    .wk-section-head { flex-wrap: wrap; row-gap: 6px }
+    .wk-filters { flex-basis: 100%; margin-left: 0 }
+    .wk-fd-pop { left: 0; right: auto }
     /* Line 1: status + title (truncated, same line). Line 2: meta + controls. */
     .wk-row { flex-wrap: wrap; row-gap: 8px }
     .wk-row-side {
@@ -5621,6 +5677,26 @@ async function applyLinkedTicket(){
 // due date (Overdue / Today / This week / Next week / Later / No deadline).
 // Due dates write straight back to the sheet's Due Date column.
 let _wkShowNoDate = false;
+// Weekly-only multiselect filters. Deliberately independent from the topbar
+// owner/program dropdowns (those drive All rows) — switching tabs shouldn't
+// silently re-scope the weekly picture. Empty set = everyone / all programs.
+// Persisted per device.
+let _wkOpenFilter = null; // 'owner' | 'program' | null — which popover is open
+let wkOwnerSel = (function(){ try { return new Set(JSON.parse(localStorage.getItem('ecm-wk-owners') || '[]')); } catch { return new Set(); } })();
+let wkProgramSel = (function(){ try { return new Set(JSON.parse(localStorage.getItem('ecm-wk-programs') || '[]')); } catch { return new Set(); } })();
+function _wkSaveFilterSel(){
+  try {
+    localStorage.setItem('ecm-wk-owners', JSON.stringify([...wkOwnerSel]));
+    localStorage.setItem('ecm-wk-programs', JSON.stringify([...wkProgramSel]));
+  } catch {}
+}
+// Close any open filter popover when clicking elsewhere.
+document.addEventListener('click', (e) => {
+  if (_wkOpenFilter && !e.target.closest('.wk-fd-wrap')) {
+    _wkOpenFilter = null;
+    if (currentView === 'weekly') { try { render(); } catch {} }
+  }
+});
 
 function _parseDateOnly(s){
   if (!s) return null;
@@ -5678,20 +5754,26 @@ function _rowClosed(r){
 // Pool of rows the Weekly view works with. Open work only; parked rows are
 // included only when they carry a deadline (deferred work with a date still
 // needs to surface — but undated parked stuff shouldn't flood the backlog).
+// All open named rows — the weekly view's unfiltered base.
+function _wkBaseOpen(){
+  return rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
+}
+function _wkSearchMatch(r, q){
+  return (r.task || '').toLowerCase().includes(q) ||
+    String(r.ticket || '').toLowerCase().includes(q) ||
+    (r.details || '').toLowerCase().includes(q);
+}
 function weeklyPool(){
   // Everything open counts — including parked (On Hold / Waitlisted) rows,
   // so the totals here match the team's "what's actually open" number.
   // Blank rows (no task name) are Smartsheet spacer rows — never show them.
-  let pool = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
-  if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
-  if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
+  // Scoping uses the weekly-only multiselects, NOT the topbar dropdowns.
+  let pool = _wkBaseOpen();
+  if (wkOwnerSel.size) pool = pool.filter(r => wkOwnerSel.has(r.owner));
+  if (wkProgramSel.size) pool = pool.filter(r => wkProgramSel.has(r.program));
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
-    pool = pool.filter(r =>
-      (r.task || '').toLowerCase().includes(q) ||
-      String(r.ticket || '').toLowerCase().includes(q) ||
-      (r.details || '').toLowerCase().includes(q)
-    );
+    pool = pool.filter(r => _wkSearchMatch(r, q));
   }
   return pool;
 }
@@ -5723,6 +5805,61 @@ function updateWeeklyCount(){
   const due = b.overdue.length + b.today.length + b.week.length;
   el.textContent = due > 0 ? String(due) : '';
   el.classList.toggle('has-new', b.overdue.length > 0);
+}
+
+// Multiselect filter dropdown (Owner / Program) — checkbox popover. Facet
+// counts are cross-filtered: each dropdown's counts respect the search box
+// and the OTHER dropdown, but not its own selection.
+function _wkFilterDropHTML(kind){
+  const isOwner = kind === 'owner';
+  const sel = isOwner ? wkOwnerSel : wkProgramSel;
+  const other = isOwner ? wkProgramSel : wkOwnerSel;
+  let facet = _wkBaseOpen();
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    facet = facet.filter(r => _wkSearchMatch(r, q));
+  }
+  if (other.size) facet = facet.filter(r => other.has(isOwner ? r.program : r.owner));
+  const counts = new Map();
+  facet.forEach(r => {
+    const v = isOwner ? r.owner : r.program;
+    if (v) counts.set(v, (counts.get(v) || 0) + 1);
+  });
+  // Selected values stay listed even when cross-filtering zeroes them out —
+  // otherwise you can't untick them.
+  sel.forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
+  const opts = [...counts.entries()];
+  if (isOwner) opts.sort((a, b) => a[0].localeCompare(b[0]));
+  else opts.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const label = isOwner ? 'Owner' : 'Program';
+  const btnText = sel.size === 0 ? `${label}: All`
+    : sel.size === 1 ? `${label}: ${[...sel][0]}`
+    : `${label}: ${sel.size} selected`;
+  const open = _wkOpenFilter === kind;
+  const optHTML = `
+    <button type="button" class="wk-fd-opt all ${sel.size === 0 ? 'on' : ''}" data-wkf-all="${kind}">
+      <span class="box">${sel.size === 0 ? '✓' : ''}</span>
+      <span class="t">All ${isOwner ? 'owners' : 'programs'}</span>
+    </button>` + opts.map(([v, n]) => {
+    const dot = isOwner
+      ? `<span class="dot" style="background:${ownerColor(v)}"></span>`
+      : `<span class="dot" style="background:${programColor(v).fg}"></span>`;
+    return `
+    <button type="button" class="wk-fd-opt ${sel.has(v) ? 'on' : ''}" data-wkf="${kind}" data-val="${escHtml(v)}">
+      <span class="box">${sel.has(v) ? '✓' : ''}</span>
+      ${dot}
+      <span class="t">${escHtml(v)}</span>
+      <span class="n">${n}</span>
+    </button>`;
+  }).join('');
+  return `
+    <span class="wk-fd-wrap ${open ? 'open' : ''}">
+      <button type="button" class="wk-fd-btn ${sel.size ? 'active' : ''}" data-wkf-toggle="${kind}" title="Filter the weekly view by ${label.toLowerCase()}">
+        ${escHtml(btnText)}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      ${open ? `<div class="wk-fd-pop">${optHTML}</div>` : ''}
+    </span>`;
 }
 
 function _wkRowHTML(r, bucket){
@@ -5820,13 +5957,12 @@ function renderWeekly(){
   const dated = pool.length - b.none.length;
   document.getElementById('metaCount').textContent = `${pool.length} open · ${dated} dated`;
 
-  // Scope banner — the owner filter defaults to the viewer, which is great
-  // for "my queue" but silently shrinks the weekly picture. Whenever any
-  // filter is narrowing the pool, say so out loud with a one-tap reset.
-  const totalOpen = rows.filter(r => (r.task || '').trim() && !_rowClosed(r)).length;
+  // Scope banner — whenever the weekly multiselects or the search box are
+  // narrowing the pool, say so out loud with a one-tap reset.
+  const totalOpen = _wkBaseOpen().length;
   const scopeBits = [];
-  if (filterOwner) scopeBits.push(`owner: <strong>${escHtml(filterOwner)}</strong>`);
-  if (filterProgram) scopeBits.push(`program: <strong>${escHtml(filterProgram)}</strong>`);
+  if (wkOwnerSel.size) scopeBits.push(`owner: <strong>${escHtml([...wkOwnerSel].join(', '))}</strong>`);
+  if (wkProgramSel.size) scopeBits.push(`program: <strong>${escHtml([...wkProgramSel].join(', '))}</strong>`);
   if (filterSearch) scopeBits.push(`search: <strong>“${escHtml(filterSearch)}”</strong>`);
   const scopeHTML = scopeBits.length
     ? `<div class="wk-scope">
@@ -5863,33 +5999,6 @@ function renderWeekly(){
       ${prioListHTML}
     </div>`;
 
-  // Program filter strip — counts computed before the program filter is
-  // applied (but after owner/search) so every program stays clickable.
-  const progStripHTML = (() => {
-    let base = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
-    if (filterOwner) base = base.filter(r => r.owner === filterOwner);
-    if (filterSearch) {
-      const q = filterSearch.toLowerCase();
-      base = base.filter(r =>
-        (r.task || '').toLowerCase().includes(q) ||
-        String(r.ticket || '').toLowerCase().includes(q) ||
-        (r.details || '').toLowerCase().includes(q));
-    }
-    const counts = new Map();
-    base.forEach(r => { if (r.program) counts.set(r.program, (counts.get(r.program) || 0) + 1); });
-    if (!counts.size) return '';
-    const progs = [...counts.entries()].sort((a, c) => c[1] - a[1]);
-    const chips = progs.map(([name, n]) => {
-      const pc = programColor(name);
-      const active = filterProgram === name;
-      return `<button type="button" class="wk-prog-chip ${active ? 'active' : ''}" data-wk-prog="${escHtml(name)}" style="${active ? `background:${pc.bg};border-color:${pc.fg};color:${pc.fg}` : ''}"><span class="dot" style="background:${pc.fg}"></span>${escHtml(name)}<span class="ct">${n}</span></button>`;
-    }).join('');
-    const reset = filterProgram
-      ? `<button type="button" class="wk-prog-chip reset" data-wk-prog="">All programs</button>`
-      : '';
-    return `<div class="wk-prog-strip">${reset}${chips}</div>`;
-  })();
-
   const SECTIONS = [
     { key: 'overdue', label: 'Overdue', cls: 'overdue', hint: 'needs a new date or a push' },
     { key: 'today', label: 'Due today', cls: 'today', hint: '' },
@@ -5915,21 +6024,35 @@ function renderWeekly(){
       </div>`;
   });
   // Undated backlog — collapsed by default so the dated plan stays the focus.
-  const noneHTML = b.none.length ? `
+  // Always rendered (even at 0) because the weekly Owner/Program multiselect
+  // filters live in this section's header.
+  const noneBodyHTML = !b.none.length
+    ? `<div class="wk-empty-sec">Nothing undated in this view.</div>`
+    : (_wkShowNoDate
+        ? b.none.map(r => _wkRowHTML(r, 'none')).join('') +
+          `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Hide undated tasks</button>`
+        : `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Show ${b.none.length} undated task${b.none.length === 1 ? '' : 's'}</button>`);
+  const noneHTML = `
     <div class="wk-section">
       <div class="wk-section-head">
         <h3 style="color:var(--w50)">No deadline</h3>
         <span class="ct">${b.none.length}</span>
         <span class="hint">set dates here to pull them into the plan</span>
+        <span class="wk-filters">
+          ${_wkFilterDropHTML('owner')}
+          ${_wkFilterDropHTML('program')}
+        </span>
       </div>
-      ${_wkShowNoDate
-        ? b.none.map(r => _wkRowHTML(r, 'none')).join('') +
-          `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Hide undated tasks</button>`
-        : `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Show ${b.none.length} undated task${b.none.length === 1 ? '' : 's'}</button>`}
-    </div>` : '';
+      ${noneBodyHTML}
+    </div>`;
 
-  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${scopeHTML}${progStripHTML}${sectionsHTML}${noneHTML}</div>`;
+  // Keep the scroll position across re-renders — the filters live at the
+  // bottom of a long list, so a scroll-to-top on every checkbox tap would
+  // make the dropdowns unusable.
+  const prevScroll = list.scrollTop;
+  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${scopeHTML}${sectionsHTML}${noneHTML}</div>`;
   _wireWeekly(list);
+  list.scrollTop = prevScroll;
 }
 
 function _wireWeekly(list){
@@ -5950,24 +6073,48 @@ function _wireWeekly(list){
   const noDateToggle = list.querySelector('#wkNoDateToggle');
   if (noDateToggle) noDateToggle.addEventListener('click', () => { _wkShowNoDate = !_wkShowNoDate; render(); });
 
-  // Scope banner reset — clears owner + program + search in one tap.
+  // Scope banner reset — clears the weekly multiselects + search in one tap.
+  // Deliberately does NOT touch the topbar dropdowns (those belong to the
+  // other tabs now).
   const clearScope = list.querySelector('#wkClearScope');
   if (clearScope) clearScope.addEventListener('click', () => {
-    filterOwner = ''; filterProgram = ''; filterSearch = '';
-    const os = document.getElementById('ownerSelect'); if (os) os.value = '';
-    const ps = document.getElementById('programSelect'); if (ps) ps.value = '';
+    wkOwnerSel.clear(); wkProgramSel.clear(); filterSearch = '';
+    _wkSaveFilterSel();
     const si = document.getElementById('searchInput'); if (si) si.value = '';
     render();
   });
 
-  // Program filter — strip chips and the per-row program tags both set the
-  // shared filter (kept in sync with the topbar dropdown).
+  // Multiselect filter dropdowns (No-deadline section header)
+  list.querySelectorAll('[data-wkf-toggle]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const k = b.getAttribute('data-wkf-toggle');
+    _wkOpenFilter = _wkOpenFilter === k ? null : k;
+    render();
+  }));
+  list.querySelectorAll('[data-wkf]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const k = b.getAttribute('data-wkf');
+    const v = b.getAttribute('data-val') || '';
+    const sel = k === 'owner' ? wkOwnerSel : wkProgramSel;
+    if (sel.has(v)) sel.delete(v); else sel.add(v);
+    _wkSaveFilterSel();
+    render();
+  }));
+  list.querySelectorAll('[data-wkf-all]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const k = b.getAttribute('data-wkf-all');
+    (k === 'owner' ? wkOwnerSel : wkProgramSel).clear();
+    _wkSaveFilterSel();
+    render();
+  }));
+
+  // Per-row program tags toggle that program in the weekly multiselect.
   list.querySelectorAll('[data-wk-prog]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
     const prog = b.getAttribute('data-wk-prog') || '';
-    filterProgram = (filterProgram === prog) ? '' : prog;
-    const sel = document.getElementById('programSelect');
-    if (sel) sel.value = filterProgram;
+    if (!prog) return;
+    if (wkProgramSel.has(prog)) wkProgramSel.delete(prog); else wkProgramSel.add(prog);
+    _wkSaveFilterSel();
     render();
   }));
 
