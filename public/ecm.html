@@ -2013,6 +2013,45 @@
     padding: 10px 12px;
     line-height: 1.45;
   }
+  /* "+ New priority" option + its inline title form */
+  .wk-prio-pop .wk-prio-pop-new-btn { border-top: 1px solid var(--w08); margin-top: 2px; border-radius: 0 0 8px 8px }
+  .wk-prio-pop .wk-prio-pop-new-btn .t { color: var(--blue); font-weight: 800 }
+  .wk-prio-pop .wk-prio-pop-new-btn .box {
+    background: rgba(107,168,255,.12);
+    border-color: rgba(107,168,255,.45);
+    color: var(--blue);
+  }
+  .wk-prio-pop-new {
+    display: flex; gap: 6px;
+    padding: 8px 6px 4px;
+    border-top: 1px solid var(--w08);
+    margin-top: 2px;
+  }
+  .wk-prio-pop-new-input {
+    flex: 1; min-width: 0;
+    padding: 8px 10px;
+    background: var(--w04);
+    border: 1px solid var(--w14);
+    border-radius: 8px;
+    color: var(--ink);
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    outline: none;
+  }
+  .wk-prio-pop-new-input::placeholder { color: var(--w30) }
+  .wk-prio-pop-new-input:focus { border-color: rgba(107,168,255,.55) }
+  .wk-prio-pop .wk-prio-pop-new-go {
+    flex-shrink: 0;
+    width: auto; height: auto;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: rgba(107,168,255,.16);
+    border: 1px solid rgba(107,168,255,.42);
+    color: var(--blue);
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .wk-prio-pop .wk-prio-pop-new-go:hover { background: rgba(107,168,255,.26); border-color: rgba(107,168,255,.42); color: var(--ink) }
   /* Options inside the popover shed the 26px icon-button chrome that
      .wk-quick button would otherwise force on them. */
   .wk-quick .wk-fd-opt, .wk-quick .wk-fd-opt:hover {
@@ -2780,7 +2819,7 @@ function prioritiesForRow(rowId){
   const rid = String(rowId);
   return activePriorities().filter(p => Array.isArray(p.rowIds) && p.rowIds.includes(rid));
 }
-async function addPriority(title, program){
+async function addPriority(title, program, rowIds){
   const t = (title || '').trim();
   if (!t) return;
   const maxOrder = priorities.reduce((m, p) => Math.max(m, p.order || 0), 0);
@@ -2794,7 +2833,8 @@ async function addPriority(title, program){
     createdBy: '',
     createdAt: new Date().toISOString(),
     archived: false,
-    rowIds: []
+    // Seed links so create-and-link is one write (no snapshot race).
+    rowIds: Array.isArray(rowIds) ? rowIds.map(String) : []
   });
 }
 async function updatePriority(id, patch){
@@ -4703,6 +4743,11 @@ function _wkSaveFilterSel(){
 // it drops down (rows near the top of the viewport can't fit an upward pop).
 let _wkPrioPopRow = null;
 let _wkPrioPopDown = false;
+// Inline "create a priority" form inside the popover. The title lives in
+// module state so a background re-render (Firestore snapshots, sheet refresh)
+// rebuilds the input with the text intact.
+let _wkPrioPopCreating = false;
+let _wkPrioPopNewTitle = '';
 // Program choice in the "Add a priority" row — kept across re-renders (the
 // panel re-renders on every snapshot) and cleared after a successful add.
 let _wkPrioAddProg = '';
@@ -5017,16 +5062,17 @@ function _wkRowHTML(r, bucket){
     </div>`;
 }
 
-// Popover listing the active priorities so a task can be pushed into one in
-// place. Priorities tagged with the task's program lead; the rest follow.
+// Popover for pushing a task into a weekly priority. Scoped to the task's
+// program: only same-program priorities show (untagged priorities for
+// untagged tasks), plus anything this row is already linked to so it can be
+// unlinked from here. A "+ New priority" row creates one in place — tagged
+// with the task's program and linked to the task in the same write.
 function _wkPrioPopHTML(r){
   const act = activePriorities();
-  if (!act.length) {
-    return `<div class="wk-fd-pop wk-prio-pop"><div class="wk-prio-pop-empty">No priorities yet — add one in the Priorities panel up top.</div></div>`;
-  }
   const prog = r.program || '';
-  const match = prog ? act.filter(p => (p.program || '') === prog) : [];
-  const rest = act.filter(p => !match.includes(p));
+  const matching = act.filter(p => (p.program || '') === prog);
+  const linkedElsewhere = act.filter(p =>
+    !matching.includes(p) && Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id)));
   const opt = p => {
     const linked = Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id));
     return `
@@ -5037,13 +5083,27 @@ function _wkPrioPopHTML(r){
       ${p.program ? `<span class="n">${escHtml(p.program)}</span>` : ''}
     </button>`;
   };
+  const createHTML = _wkPrioPopCreating
+    ? `<div class="wk-prio-pop-new">
+        <input type="text" class="wk-prio-pop-new-input" id="wkPrioPopNewInput" placeholder="${prog ? escHtml(prog) + ' priority…' : 'New priority…'}" maxlength="120" value="${escHtml(_wkPrioPopNewTitle)}" autocomplete="off">
+        <button type="button" class="wk-prio-pop-new-go" data-wk-prio-create="${escHtml(String(r.id))}">Add</button>
+      </div>`
+    : `<button type="button" class="wk-fd-opt wk-prio-pop-new-btn" data-wk-prio-new="1">
+        <span class="box">+</span>
+        <span class="t">New ${prog ? escHtml(prog) + ' ' : ''}priority</span>
+      </button>`;
   const parts = [];
-  if (match.length) {
-    parts.push(`<div class="wk-prio-pop-sec">${escHtml(prog)}</div>`);
-    parts.push(match.map(opt).join(''));
-    if (rest.length) parts.push(`<div class="wk-prio-pop-sec">Other priorities</div>`);
+  if (matching.length) {
+    if (prog) parts.push(`<div class="wk-prio-pop-sec">${escHtml(prog)}</div>`);
+    parts.push(matching.map(opt).join(''));
+  } else {
+    parts.push(`<div class="wk-prio-pop-empty">No ${prog ? escHtml(prog) + ' ' : ''}priorities yet — create one:</div>`);
   }
-  parts.push(rest.map(opt).join(''));
+  if (linkedElsewhere.length) {
+    parts.push(`<div class="wk-prio-pop-sec">Linked · other programs</div>`);
+    parts.push(linkedElsewhere.map(opt).join(''));
+  }
+  parts.push(createHTML);
   return `<div class="wk-fd-pop wk-prio-pop">${parts.join('')}</div>`;
 }
 
@@ -5332,6 +5392,8 @@ function _wireWeekly(list){
   list.querySelectorAll('[data-wk-prio-pop]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
     const id = b.getAttribute('data-wk-prio-pop');
+    _wkPrioPopCreating = false;
+    _wkPrioPopNewTitle = '';
     if (_wkPrioPopRow != null && String(_wkPrioPopRow) === String(id)) {
       _wkPrioPopRow = null;
     } else {
@@ -5366,6 +5428,53 @@ function _wireWeekly(list){
       console.error(err);
       render();
       toast('Couldn\'t update the priority.', 'err');
+    }
+  }));
+  // "+ New priority" inside the popover — swaps to an inline title input.
+  list.querySelectorAll('[data-wk-prio-new]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _wkPrioPopCreating = true;
+    _wkPrioPopNewTitle = '';
+    render();
+    const inp = document.getElementById('wkPrioPopNewInput');
+    if (inp) inp.focus();
+  }));
+  const popNewInput = list.querySelector('#wkPrioPopNewInput');
+  if (popNewInput) {
+    popNewInput.addEventListener('click', e => e.stopPropagation());
+    popNewInput.addEventListener('input', () => { _wkPrioPopNewTitle = popNewInput.value || ''; });
+    popNewInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        list.querySelector('[data-wk-prio-create]')?.click();
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        _wkPrioPopCreating = false;
+        _wkPrioPopNewTitle = '';
+        render();
+      }
+    });
+  }
+  list.querySelectorAll('[data-wk-prio-create]').forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const rowId = b.getAttribute('data-wk-prio-create');
+    const r = rows.find(x => String(x.id) === String(rowId));
+    const inp = document.getElementById('wkPrioPopNewInput');
+    const title = ((inp && inp.value) || _wkPrioPopNewTitle || '').trim();
+    if (!title) { if (inp) inp.focus(); return; }
+    const prog = (r && r.program) || '';
+    _wkPrioPopRow = null;
+    _wkPrioPopCreating = false;
+    _wkPrioPopNewTitle = '';
+    try {
+      // One write: the new priority arrives already linked to this task.
+      await addPriority(title, prog, [String(rowId)]);
+      render();
+      toast(`Created “${title}” and pushed the task to it.`, 'ok');
+    } catch (err) {
+      console.error(err);
+      render();
+      toast('Couldn\'t create the priority.', 'err');
     }
   }));
 
