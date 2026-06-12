@@ -1613,6 +1613,40 @@
     transition: all .12s;
   }
   .wk-prio-add-btn:hover { background: rgba(107,168,255,.26); color: var(--ink) }
+  .wk-prio-prog-pick {
+    flex-shrink: 0;
+    max-width: 180px;
+    padding: 0 10px;
+    background: var(--w04);
+    border: 1px solid var(--w10);
+    border-radius: 11px;
+    color: var(--w65);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    outline: none;
+    cursor: pointer;
+  }
+  .wk-prio-prog-pick:focus { border-color: rgba(107,168,255,.55) }
+  @media (max-width: 560px) {
+    .wk-prio-prog-pick { max-width: 110px }
+  }
+  /* Program tag on a priority card — a select dressed as a tag so the
+     program can be changed in place. */
+  .wk-prio-prog {
+    flex-shrink: 0;
+    max-width: 140px;
+    padding: 3px 8px;
+    border-radius: 99px;
+    background: var(--w04);
+    border: 1px solid var(--w12);
+    color: var(--w50);
+    font-family: inherit; font-size: 10px; font-weight: 800;
+    letter-spacing: .2px;
+    outline: none; cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: border-color .12s;
+  }
+  .wk-prio-prog:hover, .wk-prio-prog:focus { border-color: var(--w25) }
   .wk-prio-empty {
     font-size: 12px; font-weight: 600;
     color: var(--w40);
@@ -1963,6 +1997,31 @@
   .wk-quick button:hover, .wk-quick a:hover { color: var(--ink); border-color: var(--w30) }
   .wk-quick .q-done:hover { color: var(--green); border-color: rgba(74,222,128,.5); background: rgba(74,222,128,.08) }
   .wk-quick .q-push:hover { color: var(--orange); border-color: rgba(255,138,61,.5); background: rgba(255,138,61,.08) }
+  /* Row → weekly-priority popover (flag button in the quick cluster) */
+  .wk-quick .q-prio.on { color: var(--blue); border-color: rgba(107,168,255,.45); background: rgba(107,168,255,.10) }
+  .wk-quick .q-prio:hover { color: var(--blue); border-color: rgba(107,168,255,.5); background: rgba(107,168,255,.08) }
+  .wk-prio-pop { min-width: 235px }
+  .wk-prio-pop-sec {
+    font-size: 9.5px; font-weight: 900; letter-spacing: .9px;
+    text-transform: uppercase;
+    color: var(--w40);
+    padding: 7px 10px 3px;
+  }
+  .wk-prio-pop-empty {
+    font-size: 12px; font-weight: 600;
+    color: var(--w45);
+    padding: 10px 12px;
+    line-height: 1.45;
+  }
+  /* Options inside the popover shed the 26px icon-button chrome that
+     .wk-quick button would otherwise force on them. */
+  .wk-quick .wk-fd-opt, .wk-quick .wk-fd-opt:hover {
+    width: 100%; height: auto;
+    justify-content: flex-start;
+    border: none; border-radius: 8px;
+  }
+  .wk-quick .wk-fd-opt { background: transparent; color: var(--w80); padding: 8px 10px }
+  .wk-quick .wk-fd-opt:hover { background: var(--w06); color: var(--w95) }
   .wk-empty-sec {
     padding: 10px 12px;
     border-radius: 12px;
@@ -2009,6 +2068,10 @@
     .wk-section-head { flex-wrap: wrap; row-gap: 6px }
     .wk-filters { flex-basis: 100%; margin-left: 0 }
     .wk-fd-pop { left: 0; right: auto }
+    /* …except the row-level priority popover: it hangs off the quick-action
+       cluster at the row's right edge, so left-anchoring would push it
+       off-screen. */
+    .wk-prio-pop-wrap .wk-fd-pop { left: auto; right: 0 }
     /* Line 1: status + title (truncated, same line). Line 2: meta + controls. */
     .wk-row { row-gap: 8px }
     .wk-row-side {
@@ -2075,6 +2138,23 @@
     font-size: 10px; align-items: center;
     color: var(--w50); font-weight: 700;
   }
+  .plk-due { white-space: nowrap; font-variant-numeric: tabular-nums }
+  .plk-due.none { color: var(--w35); font-style: italic }
+  .plk-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px }
+  .plk-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 99px;
+    background: var(--w04);
+    border: 1px solid var(--w12);
+    color: var(--w60);
+    font-family: inherit; font-size: 11px; font-weight: 800;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .plk-chip:hover { color: var(--ink); border-color: var(--w25) }
+  .plk-chip.active { background: rgba(107,168,255,.14); border-color: rgba(107,168,255,.5); color: var(--blue) }
+  .plk-chip .n { font-size: 10px; font-weight: 800; color: var(--w45); font-variant-numeric: tabular-nums }
+  .plk-chip.active .n { color: var(--blue) }
 
   /* Ack-on-touch prompt editable fields */
   .apf-grid {
@@ -2406,6 +2486,7 @@
     </div>
     <div class="lr-body" id="plkBody" style="gap:2px">
       <input type="text" class="plk-search" id="plkSearch" placeholder="Search tasks…" autocomplete="off">
+      <div class="plk-chips" id="plkChips"></div>
       <div id="plkResults" style="display:flex;flex-direction:column;gap:2px"></div>
     </div>
     <div class="lr-foot">
@@ -2444,8 +2525,8 @@ const acksCol = collection(db, 'ecm_acks');
 const internalCol = collection(db, 'ecm_internal');
 const notificationsCol = collection(db, 'ecm_notifications');
 // Weekly priorities — team-shared "what matters this week" headers that ECM
-// rows get linked to. Doc shape: { title, order, color, createdBy, createdAt,
-// archived, rowIds: [smartsheetRowId, ...] }.
+// rows get linked to. Doc shape: { title, program, order, color, createdBy,
+// createdAt, archived, rowIds: [smartsheetRowId, ...] }.
 const prioritiesCol = collection(db, 'ecm_priorities');
 // Push queue → Personal page. ecm.html doesn't load sync-client.js (it's the
 // team page, no War Room login), so it can't safely touch the Neon-synced
@@ -2699,12 +2780,15 @@ function prioritiesForRow(rowId){
   const rid = String(rowId);
   return activePriorities().filter(p => Array.isArray(p.rowIds) && p.rowIds.includes(rid));
 }
-async function addPriority(title){
+async function addPriority(title, program){
   const t = (title || '').trim();
   if (!t) return;
   const maxOrder = priorities.reduce((m, p) => Math.max(m, p.order || 0), 0);
   await addDoc(prioritiesCol, {
     title: t,
+    // Optional program tag — drives the panel filter and lets task rows
+    // offer "push to a priority in this program" matches.
+    program: (program || '').trim(),
     order: maxOrder + 1,
     color: priorities.length % PRIO_COLORS.length,
     createdBy: '',
@@ -3351,11 +3435,10 @@ function populateOwnerSelect(){
   // an explicit dropdown choice.
   sel.innerHTML = `<option value="">All owners</option>` + owners.map(o => `<option value="${escHtml(o)}" ${o === filterOwner ? 'selected' : ''}>${escHtml(o)}</option>`).join('');
 }
-function populateProgramSelect(){
-  const sel = document.getElementById('programSelect');
-  if (!sel) return;
-  // Use the column's defined options if available (covers programs that aren't
-  // currently in any visible row), else fall back to discovered values.
+// Program picklist — the column's defined options if available (covers
+// programs that aren't currently in any visible row), else discovered values.
+// Shared by the topbar filter and the weekly-priority program pickers.
+function allPrograms(){
   const colProgram = columns['Program'];
   let programs = [];
   if (colProgram && Array.isArray(colProgram.options) && colProgram.options.length) {
@@ -3363,7 +3446,12 @@ function populateProgramSelect(){
   } else {
     programs = Array.from(new Set(rows.map(r => r.program).filter(Boolean)));
   }
-  programs.sort();
+  return programs.sort();
+}
+function populateProgramSelect(){
+  const sel = document.getElementById('programSelect');
+  if (!sel) return;
+  const programs = allPrograms();
   sel.innerHTML = `<option value="">All programs</option>` + programs.map(p => `<option value="${escHtml(p)}" ${p === filterProgram ? 'selected' : ''}>${escHtml(p)}</option>`).join('');
 }
 
@@ -3658,7 +3746,7 @@ function _drawerHTML(r){
             <span class="lbl">Weekly priority</span>
             <select class="select" data-prio-pick="${escHtml(String(r.id))}">
               <option value="">— None —</option>
-              ${activePriorities().map(p => `<option value="${escHtml(p._id)}" ${Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id)) ? 'selected' : ''}>${escHtml(p.title)}</option>`).join('')}
+              ${activePriorities().map(p => `<option value="${escHtml(p._id)}" ${Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id)) ? 'selected' : ''}>${escHtml(p.title + (p.program ? ` · ${p.program}` : ''))}</option>`).join('')}
             </select>
           </div>
           <div class="field field-compact">
@@ -4611,6 +4699,13 @@ function _wkSaveFilterSel(){
     localStorage.setItem('ecm-prio-programs', JSON.stringify([...prioProgramSel]));
   } catch {}
 }
+// Per-row "push to priority" popover — which row it's open for, and whether
+// it drops down (rows near the top of the viewport can't fit an upward pop).
+let _wkPrioPopRow = null;
+let _wkPrioPopDown = false;
+// Program choice in the "Add a priority" row — kept across re-renders (the
+// panel re-renders on every snapshot) and cleared after a successful add.
+let _wkPrioAddProg = '';
 // Inline expansion on the Weekly view — same drawer as the main list, opened
 // in place instead of bouncing the user to another tab.
 let _wkExpandedId = null;
@@ -4634,12 +4729,12 @@ function _wkRevealRow(id){
     setTimeout(() => el.classList.remove('row-jump-flash'), 1600);
   }, 60);
 }
-// Close any open filter popover when clicking elsewhere.
+// Close any open filter / priority popover when clicking elsewhere.
 document.addEventListener('click', (e) => {
-  if (_wkOpenFilter && !e.target.closest('.wk-fd-wrap')) {
-    _wkOpenFilter = null;
-    if (currentView === 'weekly') { try { render(); } catch {} }
-  }
+  let dirty = false;
+  if (_wkOpenFilter && !e.target.closest('.wk-fd-wrap')) { _wkOpenFilter = null; dirty = true; }
+  if (_wkPrioPopRow != null && !e.target.closest('.wk-prio-pop-wrap')) { _wkPrioPopRow = null; dirty = true; }
+  if (dirty && currentView === 'weekly') { try { render(); } catch {} }
 });
 
 function _parseDateOnly(s){
@@ -4807,9 +4902,11 @@ function _wkFilterDropHTML(kind){
 }
 
 // ---- Priorities panel program filter ----
-// A priority "belongs" to the programs of its linked tasks.
+// A priority "belongs" to its own program tag plus the programs of its
+// linked tasks.
 function _prioPrograms(p){
   const set = new Set();
+  if (p.program) set.add(p.program);
   (Array.isArray(p.rowIds) ? p.rowIds : []).forEach(id => {
     const r = rows.find(x => String(x.id) === String(id));
     if (r && r.program) set.add(r.program);
@@ -4882,6 +4979,14 @@ function _wkRowHTML(r, bucket){
   const pushBtn = canPushToMyDay()
     ? `<button type="button" class="q-push" data-wk-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>`
     : '';
+  const prioPopOpen = _wkPrioPopRow != null && String(_wkPrioPopRow) === String(r.id);
+  const prioBtn = `
+    <span class="wk-fd-wrap wk-prio-pop-wrap ${prioPopOpen ? 'open' : ''} ${_wkPrioPopDown ? 'down' : ''}">
+      <button type="button" class="q-prio ${prios.length ? 'on' : ''}" data-wk-prio-pop="${escHtml(String(r.id))}" title="${prios.length ? 'In: ' + escHtml(prios.map(p => p.title).join(' · ')) : 'Push to a weekly priority'}">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="${prios.length ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+      </button>
+      ${prioPopOpen ? _wkPrioPopHTML(r) : ''}
+    </span>`;
   const ssLink = r.permalink
     ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
     : '';
@@ -4902,6 +5007,7 @@ function _wkRowHTML(r, bucket){
           <span class="wk-quick">
             ${starBtnHTML(r)}
             <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+            ${prioBtn}
             ${pushBtn}
             ${ssLink}
           </span>
@@ -4909,6 +5015,36 @@ function _wkRowHTML(r, bucket){
       </div>
       ${expanded ? _drawerHTML(r) : ''}
     </div>`;
+}
+
+// Popover listing the active priorities so a task can be pushed into one in
+// place. Priorities tagged with the task's program lead; the rest follow.
+function _wkPrioPopHTML(r){
+  const act = activePriorities();
+  if (!act.length) {
+    return `<div class="wk-fd-pop wk-prio-pop"><div class="wk-prio-pop-empty">No priorities yet — add one in the Priorities panel up top.</div></div>`;
+  }
+  const prog = r.program || '';
+  const match = prog ? act.filter(p => (p.program || '') === prog) : [];
+  const rest = act.filter(p => !match.includes(p));
+  const opt = p => {
+    const linked = Array.isArray(p.rowIds) && p.rowIds.includes(String(r.id));
+    return `
+    <button type="button" class="wk-fd-opt ${linked ? 'on' : ''}" data-wk-prio-add="${escHtml(p._id)}" data-row="${escHtml(String(r.id))}">
+      <span class="box">${linked ? '✓' : ''}</span>
+      <span class="dot" style="background:${prioColorVar(p)}"></span>
+      <span class="t">${escHtml(p.title)}</span>
+      ${p.program ? `<span class="n">${escHtml(p.program)}</span>` : ''}
+    </button>`;
+  };
+  const parts = [];
+  if (match.length) {
+    parts.push(`<div class="wk-prio-pop-sec">${escHtml(prog)}</div>`);
+    parts.push(match.map(opt).join(''));
+    if (rest.length) parts.push(`<div class="wk-prio-pop-sec">Other priorities</div>`);
+  }
+  parts.push(rest.map(opt).join(''));
+  return `<div class="wk-fd-pop wk-prio-pop">${parts.join('')}</div>`;
 }
 
 function _wkPrioCardHTML(p){
@@ -4919,6 +5055,16 @@ function _wkPrioCardHTML(p){
   const total = linked.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const col = prioColorVar(p);
+  // Program tag — a select dressed as a tag so it's editable in place.
+  // Include the saved program even if the sheet's picklist dropped it.
+  const progOpts = allPrograms();
+  const progList = p.program && !progOpts.includes(p.program) ? [p.program, ...progOpts] : progOpts;
+  const pc = p.program ? programColor(p.program) : null;
+  const progSelHTML = `
+    <select class="wk-prio-prog" data-prio-prog="${escHtml(p._id)}" title="${p.program ? 'Program: ' + escHtml(p.program) : 'Tag this priority with a program'}" style="${pc ? `background:${pc.bg};border-color:${pc.bd};color:${pc.fg}` : ''}">
+      <option value="">${p.program ? 'No program' : '+ program'}</option>
+      ${progList.map(g => `<option value="${escHtml(g)}" ${g === p.program ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
+    </select>`;
   const chips = linked.map(r => `
     <button type="button" class="wk-prio-task-chip ${_rowClosed(r) ? 'done' : ''}" data-wk-jump="${escHtml(String(r.id))}" title="${escHtml(r.task || '')}${r.owner ? ' · ' + escHtml(r.owner) : ''}">
       <span class="st-dot" style="background:${statusDotVar(r.status)}"></span>
@@ -4929,6 +5075,7 @@ function _wkPrioCardHTML(p){
       <div class="wk-prio-card-top">
         <span class="wk-prio-dot" style="background:${col}"></span>
         <input class="wk-prio-name" data-prio-name="${escHtml(p._id)}" value="${escHtml(p.title || '')}" title="Click to rename">
+        ${progSelHTML}
         <span class="wk-prio-progress ${total > 0 && done === total ? 'complete' : ''}">${done}/${total} done</span>
         <span class="wk-prio-actions">
           <button type="button" data-prio-up="${escHtml(p._id)}" title="Move up">↑</button>
@@ -4997,6 +5144,10 @@ function renderWeekly(){
       </div>
       <div class="wk-prio-add-row">
         <input type="text" class="wk-prio-input" id="wkPrioInput" placeholder="Add a priority for this week…" maxlength="120" autocomplete="off">
+        <select class="wk-prio-prog-pick" id="wkPrioProgram" title="Tag the new priority with a program (optional)">
+          <option value="">No program</option>
+          ${allPrograms().map(g => `<option value="${escHtml(g)}" ${g === _wkPrioAddProg ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
+        </select>
         <button type="button" class="wk-prio-add-btn" id="wkPrioAdd">Add</button>
       </div>
       ${prioListHTML}
@@ -5074,11 +5225,14 @@ function renderWeekly(){
 function _wireWeekly(list){
   const addBtn = list.querySelector('#wkPrioAdd');
   const addInput = list.querySelector('#wkPrioInput');
+  const addProg = list.querySelector('#wkPrioProgram');
+  if (addProg) addProg.addEventListener('change', () => { _wkPrioAddProg = addProg.value || ''; });
   const doAdd = async () => {
     const v = (addInput && addInput.value || '').trim();
     if (!v) return;
     addInput.value = '';
-    try { await addPriority(v); } catch (e) { console.error(e); toast('Couldn\'t save the priority.', 'err'); }
+    const prog = addProg ? addProg.value : '';
+    try { await addPriority(v, prog); _wkPrioAddProg = ''; } catch (e) { console.error(e); toast('Couldn\'t save the priority.', 'err'); }
   };
   if (addBtn) addBtn.addEventListener('click', doAdd);
   if (addInput) addInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
@@ -5107,6 +5261,7 @@ function _wireWeekly(list){
     e.stopPropagation();
     const k = b.getAttribute('data-wkf-toggle');
     _wkOpenFilter = _wkOpenFilter === k ? null : k;
+    _wkPrioPopRow = null;
     render();
   }));
   list.querySelectorAll('[data-wkf]').forEach(b => b.addEventListener('click', (e) => {
@@ -5160,15 +5315,66 @@ function _wireWeekly(list){
     deletePriority(id);
   }));
   list.querySelectorAll('[data-prio-link]').forEach(b => b.addEventListener('click', () => openPrioLinkPicker(b.getAttribute('data-prio-link'))));
+  // Program tag on a priority card — change saves in place.
+  list.querySelectorAll('[data-prio-prog]').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', () => {
+      const id = sel.getAttribute('data-prio-prog');
+      updatePriority(id, { program: sel.value || '' })
+        .catch(() => toast('Couldn\'t save the program.', 'err'));
+    });
+  });
   // Priority task chips reveal the task inline in this view.
   list.querySelectorAll('[data-wk-jump]').forEach(b => b.addEventListener('click', () => _wkRevealRow(b.getAttribute('data-wk-jump'))));
+
+  // Row → priority popover: open/close the picker, then a click on a priority
+  // toggles the link.
+  list.querySelectorAll('[data-wk-prio-pop]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = b.getAttribute('data-wk-prio-pop');
+    if (_wkPrioPopRow != null && String(_wkPrioPopRow) === String(id)) {
+      _wkPrioPopRow = null;
+    } else {
+      _wkPrioPopRow = String(id);
+      // Not enough viewport above the button → drop the popover downward.
+      _wkPrioPopDown = b.getBoundingClientRect().top < 380;
+      _wkOpenFilter = null;
+    }
+    render();
+  }));
+  // The popover is right-anchored to its flag button; on narrow screens that
+  // can push it past the left edge. Nudge it right just enough to fit.
+  const openPrioPop = list.querySelector('.wk-prio-pop-wrap.open .wk-fd-pop');
+  if (openPrioPop) {
+    const pr = openPrioPop.getBoundingClientRect();
+    if (pr.left < 8) {
+      const shift = Math.min(8 - pr.left, Math.max(0, window.innerWidth - 8 - pr.right));
+      if (shift > 0) openPrioPop.style.right = `${-shift}px`;
+    }
+  }
+  list.querySelectorAll('[data-wk-prio-add]').forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const prioId = b.getAttribute('data-wk-prio-add');
+    const rowId = b.getAttribute('data-row');
+    const p = priorities.find(x => x._id === prioId);
+    _wkPrioPopRow = null;
+    try {
+      const nowLinked = await toggleRowInPriority(prioId, rowId);
+      render();
+      toast(nowLinked ? `Pushed to “${p ? p.title : 'priority'}”.` : `Removed from “${p ? p.title : 'priority'}”.`, 'ok');
+    } catch (err) {
+      console.error(err);
+      render();
+      toast('Couldn\'t update the priority.', 'err');
+    }
+  }));
 
   // Deadline rows — click expands/collapses the full edit drawer in place.
   list.querySelectorAll('[data-wk-row]').forEach(rowEl => {
     const id = rowEl.getAttribute('data-wk-row');
     rowEl.addEventListener('click', (e) => {
       if (e.target.closest('.drawer')) return;
-      if (e.target.closest('input, button, a, select, textarea')) return;
+      if (e.target.closest('input, button, a, select, textarea, .wk-fd-pop')) return;
       _wkExpandedId = (_wkExpandedId != null && String(_wkExpandedId) === String(id)) ? null : String(id);
       render();
     });
@@ -5213,12 +5419,18 @@ function _wireWeekly(list){
 // ---- Priority link picker modal ----
 let _plkPrioId = null;
 let _plkQuery = '';
+let _plkDeadline = 'all'; // 'all' | 'dated' | 'none'
 function openPrioLinkPicker(prioId){
   _plkPrioId = prioId;
   _plkQuery = '';
+  _plkDeadline = 'all';
   const bd = document.getElementById('prioLinkBackdrop');
   const p = priorities.find(x => x._id === prioId);
   document.getElementById('plkTitle').textContent = p ? `Link tasks — ${p.title}` : 'Link tasks';
+  const sub = document.getElementById('plkSub');
+  if (sub) sub.textContent = p && p.program
+    ? `Pick the ECM tasks that belong to this priority — ${p.program} tasks are listed first.`
+    : 'Pick the ECM tasks that belong to this priority.';
   const search = document.getElementById('plkSearch');
   if (search) search.value = '';
   _renderPrioLinkResults();
@@ -5245,8 +5457,31 @@ function _renderPrioLinkResults(){
       (r.program || '').toLowerCase().includes(q) ||
       (r.owner || '').toLowerCase().includes(q));
   }
-  // Picked first, then open work alphabetically. Cap for sanity.
-  pool.sort((a, c) => (picked.has(String(c.id)) - picked.has(String(a.id))) || (a.task || '').localeCompare(c.task || ''));
+  // Deadline chips — counts come from the pool BEFORE the deadline filter so
+  // each chip always shows what it would reveal.
+  const datedCt = pool.filter(r => _parseDateOnly(r.dueDate)).length;
+  const chipsEl = document.getElementById('plkChips');
+  if (chipsEl) {
+    chipsEl.innerHTML = [
+      ['all', 'All', pool.length],
+      ['dated', 'Has deadline', datedCt],
+      ['none', 'No deadline', pool.length - datedCt]
+    ].map(([k, label, n]) => `
+      <button type="button" class="plk-chip ${_plkDeadline === k ? 'active' : ''}" data-plk-dl="${k}">${label} <span class="n">${n}</span></button>`).join('');
+    chipsEl.querySelectorAll('[data-plk-dl]').forEach(b => b.addEventListener('click', () => {
+      _plkDeadline = b.getAttribute('data-plk-dl');
+      _renderPrioLinkResults();
+    }));
+  }
+  if (_plkDeadline === 'dated') pool = pool.filter(r => _parseDateOnly(r.dueDate));
+  else if (_plkDeadline === 'none') pool = pool.filter(r => !_parseDateOnly(r.dueDate));
+  // Picked first, then tasks in this priority's program, then alphabetical.
+  // Cap for sanity.
+  const pprog = p.program || '';
+  pool.sort((a, c) =>
+    (picked.has(String(c.id)) - picked.has(String(a.id))) ||
+    (pprog ? ((c.program === pprog ? 1 : 0) - (a.program === pprog ? 1 : 0)) : 0) ||
+    (a.task || '').localeCompare(c.task || ''));
   const capped = pool.slice(0, 80);
   box.innerHTML = capped.map(r => `
     <button type="button" class="plk-row ${picked.has(String(r.id)) ? 'picked' : ''}" data-plk-row="${escHtml(String(r.id))}">
@@ -5255,6 +5490,7 @@ function _renderPrioLinkResults(){
       <span class="plk-meta">
         ${r.owner ? `<span>${escHtml(ownerFirstName(r.owner))}</span>` : ''}
         ${r.program ? `<span>${escHtml(r.program)}</span>` : ''}
+        ${_parseDateOnly(r.dueDate) ? `<span class="plk-due">${escHtml(fmtAbsoluteDate(r.dueDate))}</span>` : `<span class="plk-due none">no date</span>`}
         <span class="row-status ${statusClass(r.status)}" style="font-size:8px;padding:3px 6px">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '')}</span>
       </span>
     </button>`).join('') || `<div class="manual-link-empty">No matching tasks.</div>`;
