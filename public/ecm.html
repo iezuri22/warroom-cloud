@@ -2100,7 +2100,36 @@
   .ackp-checklist strong { color: var(--w92) }
   .ackp-checklist .tick { color: var(--green); font-weight: 900; margin-right: 6px }
 
+  /* Star — shared bookmark to reference a task later */
+  .q-star.on, .wk-quick .q-star.on { color: var(--amber); border-color: rgba(255,200,77,.5); background: rgba(255,200,77,.10) }
+  .q-star:hover { color: var(--amber) !important; border-color: rgba(255,200,77,.5) !important }
+  .status-chip.star { border-color: rgba(255,200,77,.32); color: var(--amber) }
+  .status-chip.star.active { background: rgba(255,200,77,.16); border-color: var(--amber); color: var(--amber) }
+  .status-chip.star .ct { background: rgba(255,200,77,.16); color: var(--amber) }
+  .ack-del-btn, .wk-quick .q-star {
+    /* star buttons share the quick-action chrome */
+  }
+  .row-ack-btn.del-ss-link {
+    text-decoration: none;
+    background: rgba(248,113,113,.10);
+    color: var(--red);
+    border-color: rgba(248,113,113,.4);
+  }
+  .row-ack-btn.del-ss-link:hover { color: var(--ink); border-color: var(--red); background: rgba(248,113,113,.18) }
+
   /* Deletion mark — trash button + flag on the Acknowledge page */
+  .q-star {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 7px;
+    background: var(--w04);
+    border: 1px solid var(--w10);
+    color: var(--w55);
+    cursor: pointer;
+    transition: all .12s;
+    padding: 0;
+  }
   .ack-del-btn {
     flex-shrink: 0;
     width: 26px; height: 26px;
@@ -2213,11 +2242,6 @@
     <div class="title">ECM<span class="tag">Smartsheets</span></div>
     <div class="meta" id="metaCount"></div>
     <div class="topbar-actions">
-      <button class="user-pill unset" id="userPill" type="button" title="Set your name — used to stamp acknowledgements">Set name</button>
-      <button class="bell-btn" id="bellBtn" type="button" title="Tasks waiting on your acknowledgement">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        <span class="bell-badge zero" id="bellBadge"></span>
-      </button>
       <button class="icon-btn" id="themeToggle" type="button" title="Switch light / dark theme">
         <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -2269,26 +2293,6 @@
     </button>
   </div>
   <div class="status-bar" id="statusBar"></div>
-</div>
-
-<!-- Name picker — replaces the prompt() flow for both the user pill and the
-     drawer Ack field. Opens centered, lists known owners, lets you write in a
-     custom name. -->
-<div class="np-backdrop" id="namePickerBackdrop" aria-hidden="true">
-  <div class="np-modal" role="dialog" aria-modal="true">
-    <div class="np-head">
-      <div>
-        <div class="np-title" id="namePickerTitle">Who are you?</div>
-        <div class="np-sub" id="namePickerSub">Pick from your team. Used to stamp acknowledgements.</div>
-      </div>
-      <button type="button" class="np-close" id="namePickerClose" aria-label="Close">×</button>
-    </div>
-    <div class="np-body" id="namePickerBody"></div>
-    <div class="np-foot">
-      <input type="text" class="np-write" id="namePickerWrite" placeholder="Or type a name…" autocomplete="off">
-      <button type="button" class="np-save" id="namePickerSave">Save</button>
-    </div>
-  </div>
 </div>
 
 <!-- Bulk-action bar: appears when one or more rows are selected in Ack view. -->
@@ -2532,7 +2536,6 @@ function subscribeNotifications(){
       return tb - ta;
     });
     notifications = next;
-    updateBellBadge();
     updateNeedsNotifDot();
     try { if (typeof render === 'function' && currentView === 'notif') render(); } catch {}
   }, err => console.error('notifications snapshot error', err));
@@ -2651,21 +2654,6 @@ function needsAck(r){
   if (a.ackOwner && r.owner && a.ackOwner !== r.owner) return true;
   return false;
 }
-// Open tasks assigned to the current user that still need acknowledgement —
-// drives the bell badge.
-function _myUnreadNotifications(){
-  if (!_userName) return [];
-  return rows.filter(r => r.owner === _userName && needsAck(r));
-}
-function updateBellBadge(){
-  const btn = document.getElementById('bellBtn');
-  const badge = document.getElementById('bellBadge');
-  if (!btn || !badge) return;
-  const n = _myUnreadNotifications().length;
-  badge.textContent = n > 99 ? '99+' : String(n);
-  badge.classList.toggle('zero', n === 0);
-  btn.classList.toggle('has-unread', n > 0);
-}
 function updateNeedsNotifDot(){
   // Acknowledge tab badge — TEAM-wide count of unclaimed open tasks (the
   // bell badge stays personal).
@@ -2713,7 +2701,7 @@ async function addPriority(title){
     title: t,
     order: maxOrder + 1,
     color: priorities.length % PRIO_COLORS.length,
-    createdBy: _userName || '',
+    createdBy: '',
     createdAt: new Date().toISOString(),
     archived: false,
     rowIds: []
@@ -2752,6 +2740,41 @@ async function toggleRowInPriority(prioId, rowId){
   return at < 0; // true = now linked
 }
 
+// ===== Stars (Firestore: ecm_stars) =====
+// Team-shared bookmarks — star a task to reference it later. Doc per rowId.
+const starsCol = collection(db, 'ecm_stars');
+let stars = {};
+let starsUnsub = null;
+function subscribeStars(){
+  if (starsUnsub) try { starsUnsub(); } catch {}
+  starsUnsub = onSnapshot(starsCol, snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data() || {}; });
+    stars = next;
+    try { if (typeof render === 'function' && rows.length) render(); } catch {}
+  }, err => console.error('stars snapshot error', err));
+}
+async function toggleStar(rowId){
+  const rid = String(rowId);
+  const wasOn = !!stars[rid];
+  if (wasOn) delete stars[rid];
+  else stars[rid] = { rowId: rid, starredAt: new Date().toISOString() };
+  try { render(); } catch {}
+  try {
+    if (wasOn) await deleteDoc(doc(db, 'ecm_stars', rid));
+    else await setDoc(doc(db, 'ecm_stars', rid), { rowId: rid, starredAt: new Date().toISOString() });
+  } catch (e) {
+    console.error('star toggle failed', e);
+    if (wasOn) stars[rid] = { rowId: rid }; else delete stars[rid];
+    try { render(); } catch {}
+    toast('Couldn\'t update the star.', 'err');
+  }
+}
+function starBtnHTML(r){
+  const on = !!stars[String(r.id)];
+  return `<button type="button" class="q-star ${on ? 'on' : ''}" data-star="${escHtml(String(r.id))}" title="${on ? 'Unstar' : 'Star — keep this handy to reference later'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+}
+
 // ===== Toast =====
 let _toastTimer = null;
 function toast(msg, kind){
@@ -2770,10 +2793,9 @@ function toast(msg, kind){
 // drains ecm_priority_pushes on load and drops the task at the top of the
 // first priority list using its own cascade rules.
 function canPushToMyDay(){
-  if (!_teamMode) return true; // owner cookie mode
-  // Team magic link: only the configured owner pushes to the personal page.
-  return !!(_userName && _teamConfig && _teamConfig.owner &&
-            _userName.toLowerCase() === String(_teamConfig.owner).toLowerCase());
+  // Personal-page pushes only make sense for the owner's logged-in session.
+  // Team magic-link users have no Personal page here.
+  return !_teamMode;
 }
 async function pushRowToMyDay(rowId){
   const r = rows.find(x => String(x.id) === String(rowId));
@@ -2789,7 +2811,7 @@ async function pushRowToMyDay(rowId){
       details: r.details || '',
       outcome: r.outcome || '',
       permalink: r.permalink || '',
-      requestedBy: _userName || '',
+      requestedBy: '',
       createdAt: new Date().toISOString()
     });
     toast('Pushed — it\'ll land at the top of your Personal priorities.', 'ok');
@@ -2800,119 +2822,6 @@ async function pushRowToMyDay(rowId){
 }
 const SS_KEY = 'smartsheets-config';
 const TEAM_TOKEN_KEY = 'ecm-team-token';
-const USER_NAME_KEY = 'ecm-user-name';
-// Current user identity — used to stamp who acked a row. Stored in localStorage
-// so each team member sets it once per browser. Prompts on first ack if unset.
-let _userName = '';
-try { _userName = (localStorage.getItem(USER_NAME_KEY) || '').trim(); } catch {}
-function setUserName(name){
-  const prev = _userName;
-  _userName = (name || '').trim();
-  try {
-    if (_userName) localStorage.setItem(USER_NAME_KEY, _userName);
-    else localStorage.removeItem(USER_NAME_KEY);
-  } catch {}
-  updateUserPill();
-  // Bell badge depends on identity (we filter notifications to targetUser).
-  try { updateBellBadge(); updateNeedsNotifDot(); } catch {}
-  // When a name change happens AFTER the sheet is already loaded, re-apply the
-  // owner filter so the viewer sees their own tasks first. Skips if the user
-  // has explicitly chosen a different owner filter in this session.
-  if (prev !== _userName && rows && rows.length) {
-    const knownOwners = new Set(rows.map(r => r.owner).filter(Boolean));
-    if (_userName && knownOwners.has(_userName)) {
-      filterOwner = _userName;
-      const sel = document.getElementById('ownerSelect');
-      if (sel) sel.value = _userName;
-      try { render(); } catch {}
-    }
-  }
-}
-function ensureUserName(onReady){
-  // Async variant: if no name set yet, open the picker. When user picks (or
-  // closes), the callback fires. If a name is already set, the callback fires
-  // immediately with that name. Keeps backwards-compatible sync-style returns
-  // when called without a callback — used by legacy paths that just need to
-  // check current state.
-  if (_userName) {
-    if (typeof onReady === 'function') onReady(_userName);
-    return _userName;
-  }
-  if (typeof onReady === 'function') {
-    openNamePicker({
-      title: 'Who are you?',
-      sub: 'Pick from the team. Used to stamp acknowledgements.',
-      onPick: (name) => { onReady(name || ''); }
-    });
-  }
-  return '';
-}
-// Name picker modal — replaces prompt() with a click-to-pick list of known
-// owners + a write-in field for new names. Used by the user pill and any flow
-// that needs to know "who are you" before stamping data.
-function openNamePicker(opts){
-  opts = opts || {};
-  const bd = document.getElementById('namePickerBackdrop');
-  const titleEl = document.getElementById('namePickerTitle');
-  const subEl = document.getElementById('namePickerSub');
-  const body = document.getElementById('namePickerBody');
-  const writeIn = document.getElementById('namePickerWrite');
-  if (!bd || !body) return;
-  if (titleEl && opts.title) titleEl.textContent = opts.title;
-  if (subEl && opts.sub) subEl.textContent = opts.sub;
-  // Build the owner list — known sheet owners + team-config owner + current
-  // user. Dedupe + sort.
-  const known = new Set();
-  rows.forEach(r => { if (r.owner) known.add(r.owner); });
-  if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
-  if (_userName) known.add(_userName);
-  const owners = Array.from(known).sort();
-  if (owners.length === 0) {
-    body.innerHTML = `<div class="np-empty">No team members discovered yet — type a name below to set yours.</div>`;
-  } else {
-    body.innerHTML = owners.map(o => `
-      <div class="np-row ${o === _userName ? 'current' : ''}" data-name="${escHtml(o)}">
-        <span class="np-avatar" style="background:${ownerColor(o)}">${escHtml(ownerInitials(o))}</span>
-        <span class="np-name">${escHtml(o)}</span>
-        ${o === _userName ? '<span class="np-tick">✓</span>' : ''}
-      </div>
-    `).join('');
-    body.querySelectorAll('[data-name]').forEach(row => {
-      row.addEventListener('click', () => {
-        const name = row.getAttribute('data-name') || '';
-        setUserName(name);
-        closeNamePicker();
-        if (typeof opts.onPick === 'function') opts.onPick(name);
-      });
-    });
-  }
-  if (writeIn) writeIn.value = '';
-  bd.classList.add('show');
-  bd.setAttribute('aria-hidden', 'false');
-  // Stash callback so the save button + Enter key can use it
-  bd._pickCallback = opts.onPick || null;
-  setTimeout(() => { try { writeIn && writeIn.focus(); } catch {} }, 50);
-}
-function closeNamePicker(){
-  const bd = document.getElementById('namePickerBackdrop');
-  if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); bd._pickCallback = null; }
-}
-function saveNamePicker(){
-  const writeIn = document.getElementById('namePickerWrite');
-  const bd = document.getElementById('namePickerBackdrop');
-  const v = (writeIn && writeIn.value || '').trim();
-  if (!v) { closeNamePicker(); return; }
-  setUserName(v);
-  const cb = bd && bd._pickCallback;
-  closeNamePicker();
-  if (typeof cb === 'function') cb(v);
-}
-function updateUserPill(){
-  const el = document.getElementById('userPill');
-  if (!el) return;
-  el.textContent = _userName ? _userName : 'Set name';
-  el.classList.toggle('unset', !_userName);
-}
 function timeAgo(iso){
   try {
     const t = new Date(iso).getTime();
@@ -3432,14 +3341,8 @@ async function loadSheet(){
 function populateOwnerSelect(){
   const sel = document.getElementById('ownerSelect');
   const owners = Array.from(new Set(rows.map(r => r.owner).filter(Boolean))).sort();
-  const c = getConfig();
-  // Default to current user's tasks first (works for everyone on the magic
-  // link — Nick sees Nick's, Talha sees Talha's). Fall back to the configured
-  // owner from team-config only if we don't know who's looking yet.
-  if (!filterOwner) {
-    if (_userName && owners.includes(_userName)) filterOwner = _userName;
-    else if (c.owner && owners.includes(c.owner)) filterOwner = c.owner;
-  }
+  // No auto-default — the view starts at "All owners" and scoping is always
+  // an explicit dropdown choice.
   sel.innerHTML = `<option value="">All owners</option>` + owners.map(o => `<option value="${escHtml(o)}" ${o === filterOwner ? 'selected' : ''}>${escHtml(o)}</option>`).join('');
 }
 function populateProgramSelect(){
@@ -3548,7 +3451,7 @@ function applyFilters(){
   // work that's tracked elsewhere. EXCEPT when the data-quality filters
   // (No ticket / Missing date) are active — those are global hygiene
   // problems that need visibility no matter the type.
-  const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__';
+  const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__' || filterStatus === '__starred__';
   if (!isIssueFilter) {
     // The currently-expanded row is exempt — the Dev/Reports "open drawer"
     // jump lands here, and the row must be visible for the drawer to open.
@@ -3574,6 +3477,8 @@ function applyFilters(){
       pool = pool.filter(isMissingTicket);
     } else if (filterStatus === '__no_completion_date__') {
       pool = pool.filter(isMissingCompletionDate);
+    } else if (filterStatus === '__starred__') {
+      pool = pool.filter(r => stars[String(r.id)]);
     } else {
       pool = pool.filter(r => r.status === filterStatus);
     }
@@ -3635,7 +3540,8 @@ function renderStatusBar(){
     __open__: scoped.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status)).length,
     __parked__: scoped.filter(r => ECM_PARKED_STATUSES.has(r.status)).length,
     __no_ticket__: issueScope.filter(isMissingTicket).length,
-    __no_completion_date__: issueScope.filter(isMissingCompletionDate).length
+    __no_completion_date__: issueScope.filter(isMissingCompletionDate).length,
+    __starred__: issueScope.filter(r => stars[String(r.id)]).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   // Chip layout: All / Open / specific open statuses (Pending IR, Ticket Sent)
@@ -3679,10 +3585,13 @@ function renderStatusBar(){
   chips.push({ id: '__sep__', kind: 'sep' });
   chips.push({ id: '__no_ticket__', label: 'No ticket', count: counts.__no_ticket__, kind: 'issue' });
   chips.push({ id: '__no_completion_date__', label: 'Missing date', count: counts.__no_completion_date__, kind: 'issue' });
+  if (counts.__starred__ > 0 || filterStatus === '__starred__') {
+    chips.push({ id: '__starred__', label: '★ Starred', count: counts.__starred__, kind: 'star' });
+  }
   bar.innerHTML = chips.map(c => {
     if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;
     const muted = c.count === 0 && c.kind === 'status' ? 'muted' : '';
-    const kindCls = c.kind === 'issue' ? 'issue' : '';
+    const kindCls = c.kind === 'issue' ? 'issue' : c.kind === 'star' ? 'star' : '';
     return `<button class="status-chip ${kindCls} ${filterStatus === c.id ? 'active' : ''} ${muted}" data-status="${escHtml(c.id)}">${escHtml(c.label)}<span class="ct">${c.count}</span></button>`;
   }).join('');
   bar.querySelectorAll('.status-chip').forEach(b => {
@@ -3772,11 +3681,10 @@ function _drawerHTML(r){
                   ${(function(){
                     const known = new Set();
                     rows.forEach(rr => { if (rr.owner) known.add(rr.owner); });
-                    if (_userName) known.add(_userName);
-                    if (_teamMode && _teamConfig && _teamConfig.owner) known.add(_teamConfig.owner);
+                    if (r.owner) known.add(r.owner);
                     const sorted = Array.from(known).sort();
-                    if (sorted.length === 0) sorted.push('Me');
-                    return sorted.map(n => `<option value="${escHtml(n)}" ${n === (_userName || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
+                    if (sorted.length === 0) sorted.push('Team');
+                    return sorted.map(n => `<option value="${escHtml(n)}" ${n === (r.owner || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
                   })()}
                 </select>
                 <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:42px">Ack</button>
@@ -3893,7 +3801,7 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       const sel = row.querySelector('.ack-as-select');
       const pickedName = sel ? sel.value.trim() : '';
-      handleAck(r.id, pickedName || _userName || '');
+      handleAck(r.id, pickedName || '');
     }));
     row.querySelectorAll('[data-unack]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3916,8 +3824,8 @@ function _wireDrawer(row, r, onCollapse){
         try { await pushInternalToSheet(r, false); }
         catch (err) { console.error('unmark internal SS push failed', err); }
       } else {
-        const name = ensureUserName();
-        internalFlags[id] = { internal: true, markedBy: name || '', markedAt: new Date().toISOString() };
+        const name = r.owner || '';
+        internalFlags[id] = { internal: true, markedBy: name, markedAt: new Date().toISOString() };
         r.internalSS = true;
         render();
         try { await window._ecmInternal.markInternal(id, name); }
@@ -3933,7 +3841,6 @@ function render(){
   renderStatusBar();
   updateNeedsAckDot();
   renderBulkBar();
-  updateBellBadge();
   updateNeedsNotifDot();
   updateDevReportsCount();
   updateWeeklyCount();
@@ -4052,6 +3959,7 @@ function render(){
       : '';
     const quickHTML = `
       <span class="wk-quick">
+        ${starBtnHTML(r)}
         ${!isClosedStatus ? `<button type="button" class="q-done" data-row-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
         ${!isClosedStatus && canPushToMyDay() ? `<button type="button" class="q-push" data-row-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>` : ''}
         ${r.permalink ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
@@ -4137,19 +4045,17 @@ ${_drawerHTML(r)}
 // Without it, falls back to the current user — opening the name picker if
 // no current user is set yet.
 async function handleAck(rowId, nameOverride){
-  const proceed = async (name) => {
-    if (!name) return;
-    const rr = rows.find(x => String(x.id) === String(rowId));
-    const owner = (rr && rr.owner) || '';
-    acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId), ackOwner: owner };
-    selectedAckIds.delete(rowId);
-    render();
-    try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
-    catch (e) { console.error('ack failed', e); alert('Couldn\'t save ack — try again'); }
-  };
-  if (nameOverride) return proceed(nameOverride);
-  if (_userName) return proceed(_userName);
-  ensureUserName(name => { if (name) proceed(name); });
+  // Attribution: the row's owner claims it (identity picker is gone — the
+  // Owner field IS who's on the task). nameOverride covers the drawer's
+  // explicit "Ack as" dropdown.
+  const rr = rows.find(x => String(x.id) === String(rowId));
+  const owner = (rr && rr.owner) || '';
+  const name = (nameOverride || owner || 'Team').trim();
+  acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId), ackOwner: owner };
+  selectedAckIds.delete(rowId);
+  render();
+  try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
+  catch (e) { console.error('ack failed', e); toast('Couldn\'t save the acknowledgement — try again.', 'err'); }
 }
 async function handleUnack(rowId){
   delete acks[rowId];
@@ -4160,21 +4066,19 @@ async function handleUnack(rowId){
 // Bulk acknowledge — ack everything currently selected. Opens the name picker
 // if no current user is set yet.
 async function bulkAck(){
-  const proceed = async (name) => {
-    if (!name) return;
-    const ids = Array.from(selectedAckIds);
-    if (!ids.length) return;
-    const nowIso = new Date().toISOString();
-    const ownerOf = (id) => { const rr = rows.find(x => String(x.id) === String(id)); return (rr && rr.owner) || ''; };
-    ids.forEach(id => { acks[id] = { ackedBy: name, ackedAt: nowIso, rowId: String(id), ackOwner: ownerOf(id) }; });
-    selectedAckIds.clear();
-    renderBulkBar();
-    render();
-    try { await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, name, '', ownerOf(id)))); }
-    catch (e) { console.error('bulk ack partial fail', e); }
-  };
-  if (_userName) return proceed(_userName);
-  ensureUserName(name => { if (name) proceed(name); });
+  const ids = Array.from(selectedAckIds);
+  if (!ids.length) return;
+  const nowIso = new Date().toISOString();
+  const ownerOf = (id) => { const rr = rows.find(x => String(x.id) === String(id)); return (rr && rr.owner) || ''; };
+  ids.forEach(id => {
+    const owner = ownerOf(id);
+    acks[id] = { ackedBy: owner || 'Team', ackedAt: nowIso, rowId: String(id), ackOwner: owner };
+  });
+  selectedAckIds.clear();
+  renderBulkBar();
+  render();
+  try { await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, ownerOf(id) || 'Team', '', ownerOf(id)))); }
+  catch (e) { console.error('bulk ack partial fail', e); }
 }
 function renderBulkBar(){
   const bar = document.getElementById('bulkBar');
@@ -4484,6 +4388,7 @@ function renderDevReports(){
       : '';
     const quickHTML = `
       <span class="wk-quick">
+        ${starBtnHTML(r)}
         ${!isClosed ? `<button type="button" class="q-done" data-dr-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
         ${!isClosed && canPushToMyDay() ? `<button type="button" class="q-push" data-dr-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>` : ''}
         ${r.permalink ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
@@ -4989,6 +4894,7 @@ function _wkRowHTML(r, bucket){
           <span class="wk-due-rel">${escHtml(_wkRelLabel(d))}</span>
           <input type="date" class="wk-due-input" data-wk-due="${escHtml(String(r.id))}" value="${escHtml(_isoDayString(r.dueDate))}" title="Due date — saves to Smartsheets">
           <span class="wk-quick">
+            ${starBtnHTML(r)}
             <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
             ${pushBtn}
             ${ssLink}
@@ -5416,7 +5322,7 @@ function renderAcknowledge(){
     const emptyMsg = _ackTab === 'done'
       ? 'Nothing acknowledged yet in this view.'
       : _ackTab === 'del'
-        ? 'Nothing marked for deletion. Use the trash button on a task to flag junk/duplicates — it checks the deletion box in Smartsheets.'
+        ? 'Nothing marked for deletion. Use the trash button on a task to flag junk/duplicates — it checks the deletion box in Smartsheets. Delete the rows there and they vanish from War Room on the next refresh.'
         : (pool.length === 0
           ? 'No open tasks match the current filters.'
           : '<strong>Everything is claimed.</strong> Every open task here has someone on it.');
@@ -5444,15 +5350,19 @@ function renderAcknowledge(){
       ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
       : '';
     const isChecked = selectedAckIds.has(r.id);
+    const starBtn = starBtnHTML(r);
     const trashBtn = `<button type="button" class="ack-del-btn" data-del-mark="${escHtml(String(r.id))}" title="Mark for deletion — checks the deletion box in Smartsheets"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`;
     const actionHTML = _ackTab === 'del'
       ? `<span class="ack-del-flag">Marked for deletion</span>
+         ${r.permalink ? `<a class="row-ack-btn del-ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets to delete it — it disappears from War Room on the next refresh" onclick="event.stopPropagation()">Delete in Smartsheets ↗</a>` : ''}
          <button type="button" class="row-ack-btn unack" data-del-restore="${escHtml(String(r.id))}">Restore</button>`
       : _ackTab === 'done'
       ? `<span class="ack-done-info" title="Acknowledged by ${escHtml((a && a.ackedBy) || '')}">✓ ${escHtml((a && a.ackedBy) || 'Claimed')}${a && a.ackedAt ? ' · ' + escHtml(timeAgo(a.ackedAt) || '') : ''}</span>
+         ${starBtn}
          ${trashBtn}
          <button type="button" class="row-ack-btn unack" data-ack-undo="${escHtml(String(r.id))}">Un-ack</button>`
-      : `${trashBtn}
+      : `${starBtn}
+         ${trashBtn}
          <button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>`;
     return `
       <div class="row ${expanded ? 'expanded' : ''}" data-ack-row="${escHtml(String(r.id))}">
@@ -5726,7 +5636,7 @@ async function applyCompleteRow(){
   // Completing an unclaimed task counts as claiming it — silently ack so
   // the Acknowledge queue and audit trail stay coherent.
   if (needsAck(r)) {
-    const ackName = _userName || (_teamConfig && _teamConfig.owner) || r.owner || '';
+    const ackName = r.owner || (_teamConfig && _teamConfig.owner) || 'Team';
     if (ackName) {
       acks[r.id] = { ackedBy: ackName, ackedAt: new Date().toISOString(), rowId: String(r.id), ackOwner: r.owner || '' };
       ackRow(r.id, ackName, '', r.owner || '').catch(err => console.warn('auto-ack on complete failed', err));
@@ -5928,6 +5838,15 @@ async function ssPushFields(r, fields){
   }
 }
 
+// Star toggles live in every view's rows — one delegated listener covers all.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-star]');
+  if (!b) return;
+  e.stopPropagation();
+  e.preventDefault();
+  toggleStar(b.getAttribute('data-star'));
+}, true);
+
 // Wire top-level controls
 document.getElementById('btnSync').addEventListener('click', loadSheet);
 // Theme toggle — flips html.light, persists, and re-renders so any
@@ -6018,32 +5937,6 @@ document.querySelectorAll('.view-tab').forEach(b => {
   });
 });
 
-// User identity pill — opens the name picker dropdown
-const userPillEl = document.getElementById('userPill');
-if (userPillEl) {
-  userPillEl.addEventListener('click', () => {
-    openNamePicker({
-      title: _userName ? 'Change name' : 'Who are you?',
-      sub: 'Pick from the team or type a new name.'
-    });
-  });
-}
-updateUserPill();
-
-// Wire the name-picker modal close + save + click-outside-to-close
-(function wireNamePicker(){
-  const bd = document.getElementById('namePickerBackdrop');
-  const closeBtn = document.getElementById('namePickerClose');
-  const saveBtn = document.getElementById('namePickerSave');
-  const writeIn = document.getElementById('namePickerWrite');
-  if (closeBtn) closeBtn.addEventListener('click', closeNamePicker);
-  if (saveBtn) saveBtn.addEventListener('click', saveNamePicker);
-  if (writeIn) writeIn.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveNamePicker(); }
-  });
-  if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeNamePicker(); });
-})();
-
 // Bulk action bar wiring
 const bulkAckBtn = document.getElementById('bulkAckBtn');
 const bulkClearBtn = document.getElementById('bulkClearBtn');
@@ -6095,23 +5988,7 @@ if (bulkClearBtn) bulkClearBtn.addEventListener('click', () => {
 subscribeAcks();
 subscribeInternal();
 subscribePriorities();
-
-// Bell icon → jump straight to notifications tab.
-const bellBtnEl = document.getElementById('bellBtn');
-if (bellBtnEl) {
-  bellBtnEl.addEventListener('click', () => {
-    if (currentView === 'notif') return;
-    currentView = 'notif';
-    document.querySelectorAll('.view-tab').forEach(x => {
-      x.classList.toggle('active', x.dataset.view === 'notif');
-    });
-    document.body.classList.remove('view-ack', 'view-dev', 'view-weekly');
-    document.body.classList.add('view-notif');
-    selectedAckIds.clear();
-    renderBulkBar();
-    render();
-  });
-}
+subscribeStars();
 
 // Listen for settings changes from shell (e.g., user just configured token)
 window.addEventListener('message', (ev) => {
@@ -6120,18 +5997,7 @@ window.addEventListener('message', (ev) => {
 
 // Boot: load the sheet, then prompt for identity if we're in team mode and
 // don't know who's looking yet. Picking a name auto-filters to their tasks.
-loadSheet().then(() => {
-  if (_teamMode && !_userName) {
-    setTimeout(() => {
-      try {
-        openNamePicker({
-          title: 'Who are you?',
-          sub: 'We\'ll show your tasks first. You can change this any time from the top-right pill.'
-        });
-      } catch {}
-    }, 300);
-  }
-});
+loadSheet();
 </script>
 </body>
 </html>
