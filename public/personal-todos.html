@@ -12131,6 +12131,89 @@ const VOICE = {
       try { closeSidebar(); } catch {}
       showPriorityConfirm(true);
     });
+    // ===== ECM → Personal priority push queue =====
+    // The ECM page can't write personal-focus-5-v1 directly: it doesn't load
+    // sync-client.js, so its localStorage write would be clobbered by cloud
+    // hydration on the next Personal load. Instead, "Push to my priorities"
+    // on ECM queues a doc in ecm_priority_pushes and we drain it here with
+    // the normal cascade rules (top of the first priority list).
+    let _ecmPushDrainBusy = false;
+    let _ecmPushLastDrain = 0;
+    async function drainEcmPriorityPushes(){
+      if (_ecmPushDrainBusy) return;
+      if (Date.now() - _ecmPushLastDrain < 30000) return;
+      _ecmPushDrainBusy = true;
+      _ecmPushLastDrain = Date.now();
+      try {
+        const snap = await getDocs(collection(db, 'ecm_priority_pushes'));
+        if (snap.empty) return;
+        let landed = 0;
+        for (const d of snap.docs) {
+          const p = d.data() || {};
+          try {
+            if (!p.rowId || !(p.task || '').trim()) { await deleteDoc(d.ref); continue; }
+            // Find the synced todo for this Smartsheets row — in-memory first,
+            // then Firestore (covers tasks outside the loaded date window).
+            let todo = todos.find(t => String(t.smartsheetRowId || '') === String(p.rowId));
+            if (!todo) {
+              const qs = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(p.rowId))));
+              if (!qs.empty) {
+                const dd = qs.docs[0];
+                todo = { id: dd.id, ...(dd.data() || {}) };
+                if (!todos.find(t => t.id === todo.id)) todos.push(todo);
+              }
+            }
+            if (todo && todo.done) {
+              // An explicit push re-opens a completed copy — the user wants
+              // it back on deck.
+              const patch = { done: false, completedAt: null };
+              Object.assign(todo, patch);
+              try { await updateDoc(doc(db, 'tv_todos', todo.id), patch); } catch {}
+            }
+            if (!todo) {
+              const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position || 0)) + 1 : 0;
+              const payload = {
+                text: p.task, done: false, date: todayKey(), position: maxPos,
+                timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
+                job: ecmJobId(),
+                details: p.details || '',
+                smartsheetRowId: String(p.rowId),
+                smartsheetSheetId: String(p.sheetId || ''),
+                smartsheetTicket: String(p.ticket || ''),
+                smartsheetStatus: p.status || '',
+                smartsheetOutcome: p.outcome || '',
+                smartsheetPermalink: p.permalink || ''
+              };
+              const ref = await addDoc(todosCol, payload);
+              todo = Object.assign({ id: ref.id }, payload);
+              todos.push(todo);
+            }
+            const lists = getPriorityLists();
+            if (lists.length) cascadeAddTaskToList(todo.id, lists[0].id, 'top');
+            await deleteDoc(d.ref);
+            landed++;
+          } catch (e) {
+            console.warn('[ECM push] failed for', p && p.task, e);
+          }
+        }
+        if (landed) {
+          console.log('[ECM push] landed ' + landed + ' task(s) at the top of priorities');
+          try { await ensureFocus5TasksLoaded(); } catch {}
+          try { render(); } catch {}
+        }
+      } catch (e) {
+        console.warn('[ECM push] drain failed', e);
+      } finally {
+        _ecmPushDrainBusy = false;
+      }
+    }
+    // Re-check when the user comes back to the tab — covers "pushed from ECM
+    // on the phone, flipped to Personal on the Mac" without a reload.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        try { drainEcmPriorityPushes(); } catch {}
+      }
+    });
     // Seed defaults on load — but ONLY after sync-client.js has loaded cloud
     // state into localStorage. Running before hydration nukes the user's
     // real focus5State by saving empty defaults over it. The seed function
@@ -12140,6 +12223,10 @@ const VOICE = {
       try { seedDefaultFocus5Lists(); } catch {}
       // Re-render so newly-loaded cloud state actually shows.
       try { loadFocus5(); render(); } catch {}
+      // Drain any ECM pushes once lists are hydrated. Slight delay so the
+      // initial todo load has a chance to land first (dedupe still holds
+      // either way via the Firestore query).
+      setTimeout(() => { try { drainEcmPriorityPushes(); } catch {} }, 1500);
     }
     if (window.__warroomCloudReady) {
       _bootSeed();
