@@ -615,53 +615,6 @@
   }
   .needs-ack-dot.show { display: inline-block }
 
-  /* Per-owner needs-ack counts — small horizontal strip showing who has how
-     many tasks pending acknowledgement. Tap one to filter to that owner. */
-  .owner-acks {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    margin-bottom: 10px;
-  }
-  .owner-acks:empty { display: none }
-  .owner-ack-pill {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 6px 12px 6px 8px; border-radius: 99px;
-    background: var(--w04);
-    border: 1px solid var(--w10);
-    color: var(--w85);
-    font-family: inherit; font-size: 12px; font-weight: 700;
-    cursor: pointer;
-    transition: all .15s;
-  }
-  .owner-ack-pill:hover { background: var(--w08); border-color: var(--w20) }
-  .owner-ack-pill .avatar {
-    width: 22px; height: 22px; border-radius: 50%;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 900;
-    color: #050507;
-    text-transform: uppercase;
-    letter-spacing: 0;
-  }
-  .owner-ack-pill .ct {
-    font-size: 11px; font-weight: 900;
-    padding: 2px 8px; border-radius: 99px;
-    background: rgba(255,138,61,.18);
-    color: var(--orange);
-    font-variant-numeric: tabular-nums;
-  }
-  .owner-ack-pill.zero .ct {
-    background: rgba(74,222,128,.16);
-    color: var(--green);
-  }
-  .owner-ack-pill.active {
-    background: rgba(74,158,255,.16);
-    border-color: var(--blue);
-    color: var(--ink);
-  }
-  .owner-ack-pill.active .ct {
-    background: rgba(74,158,255,.32);
-    color: var(--ink);
-  }
-
   /* Program color tags — each program gets a deterministic color from a small
      palette. Same program always renders the same color so the eye can track. */
   .row-program {
@@ -723,11 +676,9 @@
   /* Dev / Reports + Notifications views: hide the standard ECM filter
      chrome (owner pills, search row, status chips). These views have
      their own controls and don't share the standard filter strip. */
-  body.view-dev .owner-acks,
   body.view-dev .search-row,
   body.view-dev .status-bar,
   body.view-notif .status-bar,
-  body.view-links .owner-acks,
   body.view-links .search-row,
   body.view-links .status-bar { display: none !important }
   /* Acknowledge view keeps the owner pills + search (they scope the queue)
@@ -1984,24 +1935,6 @@
       border-color: rgba(74,158,255,.4);
       color: var(--blue);
     }
-    /* Owner-ack pills: collapse to a tight single-row horizontal scroll so
-       team members can still tap themselves but it doesn't eat 2 rows. */
-    .owner-acks {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-      padding-bottom: 4px;
-      margin-bottom: 6px;
-    }
-    .owner-acks::-webkit-scrollbar { display: none }
-    .owner-ack-pill {
-      flex-shrink: 0;
-      padding: 4px 10px 4px 5px;
-      font-size: 11px;
-    }
-    .owner-ack-pill .avatar { width: 20px; height: 20px; font-size: 9px }
-    .owner-ack-pill .ct { font-size: 10px; padding: 1px 6px }
     /* Status chips: force single horizontal scroll instead of wrapping */
     .status-bar {
       flex-wrap: nowrap;
@@ -2054,7 +1987,6 @@
   }
 
   /* ============ WEEKLY VIEW ============ */
-  body.view-weekly .owner-acks,
   body.view-weekly .status-bar { display: none !important }
   .wk-wrap {
     display: flex; flex-direction: column; gap: 14px;
@@ -2716,8 +2648,6 @@
       <span class="view-tab-ct" id="linksCount"></span>
     </button>
   </div>
-  <!-- Per-owner needs-ack counts — auto-populated from rows. Tap to filter. -->
-  <div class="owner-acks" id="ownerAcks"></div>
   <div class="search-row">
     <input type="text" class="search-input" id="searchInput" placeholder="Search…" autocomplete="off">
     <!-- Mobile-only Filters toggle. On wider screens .mobile-filters-btn is
@@ -3748,7 +3678,7 @@ function programColor(name){
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return PROGRAM_COLORS[Math.abs(h) % (PROGRAM_COLORS.length - 1)];
 }
-// Avatar palette + initials for owner-ack pills
+// Avatar palette + initials for owner avatars (rows, drawers, name picker)
 // Red intentionally omitted — reserved for MISSING data markers
 const OWNER_COLORS = [
   '#FF8A3D', '#6BA8FF', '#4ADE80', '#C4B5FD', '#F472B6',
@@ -4527,7 +4457,6 @@ function render(){
   renderStatusBar();
   updateNeedsAckDot();
   renderBulkBar();
-  renderOwnerAcks();
   updateBellBadge();
   updateNeedsNotifDot();
   updateDevReportsCount();
@@ -4793,52 +4722,6 @@ function updateNeedsAckDot(){
   const needsCount = rows.filter(r => !acks[r.id] && !isDevOrReportRow(r)).length;
   dot.classList.toggle('show', needsCount > 0);
 }
-// Per-owner pending-ack counts — small avatar pills showing each owner with
-// open (un-acked, non-completed) rows. Tap a pill to filter the list to that
-// owner. Auto-discovered from the data — no hardcoded names.
-function renderOwnerAcks(){
-  const el = document.getElementById('ownerAcks');
-  if (!el) return;
-  // Count un-acked open rows per owner. "Open" = not Completed / Not feasible.
-  // Exclude dev/report items from the count — they're tracked on the
-  // Dev/Reports tab so they shouldn't inflate the standard owner queue.
-  const counts = {};
-  rows.forEach(r => {
-    if (!r.owner) return;
-    if (!needsAck(r)) return;
-    counts[r.owner] = (counts[r.owner] || 0) + 1;
-  });
-  const owners = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-  if (!owners.length) {
-    el.innerHTML = '';
-    return;
-  }
-  el.innerHTML = owners.map(o => {
-    const n = counts[o];
-    const init = ownerInitials(o);
-    const col = ownerColor(o);
-    const first = ownerFirstName(o);
-    const active = filterOwner === o ? 'active' : '';
-    const zero = n === 0 ? 'zero' : '';
-    return `<button type="button" class="owner-ack-pill ${active} ${zero}" data-owner-ack="${escHtml(o)}" title="${escHtml(o)} — ${n} task${n === 1 ? '' : 's'} to acknowledge">
-      <span class="avatar" style="background:${col}">${escHtml(init)}</span>
-      <span>${escHtml(first)}</span>
-      <span class="ct">${n}</span>
-    </button>`;
-  }).join('');
-  el.querySelectorAll('[data-owner-ack]').forEach(b => {
-    b.addEventListener('click', () => {
-      const o = b.getAttribute('data-owner-ack') || '';
-      // Toggle filter — tap active pill again to clear
-      filterOwner = (filterOwner === o) ? '' : o;
-      // Sync the owner select dropdown so it stays consistent
-      const sel = document.getElementById('ownerSelect');
-      if (sel) sel.value = filterOwner;
-      render();
-    });
-  });
-}
-
 // Dev / Reports view — separate section for the high-stakes work types so
 // they don't get lost in the regular ECM queue. For each open dev/report
 // item we surface:
