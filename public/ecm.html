@@ -726,12 +726,13 @@
   body.view-dev .owner-acks,
   body.view-dev .search-row,
   body.view-dev .status-bar,
-  body.view-notif .owner-acks,
-  body.view-notif .search-row,
   body.view-notif .status-bar,
   body.view-links .owner-acks,
   body.view-links .search-row,
   body.view-links .status-bar { display: none !important }
+  /* Acknowledge view keeps the owner pills + search (they scope the queue)
+     and shows the bulk-select checkboxes. */
+  body.view-notif .row-check { display: inline-flex }
 
   /* Links view — surfaces every linked group as a card. Within each card
      the rows show in creation order (oldest first cascading down) so the
@@ -2032,8 +2033,8 @@
       font-size: 10px;
       padding: 3px 7px;
     }
-    /* Checkbox tighter, only visible in ack view */
-    body:not(.view-ack) .row-check { display: none !important }
+    /* Checkbox tighter, only visible where bulk-ack applies */
+    body:not(.view-ack):not(.view-notif) .row-check { display: none !important }
     /* Drawer fields stack 100% width since the field-row already wraps; force
        each .field to take full width below this breakpoint */
     .field-row .field { flex: 1 1 100%; }
@@ -2571,6 +2572,29 @@
     color: var(--w50); font-weight: 700;
   }
 
+  /* Ack-on-touch prompt checklist */
+  .ackp-checklist {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 11px 13px;
+    border-radius: 11px;
+    background: rgba(74,222,128,.06);
+    border: 1px solid rgba(74,222,128,.22);
+    font-size: 12.5px; font-weight: 600;
+    color: var(--w75);
+    line-height: 1.4;
+  }
+  .ackp-checklist strong { color: var(--w92) }
+  .ackp-checklist .tick { color: var(--green); font-weight: 900; margin-right: 6px }
+
+  /* Acknowledge page acked-info line */
+  .ack-done-info {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10.5px; font-weight: 800;
+    color: var(--green);
+    white-space: nowrap;
+  }
+
   /* ============ TOAST ============ */
   .ecm-toast {
     position: fixed; left: 50%; bottom: 26px; z-index: 9999;
@@ -2648,7 +2672,7 @@
     <div class="meta" id="metaCount"></div>
     <div class="topbar-actions">
       <button class="user-pill unset" id="userPill" type="button" title="Set your name — used to stamp acknowledgements">Set name</button>
-      <button class="bell-btn" id="bellBtn" type="button" title="Notifications">
+      <button class="bell-btn" id="bellBtn" type="button" title="Tasks waiting on your acknowledgement">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         <span class="bell-badge zero" id="bellBadge"></span>
       </button>
@@ -2673,8 +2697,8 @@
       <span class="view-tab-ct" id="weeklyCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="notif">
-      Notifications
-      <span class="needs-ack-dot" id="needsNotifDot" aria-hidden="true"></span>
+      Acknowledge
+      <span class="view-tab-ct" id="ackTabCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="links">
       Links
@@ -2766,6 +2790,36 @@
         <button type="button" id="completeRowApply" class="lr-apply">Mark complete</button>
       </div>
       <div class="lr-status" id="completeRowStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Ack-on-touch prompt — appears the first time you update a task nobody
+     has acknowledged yet. One confirm = claimed forever; "Not now" snoozes
+     it for this session. -->
+<div class="lr-backdrop" id="ackPromptBackdrop" aria-hidden="true">
+  <div class="lr-modal" role="dialog" aria-modal="true" aria-labelledby="ackPromptTitle" style="max-width:480px">
+    <div class="lr-head">
+      <div>
+        <div class="lr-title" id="ackPromptTitle">Acknowledge this task?</div>
+        <div class="lr-sub">You're updating it — claim it so it's not floating.</div>
+      </div>
+      <button type="button" class="lr-close" id="ackPromptClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="lr-body" style="gap:12px">
+      <div id="ackPromptTask" style="font-size:14px;font-weight:700;line-height:1.35;color:var(--w95)"></div>
+      <div id="ackPromptMeta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+      <div class="ackp-checklist">
+        <div><span class="tick">✓</span> The <strong>program</strong> on this row is right</div>
+        <div><span class="tick">✓</span> The <strong>data</strong> (ticket, details, owner) looks right</div>
+        <div><span class="tick">✓</span> Someone is <strong>actively on it</strong></div>
+      </div>
+    </div>
+    <div class="lr-foot">
+      <div class="lr-ticket-row" style="justify-content:flex-end">
+        <button type="button" id="ackPromptNo" class="lr-pick-canonical" style="background:transparent">Not now</button>
+        <button type="button" id="ackPromptYes" class="lr-apply">Looks right — acknowledge</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2864,14 +2918,17 @@ function subscribeAcks(){
     try { if (typeof render === 'function' && rows.length) render(); } catch {}
   }, err => console.error('acks snapshot error', err));
 }
-async function ackRow(rowId, ackedBy, ackNote){
+async function ackRow(rowId, ackedBy, ackNote, ackOwner){
   if (!rowId || !ackedBy) return;
   const ref = doc(db, 'ecm_acks', String(rowId));
   await setDoc(ref, {
     rowId: String(rowId),
     ackedBy: String(ackedBy),
     ackedAt: new Date().toISOString(),
-    ackNote: ackNote || ''
+    ackNote: ackNote || '',
+    // Owner at ack time — if the row is later reassigned, the mismatch makes
+    // it need acknowledgement again (the new owner hasn't claimed it).
+    ackOwner: ackOwner || ''
   }, { merge: true });
 }
 async function unackRow(rowId){
@@ -3042,19 +3099,23 @@ async function _ecmDetectNotifications(currentRows){
     }, { merge: true }).catch(err => console.warn('notif write failed', err));
   }));
 }
-// Notifications addressed to the current user that haven't been acked yet.
+// A task "needs acknowledgement" when it's open, named, and either nobody
+// has claimed it yet, or it was reassigned after the ack (the ackOwner
+// stamped on the record no longer matches the row's current owner).
+// Acknowledgement = "a human is on this — it's not floating."
+function needsAck(r){
+  if (!r || !(r.task || '').trim()) return false;
+  if (_rowClosed(r)) return false;
+  const a = acks[r.id];
+  if (!a) return true;
+  if (a.ackOwner && r.owner && a.ackOwner !== r.owner) return true;
+  return false;
+}
+// Open tasks assigned to the current user that still need acknowledgement —
+// drives the bell badge.
 function _myUnreadNotifications(){
   if (!_userName) return [];
-  // Unread = open rows assigned to me that I haven't acked yet (and aren't
-  // dev/report items, which live on their own tab). Matches what the
-  // Notifications view actually shows.
-  return rows.filter(r =>
-    r.owner === _userName &&
-    !acks[r.id] &&
-    !isDevOrReportRow(r) &&
-    r.status !== 'Completed' &&
-    r.status !== 'Not feasible - close ticket'
-  );
+  return rows.filter(r => r.owner === _userName && needsAck(r));
 }
 function updateBellBadge(){
   const btn = document.getElementById('bellBtn');
@@ -3066,10 +3127,12 @@ function updateBellBadge(){
   btn.classList.toggle('has-unread', n > 0);
 }
 function updateNeedsNotifDot(){
-  const dot = document.getElementById('needsNotifDot');
-  if (!dot) return;
-  const n = _myUnreadNotifications().length;
-  dot.classList.toggle('show', n > 0);
+  // Acknowledge tab badge — TEAM-wide count of unclaimed open tasks (the
+  // bell badge stays personal).
+  const el = document.getElementById('ackTabCount');
+  if (!el) return;
+  const n = rows.filter(needsAck).length;
+  el.textContent = n > 0 ? (n > 99 ? '99+' : String(n)) : '';
 }
 
 // ===== Weekly priorities (Firestore: ecm_priorities) =====
@@ -3939,9 +4002,6 @@ async function loadSheet(){
     });
     populateOwnerSelect();
     populateProgramSelect();
-    // Detect new/reassigned tasks vs last-seen snapshot, fire notifications.
-    // Fire-and-forget — doesn't block rendering.
-    try { _ecmDetectNotifications(rows); } catch (e) { console.warn('notif detect failed', e); }
     render();
   } catch (e) {
     console.error(e);
@@ -4447,6 +4507,7 @@ function _wireDrawer(row, r, onCollapse){
         try { await pushInternalToSheet(r, true); }
         catch (err) { console.error('mark internal SS push failed', err); }
       }
+      maybePromptAck(r.id);
     }));
 }
 
@@ -4465,9 +4526,9 @@ function render(){
     renderWeekly();
     return;
   }
-  // Notifications view — short-circuit out of the row-rendering path.
+  // Acknowledge view — the team-wide "who's on it" queue.
   if (currentView === 'notif') {
-    renderNotifications();
+    renderAcknowledge();
     return;
   }
   // Dev / Reports view — dedicated layout showing limbo time + last update.
@@ -4663,10 +4724,12 @@ ${_drawerHTML(r)}
 async function handleAck(rowId, nameOverride){
   const proceed = async (name) => {
     if (!name) return;
-    acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId) };
+    const rr = rows.find(x => String(x.id) === String(rowId));
+    const owner = (rr && rr.owner) || '';
+    acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId), ackOwner: owner };
     selectedAckIds.delete(rowId);
     render();
-    try { await window._ecmAcks.ackRow(rowId, name); }
+    try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
     catch (e) { console.error('ack failed', e); alert('Couldn\'t save ack — try again'); }
   };
   if (nameOverride) return proceed(nameOverride);
@@ -4687,11 +4750,12 @@ async function bulkAck(){
     const ids = Array.from(selectedAckIds);
     if (!ids.length) return;
     const nowIso = new Date().toISOString();
-    ids.forEach(id => { acks[id] = { ackedBy: name, ackedAt: nowIso, rowId: String(id) }; });
+    const ownerOf = (id) => { const rr = rows.find(x => String(x.id) === String(id)); return (rr && rr.owner) || ''; };
+    ids.forEach(id => { acks[id] = { ackedBy: name, ackedAt: nowIso, rowId: String(id), ackOwner: ownerOf(id) }; });
     selectedAckIds.clear();
     renderBulkBar();
     render();
-    try { await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, name))); }
+    try { await Promise.all(ids.map(id => window._ecmAcks.ackRow(id, name, '', ownerOf(id)))); }
     catch (e) { console.error('bulk ack partial fail', e); }
   };
   if (_userName) return proceed(_userName);
@@ -4729,9 +4793,7 @@ function renderOwnerAcks(){
   const counts = {};
   rows.forEach(r => {
     if (!r.owner) return;
-    if (acks[r.id]) return;
-    if (r.status === 'Completed' || r.status === 'Not feasible - close ticket') return;
-    if (isDevOrReportRow(r)) return;
+    if (!needsAck(r)) return;
     counts[r.owner] = (counts[r.owner] || 0) + 1;
   });
   const owners = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
@@ -6295,6 +6357,7 @@ function _wireWeekly(list){
       r.dueDate = v;
       render(); updateWeeklyCount();
       toast(v ? 'Deadline set.' : 'Deadline cleared.', 'ok');
+      maybePromptAck(r.id);
       ssPushFields(r, { 'Due Date': v }).then(ok => {
         if (ok) return;
         r.dueDate = prev;
@@ -6386,159 +6449,183 @@ function _renderPrioLinkResults(){
   });
 })();
 
-function renderNotifications(){
+// ----- Acknowledge page -----
+// Every open task should be acknowledged by a human ("I'm on this — the
+// program and data are right"). This page is the team-wide queue of tasks
+// nobody has claimed yet, plus an audit trail of what's been acknowledged.
+let _ackShowDone = false;
+let _ackExpandedId = null;
+function renderAcknowledge(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
-  if (!_userName) {
-    if (metaEl) metaEl.textContent = '';
-    list.innerHTML = `<div class="empty">Set your name (top right) to see notifications targeted to you.</div>`;
-    return;
+  let pool = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
+  if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    pool = pool.filter(r => _wkSearchMatch(r, q));
   }
-  // Unified inbox model: every row currently assigned to me (that I haven't
-  // acked yet) shows up as a notification. We enrich each item with metadata
-  // from the ecm_notifications collection when available so we can say
-  // "Reassigned from Talha" instead of just "New task." The ack/unack
-  // mechanism on the row IS the read/unread state — no separate notif ack.
-  //
-  // Excludes dev/report items — those live on the Dev/Reports tab.
-  const myRows = rows.filter(r =>
-    r.owner === _userName &&
-    !isDevOrReportRow(r) &&
-    r.status !== 'Completed' &&
-    r.status !== 'Not feasible - close ticket'
-  );
-  // Index latest notification doc per row id for context decoration.
-  const notifByRow = new Map();
-  notifications.forEach(n => {
-    if (n.targetUser !== _userName) return;
-    const cur = notifByRow.get(n.rowId);
-    if (!cur || (Date.parse(n.createdAt) || 0) > (Date.parse(cur.createdAt) || 0)) {
-      notifByRow.set(n.rowId, n);
-    }
-  });
-  // Merge: build a list of { row, notif } entries. Sort by notif createdAt
-  // (most recent first), falling back to row's createdDate.
-  const merged = myRows.map(r => ({ row: r, notif: notifByRow.get(String(r.id)) || null }));
-  merged.sort((a, b) => {
-    const ta = (a.notif && Date.parse(a.notif.createdAt)) || Date.parse(a.row.createdDate) || 0;
-    const tb = (b.notif && Date.parse(b.notif.createdAt)) || Date.parse(b.row.createdDate) || 0;
-    return tb - ta;
-  });
-  const unread = merged.filter(m => !acks[m.row.id]);
-  const archived = merged.filter(m => !!acks[m.row.id]);
-  // Default = unread only. Toggle to see what you've already cleared.
-  const visible = _showArchivedNotifs ? archived : unread;
-  if (metaEl) metaEl.textContent = unread.length > 0
-    ? `${unread.length} unread · ${archived.length} archived`
-    : (archived.length > 0 ? `0 unread · ${archived.length} archived` : 'No notifications');
-  // Header row: toggle between Inbox (unread) and Archive
+  const needs = pool.filter(needsAck);
+  const done = pool.filter(r => !needsAck(r));
+  // Needs: newest first (today's intake is the triage). Done: latest ack first.
+  needs.sort((a, b) => (_parseDateOnly(b.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0));
+  done.sort((a, b) => (Date.parse((acks[b.id] || {}).ackedAt || 0) || 0) - (Date.parse((acks[a.id] || {}).ackedAt || 0) || 0));
+  const visible = _ackShowDone ? done : needs;
+  if (metaEl) metaEl.textContent = `${needs.length} to acknowledge · ${done.length} claimed`;
   const toggleHTML = `
     <div class="notif-toggle-row">
-      <button type="button" class="notif-toggle-btn ${!_showArchivedNotifs ? 'active' : ''}" data-notif-tab="inbox">
-        Inbox <span class="ct">${unread.length}</span>
+      <button type="button" class="notif-toggle-btn ${!_ackShowDone ? 'active' : ''}" data-ack-tab="needs">
+        Needs ack <span class="ct">${needs.length}</span>
       </button>
-      <button type="button" class="notif-toggle-btn ${_showArchivedNotifs ? 'active' : ''}" data-notif-tab="archive">
-        Archive <span class="ct">${archived.length}</span>
+      <button type="button" class="notif-toggle-btn ${_ackShowDone ? 'active' : ''}" data-ack-tab="done">
+        Acknowledged <span class="ct">${done.length}</span>
       </button>
     </div>`;
   if (!visible.length) {
-    const emptyMsg = _showArchivedNotifs
-      ? 'No archived notifications yet. Items you mark as read land here.'
-      : (merged.length === 0
-          ? `No open items assigned to <strong>${escHtml(_userName)}</strong>.`
-          : 'Inbox is clear. Tap Archive above to see what you\'ve already read.');
+    const emptyMsg = _ackShowDone
+      ? 'Nothing acknowledged yet in this view.'
+      : (pool.length === 0
+          ? 'No open tasks match the current filters.'
+          : '<strong>Everything is claimed.</strong> Every open task here has someone on it.');
     list.innerHTML = toggleHTML + `<div class="empty">${emptyMsg}</div>`;
-    _wireNotifToggle(list);
+    _wireAckToggle(list);
     return;
   }
-  list.innerHTML = toggleHTML + visible.map(m => {
-    const r = m.row;
-    const n = m.notif;
-    const isAcked = !!acks[r.id];
-    const ack = acks[r.id];
-    // Reason label: explicit notif kind (new/reassign) when we have one,
-    // otherwise just show the current status as context.
-    let kindLabel, kindCls;
-    if (n && n.kind === 'reassign') { kindLabel = 'Reassigned to you'; kindCls = 'reassign'; }
-    else if (n && n.kind === 'new') { kindLabel = 'New task'; kindCls = 'new'; }
-    else { kindLabel = r.status || 'Assigned to you'; kindCls = 'new'; }
-    const when = (n && (timeAgo(n.createdAt) || fmtAbsoluteDate(n.createdAt)))
-      || timeAgo(r.createdDate)
-      || fmtAbsoluteDate(r.createdDate)
-      || '';
-    const ticketBit = r.ticket
-      ? `<span><span class="label">Ticket</span><span class="val">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span></span>`
+  list.innerHTML = toggleHTML + visible.map(r => {
+    const expanded = _ackExpandedId != null && String(_ackExpandedId) === String(r.id);
+    const a = acks[r.id];
+    const pcol = programColor(r.program);
+    const programHTML = r.program
+      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
       : '';
-    const programBit = r.program
-      ? `<span><span class="label">Program</span><span class="val">${escHtml(r.program)}</span></span>`
+    const typeHTML = r.requestType
+      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
       : '';
-    const prevBit = (n && n.kind === 'reassign' && n.previousOwner)
-      ? `<span><span class="label">From</span><span class="val">${escHtml(n.previousOwner)}</span></span>`
+    const ticketHTML = r.ticket
+      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
       : '';
-    const ackBadge = isAcked
-      ? `<span class="notif-ack-state">✓ Read${ack && ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt) || '') : ''}</span>`
+    const createdHTML = r.createdDate
+      ? `<span class="wk-created" title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')}">${escHtml(fmtAbsoluteDate(r.createdDate))}${timeAgo(r.createdDate) ? ' · ' + escHtml(timeAgo(r.createdDate)) : ''}</span>`
       : '';
-    const permaBtn = r.permalink
-      ? `<button type="button" data-notif-open="${escHtml(r.permalink)}">Open in Smartsheets</button>`
+    const ownerHTML = r.owner
+      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
       : '';
-    const ackBtn = isAcked
-      ? `<button type="button" data-notif-unack-row="${escHtml(String(r.id))}">Mark unread</button>`
-      : `<button type="button" data-notif-ack-row="${escHtml(String(r.id))}">Mark as read</button>`;
-    // Complete button — opens a date-picker popup so the user can confirm /
-    // backdate the completion date before we push Status + Completion Date
-    // up to Smartsheets in one shot.
-    const completeBtn = `<button type="button" class="primary" data-notif-complete="${escHtml(String(r.id))}">Mark complete</button>`;
+    const isChecked = selectedAckIds.has(r.id);
+    const actionHTML = _ackShowDone
+      ? `<span class="ack-done-info" title="Acknowledged by ${escHtml((a && a.ackedBy) || '')}">✓ ${escHtml((a && a.ackedBy) || 'Claimed')}${a && a.ackedAt ? ' · ' + escHtml(timeAgo(a.ackedAt) || '') : ''}</span>
+         <button type="button" class="row-ack-btn unack" data-ack-undo="${escHtml(String(r.id))}">Un-ack</button>`
+      : `<button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>`;
     return `
-      <div class="notif-row ${isAcked ? '' : 'unread'}">
-        <div class="notif-head">
-          <span class="notif-kind ${kindCls}">${escHtml(kindLabel)}</span>
-          <span class="notif-when">${escHtml(when)}</span>
-          ${ackBadge}
+      <div class="row ${expanded ? 'expanded' : ''}" data-ack-row="${escHtml(String(r.id))}">
+        <div class="row-line">
+          ${_ackShowDone ? '' : `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk acknowledge"></span>`}
+          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
+          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
+          <span class="wk-row-side">
+            ${typeHTML}
+            ${programHTML}
+            ${ticketHTML}
+            ${createdHTML}
+            ${ownerHTML}
+            ${actionHTML}
+          </span>
         </div>
-        <div class="notif-task">${escHtml(r.task || '(untitled)')}</div>
-        <div class="notif-meta">
-          ${prevBit}
-          ${ticketBit}
-          ${programBit}
-        </div>
-        <div class="notif-actions">
-          ${completeBtn}
-          ${ackBtn}
-          ${permaBtn}
-        </div>
+        ${expanded ? _drawerHTML(r) : ''}
       </div>`;
   }).join('');
-  // Wire actions — read/unread maps directly to the row's ack record now.
-  list.querySelectorAll('[data-notif-ack-row]').forEach(b => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = b.getAttribute('data-notif-ack-row');
-      if (id) ackRow(id, _userName, '').catch(err => console.warn('ack failed', err));
+  _wireAckToggle(list);
+  list.querySelectorAll('[data-ack-row]').forEach(rowEl => {
+    const id = rowEl.getAttribute('data-ack-row');
+    rowEl.addEventListener('click', (e) => {
+      if (e.target.closest('.drawer')) return;
+      if (e.target.closest('[data-check]')) {
+        e.stopPropagation();
+        const rid = rows.find(x => String(x.id) === String(id));
+        if (!rid) return;
+        if (selectedAckIds.has(rid.id)) selectedAckIds.delete(rid.id);
+        else selectedAckIds.add(rid.id);
+        renderBulkBar();
+        render();
+        return;
+      }
+      if (e.target.closest('input, button, a, select, textarea')) return;
+      _ackExpandedId = (_ackExpandedId != null && String(_ackExpandedId) === String(id)) ? null : String(id);
+      render();
     });
+    if (_ackExpandedId != null && String(_ackExpandedId) === String(id)) {
+      const r = rows.find(x => String(x.id) === String(id));
+      if (r) _wireDrawer(rowEl, r, () => { _ackExpandedId = null; render(); });
+    }
   });
-  list.querySelectorAll('[data-notif-unack-row]').forEach(b => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = b.getAttribute('data-notif-unack-row');
-      if (id) unackRow(id).catch(err => console.warn('unack failed', err));
-    });
-  });
-  list.querySelectorAll('[data-notif-open]').forEach(b => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const url = b.getAttribute('data-notif-open') || '';
-      if (url) window.open(url, '_blank', 'noopener');
-    });
-  });
-  list.querySelectorAll('[data-notif-complete]').forEach(b => {
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = b.getAttribute('data-notif-complete');
-      if (id) openCompleteRowModal(id);
-    });
-  });
-  _wireNotifToggle(list);
+  list.querySelectorAll('[data-ack-now]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleAck(b.getAttribute('data-ack-now'));
+  }));
+  list.querySelectorAll('[data-ack-undo]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleUnack(b.getAttribute('data-ack-undo'));
+  }));
 }
+function _wireAckToggle(root){
+  root.querySelectorAll('[data-ack-tab]').forEach(b => {
+    b.addEventListener('click', () => {
+      _ackShowDone = (b.getAttribute('data-ack-tab') === 'done');
+      _ackExpandedId = null;
+      render();
+    });
+  });
+}
+
+// ----- Ack-on-touch prompt -----
+// The first time someone updates a task that nobody has acknowledged, ask
+// them to claim it (program right? data right? on it?). Acknowledging kills
+// the prompt for good; "Not now" snoozes it for this page load.
+let _ackPromptRowId = null;
+const _ackPromptSnoozed = new Set();
+function maybePromptAck(rowId){
+  const r = rows.find(x => String(x.id) === String(rowId));
+  if (!r || !needsAck(r)) return;
+  if (_ackPromptSnoozed.has(String(rowId))) return;
+  const bd = document.getElementById('ackPromptBackdrop');
+  if (!bd || bd.classList.contains('show')) return;
+  _ackPromptRowId = String(rowId);
+  const taskEl = document.getElementById('ackPromptTask');
+  if (taskEl) taskEl.textContent = r.task || '(untitled)';
+  const metaEl = document.getElementById('ackPromptMeta');
+  if (metaEl) {
+    const pcol = programColor(r.program);
+    metaEl.innerHTML = [
+      r.program ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>` : '',
+      r.ticket ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : '',
+      r.owner ? `<span class="wk-created">Owner: ${escHtml(r.owner)}</span>` : '<span class="row-missing">Unassigned</span>',
+      r.status ? `<span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status)}</span>` : ''
+    ].filter(Boolean).join('');
+  }
+  bd.classList.add('show');
+  bd.setAttribute('aria-hidden', 'false');
+}
+function _closeAckPrompt(snooze){
+  const bd = document.getElementById('ackPromptBackdrop');
+  if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+  if (snooze && _ackPromptRowId) _ackPromptSnoozed.add(_ackPromptRowId);
+  _ackPromptRowId = null;
+}
+(function wireAckPrompt(){
+  const bd = document.getElementById('ackPromptBackdrop');
+  const yes = document.getElementById('ackPromptYes');
+  const no = document.getElementById('ackPromptNo');
+  const close = document.getElementById('ackPromptClose');
+  if (yes) yes.addEventListener('click', () => {
+    const id = _ackPromptRowId;
+    _closeAckPrompt(false);
+    if (id) handleAck(id);
+  });
+  if (no) no.addEventListener('click', () => _closeAckPrompt(true));
+  if (close) close.addEventListener('click', () => _closeAckPrompt(true));
+  if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) _closeAckPrompt(true); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && bd && bd.classList.contains('show')) _closeAckPrompt(true);
+  });
+})();
 
 // ----- Mark-complete modal -----
 // Confirms the completion date before pushing Status=Completed +
@@ -6594,6 +6681,15 @@ async function applyCompleteRow(){
     if (status) { status.textContent = 'Pick a completion date first.'; status.className = 'lr-status err'; }
     return;
   }
+  // Completing an unclaimed task counts as claiming it — silently ack so
+  // the Acknowledge queue and audit trail stay coherent.
+  if (needsAck(r)) {
+    const ackName = _userName || (_teamConfig && _teamConfig.owner) || r.owner || '';
+    if (ackName) {
+      acks[r.id] = { ackedBy: ackName, ackedAt: new Date().toISOString(), rowId: String(r.id), ackOwner: r.owner || '' };
+      ackRow(r.id, ackName, '', r.owner || '').catch(err => console.warn('auto-ack on complete failed', err));
+    }
+  }
   // Optimistic: apply locally and close instantly — the Smartsheets PUT runs
   // in the background. If it fails, roll back and say why, so the UI never
   // quietly disagrees with the sheet.
@@ -6611,15 +6707,6 @@ async function applyCompleteRow(){
     toast('Smartsheets rejected the completion' + (_ssLastPushError ? ' — ' + _ssLastPushError : '') + '. Reverted.', 'err');
   });
 }
-function _wireNotifToggle(root){
-  root.querySelectorAll('[data-notif-tab]').forEach(b => {
-    b.addEventListener('click', () => {
-      _showArchivedNotifs = (b.getAttribute('data-notif-tab') === 'archive');
-      renderNotifications();
-    });
-  });
-}
-
 // Push the Internal Only checkbox value back to Smartsheets. Separate from
 // pushField because checkbox columns need a true/false value (not a string)
 // and we want to silently no-op if the column doesn't exist on the sheet.
@@ -6686,6 +6773,9 @@ async function pushField(r, fieldTitle, value, rowEl){
     // Re-render so the green completion-date pill (or MISSING marker) on the
     // row reflects the new value
     if (fieldTitle === 'Completion Date') render();
+    // Ack-on-touch: editing an unclaimed task prompts the editor to claim it
+    // (needsAck() is false for closed rows, so completing never triggers it).
+    maybePromptAck(r.id);
   } catch (e) {
     console.error('push failed', e);
     if (savedEl) {
@@ -6931,7 +7021,6 @@ if (bulkClearBtn) bulkClearBtn.addEventListener('click', () => {
 // views in sync as they ack tasks.
 subscribeAcks();
 subscribeInternal();
-subscribeNotifications();
 subscribePriorities();
 
 // Bell icon → jump straight to notifications tab.
