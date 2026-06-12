@@ -6,7 +6,7 @@
 <title>ECM · War Room</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script>
   // Apply saved theme BEFORE first paint to avoid a flash of the wrong theme.
   (function(){
@@ -98,8 +98,9 @@
   * { margin: 0; padding: 0; box-sizing: border-box }
   html, body {
     background: var(--bg); color: var(--ink);
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    font-feature-settings: 'cv11';
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv05', 'tnum' 0;
+    -webkit-font-smoothing: antialiased;
     min-height: 100vh; overflow-x: hidden;
   }
   body { display: flex; flex-direction: column }
@@ -2285,12 +2286,60 @@
   .wk-row.due-today { border-left: 3px solid rgba(255,200,77,.65); padding-left: 10px }
   .wk-row-task {
     flex: 1; min-width: 0;
-    font-size: 13.5px; font-weight: 700;
+    font-size: 13.5px; font-weight: 600;
     color: var(--w92);
     line-height: 1.3;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .wk-row-side {
+    display: inline-flex; align-items: center; gap: 8px;
+    flex-shrink: 0;
+    margin-left: auto;
+    min-width: 0;
+  }
   .wk-row .row-status { font-size: 8.5px; padding: 4px 8px }
+  .wk-row .dr-type { flex-shrink: 0 }
+  .wk-prog-tag { cursor: pointer; font-family: inherit; transition: transform .1s }
+  .wk-prog-tag:hover { transform: translateY(-1px) }
+  .wk-created {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10.5px; font-weight: 600;
+    color: var(--w40);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .wk-created svg { opacity: .7 }
+
+  /* Program filter strip — one chip per program with live counts */
+  .wk-prog-strip {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    align-items: center;
+  }
+  .wk-prog-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 12px; border-radius: 99px;
+    background: transparent;
+    border: 1px solid var(--w12);
+    color: var(--w60);
+    font-family: inherit; font-size: 11.5px; font-weight: 700;
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .wk-prog-chip:hover { color: var(--ink); border-color: var(--w25) }
+  .wk-prog-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0 }
+  .wk-prog-chip .ct {
+    font-size: 10px; font-weight: 800;
+    padding: 1px 6px; border-radius: 99px;
+    background: var(--w08); color: var(--w60);
+    font-variant-numeric: tabular-nums;
+  }
+  .wk-prog-chip.active { font-weight: 800 }
+  .wk-prog-chip.active .ct { background: var(--w10); color: inherit }
+  .wk-prog-chip.reset {
+    border-style: dashed;
+    color: var(--w50);
+  }
   .wk-owner {
     flex-shrink: 0;
     width: 22px; height: 22px; border-radius: 50%;
@@ -2392,9 +2441,19 @@
   }
   .wk-banner button:hover { background: rgba(255,200,77,.28); color: var(--ink) }
   @media (max-width: 640px) {
+    /* Line 1: status + title (truncated, same line). Line 2: meta + controls. */
     .wk-row { flex-wrap: wrap; row-gap: 8px }
-    .wk-row-task { flex-basis: 100%; white-space: normal; order: -1 }
+    .wk-row-side {
+      flex-basis: 100%;
+      margin-left: 0;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .wk-row-side .wk-quick { margin-left: auto }
     .wk-due-rel { display: none }
+    .wk-due-input { width: 118px }
+    .wk-created { display: none } /* phone: created date is in the tooltip; save the space */
     .wk-prio-task-chip .t { max-width: 170px }
   }
 
@@ -5591,7 +5650,8 @@ function _rowClosed(r){
 // included only when they carry a deadline (deferred work with a date still
 // needs to surface — but undated parked stuff shouldn't flood the backlog).
 function weeklyPool(){
-  let pool = rows.filter(r => !_rowClosed(r));
+  // Blank rows (no task name) are Smartsheet spacer rows — never show them.
+  let pool = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
   pool = pool.filter(r => r.dueDate || !ECM_PARKED_STATUSES.has(r.status));
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
@@ -5620,7 +5680,9 @@ function weeklyBuckets(pool){
   const byDue = (a, c) => (_parseDateOnly(a.dueDate) || 0) - (_parseDateOnly(c.dueDate) || 0);
   b.overdue.sort(byDue); b.today.sort(byDue); b.week.sort(byDue);
   b.next.sort(byDue); b.later.sort(byDue);
-  b.none.sort((a, c) => (a.task || '').localeCompare(c.task || ''));
+  // Undated backlog: newest first so today's incoming work is what you date.
+  b.none.sort((a, c) => (_parseDateOnly(c.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0)
+    || (a.task || '').localeCompare(c.task || ''));
   return b;
 }
 function updateWeeklyCount(){
@@ -5641,8 +5703,17 @@ function _wkRowHTML(r, bucket){
     ? `<span class="wk-owner" style="background:${ocol}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
     : '';
   const pcol = programColor(r.program);
+  // Program tag doubles as a filter — click to scope the view to that program.
   const programHTML = r.program
-    ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
+    ? `<button type="button" class="row-program wk-prog-tag" data-wk-prog="${escHtml(r.program)}" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}" title="Filter to ${escHtml(r.program)}">${escHtml(r.program)}</button>`
+    : '';
+  // Request type — same treatment as the Dev/Reports cards so types read
+  // consistently across views.
+  const typeHTML = r.requestType
+    ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
+    : '';
+  const createdHTML = r.createdDate
+    ? `<span class="wk-created" title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || r.createdDate)}${timeAgo(r.createdDate) ? ' · ' + escHtml(timeAgo(r.createdDate)) : ''}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${escHtml(fmtAbsoluteDate(r.createdDate))}</span>`
     : '';
   const prios = prioritiesForRow(r.id);
   const prioDots = prios.length
@@ -5658,15 +5729,19 @@ function _wkRowHTML(r, bucket){
     <div class="wk-row ${stCls}" data-wk-row="${escHtml(String(r.id))}">
       <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
       <span class="wk-row-task" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>
-      ${prioDots}
-      ${programHTML}
-      ${ownerHTML}
-      <span class="wk-due-rel">${escHtml(_wkRelLabel(d))}</span>
-      <input type="date" class="wk-due-input" data-wk-due="${escHtml(String(r.id))}" value="${escHtml(_isoDayString(r.dueDate))}" title="Due date — saves to Smartsheets">
-      <span class="wk-quick">
-        <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
-        ${pushBtn}
-        ${ssLink}
+      <span class="wk-row-side">
+        ${prioDots}
+        ${typeHTML}
+        ${programHTML}
+        ${createdHTML}
+        ${ownerHTML}
+        <span class="wk-due-rel">${escHtml(_wkRelLabel(d))}</span>
+        <input type="date" class="wk-due-input" data-wk-due="${escHtml(String(r.id))}" value="${escHtml(_isoDayString(r.dueDate))}" title="Due date — saves to Smartsheets">
+        <span class="wk-quick">
+          <button type="button" class="q-done" data-wk-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+          ${pushBtn}
+          ${ssLink}
+        </span>
       </span>
     </div>`;
 }
@@ -5742,6 +5817,34 @@ function renderWeekly(){
       ${prioListHTML}
     </div>`;
 
+  // Program filter strip — counts computed before the program filter is
+  // applied (but after owner/search) so every program stays clickable.
+  const progStripHTML = (() => {
+    let base = rows.filter(r => (r.task || '').trim() && !_rowClosed(r));
+    base = base.filter(r => r.dueDate || !ECM_PARKED_STATUSES.has(r.status));
+    if (filterOwner) base = base.filter(r => r.owner === filterOwner);
+    if (filterSearch) {
+      const q = filterSearch.toLowerCase();
+      base = base.filter(r =>
+        (r.task || '').toLowerCase().includes(q) ||
+        String(r.ticket || '').toLowerCase().includes(q) ||
+        (r.details || '').toLowerCase().includes(q));
+    }
+    const counts = new Map();
+    base.forEach(r => { if (r.program) counts.set(r.program, (counts.get(r.program) || 0) + 1); });
+    if (!counts.size) return '';
+    const progs = [...counts.entries()].sort((a, c) => c[1] - a[1]);
+    const chips = progs.map(([name, n]) => {
+      const pc = programColor(name);
+      const active = filterProgram === name;
+      return `<button type="button" class="wk-prog-chip ${active ? 'active' : ''}" data-wk-prog="${escHtml(name)}" style="${active ? `background:${pc.bg};border-color:${pc.fg};color:${pc.fg}` : ''}"><span class="dot" style="background:${pc.fg}"></span>${escHtml(name)}<span class="ct">${n}</span></button>`;
+    }).join('');
+    const reset = filterProgram
+      ? `<button type="button" class="wk-prog-chip reset" data-wk-prog="">All programs</button>`
+      : '';
+    return `<div class="wk-prog-strip">${reset}${chips}</div>`;
+  })();
+
   const SECTIONS = [
     { key: 'overdue', label: 'Overdue', cls: 'overdue', hint: 'needs a new date or a push' },
     { key: 'today', label: 'Due today', cls: 'today', hint: '' },
@@ -5780,7 +5883,7 @@ function renderWeekly(){
         : `<button type="button" class="wk-nodate-toggle" id="wkNoDateToggle">Show ${b.none.length} undated task${b.none.length === 1 ? '' : 's'}</button>`}
     </div>` : '';
 
-  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${sectionsHTML}${noneHTML}</div>`;
+  list.innerHTML = `<div class="wk-wrap">${bannerHTML}${prioHTML}${progStripHTML}${sectionsHTML}${noneHTML}</div>`;
   _wireWeekly(list);
 }
 
@@ -5801,6 +5904,17 @@ function _wireWeekly(list){
 
   const noDateToggle = list.querySelector('#wkNoDateToggle');
   if (noDateToggle) noDateToggle.addEventListener('click', () => { _wkShowNoDate = !_wkShowNoDate; render(); });
+
+  // Program filter — strip chips and the per-row program tags both set the
+  // shared filter (kept in sync with the topbar dropdown).
+  list.querySelectorAll('[data-wk-prog]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const prog = b.getAttribute('data-wk-prog') || '';
+    filterProgram = (filterProgram === prog) ? '' : prog;
+    const sel = document.getElementById('programSelect');
+    if (sel) sel.value = filterProgram;
+    render();
+  }));
 
   // Priority card actions
   list.querySelectorAll('[data-prio-name]').forEach(inp => {
@@ -5886,7 +6000,7 @@ function _renderPrioLinkResults(){
   const p = priorities.find(x => x._id === _plkPrioId);
   if (!box || !p) return;
   const picked = new Set(Array.isArray(p.rowIds) ? p.rowIds.map(String) : []);
-  let pool = rows.filter(r => !_rowClosed(r) || picked.has(String(r.id)));
+  let pool = rows.filter(r => (r.task || '').trim() && (!_rowClosed(r) || picked.has(String(r.id))));
   if (_plkQuery) {
     const q = _plkQuery.toLowerCase();
     pool = pool.filter(r =>
