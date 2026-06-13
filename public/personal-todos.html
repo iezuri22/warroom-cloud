@@ -1105,6 +1105,31 @@
     .focus5-quick-add.notes .qa-bulk span { display: none } /* icon-only on phones */
     /* ≥16px so iOS doesn't auto-zoom on every refocus mid-capture */
     .focus5-quick-add.notes input { font-size: 16px }
+    .focus5-details-input { font-size: 16px }
+  }
+
+  /* Collapsible details on a Focus card — closed by default so the card
+     stays compact; the Details button tints orange when details exist.
+     The card centers its children, so the wrapper must claim the width
+     itself or the textarea collapses to its tiny intrinsic size. */
+  .focus5-card-details { display: none; margin-top: 10px; width: 100%; max-width: 760px }
+  .focus5-card-details.open { display: block }
+  .focus5-details-input {
+    width: 100%; min-height: 170px; resize: vertical;
+    padding: 14px 16px; border-radius: 12px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.9);
+    font-family: inherit; font-size: 14.5px; font-weight: 600; line-height: 1.6;
+    text-align: left;
+    outline: none;
+  }
+  .focus5-details-input:focus { border-color: rgba(255,138,61,.45) }
+  .focus5-details-input::placeholder { color: rgba(255,255,255,.25); font-style: italic }
+  .focus5-btn.details.has {
+    color: #FF8A3D;
+    border-color: rgba(255,138,61,.45);
+    background: rgba(255,138,61,.08);
   }
 
   /* Bulk board — every priority list as a Notes-style section (modal reuses
@@ -1197,6 +1222,20 @@
   }
   .f5b-add input::placeholder { color: rgba(255,255,255,.25); font-weight: 500 }
   .f5b-empty { padding: 2px 8px 2px 44px; font-size: 12.5px; color: rgba(255,255,255,.28); font-weight: 600 }
+  /* Per-row details editor — sits under its row, indented past the circle */
+  .f5b-details { padding: 0 8px 6px 38px }
+  .f5b-details textarea {
+    width: 100%; min-height: 72px; resize: vertical;
+    padding: 10px 12px; border-radius: 10px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    color: rgba(255,255,255,.9);
+    font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1.5;
+    outline: none;
+  }
+  .f5b-details textarea:focus { border-color: rgba(255,138,61,.45) }
+  .f5b-details textarea::placeholder { color: rgba(255,255,255,.25); font-style: italic }
+  .f5b-actions .dt.has { color: #FF8A3D }
   @media (max-width: 560px) {
     .f5b-grip { display: none } /* touch moves via the arrows */
     .f5b-add { margin-left: 0 }
@@ -1215,6 +1254,8 @@
        type-Enter-type flow where focus returns after every commit */
     .f5b-text { font-size: 16px }
     .f5b-add input { font-size: 16px }
+    .f5b-details { padding-left: 8px }
+    .f5b-details textarea { font-size: 16px }
     #f5DumpBackdrop .f5dump-go { width: 100%; padding: 12px 0 }
   }
   .f5dump-go {
@@ -8724,7 +8765,11 @@ const VOICE = {
     // Slot 2 races don't show their own music bar — only slot 1 does, otherwise
     // two music players would fight over playback.
     const noMusic = slot === 2 ? '&nomusic=1' : '';
-    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&todoId=${encodeURIComponent(todo.id)}${noMusic}&slot=${slot}`;
+    // Details feed the in-sprint collapsible under the big title. Capped so
+    // a long ECM description can't blow up the frame URL.
+    const det = String(todo.details || '').trim().slice(0, 1500);
+    const detParam = det ? `&details=${encodeURIComponent(det)}` : '';
+    frame.src = `/sprint.html?task=${text}&min=${lastMin}&race=1&todoId=${encodeURIComponent(todo.id)}${noMusic}&slot=${slot}${detParam}`;
     if (slotEl) slotEl.removeAttribute('hidden');
     overlay.classList.add('show');
     // Mark dual class when both slots are loaded so split-screen CSS kicks in
@@ -8908,6 +8953,17 @@ const VOICE = {
   // with the half-typed line intact instead of wiping it.
   let _f5QuickText = '';
   let _f5DumpListId = null;   // which list the Brain dump modal commits into
+  // Which tasks have their collapsible details editor open (survives the
+  // per-add re-renders). One set for the Focus cards, one for the Bulk board.
+  let _f5DetailsOpen = new Set();
+  let _f5BoardDetailsOpen = new Set();
+  // Save a details edit: Firestore + memory, and ECM-synced tasks push the
+  // Details column back to Smartsheets (same contract as the day-view drawer).
+  async function _f5SaveDetails(todo, v){
+    if ((todo.details || '') === (v || '')) return;
+    await updateTodoFields(todo.id, { details: v });
+    if (todo.smartsheetRowId) { try { ssPushFields(todo, { 'Details': v }); } catch {} }
+  }
   // Time-of-day → routine flag. Chicago hours.
   function focus5CurrentRoutine(){
     try {
@@ -10105,7 +10161,10 @@ const VOICE = {
     head.className = 'f5b-head';
     head.innerHTML = `<span class="f5b-name">${escHtml(l.name)}</span><span class="f5b-count ${n > 5 ? 'over' : ''}" title="${n > 5 ? 'Over the 5 target — kept exactly as you arranged it; burns back down as tasks complete' : ''}">${n}/5</span>`;
     sec.appendChild(head);
-    l.taskIds.forEach((id, i) => sec.appendChild(_f5BoardRow(l, id, i)));
+    l.taskIds.forEach((id, i) => {
+      sec.appendChild(_f5BoardRow(l, id, i));
+      if (_f5BoardDetailsOpen.has(String(id))) sec.appendChild(_f5BoardDetailsEditor(id));
+    });
     if (!n) {
       const e = document.createElement('div');
       e.className = 'f5b-empty';
@@ -10153,11 +10212,25 @@ const VOICE = {
       </button>
       <input class="f5b-text" value="${escHtml(t ? (t.text || '') : '(routine task)')}" ${t ? '' : 'disabled'} maxlength="200">
       <span class="f5b-actions">
+        <button type="button" class="dt ${t && (t.details || '').trim() ? 'has' : ''}" title="${t && (t.details || '').trim() ? 'View / edit details' : 'Add details'}" ${t ? '' : 'disabled'}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </button>
         <button type="button" class="mv-up" title="Move up — past the top jumps to the previous list">↑</button>
         <button type="button" class="mv-dn" title="Move down — past the bottom jumps to the next list">↓</button>
         <button type="button" class="rm" title="Remove from priorities (the task itself is kept)">×</button>
       </span>
     `;
+    const dtBtn = row.querySelector('.dt');
+    if (dtBtn) dtBtn.addEventListener('click', () => {
+      const key = String(rawId);
+      if (_f5BoardDetailsOpen.has(key)) _f5BoardDetailsOpen.delete(key);
+      else _f5BoardDetailsOpen.add(key);
+      _f5BoardRender();
+      if (_f5BoardDetailsOpen.has(key)) {
+        const ta = document.querySelector(`#f5DumpBoard [data-f5b-details="${key}"] textarea`);
+        if (ta) ta.focus();
+      }
+    });
     row.querySelector('.f5b-circle').addEventListener('click', async () => {
       if (!t) return;
       try { await toggleTodo(t.id); } catch {}
@@ -10206,6 +10279,29 @@ const VOICE = {
       document.querySelectorAll('#f5DumpBoard .drop-before').forEach(r => r.classList.remove('drop-before'));
     });
     return row;
+  }
+  // Collapsible details editor rendered directly under a board row. Saves on
+  // blur; the row's notes-tint updates in place so a full rebuild doesn't eat
+  // the click that triggered the blur.
+  function _f5BoardDetailsEditor(rawId){
+    const t = resolveFocus5TaskId(rawId);
+    const wrap = document.createElement('div');
+    wrap.className = 'f5b-details';
+    wrap.setAttribute('data-f5b-details', String(rawId));
+    const ta = document.createElement('textarea');
+    ta.placeholder = t && t.smartsheetRowId
+      ? 'Details — pulled from ECM. Edits push back to Smartsheets.'
+      : 'Notes, context, links — anything useful for this task…';
+    ta.value = t ? (t.details || '') : '';
+    if (!t) ta.disabled = true;
+    ta.addEventListener('blur', () => {
+      if (!t) return;
+      _f5SaveDetails(t, ta.value).catch(() => {});
+      const btn = document.querySelector(`#f5DumpBoard .f5b-row[data-task-id="${String(rawId)}"] .dt`);
+      if (btn) btn.classList.toggle('has', !!(ta.value || '').trim());
+    });
+    wrap.appendChild(ta);
+    return wrap;
   }
   function _f5BoardAddRow(l){
     const wrap = document.createElement('form');
@@ -10690,6 +10786,10 @@ const VOICE = {
           Skip
         </button>
         ${projectChipHTML}
+        <button class="focus5-btn details ${(todo.details || '').trim() ? 'has' : ''}" data-act="details" type="button" title="${(todo.details || '').trim() ? 'View / edit details' : 'Add details'}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Details
+        </button>
         <button class="focus5-btn reorder" data-act="up" type="button" title="Move up" ${taskNumber <= 1 ? 'disabled' : ''} aria-label="Move up">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
         </button>
@@ -10716,11 +10816,18 @@ const VOICE = {
     const recurBadge = (!editing && todo.fromTemplate)
       ? `<span class="focus5-recur-badge" title="Auto-binds to today's instance every day">↻ Routine</span>`
       : '';
+    // Collapsible details — closed by default so the card stays compact.
+    const detailsHTML = (!isDone && !editing) ? `
+      <div class="focus5-card-details ${_f5DetailsOpen.has(todo.id) ? 'open' : ''}">
+        <textarea class="focus5-details-input" placeholder="${todo.smartsheetRowId ? 'Details — pulled from ECM. Edits push back to Smartsheets.' : 'Notes, context, links — anything useful for this task…'}">${escHtml(todo.details || '')}</textarea>
+      </div>
+    ` : '';
     card.innerHTML = `
       <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}${recurBadge}</div>
       <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
       ${standardActions}
       ${projectsRowHTML}
+      ${detailsHTML}
       ${editControlsHTML}
     `;
     // Wire actions
@@ -10751,6 +10858,30 @@ const VOICE = {
         e.stopPropagation();
         card.classList.toggle('projects-open');
       });
+      // Details — toggle the collapsible editor; save on blur. The .has tint
+      // updates in place (no re-render on blur, or it would eat the click
+      // that caused the blur).
+      const detailsBtn = card.querySelector('[data-act="details"]');
+      const detailsTa = card.querySelector('.focus5-details-input');
+      if (detailsBtn) detailsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_f5DetailsOpen.has(todo.id)) _f5DetailsOpen.delete(todo.id);
+        else _f5DetailsOpen.add(todo.id);
+        render();
+        if (_f5DetailsOpen.has(todo.id)) {
+          const ta = document.querySelector(`.focus5-card[data-id="${todo.id}"] .focus5-details-input`);
+          if (ta) ta.focus();
+        }
+      });
+      if (detailsTa) {
+        detailsTa.addEventListener('click', (e) => e.stopPropagation());
+        detailsTa.addEventListener('blur', () => {
+          _f5SaveDetails(todo, detailsTa.value).catch(() => {});
+          if (detailsBtn) {
+            detailsBtn.classList.toggle('has', !!(detailsTa.value || '').trim());
+          }
+        });
+      }
       card.querySelectorAll('[data-jobpick]').forEach(b => {
         b.addEventListener('click', async (e) => {
           e.stopPropagation();

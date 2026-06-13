@@ -354,6 +354,40 @@ body { display:flex; flex-direction:column; position:relative }
   font-size:clamp(20px, 2.6vw, 32px); font-weight:800; letter-spacing:-.02em;
   color:var(--text); text-align:center; max-width:80%; line-height:1.2;
 }
+/* Collapsible details under the big task title — the title stays the hero;
+   details are one tap away while the timer runs. */
+.game-details-toggle {
+  margin-top:-14px;
+  background:none; border:none; cursor:pointer;
+  font-family:inherit; font-size:11px; font-weight:900; letter-spacing:2px;
+  text-transform:uppercase; color:var(--text-fade);
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 10px; border-radius:99px;
+  transition:color .12s;
+}
+.game-details-toggle:hover { color:var(--text) }
+.game-details-toggle .chev { color:var(--accent); font-size:12px }
+.game-details-body {
+  flex-shrink:0; /* the centered flex column would crush it to one line */
+  width:min(760px, 90%);
+  max-height:30vh; overflow-y:auto;
+  margin-top:-10px;
+  padding:14px 18px; border-radius:14px;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);
+  font-size:15px; font-weight:600; line-height:1.6;
+  color:var(--text); opacity:.88;
+  text-align:left; white-space:pre-wrap;
+}
+/* While details are open on shorter screens, the ring cedes some room so
+   nothing clips — the title stays the hero either way. */
+.timer-wrap { transition: width .25s ease }
+@media (max-height: 900px) {
+  .game.details-open .timer-wrap { width:min(280px, 60vw) }
+  .game.details-open .game-details-body { max-height:26vh }
+}
+/* display rules above would otherwise beat the UA [hidden] default */
+.game-details-toggle[hidden], .game-details-body[hidden] { display:none }
 .game-eyebrow {
   font-size:11px; font-weight:900; letter-spacing:3px; text-transform:uppercase;
   color:var(--accent); display:flex; align-items:center; gap:8px;
@@ -924,6 +958,10 @@ body { display:flex; flex-direction:column; position:relative }
   <div class="game" id="gameView">
     <div class="game-eyebrow"><span class="dot"></span><span id="gameEyebrowText">Sprint in progress</span></div>
     <div class="game-task" id="gameTask">—</div>
+    <button class="game-details-toggle" id="gameDetailsToggle" type="button" hidden>
+      <span class="chev">▸</span> details
+    </button>
+    <div class="game-details-body" id="gameDetailsBody" hidden></div>
     <div class="timer-wrap">
       <svg class="timer-ring" id="timerRing" viewBox="0 0 200 200">
         <circle class="bg" cx="100" cy="100" r="90"></circle>
@@ -1083,6 +1121,31 @@ body { display:flex; flex-direction:column; position:relative }
   const runnerFill = $('runnerFill');
   const runner = $('runner');
   const gameTask = $('gameTask');
+  // Details under the big title — populated from the selected task at sprint
+  // start, collapsed by default so the title stays the hero.
+  const gameDetailsToggle = $('gameDetailsToggle');
+  const gameDetailsBody = $('gameDetailsBody');
+  function updateGameDetails(){
+    if (!gameDetailsToggle || !gameDetailsBody) return;
+    const det = (selectedTask && selectedTask.details || '').trim();
+    const gv = document.getElementById('gameView');
+    if (gv) gv.classList.remove('details-open');
+    if (!det) { gameDetailsToggle.hidden = true; gameDetailsBody.hidden = true; return; }
+    gameDetailsToggle.hidden = false;
+    gameDetailsBody.textContent = det;
+    gameDetailsBody.hidden = true; // each sprint starts collapsed
+    const chev = gameDetailsToggle.querySelector('.chev');
+    if (chev) chev.textContent = '▸';
+  }
+  if (gameDetailsToggle) gameDetailsToggle.addEventListener('click', () => {
+    const show = gameDetailsBody.hidden;
+    gameDetailsBody.hidden = !show;
+    // The ring cedes room while details are open (short screens only)
+    const gv = document.getElementById('gameView');
+    if (gv) gv.classList.toggle('details-open', show);
+    const chev = gameDetailsToggle.querySelector('.chev');
+    if (chev) chev.textContent = show ? '▾' : '▸';
+  });
   const doneBtn = $('doneBtn');
   const quitBtn = $('quitBtn');
   const resultOverlay = $('resultOverlay');
@@ -1902,6 +1965,7 @@ body { display:flex; flex-direction:column; position:relative }
     endsAt = startedAt + targetSeconds * 1000;
     beepedAt = new Set();
     gameTask.textContent = currentTask;
+    updateGameDetails();
     timerSub.textContent = `target — ${fmtMMSS(targetSeconds)}${pauseCount?`  ·  resumed`:''}`;
     timerRing.classList.remove('warn','danger');
     timerTime.classList.remove('danger');
@@ -1993,6 +2057,7 @@ body { display:flex; flex-direction:column; position:relative }
     endsAt = startedAt + targetSeconds * 1000;
     beepedAt = new Set();
     gameTask.textContent = text;
+    updateGameDetails();
     timerSub.textContent = `target — ${fmtMMSS(targetSeconds)}`;
     showView('game');
     timerRing.classList.remove('warn','danger');
@@ -3116,10 +3181,21 @@ body { display:flex; flex-direction:column; position:relative }
       // Auto-select the URL task as a "personal" linked task so the completion
       // path bumps timeSpent on the right todo. We piggyback on selectedTask.
       if (t && todoIdParam) {
+        // Details ride in on the URL (Personal passes them, capped) with the
+        // personal-todos cache as fallback — they feed the in-game details
+        // toggle under the big title.
+        let det = sp.get('details') || '';
+        if (!det) {
+          try {
+            const cache = JSON.parse(localStorage.getItem('personal-todos-cache') || '{}') || {};
+            const hit = (cache.items || []).find(i => i.id === todoIdParam);
+            if (hit) det = hit.details || '';
+          } catch {}
+        }
         try {
           setSelectedTask({
             text: t, source: 'personal', jobId: '', jobLabel: 'PERSONAL',
-            date: '', ids: { todoId: todoIdParam }, details: ''
+            date: '', ids: { todoId: todoIdParam }, details: det
           });
         } catch {}
       }
