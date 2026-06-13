@@ -2945,6 +2945,9 @@
     cursor: pointer;
   }
   .pc-snooze:hover { color: #fff; border-color: rgba(255,255,255,.3) }
+  /* Skip modal's destructive option — reads as danger, not just another row */
+  .pc-snooze.skip-delete { color: rgba(255,123,107,.85); border-color: rgba(255,107,107,.3) }
+  .pc-snooze.skip-delete:hover { color: #ff7b6b; border-color: rgba(255,107,107,.55); background: rgba(255,107,107,.08) }
   .pc-ok {
     padding: 14px 28px; border-radius: 99px;
     background: linear-gradient(135deg, #FF8A3D, #FF6B1A);
@@ -5095,6 +5098,7 @@
       <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:14px;display:flex;flex-direction:column;gap:8px">
         <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:rgba(255,255,255,.55)">Or</span>
         <button class="pc-snooze" id="skipRemove" type="button" style="width:100%">Remove from priorities</button>
+        <button class="pc-snooze skip-delete" id="skipDelete" type="button" style="width:100%" title="Deletes the task itself — not just from the priority list">Delete task</button>
       </div>
     </div>
     <div class="pc-foot">
@@ -9217,6 +9221,14 @@ const VOICE = {
         l.taskIds = Array.isArray(l.taskIds) ? l.taskIds : [];
         l.routine = (l.routine === 'morning' || l.routine === 'night') ? l.routine : null;
       });
+      // Routine lists (Morning…) belong at the END of the strip, after the
+      // priority chain. Normalize stored order so the strip, the reorder
+      // arrows, and the cascade all agree. Array.sort is stable, so the
+      // priority lists keep their relative order (First→Second→Third) — only
+      // routines slide to the back. Persisted below if anything moved.
+      const _orderBefore = lists.map(l => l.id).join(',');
+      lists.sort((a, b) => (a.routine ? 1 : 0) - (b.routine ? 1 : 0));
+      const _orderChanged = lists.map(l => l.id).join(',') !== _orderBefore;
       let activeId = typeof d.activeListId === 'string' ? d.activeListId : '';
       if (!lists.some(l => l.id === activeId)) activeId = lists[0]?.id || '';
       // Time-of-day auto-select: if there's a list flagged for the CURRENT
@@ -9235,6 +9247,9 @@ const VOICE = {
         activeListId: activeId,
         lists
       };
+      // Persist the routines-last normalization once so it sticks (and syncs).
+      // Idempotent: once ordered, _orderChanged is false and we skip the write.
+      if (_orderChanged) { try { saveFocus5(); } catch {} }
     } catch {}
   }
   function saveFocus5(){
@@ -9558,6 +9573,25 @@ const VOICE = {
     try { focus5SkipOrRemove(_skipTaskId); } catch {}
     closeSkipModal();
   }
+  async function applySkipDelete(){
+    if (!_skipTaskId) { closeSkipModal(); return; }
+    const id = _skipTaskId;
+    const t = todos.find(x => x.id === id);
+    if (!confirm(`Delete “${(t && t.text) || 'this task'}”? This deletes the task itself — not just its priority slot.`)) return;
+    // Pull it out of every focus list first so no ghost id lingers in a slot.
+    try {
+      if (focus5State && focus5State.lists) {
+        focus5State.lists.forEach(l => {
+          const at = l.taskIds.indexOf(id);
+          if (at >= 0) l.taskIds.splice(at, 1);
+        });
+        saveFocus5();
+      }
+    } catch {}
+    closeSkipModal();
+    try { await removeTodo(id); } catch {}
+    try { render(); } catch {}
+  }
   (function wireSkipModal(){
     const bd = document.getElementById('skipBackdrop');
     const cancel = document.getElementById('skipCancel');
@@ -9568,6 +9602,8 @@ const VOICE = {
     if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) closeSkipModal(); });
     if (apply) apply.addEventListener('click', applySkipToDate);
     if (remove) remove.addEventListener('click', applySkipRemove);
+    const del = document.getElementById('skipDelete');
+    if (del) del.addEventListener('click', applySkipDelete);
     if (dateInput) dateInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); applySkipToDate(); }
     });
