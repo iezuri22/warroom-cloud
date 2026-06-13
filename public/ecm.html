@@ -2354,6 +2354,21 @@
   }
   .drawer-action-btn:hover { color: var(--ink); border-color: var(--w30) }
   .drawer-action-btn.push:hover { color: var(--orange); border-color: rgba(255,138,61,.5); background: rgba(255,138,61,.08) }
+  /* Planned push — date + button pair next to "Push to my priorities" */
+  .drawer-plan-wrap { display: inline-flex; align-items: center; gap: 6px }
+  .drawer-plan-date {
+    width: 138px;
+    padding: 7px 9px; border-radius: 99px;
+    background: var(--w04);
+    border: 1px solid var(--w14);
+    color: var(--w75);
+    font-family: inherit; font-size: 11.5px; font-weight: 700;
+    outline: none;
+    transition: border-color .12s;
+  }
+  .drawer-plan-date:hover { border-color: var(--w25) }
+  .drawer-plan-date:focus { border-color: rgba(255,200,77,.55) }
+  .drawer-action-btn.plan:hover { color: var(--amber); border-color: rgba(255,200,77,.5); background: rgba(255,200,77,.08) }
 </style>
 </head>
 <body>
@@ -2927,9 +2942,10 @@ function canPushToMyDay(){
   // Team magic-link users have no Personal page here.
   return !_teamMode;
 }
-async function pushRowToMyDay(rowId){
+async function pushRowToMyDay(rowId, plannedFor){
   const r = rows.find(x => String(x.id) === String(rowId));
   if (!r) return;
+  const planned = String(plannedFor || '').trim();
   try {
     const c = getConfig();
     await addDoc(myDayPushCol, {
@@ -2942,9 +2958,14 @@ async function pushRowToMyDay(rowId){
       outcome: r.outcome || '',
       permalink: r.permalink || '',
       requestedBy: '',
+      // Optional plan date — the Personal page parks it in the Planned tab
+      // instead of the lists, and it knocks on that morning.
+      plannedFor: planned,
       createdAt: new Date().toISOString()
     });
-    toast('Pushed — it\'ll land at the top of your Personal priorities.', 'ok');
+    toast(planned
+      ? `Planned for ${planned} — it'll land in your Planned tab and knock that morning.`
+      : 'Pushed — it\'ll land at the top of your Personal priorities.', 'ok');
   } catch (e) {
     console.error('push to my day failed', e);
     toast('Push failed — check your connection and try again.', 'err');
@@ -3834,7 +3855,14 @@ function _drawerHTML(r){
           <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             Push to my priorities
-          </button>` : ''}
+          </button>
+          <span class="drawer-plan-wrap" title="Queue it as a planned priority — it knocks on the Personal page that morning">
+            <input type="date" class="drawer-plan-date" data-plan-date="${escHtml(String(r.id))}" min="${(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())}">
+            <button type="button" class="drawer-action-btn plan" data-plan-myday="${escHtml(String(r.id))}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Plan for date
+            </button>
+          </span>` : ''}
           ${!isClosedStatus ? `
           <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -3913,6 +3941,16 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       b.disabled = true;
       pushRowToMyDay(r.id).finally(() => { b.disabled = false; });
+    }));
+    // Planned push — needs a date picked first.
+    row.querySelectorAll('[data-plan-date]').forEach(inp => inp.addEventListener('click', e => e.stopPropagation()));
+    row.querySelectorAll('[data-plan-myday]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dateInp = row.querySelector(`[data-plan-date="${String(r.id)}"]`);
+      const ds = (dateInp && dateInp.value) || '';
+      if (!ds) { toast('Pick a date first — that\'s the day it knocks.', 'err'); if (dateInp) dateInp.focus(); return; }
+      b.disabled = true;
+      pushRowToMyDay(r.id, ds).finally(() => { b.disabled = false; });
     }));
     row.querySelectorAll('[data-complete-row]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
