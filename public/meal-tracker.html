@@ -554,8 +554,11 @@ function closeExport(e){if(e&&e.target&&e.target.id!=="scrimExport"&&e.type==="c
 function closeMenu(e){if(e&&e.target&&e.target.id!=="scrimMenu"&&e.type==="click")return;hide("Menu");}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove("on"),1900);}
 
-/* ---------- boot ---------- */
-const SEED_V=2;
+/* ---------- boot ----------
+   Seed only AFTER cloud hydration so the merge isn't clobbered by the
+   cloud-wins bootstrap (running it pre-bootstrap set the version flag but
+   dropped the recipe write, leaving the collection stuck at the old seed). */
+const SEED_V=3;
 function applySeed(){
   const cur=loadRecipes();
   if(cur===null){saveRecipes(DEFAULT_RECIPES.slice());localStorage.setItem("meal-recipes-seed-v",String(SEED_V));return;}
@@ -568,7 +571,8 @@ function applySeed(){
   }
 }
 document.addEventListener("warroom:cloud-ready",()=>{applySeed();if(curView==="recipes")renderRecipes();else render();});
-applySeed();
+// Fallback if cloud-ready never fires (e.g. sync disabled): seed after a beat.
+setTimeout(()=>{if(!window.__warroomCloudReady){applySeed();if(curView==="recipes")renderRecipes();}},2500);
 render();
 </script>
 </body>
