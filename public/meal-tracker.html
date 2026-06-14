@@ -198,6 +198,15 @@
   .srec-t{font-size:14.5px;font-weight:800;letter-spacing:-.01em;line-height:1.2;}
   .srec-c{font-size:11px;font-weight:700;color:var(--green);margin-top:3px;}
   .splan{flex:0 0 auto;background:var(--green-tint);color:var(--green);border:1px solid var(--green-bd);border-radius:9px;font-family:inherit;font-weight:800;font-size:12px;padding:8px 12px;cursor:pointer;}
+  .sswap{flex:0 0 auto;background:var(--w04);border:1px solid var(--w10);color:var(--w45);border-radius:9px;font-size:15px;line-height:1;padding:7px 10px;cursor:pointer;}
+  /* meal-slot plan */
+  .pmeal{margin-bottom:16px;}
+  .pmeal-h{font-size:12px;font-weight:900;letter-spacing:.4px;text-transform:uppercase;color:var(--w45);margin:0 2px 8px;}
+  .pslot{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border-radius:12px;padding:13px 14px;margin-bottom:8px;font-family:inherit;font-size:14.5px;font-weight:700;}
+  .pslot.filled{background:var(--bg-elev);border:1px solid var(--w06);color:var(--ink);box-shadow:0 1px 2px rgba(17,19,24,.04);cursor:pointer;}
+  .pslot.filled span{flex:1;min-width:0;}
+  .pslot.filled button{background:none;border:none;color:var(--w30);font-size:18px;line-height:1;cursor:pointer;padding:0 2px;}
+  .pslot.empty{background:none;border:1px dashed var(--w20);color:var(--w45);cursor:pointer;text-align:left;justify-content:flex-start;}
   .pday{background:var(--bg-elev);border:1px solid var(--w06);border-radius:14px;padding:12px 14px;margin-bottom:9px;box-shadow:0 1px 2px rgba(17,19,24,.04);}
   .pday.today{border-color:var(--blue-bd);}
   .pday-h{display:flex;align-items:center;justify-content:space-between;}
@@ -210,7 +219,7 @@
   .picklist{max-height:62vh;overflow:auto;display:flex;flex-direction:column;gap:6px;}
   .ppick{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;background:var(--w04);border:1px solid var(--w06);border-radius:10px;padding:11px 13px;font-family:inherit;font-size:14px;font-weight:700;color:var(--ink);cursor:pointer;}
   .ppick span{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--w45);flex:0 0 auto;}
-  .daybtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .daybtns{display:grid;grid-template-columns:1fr;gap:8px;}
   .daybtn{background:var(--w04);border:1px solid var(--w10);border-radius:12px;font-family:inherit;font-weight:800;font-size:14px;color:var(--ink);padding:14px;cursor:pointer;}
   .daybtn.today{border-color:var(--blue);color:var(--blue);}
   .dplan{width:100%;margin-bottom:14px;background:var(--blue);color:#fff;border:none;border-radius:12px;font-family:inherit;font-weight:800;font-size:14px;padding:12px;cursor:pointer;}
@@ -395,7 +404,7 @@
 <div class="sheet" id="sheetDayPick">
   <div class="grab"></div>
   <h2 id="dayPickTitle">Plan recipe</h2>
-  <p class="hint">Which day this week?</p>
+  <p class="hint">Which meal this week?</p>
   <div id="dayPickBtns" class="daybtns"></div>
 </div>
 
@@ -684,53 +693,55 @@ function renderRecipes(){
   CAT_ORDER.forEach(k=>{const arr=groups[k];if(!arr||!arr.length)return;html+='<div class="cathead">'+CAT_LABEL(k)+'<span>'+arr.length+'</span></div>';arr.forEach(r=>{html+=recipeCardHTML(r);});});
   g.innerHTML=html;
 }
-/* ---------- weekly plan + healthy suggestions ---------- */
-function weekDays(){
-  const[y,m,d]=todayKey().split("-").map(Number);const dt=new Date(Date.UTC(y,m-1,d,12));
-  const dow=dt.getUTCDay();const off=(dow===0?-6:1-dow);dt.setUTCDate(dt.getUTCDate()+off);
-  const out=[];for(let i=0;i<7;i++){const k=ctParts(dt);out.push({day:PLAN_DAYS[i],key:k,label:PLAN_DAYS[i]+" "+parseInt(k.split("-")[2],10)});dt.setUTCDate(dt.getUTCDate()+1);}
-  return out;
-}
-function weekStart(){return weekDays()[0].key;}
+/* ---------- weekly plan (meal slots) + healthy suggestions ---------- */
+const MEALS=["Breakfast","Lunch","Dinner"];
+const SLOTS_PER=2;
+let suggestIds=[];
+function weekStart(){const[y,m,d]=todayKey().split("-").map(Number);const dt=new Date(Date.UTC(y,m-1,d,12));const dow=dt.getUTCDay();const off=(dow===0?-6:1-dow);dt.setUTCDate(dt.getUTCDate()+off);return ctParts(dt);}
 function loadPlan(){try{return JSON.parse(localStorage.getItem(PLAN_KEY))||{};}catch(e){return {};}}
 function savePlan(p){localStorage.setItem(PLAN_KEY,JSON.stringify(p));}
 function planFor(){return loadPlan()[weekStart()]||{};}
-function planAdd(day,rid){const p=loadPlan(),w=weekStart();p[w]=p[w]||{};p[w][day]=p[w][day]||[];if(!p[w][day].includes(rid))p[w][day].push(rid);savePlan(p);if(curView==="plan")renderPlan();}
-function planRemove(day,rid){const p=loadPlan(),w=weekStart();if(p[w]&&p[w][day]){p[w][day]=p[w][day].filter(x=>x!==rid);if(!p[w][day].length)delete p[w][day];if(p[w]&&!Object.keys(p[w]).length)delete p[w];}savePlan(p);renderPlan();}
+function planAdd(meal,rid){const p=loadPlan(),w=weekStart();p[w]=p[w]||{};p[w][meal]=p[w][meal]||[];if(p[w][meal].length>=SLOTS_PER){toast(meal+" slots are full");return false;}if(!p[w][meal].includes(rid))p[w][meal].push(rid);savePlan(p);if(curView==="plan")renderPlan();return true;}
+function planRemove(meal,rid){const p=loadPlan(),w=weekStart();if(p[w]&&p[w][meal]){p[w][meal]=p[w][meal].filter(x=>x!==rid);if(!p[w][meal].length)delete p[w][meal];if(p[w]&&!Object.keys(p[w]).length)delete p[w];}savePlan(p);renderPlan();}
 function clearWeek(){if(!confirm("Clear this week's plan?"))return;const p=loadPlan();delete p[weekStart()];savePlan(p);renderPlan();}
 function healthyPool(){return recipes().filter(r=>{const c=recipeCat(r);const tags=(r.tags||[]).map(t=>String(t).toLowerCase());if(["seafood","salad","veg"].includes(c))return true;return tags.some(t=>["veg","vegetables","salad","fish","seafood","fiber","light","lean","fermented","greens"].includes(t));});}
-function shuffleSuggest(){suggestSeed=Math.floor(Math.random()*100000);renderSuggest();}
+function ensureSuggest(){const ids=healthyPool().map(r=>r.id);suggestIds=suggestIds.filter(id=>ids.includes(id));const n=Math.min(4,ids.length);const avail=ids.filter(id=>!suggestIds.includes(id));while(suggestIds.length<n&&avail.length){suggestIds.push(avail.splice(Math.floor(Math.random()*avail.length),1)[0]);}if(suggestIds.length>n)suggestIds=suggestIds.slice(0,n);}
+function shuffleSuggest(){suggestIds=[];ensureSuggest();renderSuggest();}
+function swapSuggest(pos){const ids=healthyPool().map(r=>r.id);const avail=ids.filter(id=>!suggestIds.includes(id));if(!avail.length){toast("No other picks available");return;}suggestIds[pos]=avail[Math.floor(Math.random()*avail.length)];renderSuggest();}
 function renderSuggest(){
   const pool=healthyPool(),el=document.getElementById("planSuggest");
   if(!pool.length){el.innerHTML='<div class="pempty">Add or pull recipes to get healthy suggestions.</div>';return;}
-  const n=Math.min(4,pool.length),start=suggestSeed%pool.length,picks=[];
-  for(let i=0;i<n;i++)picks.push(pool[(start+i)%pool.length]);
-  el.innerHTML=picks.map(r=>'<div class="srec"><div class="srec-b" onclick="openRecipe(\''+r.id+'\')"><div class="srec-t">'+escapeHtml(r.title)+'</div><div class="srec-c">'+CAT_LABEL(recipeCat(r))+'</div></div><button class="splan" onclick="openDayPick(\''+r.id+'\')">+ Plan</button></div>').join("");
+  ensureSuggest();
+  el.innerHTML=suggestIds.map((id,pos)=>{const r=recipeById(id);if(!r)return"";return '<div class="srec"><div class="srec-b" onclick="openRecipe(\''+id+'\')"><div class="srec-t">'+escapeHtml(r.title)+'</div><div class="srec-c">'+CAT_LABEL(recipeCat(r))+'</div></div><button class="sswap" onclick="swapSuggest('+pos+')" title="Swap this pick">&#8635;</button><button class="splan" onclick="openMealPick(\''+id+'\')">+ Plan</button></div>';}).join("");
 }
 function renderPlan(){
   renderSuggest();
-  const days=weekDays(),wp=planFor(),el=document.getElementById("planWeek");
-  el.innerHTML=days.map(d=>{
-    const ids=wp[d.day]||[];
-    const chips=ids.map(id=>{const r=recipeById(id);if(!r)return"";return '<span class="pchip" onclick="openRecipe(\''+id+'\')">'+escapeHtml(r.title)+'<button onclick="event.stopPropagation();planRemove(\''+d.day+'\',\''+id+'\')" aria-label="remove">&times;</button></span>';}).join("");
-    return '<div class="pday'+(d.key===todayKey()?" today":"")+'"><div class="pday-h"><span>'+d.label+'</span><button class="padd" onclick="openPlanPick(\''+d.day+'\')">+ Add</button></div>'+(chips?'<div class="pchips">'+chips+'</div>':'<div class="pempty">nothing planned</div>')+'</div>';
+  const wp=planFor(),el=document.getElementById("planWeek");
+  el.innerHTML=MEALS.map(meal=>{
+    const ids=wp[meal]||[];let slots="";
+    for(let i=0;i<SLOTS_PER;i++){
+      const id=ids[i];
+      if(id){const r=recipeById(id);if(r)slots+='<div class="pslot filled" onclick="openRecipe(\''+id+'\')"><span>'+escapeHtml(r.title)+'</span><button onclick="event.stopPropagation();planRemove(\''+meal+'\',\''+id+'\')" aria-label="remove">&times;</button></div>';else slots+='<button class="pslot empty" onclick="openPlanPick(\''+meal+'\')">+ Add '+meal.toLowerCase()+'</button>';}
+      else slots+='<button class="pslot empty" onclick="openPlanPick(\''+meal+'\')">+ Add '+meal.toLowerCase()+'</button>';
+    }
+    return '<div class="pmeal"><div class="pmeal-h">'+meal+'</div>'+slots+'</div>';
   }).join("");
 }
-function openPlanPick(day){pendingPlanDay=day;document.getElementById("planPickTitle").textContent="Add to "+day;document.getElementById("planPickSearch").value="";renderPlanPick();show("PlanPick");}
+function openPlanPick(meal){pendingPlanDay=meal;document.getElementById("planPickTitle").textContent="Add to "+meal;document.getElementById("planPickSearch").value="";renderPlanPick();show("PlanPick");}
 function renderPlanPick(){
   const q=(document.getElementById("planPickSearch").value||"").toLowerCase();
   let list=recipes();if(q)list=list.filter(r=>r.title.toLowerCase().includes(q));
   document.getElementById("planPickList").innerHTML=list.slice(0,80).map(r=>'<button class="ppick" onclick="planPickChoose(\''+r.id+'\')">'+escapeHtml(r.title)+'<span>'+CAT_LABEL(recipeCat(r))+'</span></button>').join("")||'<div class="pempty">No matches</div>';
 }
-function planPickChoose(rid){const day=pendingPlanDay;planAdd(day,rid);hide("PlanPick");toast("Added to "+day);}
-function openDayPick(rid){pendingPlanRecipe=rid;const r=recipeById(rid);document.getElementById("dayPickTitle").textContent="Plan: "+(r?r.title:"");document.getElementById("dayPickBtns").innerHTML=weekDays().map(d=>'<button class="daybtn'+(d.key===todayKey()?" today":"")+'" onclick="dayPickChoose(\''+d.day+'\')">'+d.label+'</button>').join("");show("DayPick");}
-function dayPickChoose(day){planAdd(day,pendingPlanRecipe);hide("DayPick");toast("Planned for "+day);}
+function planPickChoose(rid){const meal=pendingPlanDay;if(planAdd(meal,rid)){hide("PlanPick");toast("Added to "+meal);}}
+function openMealPick(rid){pendingPlanRecipe=rid;const r=recipeById(rid);document.getElementById("dayPickTitle").textContent="Plan: "+(r?r.title:"");document.getElementById("dayPickBtns").innerHTML=MEALS.map(m=>'<button class="daybtn" onclick="mealPickChoose(\''+m+'\')">'+m+'</button>').join("");show("DayPick");}
+function mealPickChoose(meal){if(planAdd(meal,pendingPlanRecipe)){hide("DayPick");toast("Planned: "+meal);}}
 function autoPlanWeek(){
   const pool=healthyPool();if(!pool.length){toast("Add recipes first");return;}
-  const days=weekDays(),p=loadPlan(),w=weekStart();p[w]=p[w]||{};
+  const p=loadPlan(),w=weekStart();p[w]=p[w]||{};
   let idx=Math.floor(Math.random()*pool.length),added=0;
-  days.forEach(d=>{if(!(p[w][d.day]&&p[w][d.day].length)){p[w][d.day]=[pool[idx%pool.length].id];idx++;added++;}});
-  savePlan(p);renderPlan();toast(added?("Filled "+added+" day"+(added>1?"s":"")):"Week already planned");
+  MEALS.forEach(meal=>{p[w][meal]=p[w][meal]||[];let guard=0;while(p[w][meal].length<SLOTS_PER&&guard++<pool.length*2){const cand=pool[idx%pool.length].id;idx++;if(!p[w][meal].includes(cand)){p[w][meal].push(cand);added++;}}});
+  savePlan(p);renderPlan();toast(added?("Filled "+added+" slot"+(added>1?"s":"")):"Plan already full");
 }
 function recipeCardHTML(r){
   const tagsHtml=(r.tags||[]).slice(0,3).map(t=>'<span class="rtag">'+escapeHtml(t)+'</span>').join("");
@@ -772,7 +783,7 @@ function renderRecipeDetail(){
       '<button class="stbtn want'+(st==="want"?" on":"")+'" onclick="setStatus(\''+r.id+'\',\'want\')">Want to cook</button>'+
       '<button class="stbtn cooked'+(st==="cooked"?" on":"")+'" onclick="setStatus(\''+r.id+'\',\'cooked\')">Cooked</button>'+
     '</div>'+
-    '<button class="dplan" onclick="openDayPick(\''+r.id+'\')">+ Add to this week</button>'+
+    '<button class="dplan" onclick="openMealPick(\''+r.id+'\')">+ Add to this week</button>'+
     (r.url?'<a class="dlink" href="'+encodeURI(r.url)+'" target="_blank" rel="noopener">Open full recipe &#8599;</a>':'')+
     '<div class="dfield"><label>Category</label><select class="tf" onchange="setCat(\''+r.id+'\',this.value)">'+catOpts+'</select></div>'+
     '<div class="dsec-h">Ingredients</div>'+
