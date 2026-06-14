@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="/sync-client.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     color-scheme: light;
@@ -246,6 +247,20 @@
   </div>
 </div>
 
+<!-- EZ login -->
+<div class="scrim" id="scrimEZLogin" onclick="closeEZLogin(event)"></div>
+<div class="sheet" id="sheetEZLogin">
+  <div class="grab"></div>
+  <h2>Connect EZ recipes</h2>
+  <p class="hint">Sign in with your PotLuck account to import your recipes. Your password is sent straight to your own Supabase and is never stored here.</p>
+  <div class="field"><label>Email</label><input class="tf" id="ezEmail" type="email" autocomplete="username" placeholder="you@email.com"></div>
+  <div class="field"><label>Password</label><input class="tf" id="ezPass" type="password" autocomplete="current-password" placeholder="PotLuck password"></div>
+  <div class="save-row">
+    <button class="btn btn-primary" onclick="ezDoLogin()">Sign in & pull</button>
+    <button class="btn-ghost" onclick="closeEZLogin()">Cancel</button>
+  </div>
+</div>
+
 <!-- Share -->
 <div class="scrim" id="scrimExport" onclick="closeExport(event)"></div>
 <div class="sheet" id="sheetExport">
@@ -269,7 +284,7 @@
   <div class="menu-row">
     <button onclick="jumpToday()">Jump to today</button>
     <button onclick="closeMenu();openExport()">Share current day</button>
-    <button onclick="closeMenu();connectEZ()">Connect EZ recipes</button>
+    <button onclick="closeMenu();openEZLogin()">Connect EZ recipes</button>
     <button class="warn" onclick="clearDay()">Clear this day</button>
     <button class="warn" onclick="clearAll()">Clear all data</button>
     <button onclick="logout()">Log out</button>
@@ -454,44 +469,50 @@ function saveRecipe(){
   const a=recipes();a.unshift(r);saveRecipes(a);closeAddRecipe();renderRecipes();toast("Recipe saved");
 }
 function delRecipe(id){const a=recipes().filter(r=>r.id!==id);saveRecipes(a);renderRecipes();}
-const EZ_KEY="meal-ez-config";
-function ezConfig(){try{return JSON.parse(localStorage.getItem(EZ_KEY))||null;}catch(e){return null;}}
-function connectEZ(){
-  const c=ezConfig()||{};
-  const url=prompt("EZ Supabase URL\n(e.g. https://yourproject.supabase.co)",c.url||"");
-  if(url===null)return false;
-  const key=prompt("EZ Supabase anon key",c.key||"");
-  if(key===null)return false;
-  const table=prompt("Recipes table name",c.table||"recipes");
-  if(table===null)return false;
-  localStorage.setItem(EZ_KEY,JSON.stringify({url:url.trim().replace(/\/$/,""),key:key.trim(),table:(table.trim()||"recipes")}));
-  toast("EZ connected");return true;
+// EZ recipes live in the PotLuck Supabase (iezuri22.github.io). Reads require
+// the user's PotLuck login (row-level security by user_id). The anon key below
+// is already public in the PotLuck site source; only the email/password the
+// user types is sensitive, and it is never stored.
+const EZ_URL="https://blqbxduxgimarrhgyfgn.supabase.co";
+const EZ_ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscWJ4ZHV4Z2ltYXJyaGd5ZmduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc1NjgyNDcsImV4cCI6MjA4MzE0NDI0N30.iNrBLJLSQEUEV24VCnhrMPTTJ6A_0rIuSAOinuFd-vM";
+let _ezClient=null;
+function ezClient(){if(!_ezClient&&window.supabase&&window.supabase.createClient){_ezClient=window.supabase.createClient(EZ_URL,EZ_ANON,{auth:{persistSession:false,autoRefreshToken:false}});}return _ezClient;}
+function ezTags(v){if(!v)return [];if(Array.isArray(v))return v.map(x=>String(x).trim()).filter(Boolean);return String(v).split(/[,#]/).map(x=>x.trim()).filter(Boolean);}
+function ezSavedEmail(){try{return localStorage.getItem("meal-ez-email")||"";}catch(e){return "";}}
+function openEZLogin(){if(!ezClient()){toast("Recipe sync still loading, try again");return;}document.getElementById("ezEmail").value=ezSavedEmail();document.getElementById("ezPass").value="";show("EZLogin");}
+async function ezDoLogin(){
+  const email=document.getElementById("ezEmail").value.trim();
+  const pass=document.getElementById("ezPass").value;
+  if(!email||!pass){toast("Enter email and password");return;}
+  const c=ezClient();if(!c){toast("Recipe sync not loaded");return;}
+  toast("Signing in...");
+  const {error}=await c.auth.signInWithPassword({email,password:pass});
+  document.getElementById("ezPass").value="";
+  if(error){toast("Login failed");return;}
+  try{localStorage.setItem("meal-ez-email",email);}catch(e){}
+  hide("EZLogin");pullEZ();
 }
-function ezPick(row,names){for(const n of names){if(row[n]!==undefined&&row[n]!==null&&row[n]!=="")return row[n];}return "";}
-function ezTags(v){if(!v)return [];if(Array.isArray(v))return v.map(x=>String(x).trim()).filter(Boolean);return String(v).split(",").map(x=>x.trim()).filter(Boolean);}
 async function pullEZ(){
-  let cfg=ezConfig();
-  if(!cfg||!cfg.url||!cfg.key){if(!connectEZ())return;cfg=ezConfig();if(!cfg)return;}
+  const c=ezClient();
+  if(!c){toast("Recipe sync still loading, try again");return;}
+  let sess=null;try{sess=(await c.auth.getSession()).data.session;}catch(e){}
+  if(!sess){openEZLogin();return;}
   toast("Pulling from EZ...");
   try{
-    const u=cfg.url+"/rest/v1/"+encodeURIComponent(cfg.table||"recipes")+"?select=*&limit=500";
-    const res=await fetch(u,{headers:{apikey:cfg.key,Authorization:"Bearer "+cfg.key}});
-    if(res.status===401||res.status===403){toast("EZ access denied — check key / RLS");return;}
-    if(!res.ok){toast("EZ pull failed ("+res.status+")");return;}
-    const rows=await res.json();
-    const incoming=(Array.isArray(rows)?rows:[]).map(row=>({
-      title:ezPick(row,["title","name","recipe_name"]),
-      url:ezPick(row,["url","link","source_url","web_url"]),
-      img:ezPick(row,["image","image_url","img","photo","photo_url","thumbnail"]),
-      tags:ezTags(ezPick(row,["tags","category","categories","cuisine"])),
-      notes:ezPick(row,["notes","description","summary"])
-    })).filter(r=>r.title);
+    const {data,error}=await c.from("meal_planner_data").select("*").eq("user_id",sess.user.id);
+    if(error){toast("EZ pull failed");return;}
+    const incoming=(data||[])
+      .filter(r=>r.id&&String(r.id).startsWith("recipe_"))
+      .map(r=>({rid:r.id,...(r.data||{})}))
+      .filter(r=>r.title&&!r.isDraft)
+      .map(r=>({title:r.title,url:(r.recipe_url||r.sourceUrl||"").trim(),img:(r.image_url||"").trim(),tags:ezTags(r.tags).concat(r.category?[String(r.category).toLowerCase()]:[]),notes:(r.notes||"").trim()}));
     if(!incoming.length){toast("No EZ recipes found");return;}
     const a=recipes();
     const have=new Set(a.map(r=>(r.title||"").toLowerCase()));
     let added=0;
     incoming.forEach(r=>{
-      if(have.has((r.title||"").toLowerCase()))return;
+      const k=(r.title||"").toLowerCase();
+      if(have.has(k))return;have.add(k);
       a.unshift({id:"ez"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:r.title,url:r.url||"",img:r.img||"",tags:r.tags||[],notes:r.notes||"",source:"EZ"});
       added++;
     });
@@ -551,6 +572,7 @@ function hide(n){document.getElementById("scrim"+n).classList.remove("on");docum
 function closeAdd(e){if(e&&e.target&&e.target.id!=="scrimAdd"&&e.type==="click")return;hide("Add");}
 function closeAddRecipe(e){if(e&&e.target&&e.target.id!=="scrimRecipe"&&e.type==="click")return;hide("Recipe");}
 function closeExport(e){if(e&&e.target&&e.target.id!=="scrimExport"&&e.type==="click")return;hide("Export");}
+function closeEZLogin(e){if(e&&e.target&&e.target.id!=="scrimEZLogin"&&e.type==="click")return;hide("EZLogin");}
 function closeMenu(e){if(e&&e.target&&e.target.id!=="scrimMenu"&&e.type==="click")return;hide("Menu");}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("on");clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove("on"),1900);}
 
