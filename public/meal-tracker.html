@@ -53,7 +53,7 @@
 
   /* segmented control */
   .seg{display:flex;gap:4px;margin-top:12px;background:var(--w04);border:1px solid var(--w08);border-radius:12px;padding:4px;}
-  .seg button{flex:1;border:none;background:none;font-family:inherit;font-size:14px;font-weight:800;letter-spacing:-.01em;color:var(--w45);padding:9px;border-radius:9px;cursor:pointer;transition:.15s;}
+  .seg button{flex:1;border:none;background:none;font-family:inherit;font-size:13px;font-weight:800;letter-spacing:-.01em;color:var(--w45);padding:9px 4px;border-radius:9px;cursor:pointer;transition:.15s;white-space:nowrap;}
   .seg button.on{background:var(--bg-elev);color:var(--ink);box-shadow:0 1px 3px rgba(17,19,24,.10);}
 
   .wrap{padding:16px 18px 0;}
@@ -226,6 +226,12 @@
   .daybtn{background:var(--w04);border:1px solid var(--w10);border-radius:12px;font-family:inherit;font-weight:800;font-size:14px;color:var(--ink);padding:14px;cursor:pointer;}
   .daybtn.today{border-color:var(--blue);color:var(--blue);}
   .dplan{width:100%;margin-bottom:14px;background:var(--blue);color:#fff;border:none;border-radius:12px;font-family:inherit;font-weight:800;font-size:14px;padding:12px;cursor:pointer;}
+  /* cooking tips */
+  .tip{background:var(--bg-elev);border:1px solid var(--w06);border-radius:14px;padding:13px 15px;margin-bottom:9px;box-shadow:0 1px 2px rgba(17,19,24,.04);cursor:pointer;}
+  .tip-h{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:15px;font-weight:800;letter-spacing:-.01em;}
+  .tip-h span{flex:1;min-width:0;}
+  .trem{flex:0 0 auto;background:none;border:none;color:var(--w30);font-size:18px;line-height:1;cursor:pointer;padding:0 2px;}
+  .tip-b{font-size:14px;line-height:1.5;color:var(--w70);font-weight:500;margin-top:6px;}
   /* fast-food nudge */
   .nudge{background:rgba(220,38,38,.10);border:1px solid rgba(220,38,38,.28);color:#b91c1c;font-size:13px;font-weight:700;line-height:1.4;padding:11px 14px;border-radius:12px;margin-bottom:6px;}
   /* meal entry where-tag */
@@ -266,6 +272,7 @@
     <button id="segMeals" class="on" onclick="switchView('meals')">Meals</button>
     <button id="segRecipes" onclick="switchView('recipes')">Recipes</button>
     <button id="segPlan" onclick="switchView('plan')">Plan</button>
+    <button id="segCook" onclick="switchView('cook')">Cook</button>
     <button id="segDaily" onclick="switchView('daily')">Daily</button>
   </div>
 </div>
@@ -291,6 +298,12 @@
   <div class="section-l">This week's meals</div>
   <div id="planWeek"></div>
   <div class="pempty" style="margin-top:14px;text-align:center;">Prefilled with healthy picks. Tap any slot to swap it.</div>
+</div>
+
+<!-- ===== COOK VIEW ===== -->
+<div class="wrap" id="viewCook" style="display:none;">
+  <div class="section-l">Cooking tips &amp; times</div>
+  <div id="cookList"></div>
 </div>
 
 <!-- ===== DAILY VIEW ===== -->
@@ -325,6 +338,9 @@
   </div>
   <div class="inner" id="dockDaily" style="display:none;">
     <button class="btn btn-primary" onclick="addDailyItem()">+ Add vitamin or habit</button>
+  </div>
+  <div class="inner" id="dockCook" style="display:none;">
+    <button class="btn btn-primary" onclick="openAddTip()">+ Add cooking tip</button>
   </div>
   <div class="inner" id="dockPlan" style="display:none;">
     <button class="btn btn-primary" onclick="refillEmpty()">Fill empty slots</button>
@@ -408,6 +424,16 @@
   <h2 id="dayPickTitle">Plan recipe</h2>
   <p class="hint">Which meal this week?</p>
   <div id="dayPickBtns" class="daybtns"></div>
+</div>
+
+<!-- Cooking tip add/edit -->
+<div class="scrim" id="scrimCook" onclick="closeCook(event)"></div>
+<div class="sheet" id="sheetCook">
+  <div class="grab"></div>
+  <h2 id="cookSheetTitle">Add cooking tip</h2>
+  <div class="field"><label>Topic</label><input class="tf" id="cookTitle" type="text" placeholder="e.g. Chicken breast" autocomplete="off"></div>
+  <div class="field"><label>Tip / time / temp</label><textarea id="cookBody" rows="3" placeholder="e.g. 165F internal. ~20-25 min at 400F, or 6-8 min per side."></textarea></div>
+  <div class="save-row"><button class="btn btn-primary" onclick="saveTip()">Save</button><button class="btn-ghost" onclick="closeCook()">Cancel</button></div>
 </div>
 
 <!-- Recipe detail -->
@@ -578,17 +604,20 @@ function switchView(v){
   document.getElementById("viewMeals").style.display=v==="meals"?"":"none";
   document.getElementById("viewRecipes").style.display=v==="recipes"?"":"none";
   document.getElementById("viewPlan").style.display=v==="plan"?"":"none";
+  document.getElementById("viewCook").style.display=v==="cook"?"":"none";
   document.getElementById("viewDaily").style.display=v==="daily"?"":"none";
   document.getElementById("dockMeals").style.display=v==="meals"?"":"none";
   document.getElementById("dockRecipes").style.display=v==="recipes"?"":"none";
   document.getElementById("dockPlan").style.display=v==="plan"?"":"none";
+  document.getElementById("dockCook").style.display=v==="cook"?"":"none";
   document.getElementById("dockDaily").style.display=v==="daily"?"":"none";
   document.getElementById("segMeals").classList.toggle("on",v==="meals");
   document.getElementById("segRecipes").classList.toggle("on",v==="recipes");
   document.getElementById("segPlan").classList.toggle("on",v==="plan");
+  document.getElementById("segCook").classList.toggle("on",v==="cook");
   document.getElementById("segDaily").classList.toggle("on",v==="daily");
-  document.getElementById("title").textContent=v==="daily"?"Daily":(v==="recipes"?"Recipes":(v==="plan"?"Plan":"Meals"));
-  if(v==="recipes")renderRecipes();else if(v==="daily")renderDaily();else if(v==="plan")renderPlan();else render();
+  document.getElementById("title").textContent=v==="daily"?"Daily":(v==="recipes"?"Recipes":(v==="plan"?"Plan":(v==="cook"?"Cook":"Meals")));
+  if(v==="recipes")renderRecipes();else if(v==="daily")renderDaily();else if(v==="plan")renderPlan();else if(v==="cook")renderCook();else render();
 }
 
 /* ---------- daily vitamins + habits ---------- */
@@ -616,6 +645,35 @@ function renderDaily(){
 function toggleDaily(id){const d=dailyData();const k=todayKey();d.log[k]=d.log[k]||[];const i=d.log[k].indexOf(id);if(i>=0)d.log[k].splice(i,1);else d.log[k].push(id);if(!d.log[k].length)delete d.log[k];saveDaily(d);renderDaily();}
 function addDailyItem(){const name=prompt("Add a vitamin, supplement, or habit");if(!name||!name.trim())return;const d=dailyData();d.items.push({id:"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,4),name:name.trim()});saveDaily(d);renderDaily();}
 function delDailyItem(id){const d=dailyData();if(!confirm("Remove this item?"))return;d.items=d.items.filter(x=>x.id!==id);Object.keys(d.log).forEach(k=>{d.log[k]=d.log[k].filter(x=>x!==id);if(!d.log[k].length)delete d.log[k];});saveDaily(d);renderDaily();}
+/* ---------- cooking tips reference ---------- */
+const COOK_KEY="meal-cooktips-v1";
+let editingTip=null;
+const DEFAULT_COOK=[
+  {id:"c_chickb",title:"Chicken breast",body:"165°F internal. About 20-25 min at 400°F, or 6-8 min per side in a hot pan. Rest 5 min before slicing."},
+  {id:"c_chickt",title:"Chicken thighs",body:"175°F (more forgiving than breast). About 30-35 min at 400°F. Start skin-side down for crispier skin."},
+  {id:"c_salmon",title:"Salmon",body:"125-130°F for moist medium. About 12-15 min at 400°F, or 4 min per side in a pan."},
+  {id:"c_shrimp",title:"Shrimp",body:"2-3 min per side, just until pink and opaque. They overcook fast, pull them early."},
+  {id:"c_steak",title:"Steak",body:"130-135°F for medium-rare. Sear 3-4 min per side, then rest 5 min."},
+  {id:"c_beef",title:"Ground beef / turkey",body:"160°F for beef, 165°F for turkey. No pink left."},
+  {id:"c_pork",title:"Pork chops / loin",body:"145°F, then rest 3 min. A little pink in the middle is fine and juicy."},
+  {id:"c_eggs",title:"Hard-boiled eggs",body:"Boil 10-12 min, then straight into an ice bath for easy peeling."},
+  {id:"c_rice",title:"White rice",body:"1 cup rice to 1.5 cups water. Simmer covered ~18 min, rest 5 min off heat, then fluff."},
+  {id:"c_pasta",title:"Pasta",body:"Salt the water well. Cook 1 min under the package time for al dente. Save a cup of pasta water for the sauce."},
+  {id:"c_temps",title:"Safe internal temps",body:"Chicken 165, ground meat 160, pork 145, fish 145 (salmon 125 for medium), steak 130-135 medium-rare."}
+];
+function loadCook(){try{const a=JSON.parse(localStorage.getItem(COOK_KEY));return Array.isArray(a)?a:null;}catch(e){return null;}}
+function saveCook(a){localStorage.setItem(COOK_KEY,JSON.stringify(a));}
+function cookTips(){return loadCook()||[];}
+function ensureCook(){if(loadCook()===null)saveCook(DEFAULT_COOK.slice());}
+function renderCook(){
+  const a=cookTips(),el=document.getElementById("cookList");
+  if(!a.length){el.innerHTML='<div class="empty"><div class="big">No tips yet</div>Tap "Add cooking tip" to save cook times, temps, and notes.</div>';return;}
+  el.innerHTML=a.map(t=>'<div class="tip" onclick="openEditTip(\''+t.id+'\')"><div class="tip-h"><span>'+escapeHtml(t.title)+'</span><button class="trem" onclick="event.stopPropagation();delTip(\''+t.id+'\')" aria-label="remove">&times;</button></div>'+(t.body?'<div class="tip-b">'+escapeHtml(t.body).replace(/\n/g,"<br>")+'</div>':'')+'</div>').join("");
+}
+function openAddTip(){editingTip=null;document.getElementById("cookSheetTitle").textContent="Add cooking tip";document.getElementById("cookTitle").value="";document.getElementById("cookBody").value="";show("Cook");}
+function openEditTip(id){const t=cookTips().find(x=>x.id===id);if(!t)return;editingTip=id;document.getElementById("cookSheetTitle").textContent="Edit tip";document.getElementById("cookTitle").value=t.title;document.getElementById("cookBody").value=t.body||"";show("Cook");}
+function saveTip(){const title=document.getElementById("cookTitle").value.trim();if(!title){toast("Add a topic");return;}const body=document.getElementById("cookBody").value.trim();const a=cookTips();if(editingTip){const t=a.find(x=>x.id===editingTip);if(t){t.title=title;t.body=body;}}else{a.unshift({id:"c"+Date.now().toString(36)+Math.random().toString(36).slice(2,4),title,body});}saveCook(a);hide("Cook");renderCook();toast("Saved");}
+function delTip(id){if(!confirm("Remove this tip?"))return;saveCook(cookTips().filter(t=>t.id!==id));renderCook();}
 function weekFastFood(){const log=loadLog();let n=0,k=todayKey();for(let i=0;i<7;i++){(log[k]||[]).forEach(e=>{if(e.source==="Fast food")n++;});k=prevKey(k);}return n;}
 function renderNudge(){const el=document.getElementById("ffNudge");if(!el)return;const n=weekFastFood();if(n>=3){el.style.display="";el.textContent=n+" fast food meals in the last 7 days. let's pull that back, your gut will thank you.";}else{el.style.display="none";}}
 
@@ -933,6 +991,7 @@ function closeAddRecipe(e){if(e&&e.target&&e.target.id!=="scrimRecipe"&&e.type==
 function closeExport(e){if(e&&e.target&&e.target.id!=="scrimExport"&&e.type==="click")return;hide("Export");}
 function closeEZLogin(e){if(e&&e.target&&e.target.id!=="scrimEZLogin"&&e.type==="click")return;hide("EZLogin");}
 function closeDetail(e){if(e&&e.target&&e.target.id!=="scrimDetail"&&e.type==="click")return;hide("Detail");curDetail=null;}
+function closeCook(e){if(e&&e.target&&e.target.id!=="scrimCook"&&e.type==="click")return;hide("Cook");}
 function closePlanPick(e){if(e&&e.target&&e.target.id!=="scrimPlanPick"&&e.type==="click")return;hide("PlanPick");}
 function closeDayPick(e){if(e&&e.target&&e.target.id!=="scrimDayPick"&&e.type==="click")return;hide("DayPick");}
 function closeMenu(e){if(e&&e.target&&e.target.id!=="scrimMenu"&&e.type==="click")return;hide("Menu");}
@@ -954,9 +1013,9 @@ function applySeed(){
     localStorage.setItem("meal-recipes-seed-v",String(SEED_V));
   }
 }
-document.addEventListener("warroom:cloud-ready",()=>{applySeed();ensureDaily();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();else render();});
+document.addEventListener("warroom:cloud-ready",()=>{applySeed();ensureDaily();ensureCook();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();else if(curView==="cook")renderCook();else if(curView==="plan")renderPlan();else render();});
 // Fallback if cloud-ready never fires (e.g. sync disabled): seed after a beat.
-setTimeout(()=>{if(!window.__warroomCloudReady){applySeed();ensureDaily();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();}},2500);
+setTimeout(()=>{if(!window.__warroomCloudReady){applySeed();ensureDaily();ensureCook();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();else if(curView==="cook")renderCook();}},2500);
 render();
 </script>
 </body>
