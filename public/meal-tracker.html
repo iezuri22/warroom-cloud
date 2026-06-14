@@ -187,9 +187,29 @@
   .miniadd{flex:0 0 auto;background:var(--blue);color:#fff;border:none;border-radius:10px;font-family:inherit;font-weight:700;font-size:14px;padding:0 16px;cursor:pointer;}
   .dremove{width:100%;margin-top:20px;background:none;border:1px solid var(--w10);color:var(--red);font-family:inherit;font-weight:700;font-size:14px;padding:13px;border-radius:12px;cursor:pointer;}
 
+  /* fast-food nudge */
+  .nudge{background:rgba(220,38,38,.10);border:1px solid rgba(220,38,38,.28);color:#b91c1c;font-size:13px;font-weight:700;line-height:1.4;padding:11px 14px;border-radius:12px;margin-bottom:6px;}
+  /* meal entry where-tag */
+  .rowtags{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0;}
+  .wtag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:4px 8px;border-radius:6px;background:var(--w06);color:var(--w45);}
+  .wtag.ff{background:rgba(220,38,38,.12);color:#b91c1c;}
+  /* daily checklist */
+  .dhead{font-size:12px;font-weight:900;letter-spacing:.4px;text-transform:uppercase;color:var(--w45);margin:0 2px 12px;}
+  .ditem{display:flex;align-items:center;gap:12px;padding:13px 14px;background:var(--bg-elev);border:1px solid var(--w06);border-radius:14px;margin-bottom:8px;cursor:pointer;box-shadow:0 1px 2px rgba(17,19,24,.04);transition:transform .1s;}
+  .ditem:active{transform:scale(.99);}
+  .ditem .ck{flex:0 0 auto;width:26px;height:26px;border-radius:8px;border:1.5px solid var(--w20);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;background:var(--bg-elev);transition:.12s;}
+  .ditem.done .ck{background:var(--green);border-color:var(--green);}
+  .ditem .dname{flex:1;min-width:0;font-size:15px;font-weight:700;}
+  .ditem.done .dname{color:var(--w45);}
+  .ditem .dstreak{flex:0 0 auto;font-size:11px;font-weight:800;color:var(--w45);background:var(--w04);border-radius:980px;padding:3px 9px;}
+  .ditem .dstreak.hot{color:var(--green);background:rgba(21,128,61,.12);}
+  .ditem .drem{flex:0 0 auto;background:none;border:none;color:var(--w30);font-size:19px;line-height:1;cursor:pointer;padding:0 2px;}
+  .ditem .drem:active{color:var(--red);}
+
   @media(max-width:380px){
     .title{font-size:21px;}
     .stat .n{font-size:22px;}
+    .seg button{font-size:13px;padding:8px;}
   }
 </style>
 </head>
@@ -206,6 +226,7 @@
   <div class="seg">
     <button id="segMeals" class="on" onclick="switchView('meals')">Meals</button>
     <button id="segRecipes" onclick="switchView('recipes')">Recipes</button>
+    <button id="segDaily" onclick="switchView('daily')">Daily</button>
   </div>
 </div>
 
@@ -221,7 +242,14 @@
     <div class="stat"><div class="n" id="sPhotos">0</div><div class="l">Photos</div></div>
     <div class="stat"><div class="n" id="sLast">—</div><div class="l">Last bite</div></div>
   </div>
+  <div id="ffNudge" class="nudge" style="display:none;"></div>
   <div class="feed" id="feed"></div>
+</div>
+
+<!-- ===== DAILY VIEW ===== -->
+<div class="wrap" id="viewDaily" style="display:none;">
+  <div class="dhead" id="dailyDate">Today</div>
+  <div id="dailyList"></div>
 </div>
 
 <!-- ===== RECIPES VIEW ===== -->
@@ -247,6 +275,9 @@
     <button class="btn btn-primary" onclick="openAddRecipe()">+ Add recipe</button>
     <button class="btn-ghost" onclick="pullEZ()">Pull from EZ</button>
   </div>
+  <div class="inner" id="dockDaily" style="display:none;">
+    <button class="btn btn-primary" onclick="addDailyItem()">+ Add vitamin or habit</button>
+  </div>
 </div>
 
 <!-- Add meal -->
@@ -265,6 +296,10 @@
   <div class="field">
     <label>Type</label>
     <div class="chips" id="typeChips"></div>
+  </div>
+  <div class="field">
+    <label>Where (optional)</label>
+    <div class="chips" id="whereChips"></div>
   </div>
   <div class="field">
     <label>Note (optional)</label>
@@ -362,7 +397,19 @@ const RECIPE_KEY="meal-recipes-v1"; // synced recipe collection
 let viewDate=new Date();
 let pendingPhoto=null;
 let pendingType="Breakfast";
+let pendingWhere="";
 let curView="meals";
+const WHERES=["Home","Takeout","Fast food","Restaurant"];
+const DAILY_KEY="meal-daily-v1";
+const DEFAULT_DAILY=[
+  {id:"d_vitd",name:"Vitamin D"},
+  {id:"d_omega",name:"Omega-3"},
+  {id:"d_mag",name:"Magnesium"},
+  {id:"d_water",name:"Water (8 cups)"},
+  {id:"d_greens",name:"Greens / veg"},
+  {id:"d_ferment",name:"Fermented food"},
+  {id:"d_beets",name:"Beets"}
+];
 
 /* ---------- seed recipes (Sip and Feast, gut-friendly leaning) ---------- */
 const DEFAULT_RECIPES=[
@@ -459,13 +506,44 @@ function switchView(v){
   curView=v;
   document.getElementById("viewMeals").style.display=v==="meals"?"":"none";
   document.getElementById("viewRecipes").style.display=v==="recipes"?"":"none";
+  document.getElementById("viewDaily").style.display=v==="daily"?"":"none";
   document.getElementById("dockMeals").style.display=v==="meals"?"":"none";
   document.getElementById("dockRecipes").style.display=v==="recipes"?"":"none";
+  document.getElementById("dockDaily").style.display=v==="daily"?"":"none";
   document.getElementById("segMeals").classList.toggle("on",v==="meals");
   document.getElementById("segRecipes").classList.toggle("on",v==="recipes");
-  document.getElementById("title").textContent=v==="meals"?"Meals":"Recipes";
-  if(v==="recipes")renderRecipes();else render();
+  document.getElementById("segDaily").classList.toggle("on",v==="daily");
+  document.getElementById("title").textContent=v==="daily"?"Daily":(v==="recipes"?"Recipes":"Meals");
+  if(v==="recipes")renderRecipes();else if(v==="daily")renderDaily();else render();
 }
+
+/* ---------- daily vitamins + habits ---------- */
+function loadDaily(){try{const d=JSON.parse(localStorage.getItem(DAILY_KEY));if(!d||!Array.isArray(d.items))return null;if(!d.log)d.log={};return d;}catch(e){return null;}}
+function saveDaily(d){localStorage.setItem(DAILY_KEY,JSON.stringify(d));}
+function dailyData(){return loadDaily()||{items:DEFAULT_DAILY.slice(),log:{}};}
+function ensureDaily(){if(loadDaily()===null)saveDaily({items:DEFAULT_DAILY.slice(),log:{}});}
+function prevKey(key){const[y,m,dd]=key.split("-").map(Number);const d=new Date(Date.UTC(y,m-1,dd,12));d.setUTCDate(d.getUTCDate()-1);return ctParts(d);}
+function streakOf(d,id){let n=0,k=todayKey(),first=true,guard=0;while(guard++<500){const done=(d.log[k]||[]).includes(id);if(done)n++;else if(!first)break;first=false;k=prevKey(k);}return n;}
+function renderDaily(){
+  const d=dailyData(),key=todayKey(),done=d.log[key]||[];
+  document.getElementById("dailyDate").textContent=niceDate(key);
+  const el=document.getElementById("dailyList");
+  if(!d.items.length){el.innerHTML='<div class="empty"><div class="big">Nothing to track yet</div>Tap "Add vitamin or habit" to start.</div>';return;}
+  el.innerHTML=d.items.map(it=>{
+    const isDone=done.includes(it.id);const s=streakOf(d,it.id);
+    return '<div class="ditem'+(isDone?" done":"")+'" onclick="toggleDaily(\''+it.id+'\')">'+
+      '<div class="ck">'+(isDone?'&#10003;':'')+'</div>'+
+      '<div class="dname">'+escapeHtml(it.name)+'</div>'+
+      (s>0?'<div class="dstreak'+(s>=3?" hot":"")+'">'+s+'d</div>':'')+
+      '<button class="drem" onclick="event.stopPropagation();delDailyItem(\''+it.id+'\')" aria-label="remove">&times;</button>'+
+    '</div>';
+  }).join("");
+}
+function toggleDaily(id){const d=dailyData();const k=todayKey();d.log[k]=d.log[k]||[];const i=d.log[k].indexOf(id);if(i>=0)d.log[k].splice(i,1);else d.log[k].push(id);if(!d.log[k].length)delete d.log[k];saveDaily(d);renderDaily();}
+function addDailyItem(){const name=prompt("Add a vitamin, supplement, or habit");if(!name||!name.trim())return;const d=dailyData();d.items.push({id:"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,4),name:name.trim()});saveDaily(d);renderDaily();}
+function delDailyItem(id){const d=dailyData();if(!confirm("Remove this item?"))return;d.items=d.items.filter(x=>x.id!==id);Object.keys(d.log).forEach(k=>{d.log[k]=d.log[k].filter(x=>x!==id);if(!d.log[k].length)delete d.log[k];});saveDaily(d);renderDaily();}
+function weekFastFood(){const log=loadLog();let n=0,k=todayKey();for(let i=0;i<7;i++){(log[k]||[]).forEach(e=>{if(e.source==="Fast food")n++;});k=prevKey(k);}return n;}
+function renderNudge(){const el=document.getElementById("ffNudge");if(!el)return;const n=weekFastFood();if(n>=3){el.style.display="";el.textContent=n+" fast food meals in the last 7 days. let's pull that back, your gut will thank you.";}else{el.style.display="none";}}
 
 /* ---------- meals render ---------- */
 function render(){
@@ -473,6 +551,7 @@ function render(){
   document.getElementById("dayD").textContent=isToday?"Today":niceDate(key);
   document.getElementById("daySub").innerHTML=isToday?'<span class="pill">'+niceDate(key)+'</span>':key;
   document.getElementById("nextBtn").style.visibility=isToday?"hidden":"visible";
+  renderNudge();
   const list=dayEntries(key),feed=document.getElementById("feed");
   document.getElementById("sMeals").textContent=list.length;
   document.getElementById("sPhotos").textContent=list.filter(e=>e.photo).length;
@@ -481,8 +560,9 @@ function render(){
   feed.innerHTML="";
   list.forEach(e=>{
     const el=document.createElement("div");el.className="entry";
+    const wtag=e.source?'<span class="wtag'+(e.source==="Fast food"?" ff":"")+'">'+escapeHtml(e.source)+'</span>':'';
     el.innerHTML=(e.photo?'<img class="photo" alt="meal" data-pid="'+e.id+'">':'')+
-      '<div class="body"><div class="row"><span class="tag">'+e.type+'</span><span class="time">'+ctTime(e.t)+'</span></div>'+
+      '<div class="body"><div class="row"><div class="rowtags"><span class="tag">'+e.type+'</span>'+wtag+'</div><span class="time">'+ctTime(e.t)+'</span></div>'+
       (e.note?'<div class="note">'+escapeHtml(e.note)+'</div>':'')+
       '<button class="del" onclick="delEntry(\''+e.id+'\')">Delete</button></div>';
     feed.appendChild(el);
@@ -655,7 +735,8 @@ async function pullEZ(){
 
 /* ---------- add meal ---------- */
 function buildChips(){const c=document.getElementById("typeChips");c.innerHTML="";const h=ctHour();pendingType=h<11?"Breakfast":h<15?"Lunch":h<21?"Dinner":"Snack";TYPES.forEach(t=>{const b=document.createElement("button");b.className="chip"+(t===pendingType?" sel":"");b.textContent=t;b.onclick=()=>{pendingType=t;[...c.children].forEach(x=>x.classList.remove("sel"));b.classList.add("sel");};c.appendChild(b);});}
-function openAdd(){pendingPhoto=null;document.getElementById("note").value="";document.getElementById("photoPick").innerHTML='<div class="ph"><div class="ic">+</div><div class="t">Tap to take or choose a photo</div></div>';buildChips();show("Add");}
+function buildWhere(){const c=document.getElementById("whereChips");c.innerHTML="";WHERES.forEach(w=>{const b=document.createElement("button");b.className="chip"+(w===pendingWhere?" sel":"");b.textContent=w;b.onclick=()=>{pendingWhere=(pendingWhere===w?"":w);[...c.children].forEach(x=>x.classList.remove("sel"));if(pendingWhere===w)b.classList.add("sel");};c.appendChild(b);});}
+function openAdd(){pendingPhoto=null;pendingWhere="";document.getElementById("note").value="";document.getElementById("photoPick").innerHTML='<div class="ph"><div class="ic">+</div><div class="t">Tap to take or choose a photo</div></div>';buildChips();buildWhere();show("Add");}
 function onPhoto(ev){const f=ev.target.files[0];if(!f)return;compress(f,url=>{pendingPhoto=url;document.getElementById("photoPick").innerHTML='<img src="'+url+'">';});}
 async function saveEntry(){
   const note=document.getElementById("note").value.trim();
@@ -663,7 +744,7 @@ async function saveEntry(){
   const id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   if(pendingPhoto){try{await putPhoto(id,pendingPhoto);}catch(e){toast("Couldn't save photo");return;}}
   const log=loadLog(),key=viewKey();log[key]=log[key]||[];
-  log[key].push({id,t:Date.now(),type:pendingType,note,photo:!!pendingPhoto});
+  log[key].push({id,t:Date.now(),type:pendingType,note,source:pendingWhere||"",photo:!!pendingPhoto});
   saveLog(log);closeAdd();render();toast("Logged");
 }
 async function delEntry(id){const log=loadLog(),key=viewKey();log[key]=(log[key]||[]).filter(e=>e.id!==id);if(!log[key].length)delete log[key];saveLog(log);await delPhoto(id);render();}
@@ -672,10 +753,13 @@ async function delEntry(id){const log=loadLog(),key=viewKey();log[key]=(log[key]
 function buildText(key){
   const list=dayEntries(key);
   let s="MEAL LOG — "+niceDate(key)+" (Central Time)\nEntries: "+list.length+"\n\n";
-  list.forEach((e,i)=>{s+=(i+1)+". "+ctTime(e.t)+"  ["+e.type+"]\n";if(e.note)s+="   note: "+e.note+"\n";s+="   photo: "+(e.photo?"attached":"none")+"\n";});
+  list.forEach((e,i)=>{s+=(i+1)+". "+ctTime(e.t)+"  ["+e.type+(e.source?" · "+e.source:"")+"]\n";if(e.note)s+="   note: "+e.note+"\n";s+="   photo: "+(e.photo?"attached":"none")+"\n";});
+  s+="\nFast food (last 7 days): "+weekFastFood()+"\n";
+  const dd=dailyData(),doneToday=dd.log[key]||[];
+  if(dd.items.length){s+="Daily checklist "+(key===todayKey()?"today":key)+": "+dd.items.map(it=>it.name+(doneToday.includes(it.id)?" yes":" no")).join(", ")+"\n";}
   const rl=recipes();
   if(rl.length){s+="\nMY SAVED RECIPES ("+rl.length+") — suggest from these first:\n";rl.slice(0,15).forEach(r=>{s+="- "+r.title+(r.source?" ["+r.source+"]":"")+"\n";});}
-  s+="\nAnalyze: gut health, macro balance, meal timing, and suggest recipes to fill the gaps.";
+  s+="\nAnalyze: gut health, macro balance, meal timing, plant diversity. Call out if fast food is too frequent and flag any vitamins/habits I'm missing. Suggest recipes from my saved list to fill the gaps.";
   return s;
 }
 async function openExport(){const key=viewKey(),list=dayEntries(key);document.getElementById("exportText").value=buildText(key);const g=document.getElementById("exportGrid");g.innerHTML="";for(const e of list){if(!e.photo)continue;const url=await getPhoto(e.id);if(!url)continue;const im=document.createElement("img");im.src=url;g.appendChild(im);}show("Export");}
@@ -725,9 +809,9 @@ function applySeed(){
     localStorage.setItem("meal-recipes-seed-v",String(SEED_V));
   }
 }
-document.addEventListener("warroom:cloud-ready",()=>{applySeed();if(curView==="recipes")renderRecipes();else render();});
+document.addEventListener("warroom:cloud-ready",()=>{applySeed();ensureDaily();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();else render();});
 // Fallback if cloud-ready never fires (e.g. sync disabled): seed after a beat.
-setTimeout(()=>{if(!window.__warroomCloudReady){applySeed();if(curView==="recipes")renderRecipes();}},2500);
+setTimeout(()=>{if(!window.__warroomCloudReady){applySeed();ensureDaily();if(curView==="recipes")renderRecipes();else if(curView==="daily")renderDaily();}},2500);
 render();
 </script>
 </body>
