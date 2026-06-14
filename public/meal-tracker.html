@@ -203,9 +203,12 @@
   .pmeal{margin-bottom:16px;}
   .pmeal-h{font-size:12px;font-weight:900;letter-spacing:.4px;text-transform:uppercase;color:var(--w45);margin:0 2px 8px;}
   .pslot{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border-radius:12px;padding:13px 14px;margin-bottom:8px;font-family:inherit;font-size:14.5px;font-weight:700;}
-  .pslot.filled{background:var(--bg-elev);border:1px solid var(--w06);color:var(--ink);box-shadow:0 1px 2px rgba(17,19,24,.04);cursor:pointer;}
-  .pslot.filled span{flex:1;min-width:0;}
-  .pslot.filled button{background:none;border:none;color:var(--w30);font-size:18px;line-height:1;cursor:pointer;padding:0 2px;}
+  .pslot.filled{background:var(--bg-elev);border:1px solid var(--w06);color:var(--ink);box-shadow:0 1px 2px rgba(17,19,24,.04);cursor:pointer;padding:8px 10px;gap:10px;}
+  .pthumb{flex:0 0 auto;width:46px;height:46px;border-radius:9px;overflow:hidden;background:var(--w04);}
+  .pthumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .ptitle{flex:1;min-width:0;font-size:14px;font-weight:700;line-height:1.25;}
+  .psw{flex:0 0 auto;background:var(--w04);border:1px solid var(--w10);color:var(--w45);border-radius:8px;font-size:14px;line-height:1;padding:6px 9px;cursor:pointer;}
+  .prm{flex:0 0 auto;background:none;border:none;color:var(--w30);font-size:18px;line-height:1;cursor:pointer;padding:0 2px;}
   .pslot.empty{background:none;border:1px dashed var(--w20);color:var(--w45);cursor:pointer;text-align:left;justify-content:flex-start;}
   .pday{background:var(--bg-elev);border:1px solid var(--w06);border-radius:14px;padding:12px 14px;margin-bottom:9px;box-shadow:0 1px 2px rgba(17,19,24,.04);}
   .pday.today{border-color:var(--blue-bd);}
@@ -324,7 +327,7 @@
     <button class="btn btn-primary" onclick="addDailyItem()">+ Add vitamin or habit</button>
   </div>
   <div class="inner" id="dockPlan" style="display:none;">
-    <button class="btn btn-primary" onclick="reshufflePlan()">Reshuffle picks</button>
+    <button class="btn btn-primary" onclick="refillEmpty()">Fill empty slots</button>
     <button class="btn-ghost" onclick="clearWeek()">Clear</button>
   </div>
 </div>
@@ -706,7 +709,15 @@ function planRemove(meal,rid){const p=loadPlan(),w=weekStart();if(p[w]&&p[w][mea
 // don't re-fill slots the user has cleared on purpose.
 function fillSlots(p,w){const pool=healthyPool();if(!pool.length)return 0;p[w]=p[w]||{};let idx=Math.floor(Math.random()*pool.length),added=0;MEALS.forEach(meal=>{p[w][meal]=p[w][meal]||[];let guard=0;while(p[w][meal].length<SLOTS_PER&&guard++<pool.length*2){const cand=pool[idx%pool.length].id;idx++;if(!p[w][meal].includes(cand)){p[w][meal].push(cand);added++;}}});return added;}
 function ensurePrefill(){const p=loadPlan(),w=weekStart();p._seeded=p._seeded||{};if(p._seeded[w])return;if(!healthyPool().length)return;fillSlots(p,w);p._seeded[w]=true;savePlan(p);}
-function reshufflePlan(){const p=loadPlan(),w=weekStart();delete p[w];fillSlots(p,w);p._seeded=p._seeded||{};p._seeded[w]=true;savePlan(p);renderPlan();toast("Fresh picks loaded");}
+function refillEmpty(){const p=loadPlan(),w=weekStart();const n=fillSlots(p,w);p._seeded=p._seeded||{};p._seeded[w]=true;savePlan(p);renderPlan();toast(n?("Filled "+n+" slot"+(n>1?"s":"")):"All slots already filled");}
+function planSwap(meal,oldId){
+  const pool=healthyPool();if(!pool.length){toast("No recipes to swap in");return;}
+  const p=loadPlan(),w=weekStart();if(!p[w]||!p[w][meal])return;
+  const used=new Set();MEALS.forEach(m=>(p[w][m]||[]).forEach(id=>used.add(id)));
+  const cand=pool.map(r=>r.id).filter(id=>!used.has(id));
+  const pick=cand.length?cand[Math.floor(Math.random()*cand.length)]:pool[Math.floor(Math.random()*pool.length)].id;
+  const arr=p[w][meal],idx=arr.indexOf(oldId);if(idx<0)return;arr[idx]=pick;savePlan(p);renderPlan();
+}
 function clearWeek(){if(!confirm("Clear this week's plan?"))return;const p=loadPlan(),w=weekStart();delete p[w];p._seeded=p._seeded||{};p._seeded[w]=true;savePlan(p);renderPlan();}
 function renderPlan(){
   ensurePrefill();
@@ -715,7 +726,12 @@ function renderPlan(){
     const ids=wp[meal]||[];let slots="";
     for(let i=0;i<SLOTS_PER;i++){
       const id=ids[i],r=id?recipeById(id):null;
-      if(r)slots+='<div class="pslot filled" onclick="openRecipe(\''+id+'\')"><span>'+escapeHtml(r.title)+'</span><button onclick="event.stopPropagation();planRemove(\''+meal+'\',\''+id+'\')" aria-label="remove">&times;</button></div>';
+      if(r)slots+='<div class="pslot filled" onclick="openRecipe(\''+id+'\')">'+
+        (r.img?'<div class="pthumb"><img src="'+escapeHtml(r.img)+'" alt="" loading="lazy" onerror="this.parentNode.style.display=\'none\'"></div>':'<div class="pthumb noimg"></div>')+
+        '<span class="ptitle">'+escapeHtml(r.title)+'</span>'+
+        '<button class="psw" onclick="event.stopPropagation();planSwap(\''+meal+'\',\''+id+'\')" title="Swap this one">&#8635;</button>'+
+        '<button class="prm" onclick="event.stopPropagation();planRemove(\''+meal+'\',\''+id+'\')" aria-label="remove">&times;</button>'+
+      '</div>';
       else slots+='<button class="pslot empty" onclick="openPlanPick(\''+meal+'\')">+ Add '+meal.toLowerCase()+'</button>';
     }
     return '<div class="pmeal"><div class="pmeal-h">'+meal+'</div>'+slots+'</div>';
