@@ -269,6 +269,7 @@
   <div class="menu-row">
     <button onclick="jumpToday()">Jump to today</button>
     <button onclick="closeMenu();openExport()">Share current day</button>
+    <button onclick="closeMenu();connectEZ()">Connect EZ recipes</button>
     <button class="warn" onclick="clearDay()">Clear this day</button>
     <button class="warn" onclick="clearAll()">Clear all data</button>
     <button onclick="logout()">Log out</button>
@@ -404,14 +405,38 @@ function saveRecipe(){
   const a=recipes();a.unshift(r);saveRecipes(a);closeAddRecipe();renderRecipes();toast("Recipe saved");
 }
 function delRecipe(id){const a=recipes().filter(r=>r.id!==id);saveRecipes(a);renderRecipes();}
+const EZ_KEY="meal-ez-config";
+function ezConfig(){try{return JSON.parse(localStorage.getItem(EZ_KEY))||null;}catch(e){return null;}}
+function connectEZ(){
+  const c=ezConfig()||{};
+  const url=prompt("EZ Supabase URL\n(e.g. https://yourproject.supabase.co)",c.url||"");
+  if(url===null)return false;
+  const key=prompt("EZ Supabase anon key",c.key||"");
+  if(key===null)return false;
+  const table=prompt("Recipes table name",c.table||"recipes");
+  if(table===null)return false;
+  localStorage.setItem(EZ_KEY,JSON.stringify({url:url.trim().replace(/\/$/,""),key:key.trim(),table:(table.trim()||"recipes")}));
+  toast("EZ connected");return true;
+}
+function ezPick(row,names){for(const n of names){if(row[n]!==undefined&&row[n]!==null&&row[n]!=="")return row[n];}return "";}
+function ezTags(v){if(!v)return [];if(Array.isArray(v))return v.map(x=>String(x).trim()).filter(Boolean);return String(v).split(",").map(x=>x.trim()).filter(Boolean);}
 async function pullEZ(){
+  let cfg=ezConfig();
+  if(!cfg||!cfg.url||!cfg.key){if(!connectEZ())return;cfg=ezConfig();if(!cfg)return;}
   toast("Pulling from EZ...");
   try{
-    const res=await fetch("/api/ez-recipes",{credentials:"same-origin"});
-    if(res.status===501||res.status===500){toast("EZ pull not set up yet — see notes");return;}
+    const u=cfg.url+"/rest/v1/"+encodeURIComponent(cfg.table||"recipes")+"?select=*&limit=500";
+    const res=await fetch(u,{headers:{apikey:cfg.key,Authorization:"Bearer "+cfg.key}});
+    if(res.status===401||res.status===403){toast("EZ access denied — check key / RLS");return;}
     if(!res.ok){toast("EZ pull failed ("+res.status+")");return;}
-    const body=await res.json();
-    const incoming=(body.recipes||[]).filter(r=>r&&r.title);
+    const rows=await res.json();
+    const incoming=(Array.isArray(rows)?rows:[]).map(row=>({
+      title:ezPick(row,["title","name","recipe_name"]),
+      url:ezPick(row,["url","link","source_url","web_url"]),
+      img:ezPick(row,["image","image_url","img","photo","photo_url","thumbnail"]),
+      tags:ezTags(ezPick(row,["tags","category","categories","cuisine"])),
+      notes:ezPick(row,["notes","description","summary"])
+    })).filter(r=>r.title);
     if(!incoming.length){toast("No EZ recipes found");return;}
     const a=recipes();
     const have=new Set(a.map(r=>(r.title||"").toLowerCase()));
