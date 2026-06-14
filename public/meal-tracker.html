@@ -890,7 +890,13 @@ const EZ_ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJl
 let _ezClient=null;
 function ezClient(){if(!_ezClient&&window.supabase&&window.supabase.createClient){_ezClient=window.supabase.createClient(EZ_URL,EZ_ANON,{auth:{persistSession:false,autoRefreshToken:false}});}return _ezClient;}
 function ezTags(v){if(!v)return [];if(Array.isArray(v))return v.map(x=>String(x).trim()).filter(Boolean);return String(v).split(/[,#]/).map(x=>x.trim()).filter(Boolean);}
-function ezIngredients(r){const rows=r.ingredientsRows;if(!Array.isArray(rows))return [];return rows.map(x=>[x.qty,x.unit,x.name].map(y=>(y||"").toString().trim()).filter(Boolean).join(" ").trim()).filter(Boolean);}
+function ezIngredients(r){
+  const fromRow=x=>(typeof x==="string")?x.trim():[x.qty,x.unit,x.name].map(y=>(y||"").toString().trim()).filter(Boolean).join(" ").trim();
+  if(Array.isArray(r.ingredientsRows))return r.ingredientsRows.map(fromRow).filter(Boolean);
+  if(Array.isArray(r.ingredients))return r.ingredients.map(fromRow).filter(Boolean);
+  if(typeof r.ingredients==="string")return r.ingredients.split("\n").map(s=>s.trim()).filter(Boolean);
+  return [];
+}
 function ezSteps(r){
   const out=[];
   const pull=arr=>{if(Array.isArray(arr))arr.forEach(s=>{const t=(s&&(s.text||s.caption))||(typeof s==="string"?s:"");if(t&&t.trim())out.push(t.trim());});};
@@ -928,16 +934,26 @@ async function pullEZ(){
       .map(r=>({title:r.title,url:(r.recipe_url||r.sourceUrl||"").trim(),img:(r.image_url||"").trim(),tags:ezTags(r.tags),notes:(r.notes||"").trim(),ingredients:ezIngredients(r),steps:ezSteps(r)}));
     if(!incoming.length){toast("No EZ recipes found");return;}
     const a=recipes();
-    const have=new Set(a.map(r=>(r.title||"").toLowerCase()));
-    let added=0;
+    const byTitle=new Map(a.map(r=>[(r.title||"").toLowerCase(),r]));
+    let added=0,updated=0;
     incoming.forEach(r=>{
       const k=(r.title||"").toLowerCase();
-      if(have.has(k))return;have.add(k);
-      a.unshift({id:"ez"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:r.title,url:r.url||"",img:r.img||"",tags:r.tags||[],notes:r.notes||"",ingredients:r.ingredients||[],steps:r.steps||[],status:"",source:"EZ"});
-      added++;
+      const ex=byTitle.get(k);
+      if(ex){ // enrich an existing recipe with anything it's missing
+        let ch=false;
+        if((!ex.ingredients||!ex.ingredients.length)&&r.ingredients&&r.ingredients.length){ex.ingredients=r.ingredients;ch=true;}
+        if((!ex.steps||!ex.steps.length)&&r.steps&&r.steps.length){ex.steps=r.steps;ch=true;}
+        if(!ex.img&&r.img){ex.img=r.img;ch=true;}
+        if(!ex.url&&r.url){ex.url=r.url;ch=true;}
+        if((!ex.tags||!ex.tags.length)&&r.tags&&r.tags.length){ex.tags=r.tags;ch=true;}
+        if(ch)updated++;
+        return;
+      }
+      const nr={id:"ez"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:r.title,url:r.url||"",img:r.img||"",tags:r.tags||[],notes:r.notes||"",ingredients:r.ingredients||[],steps:r.steps||[],status:"",source:"EZ"};
+      a.unshift(nr);byTitle.set(k,nr);added++;
     });
     saveRecipes(a);renderRecipes();
-    toast(added?("Added "+added+" from EZ"):"Already up to date");
+    toast((added||updated)?("Added "+added+", updated "+updated):"Already up to date");
   }catch(e){toast("EZ pull failed");}
 }
 
