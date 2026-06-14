@@ -68,6 +68,8 @@
   .jrt{font-size:14.5px;font-weight:600;line-height:1.25;}
   .jrsrc{font-size:11px;color:var(--muted);margin-top:2px;}
   .jrwant{font-size:11px;font-weight:700;color:var(--feeling);margin-top:2px;}
+  .jreat{font-size:11px;font-weight:700;color:var(--eating);margin-top:2px;}
+  .jrgroc{flex:0 0 auto;background:var(--eating-bg);color:var(--eating);border:1px solid rgba(68,131,97,.3);border-radius:8px;font-family:inherit;font-weight:700;font-size:11.5px;padding:7px 9px;cursor:pointer;}
   .jrx{flex:0 0 auto;background:none;border:none;color:var(--faint);font-size:18px;line-height:1;cursor:pointer;padding:0 2px;}
   /* pick filters + thumbnails */
   .pfilters{display:flex;gap:7px;overflow-x:auto;margin-bottom:10px;scrollbar-width:none;}
@@ -164,6 +166,7 @@
   <a href="/meal-tracker.html?tab=recipes">Recipes</a>
   <a href="/meal-tracker.html?tab=daily">Vitamins</a>
   <a href="/meal-tracker.html?tab=cook">Cook tips</a>
+  <a href="/grocery.html">Grocery</a>
   <a href="/eat-well.html">Eating tips</a>
 </div>
 
@@ -207,12 +210,23 @@
   <div class="grab"></div>
   <h2>Insert</h2>
   <div class="slashmenu">
-    <button onclick="slashPickRecipe('ref')"><b>Recipe</b><span>drop in a recipe from your list</span></button>
-    <button onclick="slashPickRecipe('want')"><b>Want to cook</b><span>flag a recipe you want</span></button>
+    <button onclick="slashPickRecipe()"><b>Recipe</b><span>add a recipe — eat, want, or reference</span></button>
     <button onclick="slashAction('meal')"><b>Log a meal photo</b><span>snap what you ate</span></button>
     <button onclick="slashAction('todo')"><b>Checklist item</b><span>a [ ] to tick off</span></button>
     <button onclick="slashAction('date')"><b>Today's date</b><span>insert today</span></button>
     <button onclick="slashAction('divider')"><b>Divider</b><span>a line break</span></button>
+  </div>
+</div>
+
+<!-- recipe purpose -->
+<div class="scrim" id="scrimPurpose" onclick="closePurpose(event)"></div>
+<div class="sheet" id="sheetPurpose">
+  <div class="grab"></div>
+  <h2>What's this recipe for?</h2>
+  <div class="slashmenu">
+    <button onclick="purposeChoose('eat')"><b>To eat</b><span>planning to cook it — build a grocery list</span></button>
+    <button onclick="purposeChoose('want')"><b>Want to cook</b><span>on the wishlist for later</span></button>
+    <button onclick="purposeChoose('ref')"><b>Reference</b><span>just saving or learning</span></button>
   </div>
 </div>
 
@@ -234,7 +248,8 @@
 
 <script>
 /* shared keys with the meal tracker — same data, no duplication */
-const LOG_KEY="meal-log-v1",PLAN_KEY="meal-plan-v1",RECIPE_KEY="meal-recipes-v1",JKEY="food-journal-v1";
+const LOG_KEY="meal-log-v1",PLAN_KEY="meal-plan-v1",RECIPE_KEY="meal-recipes-v1",JKEY="food-journal-v1",GKEY="grocery-list-v1";
+let pendingPickId=null;
 const TYPES=["Breakfast","Lunch","Dinner","Snack","Drink"];
 const WHERES=["Home","Takeout","Fast food","Restaurant"];
 const MEALS=["Breakfast","Lunch","Dinner"],SLOTS_PER=2;
@@ -352,9 +367,12 @@ function renderDays(){
     }).join("");
     const recs=dayRecipes(k).map((ref,ri)=>{
       const r=recipeById(ref.id);if(!r)return"";
+      const purpose=ref.purpose||(ref.want?"want":"ref");
+      const badge=purpose==="eat"?'<div class="jreat">To eat</div>':(purpose==="want"?'<div class="jrwant">Want to cook</div>':'<div class="jrsrc">'+esc(r.source||"Recipe")+'</div>');
+      const groc=purpose==="eat"?'<button class="jrgroc" onclick="event.stopPropagation();addRecipeToGrocery(\''+esc(ref.id)+'\')">Grocery list</button>':'';
       return '<div class="jrec" onclick="openRecipeModal(\''+esc(ref.id)+'\')">'+
         (r.img?'<div class="jrthumb"><img src="'+esc(r.img)+'" onerror="this.parentNode.style.display=\'none\'"></div>':'<div class="jrthumb"></div>')+
-        '<div class="jrbody"><div class="jrt">'+esc(r.title)+'</div>'+(ref.want?'<div class="jrwant">Want to cook</div>':'<div class="jrsrc">'+esc(r.source||"Recipe")+'</div>')+'</div>'+
+        '<div class="jrbody"><div class="jrt">'+esc(r.title)+'</div>'+badge+'</div>'+groc+
         '<button class="jrx" onclick="event.stopPropagation();detachRecipe(\''+k+'\','+ri+')" aria-label="remove">&times;</button></div>';
     }).join("");
     const note=dayNote(k);
@@ -380,7 +398,11 @@ function openRecipeModal(id){
     (r.url?'<a class="rvlink" href="'+encodeURI(r.url)+'" target="_blank" rel="noopener">Open full recipe &#8599;</a>':'')+
     (ings.length?'<div class="rvh">Ingredients</div>'+ings.map(x=>'<div class="rvli">'+esc(x)+'</div>').join(""):'')+
     (steps.length?'<div class="rvh">Steps</div>'+steps.map((x,i)=>'<div class="rvli"><b>'+(i+1)+'.</b> '+esc(x)+'</div>').join(""):'')+
-    ((!ings.length&&!steps.length)?'<div class="toc-d" style="margin-top:10px">No ingredients or steps saved yet — open the full recipe link, or add them under Recipes.</div>':'');
+    ((!ings.length&&!steps.length)?'<div class="toc-d" style="margin-top:10px">No ingredients or steps saved yet — open the full recipe link, or add them under Recipes.</div>':'')+
+    '<div style="display:flex;gap:9px;margin-top:16px">'+
+      '<button class="btn pri" style="flex:1" onclick="addRecipeToGrocery(\''+esc(id)+'\')">Add to grocery list</button>'+
+      '<a class="btn ghost" href="/grocery.html" style="text-decoration:none;text-align:center;display:flex;align-items:center;justify-content:center">Open list</a>'+
+    '</div>';
   show("Rview");
 }
 function closeRview(e){if(e&&e.target&&e.target.id!=="scrimRview"&&e.type==="click")return;hide("Rview");}
@@ -402,7 +424,28 @@ function slashAction(kind){
   else if(kind==="divider")insertAtSlash("\n———\n");
   else if(kind==="meal"){const day=slashCtx?slashCtx.day:todayKey();insertAtSlash("");openAdd(day);}
 }
-function slashPickRecipe(mode){slashRecipeMode=mode;pickMeal="__slash";pickCat="all";document.getElementById("pickTitle").textContent=(mode==="want"?"Want to cook":"Insert a recipe");document.getElementById("pickSearch").value="";renderPick();hide("Slash");show("Pick");}
+function slashPickRecipe(){pickMeal="__slash";pickCat="all";document.getElementById("pickTitle").textContent="Choose a recipe";document.getElementById("pickSearch").value="";renderPick();hide("Slash");show("Pick");}
+function openPurpose(){show("Purpose");}
+function closePurpose(e){if(e&&e.target&&e.target.id!=="scrimPurpose"&&e.type==="click")return;hide("Purpose");pendingPickId=null;}
+function purposeChoose(p){
+  if(!slashCtx||!pendingPickId){hide("Purpose");return;}
+  dropSlashChar();
+  const day=slashCtx.day,rid=pendingPickId;
+  ensureDay(day).recipes.push({id:rid,purpose:p});
+  queueSave();pendingPickId=null;slashCtx=null;hide("Purpose");renderDays();renderTOC();
+  toast(p==="eat"?"Added — grocery list ready":"Added recipe");
+}
+function addRecipeToGrocery(id){
+  const r=recipeById(id);if(!r)return;
+  const ings=r.ingredients||[];
+  if(!ings.length){toast("No ingredients saved — pull from EZ or add them");return;}
+  let list=[];try{list=JSON.parse(localStorage.getItem(GKEY))||[];}catch(e){list=[];}
+  const have=new Set(list.map(i=>(i.text||"").toLowerCase()));
+  let n=0;
+  ings.forEach(ing=>{const t=String(ing).trim();if(!t||have.has(t.toLowerCase()))return;have.add(t.toLowerCase());list.unshift({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),text:t,qty:"",category:"other",done:false,createdAt:new Date().toISOString()});n++;});
+  localStorage.setItem(GKEY,JSON.stringify(list));
+  toast(n?("Added "+n+" to grocery list"):"Already on your list");
+}
 function jump(id){const el=document.getElementById(id);if(el)el.scrollIntoView({behavior:"smooth",block:"start"});}
 
 /* ---------- add a bite ---------- */
@@ -438,13 +481,7 @@ function renderPick(){
   document.getElementById("pickList").innerHTML=list.slice(0,120).map(r=>'<button class="ppick" onclick="pickChoose(\''+r.id+'\')">'+(r.img?'<span class="ppthumb"><img src="'+esc(r.img)+'" onerror="this.parentNode.style.display=\'none\'"></span>':'<span class="ppthumb"></span>')+'<span class="ppt">'+esc(r.title)+'</span><span class="ppc">'+CAT_LABEL(recipeCat(r))+'</span></button>').join("")||'<div class="toc-d" style="padding:8px">No matches</div>';
 }
 function pickChoose(id){
-  if(pickMeal==="__slash"){
-    dropSlashChar();
-    const day=slashCtx?slashCtx.day:todayKey();
-    ensureDay(day).recipes.push({id,want:slashRecipeMode==="want"});
-    queueSave();slashCtx=null;hide("Pick");renderDays();renderTOC();toast("Added recipe");
-    return;
-  }
+  if(pickMeal==="__slash"){pendingPickId=id;hide("Pick");openPurpose();return;}
   if(planAdd(pickMeal,id)){hide("Pick");toast("Added to "+pickMeal);}
 }
 
