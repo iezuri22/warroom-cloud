@@ -589,6 +589,80 @@
     border: 1px solid var(--w08);
     width: fit-content;
   }
+  /* Activity feed */
+  .activity-foot {
+    display: flex; justify-content: flex-end;
+    padding: 8px 4px;
+  }
+  .activity-clear-btn {
+    background: transparent; border: 1px solid rgba(127,127,127,.25);
+    color: inherit; opacity: .7;
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .activity-clear-btn:hover { opacity: 1; border-color: rgba(248,113,113,.6); color: #f87171; }
+  .activity-day { margin-bottom: 14px }
+  .activity-day-head {
+    font-size: 11px; font-weight: 800; letter-spacing: .08em;
+    text-transform: uppercase; opacity: .55;
+    padding: 6px 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .activity-day-head .ct {
+    font-weight: 700; font-size: 10.5px; opacity: .8;
+    background: rgba(127,127,127,.12); padding: 1px 7px; border-radius: 999px;
+  }
+  .activity-list { display: flex; flex-direction: column; gap: 4px; }
+  .activity-row {
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(127,127,127,.04);
+    border: 1px solid rgba(127,127,127,.10);
+    border-radius: 10px;
+    padding: 9px 12px;
+    color: inherit; font-family: inherit;
+    cursor: pointer; text-align: left;
+    transition: background .1s, border-color .1s;
+  }
+  .activity-row:hover {
+    background: rgba(255,138,61,.08); border-color: rgba(255,138,61,.4);
+  }
+  .activity-row .act-time {
+    flex-shrink: 0; font-size: 11.5px; font-weight: 700;
+    opacity: .55; min-width: 60px;
+    font-variant-numeric: tabular-nums;
+  }
+  .activity-row .act-body {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .activity-row .act-task {
+    font-weight: 700; font-size: 13.5px; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .activity-row .act-change {
+    font-size: 12px; opacity: .75; line-height: 1.3;
+  }
+  .activity-row .act-change strong { font-weight: 800; }
+  .activity-row .act-change em.act-empty {
+    opacity: .55; font-style: italic;
+  }
+  .activity-row .act-meta {
+    flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+  }
+  .activity-row .act-ticket {
+    font-size: 11px; font-weight: 700; opacity: .65;
+    font-variant-numeric: tabular-nums;
+  }
+  .activity-row .act-program {
+    font-size: 10.5px; font-weight: 700;
+    padding: 1px 6px; border-radius: 999px;
+    background: rgba(127,127,127,.10); border: 1px solid rgba(127,127,127,.18);
+  }
+  .activity-row .act-owner {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 800; color: #15151B;
+  }
+
   .view-tab {
     position: relative;
     padding: 7px 16px; border-radius: 99px;
@@ -2443,6 +2517,10 @@
       ★ Starred
       <span class="view-tab-ct" id="starredCount"></span>
     </button>
+    <button type="button" class="view-tab" data-view="activity">
+      Activity
+      <span class="view-tab-ct" id="activityCount"></span>
+    </button>
   </div>
   <div class="search-row">
     <input type="text" class="search-input" id="searchInput" placeholder="Search…" autocomplete="off">
@@ -4051,6 +4129,7 @@ function render(){
   updateNeedsNotifDot();
   updateDevReportsCount();
   updateWeeklyCount();
+  try { updateActivityCount(); } catch {}
   updateStarredCount();
   // Weekly view — priorities + deadline buckets.
   if (currentView === 'weekly') {
@@ -4070,6 +4149,10 @@ function render(){
   // Dev / Reports view — dedicated layout showing limbo time + last update.
   if (currentView === 'dev') {
     renderDevReports();
+    return;
+  }
+  if (currentView === 'activity') {
+    renderActivity();
     return;
   }
   const list = document.getElementById('list');
@@ -4266,12 +4349,15 @@ async function handleAck(rowId, nameOverride){
   const name = (nameOverride || owner || 'Team').trim();
   acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId), ackOwner: owner };
   selectedAckIds.delete(rowId);
+  if (rr) { try { recordActivity('ack', rr, { ackedBy: name }); } catch {} }
   render();
   try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
   catch (e) { console.error('ack failed', e); toast('Couldn\'t save the acknowledgement — try again.', 'err'); }
 }
 async function handleUnack(rowId){
+  const rr = rows.find(x => String(x.id) === String(rowId));
   delete acks[rowId];
+  if (rr) { try { recordActivity('unack', rr, {}); } catch {} }
   render();
   try { await window._ecmAcks.unackRow(rowId); }
   catch (e) { console.error('un-ack failed', e); }
@@ -5875,6 +5961,127 @@ function updateStarredCount(){
   const n = rows.filter(r => (r.task || '').trim() && stars[String(r.id)]).length;
   el.textContent = n > 0 ? String(n) : '';
 }
+// ===== Activity view =====
+// Chronological feed of recent changes, scoped by the same owner/search/
+// program filters as the other views. Clicking an event opens its row.
+function _activityRelTime(iso){
+  const t = Date.parse(iso || 0);
+  if (!t) return '';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+function _activityFmtVal(v){
+  if (v == null || v === '') return '<em class="act-empty">empty</em>';
+  return escHtml(String(v).slice(0, 80));
+}
+function _activityLabelFor(e){
+  switch (e.type) {
+    case 'ack':           return `Acknowledged by <strong>${escHtml(e.ackedBy || 'someone')}</strong>`;
+    case 'unack':         return `Un-acknowledged`;
+    case 'complete':      return `Marked <strong>Completed</strong>`;
+    case 'mark-delete':   return `Flagged for deletion`;
+    case 'unmark-delete': return `Un-flagged from deletion`;
+    case 'new':           return `New task added`;
+    case 'field': {
+      const f = e.field || 'field';
+      return `<strong>${escHtml(f)}</strong> ${_activityFmtVal(e.from)} → ${_activityFmtVal(e.to)}`;
+    }
+    default: return escHtml(e.type || 'change');
+  }
+}
+function renderActivity(){
+  const list = document.getElementById('list');
+  const metaEl = document.getElementById('metaCount');
+  markActivitySeen();
+  // Apply the page's existing filters so the feed respects what the user is
+  // already scoped to.
+  let events = _activityLog.slice();
+  if (filterOwner) {
+    events = events.filter(e => {
+      const r = rows.find(x => String(x.id) === e.rowId);
+      return r && r.owner === filterOwner;
+    });
+  }
+  if (filterProgram) {
+    events = events.filter(e => (e.program || '') === filterProgram
+      || (rows.find(x => String(x.id) === e.rowId) || {}).program === filterProgram);
+  }
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    events = events.filter(e => (e.task || '').toLowerCase().includes(q)
+      || (e.field || '').toLowerCase().includes(q)
+      || (e.to || '').toLowerCase().includes(q));
+  }
+  if (metaEl) metaEl.textContent = `${events.length} recent change${events.length === 1 ? '' : 's'}`;
+  if (!events.length) {
+    list.innerHTML = `<div class="empty">No activity yet. Edits, acknowledgements, and completions will appear here as they happen.</div>`;
+    return;
+  }
+  // Group by day for scannability.
+  const groups = new Map();
+  for (const e of events) {
+    const dayKey = (e.ts || '').slice(0, 10) || 'unknown';
+    if (!groups.has(dayKey)) groups.set(dayKey, []);
+    groups.get(dayKey).push(e);
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  function dayLabel(k){
+    if (k === today) return 'Today';
+    if (k === yest) return 'Yesterday';
+    try { return new Date(k + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+    catch { return k; }
+  }
+  const html = [
+    `<div class="activity-foot">
+       <button type="button" class="activity-clear-btn" id="activityClearBtn">Clear activity</button>
+     </div>`
+  ];
+  for (const [k, evs] of groups) {
+    html.push(`<div class="activity-day">
+      <div class="activity-day-head">${dayLabel(k)} <span class="ct">${evs.length}</span></div>
+      <div class="activity-list">${evs.map(e => {
+        const owner = e.owner ? `<span class="act-owner" style="background:${ownerColor(e.owner)}" title="${escHtml(e.owner)}">${escHtml(ownerInitials(e.owner))}</span>` : '';
+        const ticket = e.ticket ? `<span class="act-ticket">#${escHtml(String(e.ticket).replace(/\\.0$/, ''))}</span>` : '';
+        const program = e.program ? `<span class="act-program">${escHtml(e.program)}</span>` : '';
+        return `<button type="button" class="activity-row" data-act-row="${escHtml(e.rowId)}">
+          <span class="act-time">${escHtml(_activityRelTime(e.ts))}</span>
+          <span class="act-body">
+            <span class="act-task">${escHtml(e.task || '(untitled)')}</span>
+            <span class="act-change">${_activityLabelFor(e)}</span>
+          </span>
+          <span class="act-meta">${ticket}${program}${owner}</span>
+        </button>`;
+      }).join('')}</div>
+    </div>`);
+  }
+  list.innerHTML = html.join('');
+  // Wire — clicking a row opens that task; Clear wipes the log.
+  list.querySelectorAll('[data-act-row]').forEach(b => b.addEventListener('click', () => {
+    const id = b.getAttribute('data-act-row');
+    if (!id) return;
+    // Jump back to the All view focused on this row.
+    currentView = 'all';
+    expandedId = id;
+    render();
+    setTimeout(() => {
+      const card = document.querySelector(`.row[data-id="${id}"], .dr-card[data-id="${id}"]`);
+      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }));
+  const clr = document.getElementById('activityClearBtn');
+  if (clr) clr.addEventListener('click', () => {
+    if (!confirm('Clear the entire activity log? This only affects this device.')) return;
+    _activityLog = [];
+    _persistActivity();
+    updateActivityCount();
+    render();
+  });
+}
+
 function renderStarred(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
@@ -6355,6 +6562,54 @@ async function pushField(r, fieldTitle, value, rowEl){
 // HTTP 200, false otherwise. Mirrors local state on success so the next
 // render reflects the change without waiting for a sheet pull.
 // On failure the human-readable cause lands in _ssLastPushError so callers
+// ===== Recent activity log =====
+// Local chronological feed of changes so the user can see what's been
+// modified across the page without having to scroll the whole task list.
+// Persisted to localStorage (capped at 200 events) and surfaced in the
+// "Activity" view tab.
+const ACTIVITY_KEY = 'ecm-activity-log-v1';
+const ACTIVITY_MAX = 200;
+let _activityLog = (function(){
+  try { return JSON.parse(localStorage.getItem(ACTIVITY_KEY) || '[]') || []; }
+  catch { return []; }
+})();
+function _persistActivity(){
+  try { localStorage.setItem(ACTIVITY_KEY, JSON.stringify(_activityLog.slice(0, ACTIVITY_MAX))); } catch {}
+}
+// Record one event. type: 'field' | 'ack' | 'unack' | 'mark-delete' | 'unmark-delete' | 'new' | 'complete'.
+function recordActivity(type, r, payload){
+  if (!r) return;
+  const evt = {
+    type,
+    rowId: String(r.id),
+    task: r.task || '',
+    program: r.program || '',
+    owner: r.owner || '',
+    ticket: r.ticket || '',
+    ts: new Date().toISOString(),
+    ...(payload || {})
+  };
+  _activityLog.unshift(evt);
+  if (_activityLog.length > ACTIVITY_MAX) _activityLog.length = ACTIVITY_MAX;
+  _persistActivity();
+  try { updateActivityCount(); } catch {}
+  if (currentView === 'activity') { try { render(); } catch {} }
+}
+function updateActivityCount(){
+  const el = document.getElementById('activityCount');
+  if (!el) return;
+  const last = (function(){
+    try { return parseInt(localStorage.getItem('ecm-activity-seen-ts') || '0', 10); }
+    catch { return 0; }
+  })();
+  const unread = _activityLog.filter(e => (Date.parse(e.ts) || 0) > last).length;
+  el.textContent = unread > 0 ? (unread > 99 ? '99+' : String(unread)) : '';
+}
+function markActivitySeen(){
+  try { localStorage.setItem('ecm-activity-seen-ts', String(Date.now())); } catch {}
+  updateActivityCount();
+}
+
 // can show WHY instead of a bare "failed".
 let _ssLastPushError = '';
 async function ssPushFields(r, fields){
@@ -6399,7 +6654,13 @@ async function ssPushFields(r, fields){
       return false;
     }
     _ssLastPushError = '';
-    // Mirror local
+    // Mirror local — capture prev values FIRST so we can log meaningful
+    // before/after for the activity feed.
+    const prev = {
+      status: r.status, ticket: r.ticket, details: r.details, outcome: r.outcome,
+      task: r.task, owner: r.owner, program: r.program,
+      completionDate: r.completionDate, dueDate: r.dueDate
+    };
     for (const [title, raw] of Object.entries(fields)) {
       if (title === 'Status') r.status = raw;
       else if (title === 'Ticket #') r.ticket = raw;
@@ -6411,6 +6672,26 @@ async function ssPushFields(r, fields){
       else if (title === 'Completion Date') r.completionDate = raw;
       else if (title === 'Due Date') r.dueDate = raw;
     }
+    // Activity log — one event per changed field, plus a 'complete' marker
+    // if Status flipped to Completed (so the user can see closures at a glance).
+    try {
+      const keyFor = {
+        'Status': 'status', 'Ticket #': 'ticket', 'Details': 'details',
+        'Outcome Details': 'outcome', 'Task Name': 'task', 'Owner': 'owner',
+        'Program': 'program', 'Completion Date': 'completionDate', 'Due Date': 'dueDate'
+      };
+      for (const [title, raw] of Object.entries(fields)) {
+        const k = keyFor[title];
+        if (!k) continue;
+        const before = prev[k] ?? '';
+        const after = raw ?? '';
+        if (String(before) === String(after)) continue;
+        recordActivity('field', r, { field: title, from: String(before), to: String(after) });
+      }
+      if (fields['Status'] === 'Completed' && prev.status !== 'Completed') {
+        recordActivity('complete', r, {});
+      }
+    } catch (e) { console.warn('activity log push failed', e); }
     return true;
   } catch (e) {
     console.error('ssPushFields error', e);
