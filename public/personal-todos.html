@@ -13555,18 +13555,39 @@ const VOICE = {
       _bootSeed();
     } else {
       document.addEventListener('warroom:cloud-ready', _bootSeed, { once: true });
-      // Safety net: if the cloud-ready event somehow never fires (offline,
-      // login broken), still seed after 5s so the page isn't permanently
-      // stuck without priority lists.
+      // Safety net: if cloud-ready hasn't fired after 10s (offline, slow
+      // cold start, login broken), only seed defaults when there is NO
+      // Focus 5 data locally. Previously this path forced cloud-ready and
+      // seeded unconditionally — when the cloud was actually populated
+      // but the load was simply slow, an empty-defaults state got pushed
+      // up and wiped the user's priority lists. Three times.
+      //
+      // New behavior:
+      //   - localStorage already has lists → render from local; KEEP
+      //     waiting for cloud-ready. No seed, no write, nothing to clobber.
+      //   - localStorage is empty (truly fresh device, no cloud either) →
+      //     allow seeding; there is nothing to lose.
+      //
+      // The empty-clobber guard in api/sync.js is a second layer; we don't
+      // depend on it alone.
       setTimeout(() => {
-        if (!window.__warroomCloudReady) {
-          // Force the flag so the seed function will actually run, but
-          // accept that without cloud sync we might be writing to a clean
-          // local state. Better than no priority lists at all.
-          window.__warroomCloudReady = true;
-          _bootSeed();
+        if (window.__warroomCloudReady) return;
+        let hasLocalData = false;
+        try {
+          const raw = localStorage.getItem(FOCUS5_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            hasLocalData = !!(parsed && Array.isArray(parsed.lists) && parsed.lists.length > 0);
+          }
+        } catch {}
+        if (hasLocalData) {
+          try { loadFocus5(); render(); } catch {}
+          return; // do NOT force cloud-ready, do NOT seed, do NOT write.
         }
-      }, 5000);
+        // Truly fresh device — safe to seed defaults.
+        window.__warroomCloudReady = true;
+        _bootSeed();
+      }, 10000);
     }
     setTimeout(() => { try { maybeShowPriorityConfirm(); } catch {} }, 2500);
     // Re-check every 5 min while page is open — covers the case where user
