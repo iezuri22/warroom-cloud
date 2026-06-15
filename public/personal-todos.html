@@ -6585,8 +6585,23 @@ const VOICE = {
     try { loadFocus5(); updateFocus5Toggle(); } catch {}
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
-    // Focus 5 mode short-circuits the regular task list — only the chosen 5 show.
-    if (focus5State.active && focus5State.lists.length > 0) {
+    // Personal is strictly the Focus 5 / Priority page now. The old
+    // long-list view is retired — everything non-priority lives in the
+    // Planned tab inside Focus 5. We force the Focus 5 view as long as
+    // there's at least one list (the bootstrap seeder guarantees this
+    // on every device).
+    //
+    // Edge case: if lists are temporarily empty (mid-bootstrap, brand-new
+    // account before seed runs), fall through to renderTasks() so the page
+    // isn't blank. The seed function will populate within ~1s.
+    if (focus5State.lists && focus5State.lists.length > 0) {
+      // Auto-activate so the body.focus5-active class hides the filter bar,
+      // music bar, etc. — same as if the user had tapped the toggle. This
+      // is idempotent; saveFocus5 only writes if a value actually changed.
+      if (!focus5State.active) {
+        focus5State.active = true;
+        try { saveFocus5(); } catch {}
+      }
       try { renderFocus5View(); return; } catch (e) { console.error('focus5 render', e); }
     }
     renderTasks();
@@ -12222,38 +12237,62 @@ const VOICE = {
   // Idempotent: a localStorage flag prevents re-running, but it's
   // structurally safe to re-run anyway (no-op if there's nothing to move).
   const PLAN_MIG_KEY = 'personal-plan-migration-v1';
+  let _planMigInProgress = false;
   async function _migrateNonPriorityToPlanned(){
+    if (_planMigInProgress) return;
     try { if (localStorage.getItem(PLAN_MIG_KEY) === '1') return; } catch {}
-    // Refuse to run until Focus 5 state has hydrated — otherwise we'd
-    // mark legitimate priority tasks as planned just because their list
-    // wasn't loaded yet.
     if (!window.__warroomCloudReady) return;
-    if (!Array.isArray(todos) || todos.length === 0) {
-      try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+    // We need both Focus 5 state AND a populated todos array to migrate
+    // correctly. If either isn't there yet, retry every 2s for up to 30s.
+    // This handles cold-start ordering: cloud-ready fires before Firestore
+    // todos finish streaming in.
+    if (!Array.isArray(focus5State.lists) || focus5State.lists.length === 0 ||
+        !Array.isArray(todos)) {
+      setTimeout(() => { try { _migrateNonPriorityToPlanned(); } catch {} }, 2000);
       return;
     }
-    const candidates = todos.filter(t =>
-      t && !t.done && !_isPlanned(t) && !_isPendingReminder(t) && !_isInFocus5(t)
-    );
-    if (candidates.length === 0) {
-      try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
-      return;
-    }
-    console.log('[plan-migration] moving ' + candidates.length + ' non-priority pending todos to Planned');
-    let migrated = 0;
-    for (const t of candidates) {
+    _planMigInProgress = true;
+    try {
+      // Pull EVERY open todo straight from Firestore — `todos` in memory
+      // might be filtered to today's view. We want the full open set so
+      // we don't miss historical tasks the user wants moved to Planned.
+      let allOpen = [];
       try {
-        await updateDoc(doc(db, 'tv_todos', t.id), { planned: true });
-        t.planned = true;
-        migrated++;
+        const snap = await getDocs(query(todosCol, where('done', '==', false)));
+        snap.forEach(d => allOpen.push({ id: d.id, ...(d.data() || {}) }));
       } catch (e) {
-        console.warn('[plan-migration] failed', t && t.id, e && e.message);
+        console.warn('[plan-migration] open scan failed, falling back to in-memory todos', e && e.message);
+        allOpen = todos.filter(t => t && !t.done);
       }
+      const candidates = allOpen.filter(t =>
+        t && !t.done && !_isPlanned(t) && !_isPendingReminder(t) && !_isInFocus5(t)
+      );
+      if (candidates.length === 0) {
+        try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+        return;
+      }
+      console.log('[plan-migration] moving ' + candidates.length + ' non-priority pending todos to Planned');
+      let migrated = 0;
+      for (const t of candidates) {
+        try {
+          await updateDoc(doc(db, 'tv_todos', t.id), { planned: true });
+          // Reflect in in-memory caches so the user sees the change
+          // immediately without waiting for the next Firestore snapshot.
+          const inMem = todos.find(x => x.id === t.id);
+          if (inMem) inMem.planned = true;
+          else todos.push({ ...t, planned: true });
+          migrated++;
+        } catch (e) {
+          console.warn('[plan-migration] failed', t && t.id, e && e.message);
+        }
+      }
+      try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+      try { await loadPlannedTodos(true); } catch {}
+      try { render(); } catch {}
+      console.log('[plan-migration] done — ' + migrated + ' migrated');
+    } finally {
+      _planMigInProgress = false;
     }
-    try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
-    try { await loadPlannedTodos(true); } catch {}
-    try { render(); } catch {}
-    console.log('[plan-migration] done — ' + migrated + ' migrated');
   }
   // Ordered chain of priority lists, in display order.
   function _priorityChain(){
