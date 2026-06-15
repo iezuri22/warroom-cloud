@@ -6034,16 +6034,21 @@ function _activityFmtVal(v){
   return escHtml(String(v).slice(0, 80));
 }
 function _activityLabelFor(e){
+  // Prefer the human who actually performed the action. `actor` is set on
+  // events recorded after the actor-aware update; older events fall back to
+  // `ackedBy` (only meaningful for ack events).
+  const actor = e.actor || e.ackedBy || '';
+  const by = actor ? ` by <strong>${escHtml(actor)}</strong>` : '';
   switch (e.type) {
-    case 'ack':           return `Acknowledged by <strong>${escHtml(e.ackedBy || 'someone')}</strong>`;
-    case 'unack':         return `Un-acknowledged`;
-    case 'complete':      return `Marked <strong>Completed</strong>`;
-    case 'mark-delete':   return `Flagged for deletion`;
-    case 'unmark-delete': return `Un-flagged from deletion`;
-    case 'new':           return `New task added`;
+    case 'ack':           return `Acknowledged${by}`;
+    case 'unack':         return `Un-acknowledged${by}`;
+    case 'complete':      return `Marked <strong>Completed</strong>${by}`;
+    case 'mark-delete':   return `Flagged for deletion${by}`;
+    case 'unmark-delete': return `Un-flagged from deletion${by}`;
+    case 'new':           return `New task added${by}`;
     case 'field': {
       const f = e.field || 'field';
-      return `<strong>${escHtml(f)}</strong> ${_activityFmtVal(e.from)} → ${_activityFmtVal(e.to)}`;
+      return `<strong>${escHtml(f)}</strong> ${_activityFmtVal(e.from)} → ${_activityFmtVal(e.to)}${by}`;
     }
     default: return escHtml(e.type || 'change');
   }
@@ -6581,6 +6586,14 @@ async function pushField(r, fieldTitle, value, rowEl){
       const t = await res.text().catch(() => '');
       throw new Error(`${res.status}: ${t.slice(0, 200)}`);
     }
+    // Capture the previous value BEFORE mirroring so we can log a meaningful
+    // before/after event for the Activity feed.
+    const _activityKey = ({
+      'Status': 'status', 'Ticket #': 'ticket', 'Details': 'details',
+      'Outcome Details': 'outcome', 'Task Name': 'task', 'Owner': 'owner',
+      'Completion Date': 'completionDate', 'Due Date': 'dueDate'
+    })[fieldTitle];
+    const _activityPrev = _activityKey ? (r[_activityKey] ?? '') : '';
     // Mirror local
     if (fieldTitle === 'Status') r.status = value;
     if (fieldTitle === 'Ticket #') r.ticket = value;
@@ -6590,6 +6603,15 @@ async function pushField(r, fieldTitle, value, rowEl){
     if (fieldTitle === 'Owner') r.owner = value;
     if (fieldTitle === 'Completion Date') r.completionDate = value;
     if (fieldTitle === 'Due Date') r.dueDate = value;
+    // Log to the Activity feed.
+    try {
+      if (_activityKey && String(_activityPrev) !== String(value ?? '')) {
+        recordActivity('field', r, { field: fieldTitle, from: String(_activityPrev), to: String(value ?? '') });
+        if (fieldTitle === 'Status' && value === 'Completed' && _activityPrev !== 'Completed') {
+          recordActivity('complete', r, {});
+        }
+      }
+    } catch (e) { console.warn('activity log pushField failed', e); }
     if (savedEl) {
       savedEl.textContent = 'Saved to Smartsheets';
       savedEl.classList.add('ok');
@@ -6632,15 +6654,28 @@ let _activityLog = (function(){
 function _persistActivity(){
   try { localStorage.setItem(ACTIVITY_KEY, JSON.stringify(_activityLog.slice(0, ACTIVITY_MAX))); } catch {}
 }
+// Best-effort "who is the human at the keyboard right now". Team mode wires
+// this through _teamConfig.owner. Personal mode reads localStorage. Falls
+// back to the user-visible string "You" so feed events never render as a
+// bare verb without a person.
+function _currentActor(){
+  try {
+    if (_teamMode && _teamConfig && _teamConfig.owner) return _teamConfig.owner;
+    const c = (typeof getConfig === 'function') ? getConfig() : null;
+    if (c && c.owner) return c.owner;
+  } catch {}
+  return 'You';
+}
 // Record one event. type: 'field' | 'ack' | 'unack' | 'mark-delete' | 'unmark-delete' | 'new' | 'complete'.
 function recordActivity(type, r, payload){
   if (!r) return;
   const evt = {
     type,
+    actor: _currentActor(),       // who clicked / typed (the human at the keyboard)
     rowId: String(r.id),
     task: r.task || '',
     program: r.program || '',
-    owner: r.owner || '',
+    owner: r.owner || '',          // task's current owner (assignee, not the actor)
     ticket: r.ticket || '',
     ts: new Date().toISOString(),
     ...(payload || {})
