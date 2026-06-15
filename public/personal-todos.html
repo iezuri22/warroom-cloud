@@ -6631,7 +6631,13 @@ const VOICE = {
       return;
     }
     // Hide future reminders — they reappear when their date arrives.
-    let pending = todos.filter(t => !t.done && !_isPendingReminder(t));
+    // Also hide Planned items: the Personal page is strictly the priority
+    // page now, and planned/undated items live exclusively in the Planned
+    // tab. ECM tasks are still surfaced via the ECM job chip handler
+    // below, so excluding planned here doesn't affect those rows.
+    let pending = todos.filter(t =>
+      !t.done && !_isPendingReminder(t) && !_isPlanned(t)
+    );
     const done = todos.filter(t => t.done);
     // Apply job filter to pending list (keep Completed unfiltered so users
     // can still see what they wrapped up today regardless of filter).
@@ -10673,22 +10679,44 @@ const VOICE = {
   // On its day it knocks via a once-per-day prompt — and keeps knocking every
   // day until it's added to the list, re-dated, or deleted.
   let _f5PlannedTab = false;   // Planned tab active in the focus strip
-  let _plannedCache = [];      // open tv_todos docs with plannedFor set
+  let _plannedCache = [];      // open tv_todos docs in the Planned bucket
   let _plannedLoadedAt = 0;
+  // A todo is considered "Planned" when EITHER:
+  //   - planned === true  (the new canonical flag, allows undated items)
+  //   - plannedFor > ''   (legacy: a YYYY-MM-DD date pinning it to a day)
+  // The Planned tab/page shows everything matching either condition.
+  function _isPlannedDoc(p){
+    if (!p) return false;
+    return p.planned === true || (typeof p.plannedFor === 'string' && p.plannedFor.length > 0);
+  }
   async function loadPlannedTodos(force){
     if (!force && Date.now() - _plannedLoadedAt < 30000) return _plannedCache;
     try {
-      const qs = await getDocs(query(todosCol, where('plannedFor', '>', '')));
-      const next = [];
-      qs.forEach(d => { next.push({ id: d.id, ...(d.data() || {}) }); });
-      _plannedCache = next.filter(p => !p.done);
+      // Firestore has no efficient OR query, so we run two reads and merge.
+      // 1) dated planned (legacy + ongoing) — plannedFor > ''
+      // 2) flagged planned — planned == true (covers undated "someday" items)
+      const [datedSnap, flaggedSnap] = await Promise.all([
+        getDocs(query(todosCol, where('plannedFor', '>', ''))),
+        getDocs(query(todosCol, where('planned', '==', true)))
+      ]);
+      const byId = new Map();
+      const collect = (snap) => snap.forEach(d => {
+        if (!byId.has(d.id)) byId.set(d.id, { id: d.id, ...(d.data() || {}) });
+      });
+      collect(datedSnap);
+      collect(flaggedSnap);
+      _plannedCache = [...byId.values()].filter(p => !p.done && _isPlannedDoc(p));
       _plannedLoadedAt = Date.now();
     } catch (e) { console.warn('planned load failed', e); }
     return _plannedCache;
   }
   function plannedDue(){
     const tk = todayKey();
-    return _plannedCache.filter(p => !p.done && (p.plannedFor || '') <= tk);
+    // Only DATED planned items can be "due" today. Undated (someday) items
+    // never knock — they're an explicit backlog.
+    return _plannedCache.filter(p =>
+      !p.done && typeof p.plannedFor === 'string' && p.plannedFor.length > 0 && p.plannedFor <= tk
+    );
   }
   function plannedBuckets(){
     const tk = todayKey();
@@ -10697,16 +10725,23 @@ const VOICE = {
     const monday = _mondayKeyFor(base);
     const weekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 6 * 86400000));
     const nextWeekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 13 * 86400000));
-    const b = { due: [], tomorrow: [], week: [], next: [], later: [] };
+    // Buckets: due (today/overdue) → tomorrow → week → next → later → someday
+    // 'someday' holds undated planned items (planned: true with no plannedFor).
+    const b = { due: [], tomorrow: [], week: [], next: [], later: [], someday: [] };
     _plannedCache.filter(p => !p.done).forEach(p => {
-      const d = p.plannedFor || '';
+      const d = typeof p.plannedFor === 'string' ? p.plannedFor : '';
+      if (!d) { b.someday.push(p); return; }
       if (d <= tk) b.due.push(p);
       else if (d === tomorrow) b.tomorrow.push(p);
       else if (d <= weekEnd) b.week.push(p);
       else if (d <= nextWeekEnd) b.next.push(p);
       else b.later.push(p);
     });
-    Object.values(b).forEach(arr => arr.sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || '')));
+    // Sort dated buckets by plannedFor ascending; someday by createdAt newest first.
+    ['due','tomorrow','week','next','later'].forEach(k => {
+      b[k].sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || ''));
+    });
+    b.someday.sort((a, c) => (c.createdAt || '').localeCompare(a.createdAt || ''));
     return b;
   }
   function _plannedRelLabel(dateStr){
@@ -10727,12 +10762,19 @@ const VOICE = {
   }
   async function createPlannedTask(text, dateStr, job){
     const t = (text || '').trim();
+    if (!t) return null;
+    // Empty date is now allowed — task lands in the Planned "Someday"
+    // bucket and the user can date it later.
     const ds = (dateStr || '').trim();
-    if (!t || !ds) return null;
     const maxPos = todos.length > 0 ? Math.max(...todos.map(x => x.position || 0)) + 1 : 0;
     const payload = {
       text: t, done: false,
-      date: ds, plannedFor: ds,
+      // For undated planned items, leave `date` empty so they never appear
+      // on a daily view. plannedFor stays empty; the `planned` flag is the
+      // canonical marker.
+      date: ds || '',
+      plannedFor: ds,
+      planned: true,
       position: maxPos, timeSpent: 0, countdownSecs: 0,
       createdAt: new Date().toISOString()
     };
@@ -10749,7 +10791,9 @@ const VOICE = {
   async function plannedAddToList(id){
     const p = _plannedCache.find(x => x.id === id);
     if (!p) return;
-    const patch = { plannedFor: '', date: todayKey() };
+    // Graduate out of Planned: clear plannedFor + the `planned` flag so the
+    // task reappears on the Personal page main view.
+    const patch = { plannedFor: '', planned: false, date: todayKey() };
     try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch (e) { console.warn(e); }
     Object.assign(p, patch);
     _plannedCache = _plannedCache.filter(x => x.id !== id);
@@ -10762,10 +10806,12 @@ const VOICE = {
   }
   async function plannedRedate(id, dateStr){
     const ds = (dateStr || '').trim();
-    if (!ds) return;
     const p = _plannedCache.find(x => x.id === id);
     if (!p) return;
-    const patch = { plannedFor: ds, date: ds };
+    // Empty string is now a valid plannedFor — it means "Someday, undated".
+    // We keep the task in the Planned bucket either way by ensuring the
+    // `planned: true` flag is set.
+    const patch = { plannedFor: ds, date: ds, planned: true };
     try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch (e) { console.warn(e); }
     Object.assign(p, patch);
     const t = todos.find(x => x.id === id);
@@ -10913,7 +10959,8 @@ const VOICE = {
       ['tomorrow', 'Tomorrow', ''],
       ['week', 'This week', ''],
       ['next', 'Next week', ''],
-      ['later', 'Later', '']
+      ['later', 'Later', ''],
+      ['someday', 'Someday — no date', 'someday']
     ];
     let any = false;
     SECTIONS.forEach(([key, label, cls]) => {
@@ -10929,7 +10976,7 @@ const VOICE = {
     if (!any) {
       const empty = document.createElement('div');
       empty.className = 'planned-empty';
-      empty.innerHTML = `Nothing planned yet. Type a priority above, pick its day, and it'll show up here — then knock on the morning it's due. ECM pushes can land here too via “Plan for a date”.`;
+      empty.innerHTML = `Nothing planned yet. Type a task above and either pick a day or leave the date blank to land in Someday. Dated items knock on the morning they're due.`;
       groups.appendChild(empty);
     }
     const form = wrap.querySelector('#plannedAddForm');
@@ -10942,7 +10989,7 @@ const VOICE = {
       const ds = dateInp.value || '';
       const j = jobSel ? jobSel.value : '';
       if (!t) { textInp.focus(); return; }
-      if (!ds) { dateInp.focus(); return; }
+      // Date is now optional — empty date lands the task in Someday.
       textInp.value = '';
       await createPlannedTask(t, ds, j);
       render();
@@ -12149,6 +12196,64 @@ const VOICE = {
   function _isPriorityList(list){
     const name = (list && list.name || '').toLowerCase();
     return /\bpriority\b/.test(name);
+  }
+  // True when this todo's id is inside any Focus 5 list (priority or routine).
+  // Cheap pass; called per-todo during render so kept tight.
+  function _isInFocus5(t){
+    const id = t && t.id;
+    if (!id) return false;
+    const lists = (focus5State && focus5State.lists) || [];
+    for (const l of lists) {
+      const ids = (l && l.taskIds) || [];
+      for (const x of ids) if (x === id) return true;
+    }
+    return false;
+  }
+  // True when this todo lives in the Planned bucket (dated or undated).
+  function _isPlanned(t){
+    if (!t) return false;
+    return t.planned === true || (typeof t.plannedFor === 'string' && t.plannedFor.length > 0);
+  }
+  // One-time migration so the Personal page can become strictly the
+  // priority page. Sweeps every pending non-priority todo (not in any
+  // Focus 5 list, not already planned, not a pending reminder) and marks
+  // it `planned: true` with no date — it lands in the Planned tab's
+  // "Someday" bucket where the user can pick a date or just leave it.
+  // Idempotent: a localStorage flag prevents re-running, but it's
+  // structurally safe to re-run anyway (no-op if there's nothing to move).
+  const PLAN_MIG_KEY = 'personal-plan-migration-v1';
+  async function _migrateNonPriorityToPlanned(){
+    try { if (localStorage.getItem(PLAN_MIG_KEY) === '1') return; } catch {}
+    // Refuse to run until Focus 5 state has hydrated — otherwise we'd
+    // mark legitimate priority tasks as planned just because their list
+    // wasn't loaded yet.
+    if (!window.__warroomCloudReady) return;
+    if (!Array.isArray(todos) || todos.length === 0) {
+      try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+      return;
+    }
+    const candidates = todos.filter(t =>
+      t && !t.done && !_isPlanned(t) && !_isPendingReminder(t) && !_isInFocus5(t)
+    );
+    if (candidates.length === 0) {
+      try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+      return;
+    }
+    console.log('[plan-migration] moving ' + candidates.length + ' non-priority pending todos to Planned');
+    let migrated = 0;
+    for (const t of candidates) {
+      try {
+        await updateDoc(doc(db, 'tv_todos', t.id), { planned: true });
+        t.planned = true;
+        migrated++;
+      } catch (e) {
+        console.warn('[plan-migration] failed', t && t.id, e && e.message);
+      }
+    }
+    try { localStorage.setItem(PLAN_MIG_KEY, '1'); } catch {}
+    try { await loadPlannedTodos(true); } catch {}
+    try { render(); } catch {}
+    console.log('[plan-migration] done — ' + migrated + ' migrated');
   }
   // Ordered chain of priority lists, in display order.
   function _priorityChain(){
@@ -13550,6 +13655,11 @@ const VOICE = {
       setTimeout(() => {
         try { loadPlannedTodos(true).then(() => { try { render(); maybeShowPlannedPrompt(); } catch {} }); } catch {}
       }, 2200);
+      // One-time migration: with the Personal page now strictly the
+      // priority page, any pending todo that isn't in a Focus 5 list and
+      // isn't already planned should slide into Planned (undated). Runs
+      // once per device thanks to the localStorage flag.
+      setTimeout(() => { try { _migrateNonPriorityToPlanned(); } catch (e) { console.warn('plan-migration failed', e); } }, 3000);
     }
     if (window.__warroomCloudReady) {
       _bootSeed();
