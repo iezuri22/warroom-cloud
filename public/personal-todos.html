@@ -1362,12 +1362,52 @@
     font-weight: 600;
   }
   .f5b-existing-foot {
-    padding: 6px 14px 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 14px 10px;
     font-size: 11px; color: rgba(255,255,255,.4);
     border-top: 1px solid rgba(255,255,255,.05);
     background: rgba(255,255,255,.015);
   }
   .f5b-existing-count { font-variant-numeric: tabular-nums }
+  .f5b-existing-add-btn {
+    background: linear-gradient(135deg, #FF9B57, #FF8A3D);
+    color: #15151B;
+    border: 0; border-radius: 999px;
+    padding: 6px 18px;
+    font-family: inherit; font-size: 12.5px; font-weight: 800;
+    letter-spacing: .02em;
+    cursor: pointer;
+    transition: opacity .12s, transform .08s;
+    font-variant-numeric: tabular-nums;
+  }
+  .f5b-existing-add-btn:hover:not(:disabled) { transform: translateY(-1px) }
+  .f5b-existing-add-btn:disabled {
+    background: rgba(255,255,255,.06); color: rgba(255,255,255,.35);
+    cursor: default;
+  }
+  /* Checkbox cell on the left of each row */
+  .f5b-existing-row {
+    /* widen the row so the check has room */
+  }
+  .f5b-existing-check {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1.5px solid rgba(255,255,255,.22);
+    background: transparent;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #15151B;
+    transition: border-color .1s, background .1s;
+  }
+  .f5b-existing-row:hover .f5b-existing-check { border-color: rgba(255,138,61,.55) }
+  .f5b-existing-row.selected {
+    background: rgba(255,138,61,.10);
+    border-left-color: #FF8A3D;
+  }
+  .f5b-existing-row.selected .f5b-existing-check {
+    background: linear-gradient(135deg, #FF9B57, #FF8A3D);
+    border-color: #FF8A3D;
+  }
   .f5b-existing-empty {
     padding: 18px 14px;
     font-size: 12.5px; color: rgba(255,255,255,.4);
@@ -10910,14 +10950,17 @@ const VOICE = {
     return wrap;
   }
   // Inline "From existing" picker. Job filter chips + search + grouped
-  // sections (Planned vs Today vs Other). Pick a row and it moves into
-  // the active bulk list.
+  // sections (Planned vs Today vs Other) + multi-select. Pick any number
+  // of rows; "Add N" in the footer moves them all into the active bulk list.
   let _f5ExistingJobFilter = 'all';
+  let _f5ExistingSelected = new Set();
   function _f5BoardOpenExistingPicker(listId, addRowEl){
     // Toggle: if a picker is open under this row, close it.
     const existing = addRowEl.parentNode && addRowEl.parentNode.querySelector('.f5b-existing-picker');
-    if (existing) { existing.remove(); return; }
+    if (existing) { existing.remove(); _f5ExistingSelected.clear(); return; }
     document.querySelectorAll('.f5b-existing-picker').forEach(el => el.remove());
+    // Reset selection set every time the picker opens fresh.
+    _f5ExistingSelected = new Set();
 
     const panel = document.createElement('div');
     panel.className = 'f5b-existing-picker';
@@ -10935,6 +10978,7 @@ const VOICE = {
       <div class="f5b-existing-list"></div>
       <div class="f5b-existing-foot">
         <span class="f5b-existing-count" id="f5bExistingCount">0 open</span>
+        <button type="button" class="f5b-existing-add-btn" id="f5bExistingAddBtn" disabled>Add 0</button>
       </div>
     `;
     addRowEl.parentNode.insertBefore(panel, addRowEl.nextSibling);
@@ -10944,6 +10988,48 @@ const VOICE = {
     const closeBtn = panel.querySelector('.f5b-existing-close');
     const jobsEl   = panel.querySelector('.f5b-existing-jobs');
     const countEl  = panel.querySelector('#f5bExistingCount');
+    const addBtn   = panel.querySelector('#f5bExistingAddBtn');
+
+    function updateAddBtn(){
+      const n = _f5ExistingSelected.size;
+      addBtn.textContent = n === 0 ? 'Add 0' : `Add ${n}`;
+      addBtn.disabled = n === 0;
+    }
+    async function commitSelected(){
+      const list = focus5State.lists.find(x => x.id === listId);
+      if (!list || _f5ExistingSelected.size === 0) { panel.remove(); return; }
+      // Resolve the actual task objects from the current pool so we have
+      // their planned state (might've gone stale during the open session).
+      const pool = buildPool();
+      const byId = new Map(pool.map(t => [t.id, t]));
+      const toAdd = [];
+      _f5ExistingSelected.forEach(id => {
+        const t = byId.get(id);
+        if (t) toAdd.push(t);
+      });
+      // Lock the button while we run the batch.
+      addBtn.disabled = true;
+      addBtn.textContent = 'Adding…';
+      for (const t of toAdd) {
+        try {
+          if (t.planned === true || (t.plannedFor && t.plannedFor.length)) {
+            try { await updateDoc(doc(db, 'tv_todos', t.id), { planned: false, plannedFor: '' }); } catch {}
+            t.planned = false;
+            t.plannedFor = '';
+            _plannedCache = (_plannedCache || []).filter(x => x.id !== t.id);
+            const inMem = todos.find(x => x.id === t.id);
+            if (inMem) { inMem.planned = false; inMem.plannedFor = ''; }
+            else todos.push(t);
+          }
+          _f5BoardInsert(t.id, list, null);
+        } catch (e) { console.warn('bulk multi-add failed for', t.id, e); }
+      }
+      panel.remove();
+      _f5ExistingSelected = new Set();
+      try { render(); } catch {}
+      _f5BoardRender();
+    }
+    addBtn.addEventListener('click', commitSelected);
 
     function buildPool(){
       // Open todos pool: in-memory + planned cache (planned tasks may not
@@ -11069,7 +11155,8 @@ const VOICE = {
     function buildRow(t){
       const row = document.createElement('button');
       row.type = 'button';
-      row.className = 'f5b-existing-row';
+      const isSel = _f5ExistingSelected.has(t.id);
+      row.className = 'f5b-existing-row' + (isSel ? ' selected' : '');
       const jm = t.job ? jobMeta(t.job) : null;
       const jobBadge = jm
         ? `<span class="f5b-existing-job" style="background:${jm.color}22;color:${jm.color}">${escHtml(jm.label)}</span>`
@@ -11078,37 +11165,43 @@ const VOICE = {
       const dateChip = date ? `<span class="f5b-existing-date">${escHtml(date)}</span>` : '';
       const plannedTag = _isPlanned(t) ? `<span class="f5b-existing-tag">Planned</span>` : '';
       row.innerHTML = `
+        <span class="f5b-existing-check" aria-hidden="true">
+          ${isSel
+            ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+            : ''}
+        </span>
         <span class="f5b-existing-row-left">
           <span class="f5b-existing-tag-row">${plannedTag}${jobBadge}</span>
           <span class="f5b-existing-text">${escHtml(t.text || '')}</span>
         </span>
         ${dateChip}
       `;
-      row.addEventListener('click', async () => {
-        const list = focus5State.lists.find(x => x.id === listId);
-        if (!list) { panel.remove(); return; }
-        // Moving a Planned task into a list means it's no longer planned.
-        if (t.planned === true || (t.plannedFor && t.plannedFor.length)) {
-          try { await updateDoc(doc(db, 'tv_todos', t.id), { planned: false, plannedFor: '' }); } catch {}
-          t.planned = false;
-          t.plannedFor = '';
-          _plannedCache = (_plannedCache || []).filter(x => x.id !== t.id);
-          const inMem = todos.find(x => x.id === t.id);
-          if (inMem) { inMem.planned = false; inMem.plannedFor = ''; }
-          else todos.push(t);
+      row.addEventListener('click', () => {
+        if (_f5ExistingSelected.has(t.id)) _f5ExistingSelected.delete(t.id);
+        else _f5ExistingSelected.add(t.id);
+        // Re-render just this row (toggle classes + checkmark) to keep
+        // scroll/focus stable. Cheaper than rebuilding the list.
+        const isNowSel = _f5ExistingSelected.has(t.id);
+        row.classList.toggle('selected', isNowSel);
+        const check = row.querySelector('.f5b-existing-check');
+        if (check) {
+          check.innerHTML = isNowSel
+            ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+            : '';
         }
-        _f5BoardInsert(t.id, list, null);
-        panel.remove();
-        try { render(); } catch {}
-        _f5BoardRender();
+        updateAddBtn();
       });
       return row;
     }
 
     searchEl.addEventListener('input', renderList);
-    closeBtn.addEventListener('click', () => panel.remove());
+    closeBtn.addEventListener('click', () => {
+      panel.remove();
+      _f5ExistingSelected = new Set();
+    });
     renderJobChips();
     renderList();
+    updateAddBtn();
     setTimeout(() => { try { searchEl.focus(); } catch {} }, 30);
   }
   // Direct insert at an index — the board is manual-arrangement mode, so no
