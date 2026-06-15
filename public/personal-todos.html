@@ -1221,6 +1221,73 @@
     padding: 4px 0;
   }
   .f5b-add input::placeholder { color: rgba(255,255,255,.25); font-weight: 500 }
+  /* "From existing" picker affordance — sits to the right of the add input */
+  .f5b-pick-existing {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: transparent; border: 1px dashed rgba(255,138,61,.35);
+    color: rgba(255,138,61,.85);
+    border-radius: 999px; padding: 3px 9px;
+    font-family: inherit; font-size: 11.5px; font-weight: 700;
+    cursor: pointer; white-space: nowrap;
+  }
+  .f5b-pick-existing:hover { border-color: rgba(255,138,61,.7); color: #FF8A3D; background: rgba(255,138,61,.06); }
+  .f5b-pick-existing svg { flex-shrink: 0 }
+  /* Inline picker dropped below the add row */
+  .f5b-existing-picker {
+    margin: 4px 8px 8px 44px;
+    background: rgba(20,20,28,.95);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .f5b-existing-head {
+    display: flex; gap: 8px; align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .f5b-existing-search {
+    flex: 1; background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 8px; padding: 6px 10px;
+    color: rgba(255,255,255,.92); font-family: inherit; font-size: 13px;
+    outline: none;
+  }
+  .f5b-existing-search:focus { border-color: rgba(255,138,61,.5) }
+  .f5b-existing-close {
+    background: transparent; border: 0; color: rgba(255,255,255,.5);
+    font-size: 22px; line-height: 1; padding: 0 4px; cursor: pointer;
+  }
+  .f5b-existing-close:hover { color: #fff }
+  .f5b-existing-list {
+    max-height: 280px; overflow-y: auto;
+    padding: 4px 0;
+  }
+  .f5b-existing-row {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; text-align: left;
+    background: transparent; border: 0;
+    padding: 8px 12px;
+    color: rgba(255,255,255,.88); font-family: inherit; font-size: 13px;
+    cursor: pointer;
+  }
+  .f5b-existing-row:hover { background: rgba(255,138,61,.08) }
+  .f5b-existing-row .f5b-existing-tag {
+    flex-shrink: 0;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    padding: 1px 6px; border-radius: 999px;
+    background: rgba(255,138,61,.18); color: #FF8A3D;
+  }
+  .f5b-existing-row .f5b-existing-text { flex: 1; }
+  .f5b-existing-row .f5b-existing-date {
+    flex-shrink: 0;
+    font-size: 11px; color: rgba(255,255,255,.45);
+    font-variant-numeric: tabular-nums;
+  }
+  .f5b-existing-empty {
+    padding: 14px 12px;
+    font-size: 12.5px; color: rgba(255,255,255,.4);
+    text-align: center;
+  }
   .f5b-empty { padding: 2px 8px 2px 44px; font-size: 12.5px; color: rgba(255,255,255,.28); font-weight: 600 }
   /* Per-row details editor — sits under its row, indented past the circle */
   .f5b-details { padding: 0 8px 6px 38px }
@@ -10571,6 +10638,12 @@ const VOICE = {
     wrap.innerHTML = `
       <span class="f5b-add-circle" aria-hidden="true"></span>
       <input type="text" placeholder="Add to ${escHtml(l.name)}…" maxlength="200" autocomplete="off">
+      <button type="button" class="f5b-pick-existing" data-pick-existing="${escHtml(l.id)}" title="Pick from existing tasks (Planned + open)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 8h8M8 16h5"/>
+        </svg>
+        <span>From existing</span>
+      </button>
       <button type="submit" style="display:none" tabindex="-1" aria-hidden="true"></button>
     `;
     const inp = wrap.querySelector('input');
@@ -10593,7 +10666,109 @@ const VOICE = {
       inp.value = ''; _f5BoardAddText[l.id] = '';
       _f5BoardAddTasks(l.id, [v]);
     });
+    wrap.querySelector('[data-pick-existing]').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _f5BoardOpenExistingPicker(l.id, wrap);
+    });
     return wrap;
+  }
+  // Inline picker — shows every open task that isn't already in any Focus 5
+  // list. Pick one → it lands in the active bulk list via _f5BoardInsert
+  // (no duplicate row created; just a list-membership change).
+  function _f5BoardOpenExistingPicker(listId, addRowEl){
+    // Toggle: if a picker is already open under this row, close it.
+    const existing = addRowEl.parentNode && addRowEl.parentNode.querySelector('.f5b-existing-picker');
+    if (existing) { existing.remove(); return; }
+    // Close any other open pickers across the board so we never have two.
+    document.querySelectorAll('.f5b-existing-picker').forEach(el => el.remove());
+    const panel = document.createElement('div');
+    panel.className = 'f5b-existing-picker';
+    panel.innerHTML = `
+      <div class="f5b-existing-head">
+        <input type="search" class="f5b-existing-search" placeholder="Search open tasks…" autocomplete="off">
+        <button type="button" class="f5b-existing-close" aria-label="Close">×</button>
+      </div>
+      <div class="f5b-existing-list"></div>
+    `;
+    addRowEl.parentNode.insertBefore(panel, addRowEl.nextSibling);
+
+    const listEl = panel.querySelector('.f5b-existing-list');
+    const searchEl = panel.querySelector('.f5b-existing-search');
+    const closeBtn = panel.querySelector('.f5b-existing-close');
+
+    function buildCandidates(){
+      // Open todos pool: in-memory + planned cache (planned tasks may not be
+      // in `todos` if they're undated/old).
+      const seen = new Set();
+      const pool = [];
+      const push = (t) => {
+        if (!t || !t.id || seen.has(t.id)) return;
+        seen.add(t.id);
+        pool.push(t);
+      };
+      (todos || []).forEach(push);
+      (_plannedCache || []).forEach(push);
+      // Filter: must be open, not a pending reminder, not already in ANY
+      // Focus 5 list (otherwise the user would be duplicating).
+      return pool.filter(t =>
+        t && !t.done && !_isPendingReminder(t) && !_isInFocus5(t) && (t.text || '').trim()
+      );
+    }
+    function renderList(){
+      const q = (searchEl.value || '').trim().toLowerCase();
+      const candidates = buildCandidates()
+        .filter(t => !q || (t.text || '').toLowerCase().includes(q))
+        // Planned first, then by createdAt desc
+        .sort((a, b) => {
+          const ap = _isPlanned(a) ? 0 : 1;
+          const bp = _isPlanned(b) ? 0 : 1;
+          if (ap !== bp) return ap - bp;
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        })
+        .slice(0, 40);
+      listEl.innerHTML = '';
+      if (!candidates.length) {
+        const e = document.createElement('div');
+        e.className = 'f5b-existing-empty';
+        e.textContent = q ? 'No matches.' : 'No open tasks outside Focus 5.';
+        listEl.appendChild(e);
+        return;
+      }
+      candidates.forEach(t => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'f5b-existing-row';
+        const tag = _isPlanned(t) ? '<span class="f5b-existing-tag">Planned</span>' : '';
+        const date = (t.plannedFor || t.date || '').slice(0, 10);
+        const dateChip = date ? `<span class="f5b-existing-date">${escHtml(date)}</span>` : '';
+        row.innerHTML = `${tag}<span class="f5b-existing-text">${escHtml(t.text || '')}</span>${dateChip}`;
+        row.addEventListener('click', async () => {
+          const list = focus5State.lists.find(x => x.id === listId);
+          if (!list) { panel.remove(); return; }
+          // Adding to a Focus 5 list means the task is no longer "Planned" —
+          // clear the planned flag so it shows in the main view normally.
+          if (t.planned === true || (t.plannedFor && t.plannedFor.length)) {
+            try { await updateDoc(doc(db, 'tv_todos', t.id), { planned: false, plannedFor: '' }); } catch {}
+            t.planned = false;
+            t.plannedFor = '';
+            _plannedCache = (_plannedCache || []).filter(x => x.id !== t.id);
+            const inMem = todos.find(x => x.id === t.id);
+            if (inMem) { inMem.planned = false; inMem.plannedFor = ''; }
+            else todos.push(t);
+          }
+          _f5BoardInsert(t.id, list, null);
+          panel.remove();
+          try { render(); } catch {}
+          _f5BoardRender();
+        });
+        listEl.appendChild(row);
+      });
+    }
+    searchEl.addEventListener('input', renderList);
+    closeBtn.addEventListener('click', () => panel.remove());
+    renderList();
+    setTimeout(() => { try { searchEl.focus(); } catch {} }, 30);
   }
   // Direct insert at an index — the board is manual-arrangement mode, so no
   // cascade reshuffle (the count just shows orange past 5). Dupes across
