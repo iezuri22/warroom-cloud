@@ -2276,6 +2276,40 @@
     white-space: nowrap;
   }
   .ackp-delete { color: var(--red) !important; border-color: rgba(248,113,113,.35) !important }
+  /* Prominent task card at the top of the ack prompt */
+  .ackp-task-card {
+    background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
+    border: 1px solid rgba(255,255,255,.10);
+    border-left: 3px solid var(--orange, #FF8A3D);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .ackp-task-eyebrow {
+    font-size: 10px; font-weight: 800; letter-spacing: .12em;
+    color: var(--orange, #FF8A3D);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .ackp-task-text {
+    font-size: 18px; font-weight: 800; line-height: 1.3;
+    color: var(--w99, #fafafa);
+    overflow-wrap: anywhere;
+  }
+  .ackp-task-meta {
+    margin-top: 8px;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    font-size: 11.5px; color: var(--w55, rgba(255,255,255,.55));
+  }
+  .ackp-task-meta .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    font-weight: 600;
+  }
+  .ackp-task-meta .chip strong {
+    color: var(--w90, #ddd); font-weight: 700;
+  }
   .ackp-delete:hover { border-color: var(--red) !important }
 
   /* Acknowledge page acked-info line */
@@ -2486,8 +2520,12 @@
       </div>
       <button type="button" class="lr-close" id="ackPromptClose" aria-label="Close">&times;</button>
     </div>
-    <div class="lr-body" style="gap:12px">
-      <div id="ackPromptTask" style="font-size:14px;font-weight:700;line-height:1.35;color:var(--w95)"></div>
+    <div class="lr-body" style="gap:14px">
+      <div class="ackp-task-card">
+        <div class="ackp-task-eyebrow">Task</div>
+        <div id="ackPromptTask" class="ackp-task-text"></div>
+        <div id="ackPromptTaskMeta" class="ackp-task-meta"></div>
+      </div>
       <div class="ackp-checklist">
         <div><span class="tick">✓</span> The <strong>program</strong> on this row is right</div>
         <div><span class="tick">✓</span> The <strong>data</strong> (ticket, details, owner) looks right</div>
@@ -5919,12 +5957,62 @@ const _ackPromptSnoozed = new Set();
 // Guarded auto-trigger (ack-on-touch): skips snoozed rows and anything that
 // doesn't need acknowledgement. The Acknowledge page's button calls
 // openAckPrompt directly — an explicit click always opens the popup.
-function maybePromptAck(rowId){
-  const r = rows.find(x => String(x.id) === String(rowId));
+// ack-on-touch v2 — don't show the popup while the user is still actively
+// editing the row. Instead, arm a "deferred prompt" for this row. The prompt
+// fires when:
+//   - user moves focus to a different row (focusout outside this row's DOM), OR
+//   - user is idle for 6s after the last edit (safety net for cases where
+//     focusout never fires — e.g. the popup was opened by a date change with
+//     no element focus afterwards).
+let _armedAckRowId = null;
+let _armedAckTimer = null;
+const ARMED_ACK_IDLE_MS = 6000;
+
+function _fireArmedAck(){
+  const id = _armedAckRowId;
+  if (_armedAckTimer) { clearTimeout(_armedAckTimer); _armedAckTimer = null; }
+  _armedAckRowId = null;
+  if (!id) return;
+  const r = rows.find(x => String(x.id) === String(id));
   if (!r || !needsAck(r)) return;
-  if (_ackPromptSnoozed.has(String(rowId))) return;
-  openAckPrompt(rowId);
+  if (_ackPromptSnoozed.has(String(id))) return;
+  // Don't stack on top of an already-open prompt for some other row.
+  const bd = document.getElementById('ackPromptBackdrop');
+  if (bd && bd.classList.contains('show')) return;
+  openAckPrompt(id);
 }
+
+function _armAckPromptFor(rowId){
+  const id = String(rowId);
+  // Switching to a different row → fire the previous row's prompt FIRST so
+  // it isn't lost when we overwrite the armed slot.
+  if (_armedAckRowId && _armedAckRowId !== id) _fireArmedAck();
+  _armedAckRowId = id;
+  if (_armedAckTimer) clearTimeout(_armedAckTimer);
+  _armedAckTimer = setTimeout(_fireArmedAck, ARMED_ACK_IDLE_MS);
+}
+
+// Public entry — kept for compatibility with existing call sites. Now only
+// ARMS the prompt instead of opening it immediately.
+function maybePromptAck(rowId){
+  _armAckPromptFor(rowId);
+}
+
+// When focus moves to a DIFFERENT row's editable element, fire the armed
+// prompt for the previous row. We let focusout settle a tick so document.
+// activeElement reflects the new focus.
+document.addEventListener('focusout', () => {
+  if (!_armedAckRowId) return;
+  setTimeout(() => {
+    if (!_armedAckRowId) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) return; // lost focus → idle timer handles it
+    const rowEl = active.closest && active.closest('[data-id]');
+    const newRowId = rowEl ? rowEl.getAttribute('data-id') : null;
+    if (!newRowId || newRowId !== _armedAckRowId) _fireArmedAck();
+  }, 30);
+}, true);
+
 function openAckPrompt(rowId){
   const r = rows.find(x => String(x.id) === String(rowId));
   if (!r) return;
@@ -5933,6 +6021,21 @@ function openAckPrompt(rowId){
   _ackPromptRowId = String(rowId);
   const taskEl = document.getElementById('ackPromptTask');
   if (taskEl) taskEl.textContent = r.task || '(untitled)';
+  // Meta chips under the task: ticket, program, current owner, type, age.
+  const metaEl = document.getElementById('ackPromptTaskMeta');
+  if (metaEl) {
+    const chips = [];
+    if (r.ticket) chips.push(`<span class="chip">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`);
+    if (r.program) chips.push(`<span class="chip"><strong>${escHtml(r.program)}</strong></span>`);
+    if (r.owner) chips.push(`<span class="chip">Owner <strong>${escHtml(r.owner)}</strong></span>`);
+    else chips.push(`<span class="chip" style="color:var(--orange,#FF8A3D)">Unassigned</span>`);
+    if (r.requestType) chips.push(`<span class="chip">${escHtml(r.requestType)}</span>`);
+    if (r.createdDate) {
+      const age = timeAgo(r.createdDate);
+      chips.push(`<span class="chip" title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')}">${escHtml(age || fmtAbsoluteDate(r.createdDate))}</span>`);
+    }
+    metaEl.innerHTML = chips.join('');
+  }
   const savedEl = document.getElementById('ackPromptSaved');
   if (savedEl) { savedEl.textContent = ''; savedEl.className = 'lr-status'; }
   // Key fields, editable in place — fixing wrong data is the whole point of
