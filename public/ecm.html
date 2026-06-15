@@ -662,6 +662,12 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 800; color: #15151B;
   }
+  /* Flash a row after jumping to it from the activity feed so the eye lands on it. */
+  @keyframes ecmRowFlash {
+    0% { background: rgba(255,138,61,.18); box-shadow: 0 0 0 2px rgba(255,138,61,.35); }
+    100% { background: transparent; box-shadow: none; }
+  }
+  .row-flash { animation: ecmRowFlash 1.4s ease-out 1; }
 
   .view-tab {
     position: relative;
@@ -2465,6 +2471,8 @@
   }
   .drawer-action-btn:hover { color: var(--ink); border-color: var(--w30) }
   .drawer-action-btn.push:hover { color: var(--orange); border-color: rgba(255,138,61,.5); background: rgba(255,138,61,.08) }
+  .drawer-action-btn.delete { color: rgba(248,113,113,.85); border-color: rgba(248,113,113,.3); }
+  .drawer-action-btn.delete:hover { color: var(--red, #f87171); border-color: rgba(248,113,113,.65); background: rgba(248,113,113,.10); }
   /* Planned push — date + button pair next to "Push to my priorities" */
   .drawer-plan-wrap { display: inline-flex; align-items: center; gap: 6px }
   .drawer-plan-date {
@@ -4026,11 +4034,17 @@ function _drawerHTML(r){
           </div>
         </details>
         <div class="drawer-actions-row">
-          ${canPushToMyDay() && !isClosedStatus ? `
+          ${currentView === 'all' && !isClosedStatus ? `
+          <button type="button" class="drawer-action-btn delete" data-mark-delete="${escHtml(String(r.id))}" title="${r.deletion ? 'Remove deletion mark' : 'Mark this row for deletion in Smartsheets'}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            ${r.deletion ? 'Unmark delete' : 'Delete'}
+          </button>` : ''}
+          ${currentView !== 'all' && canPushToMyDay() && !isClosedStatus ? `
           <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             Push to my priorities
-          </button>
+          </button>` : ''}
+          ${canPushToMyDay() && !isClosedStatus ? `
           <span class="drawer-plan-wrap" title="Queue it as a planned priority — it knocks on the Personal page that morning">
             <input type="date" class="drawer-plan-date" data-plan-date="${escHtml(String(r.id))}" min="${(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())}">
             <button type="button" class="drawer-action-btn plan" data-plan-myday="${escHtml(String(r.id))}">
@@ -4116,6 +4130,13 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       b.disabled = true;
       pushRowToMyDay(r.id).finally(() => { b.disabled = false; });
+    }));
+    row.querySelectorAll('[data-mark-delete]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const turnOn = !r.deletion;
+      if (turnOn && !confirm(`Mark "${r.task || 'this row'}" for deletion?\n\nThis checks the deletion box in Smartsheets so the team can clear it during the next purge.`)) return;
+      b.disabled = true;
+      setRowDeletion(r.id, turnOn).finally(() => { b.disabled = false; });
     }));
     // Planned push — needs a date picked first.
     row.querySelectorAll('[data-plan-date]').forEach(inp => inp.addEventListener('click', e => e.stopPropagation()));
@@ -4582,6 +4603,9 @@ function renderDevReports(){
     pool = pool.filter(r => drStatusBucket(r.status) === 'parked');
   } else if (_drStatusFilter === 'completed') {
     pool = pool.filter(r => drStatusBucket(r.status) === 'completed');
+  } else if (_drStatusFilter === '__no_ticket__') {
+    // Data-hygiene filter: dev/report rows missing a ticket #.
+    pool = pool.filter(isMissingTicket);
   } else if (_drStatusFilter !== 'all') {
     pool = pool.filter(r => r.status === _drStatusFilter);
   }
@@ -4611,7 +4635,7 @@ function renderDevReports(){
   });
   const programCounts = new Map();
   const statusCounts = new Map();
-  let openCt = 0, parkedCt = 0, completedCt = 0;
+  let openCt = 0, parkedCt = 0, completedCt = 0, noTicketCt = 0;
   typeScoped.forEach(r => {
     if (r.program) programCounts.set(r.program, (programCounts.get(r.program) || 0) + 1);
     if (r.status) statusCounts.set(r.status, (statusCounts.get(r.status) || 0) + 1);
@@ -4619,6 +4643,7 @@ function renderDevReports(){
     if (b === 'open') openCt++;
     else if (b === 'parked') parkedCt++;
     else if (b === 'completed') completedCt++;
+    if (typeof isMissingTicket === 'function' && isMissingTicket(r)) noTicketCt++;
   });
   const statusOptions = SS_STATUSES.filter(s => statusCounts.has(s)).map(s =>
     `<option value="${escHtml(s)}" ${_drStatusFilter === s ? 'selected' : ''}>${escHtml(s)} (${statusCounts.get(s)})</option>`
@@ -4653,6 +4678,7 @@ function renderDevReports(){
         <option value="open" ${_drStatusFilter === 'open' ? 'selected' : ''}>Open (${openCt})</option>
         <option value="parked" ${_drStatusFilter === 'parked' ? 'selected' : ''}>Parked (${parkedCt})</option>
         <option value="completed" ${_drStatusFilter === 'completed' ? 'selected' : ''}>Completed (${completedCt})</option>
+        <option value="__no_ticket__" ${_drStatusFilter === '__no_ticket__' ? 'selected' : ''}>No ticket (${noTicketCt})</option>
         <option value="all" ${_drStatusFilter === 'all' ? 'selected' : ''}>All (${typeScoped.length})</option>
         ${statusOptions}
       </select>
@@ -6124,14 +6150,40 @@ function renderActivity(){
   list.querySelectorAll('[data-act-row]').forEach(b => b.addEventListener('click', () => {
     const id = b.getAttribute('data-act-row');
     if (!id) return;
-    // Jump back to the All view focused on this row.
-    currentView = 'all';
+    const r = rows.find(x => String(x.id) === String(id));
+    // Route to the correct tab: dev/report rows live on the Dev/Reports tab,
+    // everything else on All.
+    const targetView = (r && isDevOrReportRow(r)) ? 'dev' : 'all';
+    currentView = targetView;
+    // Sync the tab-bar visual state + body class hooks (the regular view
+    // toggle does these on click; we replicate them here since we're
+    // switching programmatically).
+    document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === targetView));
+    document.body.classList.toggle('view-ack',     targetView === 'ack');
+    document.body.classList.toggle('view-dev',     targetView === 'dev');
+    document.body.classList.toggle('view-notif',   targetView === 'notif');
+    document.body.classList.toggle('view-weekly',  targetView === 'weekly');
+    document.body.classList.toggle('view-starred', targetView === 'starred');
+    // Reset status / search / owner / program filters so the row isn't
+    // hidden by a stale filter from before the activity view. Keep the user
+    // in control via the existing chips after they jump in.
+    filterStatus = 'all';
+    filterSearch = '';
+    filterOwner = '';
+    filterProgram = '';
+    const searchInput = document.querySelector('.search-row input[type="search"], .search-row input[type="text"]');
+    if (searchInput) searchInput.value = '';
+    // Open the row drawer.
     expandedId = id;
     render();
+    // Scroll into view + flash highlight so the eye lands on it.
     setTimeout(() => {
       const card = document.querySelector(`.row[data-id="${id}"], .dr-card[data-id="${id}"]`);
-      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 80);
+      if (!card) return;
+      if (card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('row-flash');
+      setTimeout(() => card.classList.remove('row-flash'), 1500);
+    }, 100);
   }));
   const clr = document.getElementById('activityClearBtn');
   if (clr) clr.addEventListener('click', () => {
