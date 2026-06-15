@@ -3717,6 +3717,51 @@ function isMissingCompletionDate(r){
   const cd = (r.completionDate == null ? '' : String(r.completionDate)).trim();
   return closed && !cd;
 }
+// Row pinning — when the user is mid-edit on a row, that row stays in the
+// pool even if their edit just made it stop matching the active filter
+// (e.g. adding a ticket on the "Missing ticket" filter). It's released the
+// moment focus moves into a different row's editable element, or after a
+// short idle period.
+let _pinnedFilterRowId = null;
+let _pinnedFilterTimer = null;
+const PINNED_FILTER_IDLE_MS = 4000;
+
+function _pinFilterRow(rowId){
+  const id = String(rowId);
+  _pinnedFilterRowId = id;
+  if (_pinnedFilterTimer) clearTimeout(_pinnedFilterTimer);
+  _pinnedFilterTimer = setTimeout(() => {
+    _pinnedFilterRowId = null;
+    try { render(); } catch {}
+  }, PINNED_FILTER_IDLE_MS);
+}
+function _unpinFilterRow(){
+  if (!_pinnedFilterRowId) return;
+  _pinnedFilterRowId = null;
+  if (_pinnedFilterTimer) { clearTimeout(_pinnedFilterTimer); _pinnedFilterTimer = null; }
+  try { render(); } catch {}
+}
+
+// On focus entering any editable inside a row, pin that row.
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  // Only inputs/textareas/selects/contenteditables count as "editing".
+  const editable = t.matches('input, textarea, select, [contenteditable="true"]');
+  if (!editable) return;
+  const rowEl = t.closest('[data-id]');
+  const newRowId = rowEl ? rowEl.getAttribute('data-id') : null;
+  if (!newRowId) return;
+  // Switching to a different row — release the old pin (it'll trigger a
+  // re-render which then drops the previously-pinned row if it no longer
+  // matches the active filter).
+  if (_pinnedFilterRowId && _pinnedFilterRowId !== newRowId) {
+    _pinnedFilterRowId = null;
+    if (_pinnedFilterTimer) { clearTimeout(_pinnedFilterTimer); _pinnedFilterTimer = null; }
+  }
+  _pinFilterRow(newRowId);
+}, true);
+
 function applyFilters(){
   // Blank rows (no task name) are Smartsheet spacer rows — hide everywhere.
   let pool = rows.filter(r => (r.task || '').trim());
@@ -3791,6 +3836,17 @@ function applyFilters(){
     else if (sortBy === 'status')   r = (STATUS_ORDER[a.status] ?? 999) - (STATUS_ORDER[b.status] ?? 999);
     return r * dirMul || cmpStr(a.task, b.task); // tie-break by name
   });
+  // Force-include the currently-pinned row even if filters/sort dropped it.
+  // Editing a row shouldn't make it vanish mid-keystroke (e.g. adding a
+  // ticket while on the "Missing ticket" filter). The pin is released when
+  // the user moves to another row or after a brief idle.
+  if (_pinnedFilterRowId && !pool.some(r => String(r.id) === _pinnedFilterRowId)) {
+    const pinned = rows.find(r => String(r.id) === _pinnedFilterRowId && (r.task || '').trim());
+    if (pinned) {
+      // Insert at the top so the user doesn't have to hunt for it.
+      pool = [pinned, ...pool];
+    }
+  }
   return pool;
 }
 
