@@ -919,18 +919,33 @@ function attachNodeListeners(el){
           childEl.style.top  = d.y + 'px';
         }
       });
-      // Highlight section drop target as we hover stickies over them.
-      if (n.type === 'sticky') updateDropTargetHighlight(n);
+      // Highlight drop target as we hover ANY movable node over a container.
+      // Sections light up too, so it's obvious when a drop will convert one
+      // into a subsection.
+      updateDropTargetHighlight(n);
     }
     function up(){
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
       el.classList.remove('dragging');
-      // Snap-into-section for stickies + subsections
-      if (n.type === 'sticky' || n.type === 'subsection') {
-        n.parentId = findContainer(n);
+      // Snap-into-container for every movable node type. A section dropped
+      // inside another container auto-converts to a subsection; a subsection
+      // dropped at top level promotes back to a section. Stickies just get
+      // a parent (no type change). collectDescendants ran at drag-start, so
+      // child stickies/subsections were carried along by the move handler —
+      // their parentId is unchanged, which means a later drag of THIS node
+      // will still carry them via the parentId chain.
+      const wasType = n.type;
+      const newParent = findContainer(n);
+      n.parentId = newParent;
+      if (n.type === 'section' && newParent) {
+        n.type = 'subsection';
+      } else if (n.type === 'subsection' && !newParent) {
+        n.type = 'section';
       }
       clearDropTargetHighlight();
+      // Re-render so the type/class change is reflected immediately.
+      if (n.type !== wasType) renderNode(n);
       saveNode(n);
       // Persist every descendant we dragged along, then clear the write locks.
       descendants.forEach(d => { delete d._origX; delete d._origY; saveNode(d); });
@@ -1091,12 +1106,29 @@ function collectDescendants(rootId){
   return out;
 }
 
-// Containment: a sticky belongs to the smallest (subsection > section) box that contains its center.
+// Containment: a node belongs to the smallest container (section or
+// subsection) whose box contains its center. Self and descendants are
+// excluded so a container can never become its own ancestor (cycle).
 function findContainer(n){
   const cx = n.x + n.w/2, cy = n.y + n.h/2;
+  // Build the set of ids we MUST NOT consider as containers — self + every
+  // descendant in the parentId tree.
+  const forbidden = new Set([n.id]);
+  const queue = [n.id];
+  while (queue.length) {
+    const pid = queue.shift();
+    for (const c of nodes.values()) {
+      if (c.parentId === pid && !forbidden.has(c.id)) {
+        forbidden.add(c.id);
+        queue.push(c.id);
+      }
+    }
+  }
+  // Also exclude nodes on a different board (boards don't share containers).
   let best = null;
   for (const c of nodes.values()) {
-    if (c.id === n.id) continue;
+    if (forbidden.has(c.id)) continue;
+    if ((c.boardId || null) !== (n.boardId || null)) continue;
     if (c.type !== 'section' && c.type !== 'subsection') continue;
     if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) {
       if (!best || c.w * c.h < best.w * best.h) best = c;
