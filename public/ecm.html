@@ -6594,6 +6594,7 @@ function subscribeVisitsConfig(){
           .filter(p => p && (p.key || p.label))
           .map(p => ({ key: p.key || slugify(p.label), label: p.label || p.key }));
       }
+      if (Array.isArray(d.locations)) visitsConfig.locations = d.locations.slice();
     }
     if (currentView === 'visits') { try { renderVisits(); } catch {} }
   }, (err) => console.warn('[visits config] subscribe error', err));
@@ -6754,6 +6755,15 @@ function repopulateVisitDropdowns(){
       .map(p => `<option value="${esc(p.key)}">${esc(p.label)}</option>`).join('');
     if (cur) purpSel.value = cur;
   }
+  // Location datalist — union of configured + any already used in past visits
+  // so suggestions don't disappear if someone trims the config later. Sorted
+  // for a tidy dropdown.
+  const locList = document.getElementById('vmLocationList');
+  if (locList) {
+    const used = new Set(visits.map(v => (v.location || '').trim()).filter(Boolean));
+    const all = [...new Set([...visitsConfig.locations, ...used])].sort();
+    locList.innerHTML = all.map(l => `<option value="${esc(l)}"></option>`).join('');
+  }
 }
 function openVisitModal(editId){
   const bd = document.getElementById('visitsModalBd');
@@ -6779,11 +6789,13 @@ function openVisitModal(editId){
 // ============= Options modal — edit Programs + Purposes ====================
 let _voPrograms = [];   // working copy while modal open
 let _voPurposes = [];
+let _voLocations = [];
 function openOptionsModal(){
   const bd = document.getElementById('voModalBd');
   if (!bd) return;
   _voPrograms = visitsConfig.programs.slice();
   _voPurposes = visitsConfig.purposes.map(p => ({ ...p }));
+  _voLocations = visitsConfig.locations.slice();
   drawOptionsLists();
   bd.classList.add('open');
 }
@@ -6791,7 +6803,8 @@ function closeOptionsModal(){ document.getElementById('voModalBd')?.classList.re
 function drawOptionsLists(){
   const progBox = document.getElementById('voPrograms');
   const purpBox = document.getElementById('voPurposes');
-  if (!progBox || !purpBox) return;
+  const locBox  = document.getElementById('voLocations');
+  if (!progBox || !purpBox || !locBox) return;
   progBox.innerHTML = _voPrograms.map((p, i) => `
     <div class="vo-row" data-i="${i}">
       <span class="vo-handle">⋮⋮</span>
@@ -6823,16 +6836,30 @@ function drawOptionsLists(){
   purpBox.querySelectorAll('[data-vo-purp-del]').forEach(b => {
     b.addEventListener('click', () => { _voPurposes.splice(parseInt(b.getAttribute('data-vo-purp-del'), 10), 1); drawOptionsLists(); });
   });
+  locBox.innerHTML = _voLocations.map((l, i) => `
+    <div class="vo-row" data-i="${i}">
+      <span class="vo-handle">⋮⋮</span>
+      <input type="text" value="${esc(l)}" data-vo-loc-i="${i}">
+      <button type="button" data-vo-loc-del="${i}" title="Remove">✕</button>
+    </div>
+  `).join('');
+  locBox.querySelectorAll('[data-vo-loc-i]').forEach(inp => {
+    inp.addEventListener('input', (e) => { _voLocations[parseInt(e.target.getAttribute('data-vo-loc-i'), 10)] = e.target.value; });
+  });
+  locBox.querySelectorAll('[data-vo-loc-del]').forEach(b => {
+    b.addEventListener('click', () => { _voLocations.splice(parseInt(b.getAttribute('data-vo-loc-del'), 10), 1); drawOptionsLists(); });
+  });
 }
 async function saveOptionsModal(){
   const programs = _voPrograms.map(s => String(s || '').trim()).filter(Boolean);
   const purposes = _voPurposes
     .map(p => ({ key: p.key || slugify(p.label), label: String(p.label || '').trim() }))
     .filter(p => p.label);
+  const locations = _voLocations.map(s => String(s || '').trim()).filter(Boolean);
   if (!programs.length) { alert('Add at least one program.'); return; }
   if (!purposes.length) { alert('Add at least one purpose.'); return; }
   try {
-    await setDoc(visitsConfigDoc, { programs, purposes, updatedAt: new Date().toISOString() }, { merge: true });
+    await setDoc(visitsConfigDoc, { programs, purposes, locations, updatedAt: new Date().toISOString() }, { merge: true });
     closeOptionsModal();
   } catch (e) {
     console.error('[visits config] save failed', e);
@@ -6861,6 +6888,14 @@ document.getElementById('voAddPurpose')?.addEventListener('click', () => {
   drawOptionsLists();
   setTimeout(() => {
     const inputs = document.querySelectorAll('#voPurposes input');
+    inputs[inputs.length - 1]?.focus();
+  }, 0);
+});
+document.getElementById('voAddLocation')?.addEventListener('click', () => {
+  _voLocations.push('');
+  drawOptionsLists();
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('#voLocations input');
     inputs[inputs.length - 1]?.focus();
   }, 0);
 });
