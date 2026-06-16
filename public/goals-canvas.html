@@ -602,20 +602,27 @@ function updateEmptyHint(){
 function rebuildToc(){
   const list = document.getElementById('tocList');
   const pool = activeNodes();
-  const sections = pool.filter(n => n.type === 'section').sort((a,b)=>a.y - b.y || a.x - b.x);
-  if (!sections.length) {
+  // Group by geometry, not by stored parentId — that field can lag behind a
+  // resize. A "top-level section" is any container whose findContainer is
+  // null; a subsection is any container whose findContainer points at it.
+  const containers = pool.filter(n => n.type === 'section' || n.type === 'subsection');
+  const parentOf = new Map();
+  for (const c of containers) parentOf.set(c.id, findContainer(c));
+  const topLevel = containers.filter(c => !parentOf.get(c.id))
+    .sort((a,b)=>a.y - b.y || a.x - b.x);
+  if (!topLevel.length) {
     list.innerHTML = '<div class="toc-empty">Sections appear here. Click + Section above to start.</div>';
     return;
   }
   const html = [];
-  for (const s of sections) {
+  for (const s of topLevel) {
     const c = SECTION_HEX[s.color] || '#9ca3af';
     html.push(`<div class="toc-entry${selectedId===s.id?' active':''}" data-id="${s.id}">
       <span class="dot" style="background:${c}"></span>
       <span>${escapeHtml(s.title || 'Untitled section')}</span>
     </div>`);
-    const subs = pool
-      .filter(n => n.type === 'subsection' && n.parentId === s.id)
+    const subs = containers
+      .filter(x => parentOf.get(x.id) === s.id)
       .sort((a,b)=>a.y - b.y || a.x - b.x);
     for (const sub of subs) {
       html.push(`<div class="toc-entry sub${selectedId===sub.id?' active':''}" data-id="${sub.id}">
@@ -793,6 +800,7 @@ wrap.addEventListener('wheel', (e) => {
           saveNode(n);
           _nodeResizeDebounce.delete(id);
           setTimeout(() => _writingNode.delete(id), 250);
+          reconcileBoard();  // resize may have changed containment
         }, 200));
         return;
       }
@@ -954,6 +962,10 @@ function attachNodeListeners(el){
         descendants.forEach(d => _writingNode.delete(d.id));
       }, 250);
       rebuildToc();
+      // Catch any indirect parent/type changes the drop caused for OTHER
+      // nodes (e.g. moving a section out of a container promotes nodes that
+      // were inside it).
+      reconcileBoard();
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
@@ -1065,18 +1077,21 @@ function startResize(e, id){
     window.removeEventListener('mouseup', up);
     saveNode(n);
     setTimeout(()=> _writingNode.delete(id), 250);
+    // A resize may make this container wrap around other nodes (or stop
+    // wrapping them) — recompute everyone's parent/type.
+    reconcileBoard();
   }
   window.addEventListener('mousemove', move);
   window.addEventListener('mouseup', up);
 }
 
-// Walk the parentId tree downward and collect every descendant of `rootId`.
-// Used when dragging a container so children move together. We also pick up
-// any node whose center is currently inside the root's box but whose
-// parentId hasn't been set yet (legacy data, or a sticky placed before its
-// section was drawn) — feels right visually.
+// Collect every descendant of `rootId` using GEOMETRY as the source of truth
+// (not stored parentId, which may be stale until reconcileBoard runs). A node
+// is a descendant if findContainer(node) === rootId, transitively.
 function collectDescendants(rootId){
   const root = nodes.get(rootId);
+  if (!root) return [];
+  if (root.type !== 'section' && root.type !== 'subsection') return [];
   const out = [];
   const seen = new Set([rootId]);
   const queue = [rootId];
@@ -1084,22 +1099,11 @@ function collectDescendants(rootId){
     const pid = queue.shift();
     for (const c of nodes.values()) {
       if (seen.has(c.id)) continue;
-      if (c.parentId === pid) {
+      if ((c.boardId || null) !== (root.boardId || null)) continue;
+      if (findContainer(c) === pid) {
         out.push(c);
         seen.add(c.id);
         queue.push(c.id);
-      }
-    }
-  }
-  if (root && (root.type === 'section' || root.type === 'subsection')) {
-    for (const c of nodes.values()) {
-      if (seen.has(c.id)) continue;
-      if (c.parentId) continue;   // already parented to something else
-      const cx = c.x + c.w/2, cy = c.y + c.h/2;
-      if (cx >= root.x && cx <= root.x + root.w && cy >= root.y && cy <= root.y + root.h) {
-        out.push(c);
-        seen.add(c.id);
-        queue.push(c.id);   // walk this one's subtree too
       }
     }
   }
@@ -1107,34 +1111,63 @@ function collectDescendants(rootId){
 }
 
 // Containment: a node belongs to the smallest container (section or
-// subsection) whose box contains its center. Self and descendants are
-// excluded so a container can never become its own ancestor (cycle).
+// subsection) whose box contains its center. We derive this from GEOMETRY,
+// not from the stored parentId — that field is just a cache so that when
+// nothing has moved, lookups are fast. Whenever geometry changes (drag end,
+// resize end, scroll-resize end) we run reconcileBoard() which recomputes
+// every node's parentId from scratch.
+//
+// Cycle prevention: if candidate c sits geometrically inside n AND c is no
+// larger than n, c can't be n's parent (n is wrapping c, so c is the
+// descendant). This handles the common "resize a section to wrap around
+// existing stuff" case correctly.
 function findContainer(n){
   const cx = n.x + n.w/2, cy = n.y + n.h/2;
-  // Build the set of ids we MUST NOT consider as containers — self + every
-  // descendant in the parentId tree.
-  const forbidden = new Set([n.id]);
-  const queue = [n.id];
-  while (queue.length) {
-    const pid = queue.shift();
-    for (const c of nodes.values()) {
-      if (c.parentId === pid && !forbidden.has(c.id)) {
-        forbidden.add(c.id);
-        queue.push(c.id);
-      }
-    }
-  }
-  // Also exclude nodes on a different board (boards don't share containers).
   let best = null;
   for (const c of nodes.values()) {
-    if (forbidden.has(c.id)) continue;
+    if (c.id === n.id) continue;
     if ((c.boardId || null) !== (n.boardId || null)) continue;
     if (c.type !== 'section' && c.type !== 'subsection') continue;
+    // Skip candidates that n itself wraps around.
+    const ccx = c.x + c.w/2, ccy = c.y + c.h/2;
+    const cInsideN = (ccx >= n.x && ccx <= n.x + n.w && ccy >= n.y && ccy <= n.y + n.h);
+    if (cInsideN && c.w * c.h <= n.w * n.h) continue;
     if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) {
       if (!best || c.w * c.h < best.w * best.h) best = c;
     }
   }
   return best ? best.id : null;
+}
+
+// Run after any geometry change. Recomputes parentId for every node on the
+// active board; flips section ↔ subsection based on whether it has a
+// parent. Only saves/redraws nodes whose stored state actually changed, so
+// this is cheap to run liberally.
+let _reconcileTimer = null;
+function reconcileBoard(){
+  if (_reconcileTimer) return;
+  _reconcileTimer = setTimeout(() => {
+    _reconcileTimer = null;
+    if (!activeBoardId) return;
+    const board = [...nodes.values()].filter(n => (n.boardId || null) === activeBoardId);
+    const changed = [];
+    for (const n of board) {
+      const newParent = findContainer(n);
+      let newType = n.type;
+      if (n.type === 'section' && newParent) newType = 'subsection';
+      else if (n.type === 'subsection' && !newParent) newType = 'section';
+      if (n.parentId !== newParent || n.type !== newType) {
+        n.parentId = newParent;
+        n.type = newType;
+        changed.push(n);
+      }
+    }
+    for (const n of changed) {
+      renderNode(n);
+      saveNode(n);
+    }
+    if (changed.length) rebuildToc();
+  }, 0);
 }
 function updateDropTargetHighlight(n){
   const target = findContainer(n);
@@ -1522,6 +1555,9 @@ async function bootstrap(){
     }
     renderBoardBar();
     rerenderAll();
+    // Heal any stale parentId/type from previous sessions (e.g. user resized
+    // a section to wrap around another one and the data never caught up).
+    reconcileBoard();
 
     // 4. Live subscriptions
     subscribeBoards();
