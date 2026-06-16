@@ -662,6 +662,19 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 800; color: #15151B;
   }
+  /* Review (Acknowledge) — day grouping */
+  .ack-day { margin-bottom: 14px; }
+  .ack-day-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 6px 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: .08em;
+    text-transform: uppercase; opacity: .55;
+  }
+  .ack-day-head .ct {
+    font-weight: 700; font-size: 10.5px;
+    background: rgba(127,127,127,.12); padding: 1px 7px; border-radius: 999px;
+    opacity: .85;
+  }
   /* Flash a row after jumping to it from the activity feed so the eye lands on it. */
   @keyframes ecmRowFlash {
     0% { background: rgba(255,138,61,.18); box-shadow: 0 0 0 2px rgba(255,138,61,.35); }
@@ -2518,7 +2531,7 @@
       <span class="view-tab-ct" id="weeklyCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="notif">
-      Acknowledge
+      Review
       <span class="view-tab-ct" id="ackTabCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="starred">
@@ -5928,7 +5941,9 @@ function renderAcknowledge(){
     _wireAckToggle(list);
     return;
   }
-  list.innerHTML = toggleHTML + visible.map(r => {
+  // Helper to build one row's HTML — pulled out so both grouped (needs) and
+  // flat (done/del) layouts can reuse it.
+  const buildAckRow = (r) => {
     const expanded = _ackExpandedId != null && String(_ackExpandedId) === String(r.id);
     const a = acks[r.id];
     const pcol = programColor(r.program);
@@ -5979,7 +5994,46 @@ function renderAcknowledge(){
         </div>
         ${expanded ? _drawerHTML(r) : ''}
       </div>`;
-  }).join('');
+  };
+  // For the Needs (Review) tab, group by createdDate-day so the user can
+  // scan today's intake, then yesterday's, etc. Other tabs (done/del) stay
+  // flat since their relevant timestamp is the ack/deletion time, not
+  // createdDate.
+  let bodyHTML = '';
+  if (_ackTab === 'needs') {
+    const groups = new Map();
+    visible.forEach(r => {
+      const k = (r.createdDate || '').slice(0, 10) || 'unknown';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    const yest  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    function dayLabel(k){
+      if (k === 'unknown') return 'No created date';
+      if (k === today) return 'Today';
+      if (k === yest)  return 'Yesterday';
+      try {
+        const d = new Date(k + 'T12:00:00');
+        const daysAgo = Math.floor((Date.now() - d.getTime()) / 86400000);
+        const abs = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        return `${abs}${daysAgo > 1 && daysAgo < 14 ? ' · ' + daysAgo + ' days ago' : ''}`;
+      } catch { return k; }
+    }
+    // Map iteration preserves insertion order — but `visible` was already
+    // sorted by createdDate desc above, so groups land newest-day first.
+    const sectionsHTML = [];
+    for (const [k, items] of groups) {
+      sectionsHTML.push(`<div class="ack-day">
+        <div class="ack-day-head"><span>${dayLabel(k)}</span><span class="ct">${items.length}</span></div>
+        ${items.map(buildAckRow).join('')}
+      </div>`);
+    }
+    bodyHTML = sectionsHTML.join('');
+  } else {
+    bodyHTML = visible.map(buildAckRow).join('');
+  }
+  list.innerHTML = toggleHTML + bodyHTML;
   _wireAckToggle(list);
   list.querySelectorAll('[data-ack-row]').forEach(rowEl => {
     const id = rowEl.getAttribute('data-ack-row');
