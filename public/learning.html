@@ -251,6 +251,57 @@
   .modal .row .field{flex:1}
   .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;border-top:1px solid var(--line);padding-top:16px}
 
+  /* ---------- Focus panel (slide-out right) ---------- */
+  #focusPanel{
+    position:fixed;top:0;right:0;bottom:0;width:420px;
+    background:var(--bg);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .25s ease;
+    z-index:50;display:flex;flex-direction:column;
+    box-shadow:-12px 0 30px rgba(0,0,0,.4)
+  }
+  #focusPanel.open{transform:translateX(0)}
+  /* Push the page content over when panel is open on desktop so the canvas
+     doesn't disappear under it. */
+  body.focus-open #main{padding-right:436px}
+  .fp-head{
+    display:flex;align-items:center;gap:10px;padding:14px 18px;
+    border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)
+  }
+  .fp-head h3{margin:0;font-size:14px;font-weight:600;flex:1}
+  .fp-head .fp-cur{
+    font-size:11px;color:var(--muted);max-width:200px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;font-weight:500
+  }
+  .fp-icon-btn{
+    width:28px;height:28px;border-radius:6px;background:transparent;
+    border:1px solid var(--line);color:var(--muted);cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;font-size:13px
+  }
+  .fp-icon-btn:hover{color:var(--ink);background:var(--w05)}
+  #fpFrame{
+    flex:1;width:100%;border:none;background:var(--bg)
+  }
+  #fpEmpty{
+    flex:1;padding:40px 24px;text-align:center;color:var(--muted);
+    font-size:13px;line-height:1.6;display:flex;flex-direction:column;
+    justify-content:center;align-items:center;gap:14px
+  }
+  #fpEmpty .big{font-size:42px;opacity:.4}
+  @media (max-width:740px){
+    #focusPanel{width:100%}
+    body.focus-open #main{padding-right:20px}
+  }
+
+  /* Topbar focus toggle button */
+  #focusToggleBtn.active{
+    background:rgba(74,158,255,.18);color:var(--accent);border-color:var(--accent)
+  }
+  #focusToggleBtn .live-dot{
+    display:none;width:6px;height:6px;border-radius:50%;background:#22c55e;
+    animation:learn-pulse 1.6s ease-in-out infinite;margin-left:2px
+  }
+  #focusToggleBtn.live .live-dot{display:inline-block}
+
   /* Toast */
   #toast{
     position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
@@ -266,12 +317,35 @@
 <div id="topbar">
   <h1>Learning</h1>
   <span class="sp"></span>
+  <button class="tb-btn" id="focusToggleBtn" title="Open the focus timer panel">
+    ⏱ Focus<span class="live-dot" aria-hidden="true"></span>
+  </button>
   <button class="tb-btn primary" id="addCourseBtn">+ Add course</button>
 </div>
 
 <main id="main">
   <div id="courses"></div>
 </main>
+
+<!-- Slide-out focus timer panel — wraps focus-session.html in an iframe so
+     starting/stopping a session stays in-page. -->
+<aside id="focusPanel" aria-label="Focus timer">
+  <div class="fp-head">
+    <h3>Focus session</h3>
+    <span class="fp-cur" id="fpCur"></span>
+    <button class="fp-icon-btn" id="fpPopout" title="Open in a new tab">↗</button>
+    <button class="fp-icon-btn" id="fpClose" title="Close panel">×</button>
+  </div>
+  <div id="fpEmpty">
+    <span class="big">⏱</span>
+    <div>
+      Click <strong>▶ Study</strong> on any lecture to load it in the timer here,<br>
+      or open the timer empty and type your own focus intention.
+    </div>
+    <button class="tb-btn" id="fpStartEmpty">Open empty timer</button>
+  </div>
+  <iframe id="fpFrame" src="about:blank" style="display:none" allow="autoplay; clipboard-read; clipboard-write"></iframe>
+</aside>
 
 <!-- Add / edit course modal -->
 <div class="modal-bd" id="courseModalBd">
@@ -704,11 +778,8 @@ function wireEvents(){
           const subId = b.closest('.sub-row')?.dataset.sub;
           const u = (s.subsections || []).find(x => x.id === subId);
           if (!u) return;
-          // Pre-fill the Focus session with the lecture title. Opens in a new
-          // tab so the Learning page stays in place.
           const intent = `${c.title} — ${s.title} · ${u.title}`;
-          const qs = new URLSearchParams({ intent });
-          window.open('/focus-session.html?' + qs.toString(), '_blank');
+          openFocusPanel(intent);
         }));
       sectionEl.querySelectorAll('[data-action="del-sub"]').forEach(b =>
         b.addEventListener('click', () => {
@@ -818,6 +889,72 @@ async function saveCourseFromModal(){
 }
 
 document.getElementById('addCourseBtn').addEventListener('click', () => openCourseModal());
+
+// ============= Focus panel ==============================
+// Mirrors the existing focus-session.html via an iframe so the user can keep
+// the Learning page visible while a timer runs. The Study button on any
+// lecture loads the iframe with ?intent=… so the lecture title is pre-filled.
+function openFocusPanel(intent){
+  const panel = document.getElementById('focusPanel');
+  const frame = document.getElementById('fpFrame');
+  const empty = document.getElementById('fpEmpty');
+  // Reuse the existing iframe if it's already running an active session
+  // (don't blow away a live timer). Only swap src when there's an intent
+  // OR no active session.
+  const active = !!localStorage.getItem('focus-active');
+  if (intent) {
+    const qs = new URLSearchParams({ embed: '1', intent });
+    frame.src = '/focus-session.html?' + qs.toString();
+  } else if (!frame.src || frame.src === 'about:blank') {
+    frame.src = '/focus-session.html?embed=1';
+  }
+  empty.style.display = 'none';
+  frame.style.display = '';
+  panel.classList.add('open');
+  document.body.classList.add('focus-open');
+  document.getElementById('focusToggleBtn').classList.add('active');
+  setFpCur(intent || (active ? 'Resuming…' : ''));
+}
+function closeFocusPanel(){
+  document.getElementById('focusPanel').classList.remove('open');
+  document.body.classList.remove('focus-open');
+  document.getElementById('focusToggleBtn').classList.remove('active');
+}
+function setFpCur(text){
+  document.getElementById('fpCur').textContent = text || '';
+}
+document.getElementById('focusToggleBtn').addEventListener('click', () => {
+  if (document.getElementById('focusPanel').classList.contains('open')) {
+    closeFocusPanel();
+  } else {
+    openFocusPanel('');
+  }
+});
+document.getElementById('fpClose').addEventListener('click', closeFocusPanel);
+document.getElementById('fpPopout').addEventListener('click', () => {
+  // Pull the current iframe URL into a new tab so the user can take the
+  // session full-screen if they want it visible while scrolling something
+  // else.
+  const frame = document.getElementById('fpFrame');
+  const src = frame.src && frame.src !== 'about:blank' ? frame.src : '/focus-session.html';
+  // Strip the embed flag for the popout so the standalone chrome shows up.
+  const url = src.replace(/[?&]embed=1/, '').replace(/[?&]$/, '');
+  window.open(url || '/focus-session.html', '_blank');
+});
+document.getElementById('fpStartEmpty').addEventListener('click', () => openFocusPanel(''));
+
+// Live-dot on the toolbar button while a focus session is active.
+function pollFocusActive(){
+  const live = !!localStorage.getItem('focus-active');
+  const btn = document.getElementById('focusToggleBtn');
+  btn.classList.toggle('live', live);
+  if (!live) setFpCur('');
+}
+window.addEventListener('storage', (e) => {
+  if (e.key === 'focus-active') pollFocusActive();
+});
+setInterval(pollFocusActive, 4000);
+pollFocusActive();
 document.getElementById('cmCancel').addEventListener('click', closeCourseModal);
 document.getElementById('cmSave').addEventListener('click', saveCourseFromModal);
 document.getElementById('courseModalBd').addEventListener('click', (e) => {
