@@ -77,6 +77,14 @@
   .board-tab:hover{color:var(--ink);border-color:var(--line2)}
   .board-tab.active{color:var(--ink);border-color:var(--accent);background:rgba(74,158,255,.12)}
   .board-tab .b-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  /* Active board gets a hover-revealed delete ✕ so removing a board doesn't
+     require knowing about right-click. */
+  .board-tab.active .b-del{
+    display:none; margin-left:6px; padding:0 4px; border:none; background:transparent;
+    color:var(--muted); cursor:pointer; font-size:11px; border-radius:50%
+  }
+  .board-tab.active:hover .b-del{ display:inline-flex; align-items:center }
+  .board-tab.active .b-del:hover{ color:#f87171; background:rgba(248,113,113,.12) }
   .board-add{
     height:26px;min-width:26px;padding:0 8px;border-radius:13px;
     background:transparent;border:1px dashed var(--line2);color:var(--muted);
@@ -642,26 +650,49 @@ async function saveNode(n){
     setStatus('Couldn\'t save — retrying', 'error');
   }
 }
-async function deleteNode(id){
+// Delete a node. For sections/subsections this cascades — everything inside
+// goes too. That's almost always what the user wants ("delete this recipe"
+// means delete the section AND its ingredient + step stickies). Undo
+// restores every deleted node.
+async function deleteNode(id, opts){
   if (!id) return;
-  // Snapshot for undo: the node itself + every orphan's prior parentId so
-  // restore can put the parent-child links back exactly as they were.
+  opts = opts || {};
   const victim = nodes.get(id);
-  const orphans = [...nodes.values()].filter(n => n.parentId === id);
-  const undoEntry = victim
-    ? {
-        type: 'delete',
-        nodes: [{ ...victim, items: Array.isArray(victim.items) ? victim.items.map(it => ({ ...it })) : undefined }],
-        orphans: orphans.map(o => ({ id: o.id, oldParentId: o.parentId }))
-      }
-    : null;
-  for (const o of orphans) {
-    o.parentId = nodes.get(id)?.parentId || null;
-    await saveNode(o);
+  if (!victim) return;
+  const cascade = opts.cascade !== false; // default true
+  let toDelete;
+  if (cascade && (victim.type === 'section' || victim.type === 'subsection')) {
+    toDelete = [victim, ...collectDescendants(id)];
+  } else {
+    toDelete = [victim];
   }
-  try { await deleteDoc(doc(nodesCol, id)); } catch (e) { console.warn('[goals] delete failed', e); }
-  if (undoEntry) pushUndo(undoEntry);
-  // Local cleanup is handled by the snapshot listener.
+  // Snapshot for undo BEFORE we mutate anything.
+  const snapshot = toDelete.map(n => ({
+    ...n,
+    items: Array.isArray(n.items) ? n.items.map(it => ({ ...it })) : undefined
+  }));
+  // Stickies that referenced the now-deleted container as a parent and AREN'T
+  // themselves in the cascade need to orphan up (rare — only happens with
+  // stale parentIds). Capture so undo can restore.
+  const cascadeIds = new Set(toDelete.map(n => n.id));
+  const orphanedOut = [];
+  if (cascade) {
+    for (const n of nodes.values()) {
+      if (cascadeIds.has(n.id)) continue;
+      if (n.parentId && cascadeIds.has(n.parentId)) {
+        orphanedOut.push({ id: n.id, oldParentId: n.parentId });
+        n.parentId = victim.parentId || null;
+        await saveNode(n);
+      }
+    }
+  }
+  // Persist deletes.
+  for (const n of toDelete) {
+    try { await deleteDoc(doc(nodesCol, n.id)); } catch (e) { console.warn('[goals] delete failed', e); }
+  }
+  pushUndo({ type: 'delete', nodes: snapshot, orphans: orphanedOut });
+  // Local cleanup is handled by the snapshot listener (it will fire for each
+  // deleted doc and prune both nodes Map + DOM).
 }
 
 // ============= Persist view (per-board pan/zoom) =============
@@ -1373,7 +1404,11 @@ function attachNodeListeners(el){
       return;
     }
     if (a === 'delete') {
-      if (confirm('Delete this ' + n.type + '?')) deleteNode(id);
+      const desc = (n.type === 'section' || n.type === 'subsection') ? collectDescendants(id).length : 0;
+      const msg = desc
+        ? `Delete this ${n.type} and the ${desc} item${desc===1?'':'s'} inside it?`
+        : `Delete this ${n.type}?`;
+      if (confirm(msg)) deleteNode(id);
       e.stopPropagation();
       return;
     }
@@ -2455,7 +2490,13 @@ function showNodeContextMenu(px, py, n){
     if (c === 'z-forward')   bumpZ(n, +1);
     if (c === 'z-backward')  bumpZ(n, -1);
     if (c === 'z-back')      sendToBack(n);
-    if (c === 'delete')      { if (confirm('Delete this ' + n.type + '?')) deleteNode(n.id); }
+    if (c === 'delete') {
+      const desc = (n.type === 'section' || n.type === 'subsection') ? collectDescendants(n.id).length : 0;
+      const msg = desc
+        ? `Delete this ${n.type} and the ${desc} item${desc===1?'':'s'} inside it?`
+        : `Delete this ${n.type}?`;
+      if (confirm(msg)) deleteNode(n.id);
+    }
   };
 }
 
@@ -2520,10 +2561,19 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) {
     if (selectedIds.size && !document.activeElement?.matches('[contenteditable]')) {
       const ids = [...selectedIds];
+      // Total items including nested children (cascade preview).
+      let totalNested = 0;
+      ids.forEach(id => {
+        const n = nodes.get(id);
+        if (n && (n.type === 'section' || n.type === 'subsection')) {
+          totalNested += collectDescendants(id).length;
+        }
+      });
       const label = ids.length === 1
         ? ('this ' + (nodes.get(ids[0])?.type || 'item'))
         : (ids.length + ' items');
-      if (confirm('Delete ' + label + '?')) {
+      const extra = totalNested ? ` (plus ${totalNested} nested)` : '';
+      if (confirm('Delete ' + label + extra + '?')) {
         ids.forEach(id => deleteNode(id));
         selectedIds.clear();
         selectedId = null;
@@ -2598,9 +2648,10 @@ function renderBoardBar(){
   bar.innerHTML = list.map(b => {
     const color = SECTION_HEX[b.color] || '#9ca3af';
     const act = b.id === activeBoardId ? ' active' : '';
-    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for options">
+    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for rename / color">
       <span class="b-dot" style="background:${color}"></span>
       <span>${escapeHtml(b.name || 'Untitled')}</span>
+      <button class="b-del" data-board-del="${b.id}" title="Delete this board (with everything on it)">✕</button>
     </div>`;
   }).join('') + `<button class="board-add" id="boardAddBtn" title="New board">+</button>`;
 }
@@ -2681,8 +2732,15 @@ async function deleteBoard(id){
 // Board-bar click + right-click handlers (delegated).
 document.getElementById('boardBar').addEventListener('click', (e) => {
   if (e.target.id === 'boardAddBtn' || e.target.closest('#boardAddBtn')) {
-    const name = prompt('Name this board (e.g. VitalTouch, Personal, Fitness):', '');
+    const name = prompt('Name this board (e.g. Meals, Personal, Fitness):', '');
     if (name && name.trim()) createBoard(name.trim());
+    return;
+  }
+  // The hover-revealed ✕ on the active tab deletes the whole board.
+  const del = e.target.closest('[data-board-del]');
+  if (del) {
+    e.stopPropagation();
+    deleteBoard(del.getAttribute('data-board-del'));
     return;
   }
   const tab = e.target.closest('.board-tab');
