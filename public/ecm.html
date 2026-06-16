@@ -3889,17 +3889,19 @@ function applyFilters(){
 
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
-  // Status counts scope to non-dev/report rows so the All / Open / per-status
-  // chips reflect just standard ECM work. Blank spacer rows don't count.
-  const named = rows.filter(r => (r.task || '').trim());
-  let scoped = named.filter(r => !isDevOrReportRow(r));
+  // Scope the chip counts to match what's actually visible in the current
+  // tab. Without this, "Open 63" on the Non-Dev tab would count dev/report
+  // rows that the tab itself excludes.
+  const named = rows.filter(r => (r.task || '').trim() && !r.deletion);
+  let scoped = named;
+  if (currentView === 'all') scoped = scoped.filter(r => !isDevOrReportRow(r));
+  else if (currentView === 'dev') scoped = scoped.filter(r => isDevOrReportRow(r));
+  // 'allrows' (the All tab) keeps the full pool — no type filter.
   if (filterOwner) scoped = scoped.filter(r => r.owner === filterOwner);
   if (filterProgram) scoped = scoped.filter(r => r.program === filterProgram);
-  // Data-quality issue counts scan EVERY named row (including dev/report). A
-  // missing ticket or completion date is a problem no matter the type.
-  let issueScope = named;
-  if (filterOwner) issueScope = issueScope.filter(r => r.owner === filterOwner);
-  if (filterProgram) issueScope = issueScope.filter(r => r.program === filterProgram);
+  // Issue counts use the same scope as the chip strip so the displayed
+  // count is exactly what you'd see if you tapped that chip.
+  let issueScope = scoped;
   const counts = {
     all: scoped.length,
     __open__: scoped.filter(r => !ECM_DONE_STATUSES.has(r.status) && !ECM_PARKED_STATUSES.has(r.status)).length,
