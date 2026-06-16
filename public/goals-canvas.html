@@ -284,17 +284,19 @@
     background:transparent; border:none; padding:4px 6px
   }
   #rpTags .rp-tag-clear:hover{ color:var(--ink) }
-  /* Recipe list — switch to a 2-column grid with thumbnails */
+  /* Recipe list — 2-column grid (3+ on wide screens) with thumbnails */
   #rpList{
-    overflow:auto; flex:1; min-height:0;
-    display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;
-    align-content:start
+    overflow-y:auto; overflow-x:hidden; flex:1; min-height:0;
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));
+    gap:12px; align-content:start; padding:2px
   }
   #rpList .rp-group-h{
     grid-column:1/-1;
     font-size:10px; text-transform:uppercase; letter-spacing:.6px;
     color:var(--muted); padding:8px 4px 4px
   }
+  /* Card is a <div role="button"> not a <button>, so block-level children
+     (including aspect-ratio thumbnails) render reliably. */
   #rpList .rp-item{
     display:flex; flex-direction:column; padding:0; border-radius:10px;
     cursor:pointer; font-size:13px; color:var(--ink);
@@ -303,24 +305,31 @@
   }
   #rpList .rp-item:hover{ background:rgba(255,255,255,.045); border-color:var(--accent, #4a9eff); transform:translateY(-1px) }
   #rpList .rp-thumb{
-    width:100%; padding-bottom:60%; background-color:rgba(255,255,255,.04);
-    background-size:cover; background-position:center; background-repeat:no-repeat;
+    display:block; width:100%; aspect-ratio:5/3;
+    background:rgba(255,255,255,.04) center/cover no-repeat;
     border-bottom:1px solid var(--line); position:relative
   }
-  #rpList .rp-thumb.no-img::after{
-    content:'🍳'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    font-size:36px; opacity:.35
+  #rpList .rp-thumb.no-img{
+    display:flex; align-items:center; justify-content:center;
+    font-size:34px; opacity:.35
   }
-  #rpList .rp-body{ padding:10px 12px; display:flex; flex-direction:column; gap:6px; flex:1 }
-  #rpList .rp-title{ font-size:13.5px; font-weight:600; line-height:1.3; color:var(--ink) }
+  #rpList .rp-body{
+    display:flex; flex-direction:column; gap:6px; padding:10px 12px 12px; flex:1
+  }
+  #rpList .rp-title{
+    font-size:13.5px; font-weight:600; line-height:1.3; color:var(--ink);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden
+  }
   #rpList .rp-tags{ display:flex; flex-wrap:wrap; gap:4px }
   #rpList .rp-tags .rp-tag{
     font-size:10px; padding:2px 7px; border-radius:9px;
-    background:rgba(74,158,255,.12); color:#93c5fd
+    background:rgba(74,158,255,.14); color:#93c5fd
   }
   #rpList .rp-meta{
     font-size:11px; color:var(--muted); margin-top:auto;
-    border-top:1px solid var(--line); padding-top:6px; display:flex; gap:10px
+    border-top:1px solid var(--line); padding-top:7px;
+    display:flex; gap:10px; flex-wrap:wrap
   }
   #rpEmpty{
     grid-column:1/-1; padding:50px 16px; text-align:center; color:var(--muted);
@@ -1942,23 +1951,22 @@ function drawEzRecipeList(){
     return;
   }
   list.innerHTML = matches.map((r, i) => {
-    const thumbStyle = r.img
-      ? `background-image:url('${escapeAttr(r.img)}')`
-      : '';
-    const thumbCls = r.img ? '' : ' no-img';
+    const thumbStyle = r.img ? `background-image:url('${escapeAttr(r.img)}')` : '';
+    const thumbInner = r.img ? '' : '🍳';
+    const thumbCls   = r.img ? '' : ' no-img';
     const tags = (r.tags || []).slice(0, 4).map(t => `<span class="rp-tag">${escapeHtml(t)}</span>`).join('');
     return `
-      <button type="button" class="rp-item" data-ez-i="${i}" title="Click to add to board">
-        <span class="rp-thumb${thumbCls}" style="${thumbStyle}"></span>
-        <span class="rp-body">
-          <span class="rp-title">${escapeHtml(r.title)}</span>
-          <span class="rp-tags">${tags}</span>
-          <span class="rp-meta">
+      <div role="button" tabindex="0" class="rp-item" data-ez-i="${i}" title="Click to add to board">
+        <div class="rp-thumb${thumbCls}" style="${thumbStyle}">${thumbInner}</div>
+        <div class="rp-body">
+          <div class="rp-title">${escapeHtml(r.title)}</div>
+          ${tags ? `<div class="rp-tags">${tags}</div>` : ''}
+          <div class="rp-meta">
             <span>${r.ingredients.length} ingredients</span>
             <span>${r.steps.length} step${r.steps.length===1?'':'s'}</span>
-          </span>
-        </span>
-      </button>`;
+          </div>
+        </div>
+      </div>`;
   }).join('');
   list.querySelectorAll('[data-ez-i]').forEach(b => {
     b.addEventListener('click', () => {
