@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Goals — War Room</title>
 <link rel="icon" href="/favicon.ico">
+<!-- Supabase JS — used by the EZ Recipes integration (PotLuck backend). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --bg:#0e1116;
@@ -376,8 +378,8 @@
   <span class="spacer"></span>
   <button class="tb-btn" id="addSectionBtn">+ Section</button>
   <button class="tb-btn" id="addStickyBtn">+ Note</button>
-  <button class="tb-btn" id="addRecipeBtn" title="Drop a recipe scaffold — Ingredients + Steps">+ Recipe</button>
-  <button class="tb-btn" id="pullRecipeBtn" title="Duplicate an existing section/recipe onto this board">↓ From existing</button>
+  <button class="tb-btn" id="addRecipeBtn" title="Drop a blank recipe scaffold — Ingredients + Steps">+ Recipe</button>
+  <button class="tb-btn" id="ezRecipeBtn" title="Pull a recipe from your EZ Recipes (PotLuck) account">🍳 From EZ Recipes</button>
   <div class="zoom-widget">
     <button id="zoomOut" title="Zoom out">−</button>
     <button class="pct" id="zoomReset" title="Reset zoom to 100%">100%</button>
@@ -401,7 +403,7 @@
     <div id="canvas"></div>
     <div id="emptyHint">
       <h2>Your goal board</h2>
-      <p>Pan with mouse drag · zoom with Shift+scroll, pinch, or the buttons above.<br>Shift+drag a node to move just it, leaving anything inside in place.</p>
+      <p>Pan with mouse drag · zoom with Shift+scroll, pinch, or the buttons above.<br>Shift+click multiple nodes to grab them as a group, then drag any one to move them all.</p>
       <span class="pill" id="firstAddBtn">+ Add your first section</span>
     </div>
   </main>
@@ -451,7 +453,8 @@ const boards = new Map();       // id -> { id, name, color, order, createdAt, up
 let activeBoardId = null;
 let view = { panX: 0, panY: 0, zoom: 1 };
 const viewPerBoard = {};        // boardId -> { panX, panY, zoom } from Firestore
-let selectedId = null;
+let selectedId = null;          // back-compat for code that still reads "the" selection
+let selectedIds = new Set();    // multi-select. selectedId mirrors the most-recently-added.
 let _writingView = false;
 let _writingNode = new Set();   // nodes the local user is mid-drag/edit on (don't clobber from snapshot)
 let _suppressEmpty = false;
@@ -633,26 +636,45 @@ function renderNode(n){
     // section / subsection
     el.className = 'node ' + n.type + ' ' + (n.color || NODE_TYPES[n.type].color);
     el.style.transform = '';
+    // Optional banner image (used by EZ Recipes import; user can also set it
+    // via right-click 📷). Sits below the header, full width, ~140px tall.
+    const banner = n.imageUrl
+      ? `<div class="sec-banner" data-action="open-image" style="height:140px;background:url('${escapeAttr(n.imageUrl)}') center/cover no-repeat;border-bottom:1px solid var(--line);cursor:zoom-in"></div>`
+      : '';
+    const sourceLink = n.sourceUrl
+      ? `<a href="${escapeAttr(n.sourceUrl)}" target="_blank" rel="noopener" class="sec-source" title="Open source"
+            style="font-size:11px;color:var(--accent);text-decoration:none;margin-left:8px">↗ Source</a>`
+      : '';
     el.innerHTML = `
       <div class="sec-head" data-action="drag-handle">
         <span class="sec-tag"></span>
         <div class="sec-title" contenteditable="plaintext-only" data-field="title">${escapeHtml(n.title || (n.type === 'section' ? 'New section' : 'New subsection'))}</div>
+        ${sourceLink}
       </div>
+      ${banner}
       <div class="sec-body"></div>
       <div class="resize" data-action="resize"></div>
       <div class="node-tools">
         ${swatchesFor('section')}
+        <button class="nt-btn" data-action="set-image" title="Set banner image URL">📷</button>
         <button class="nt-btn" data-action="add-sticky-here" title="Add sticky inside">+</button>
         ${n.type === 'section' ? '<button class="nt-btn" data-action="add-subsection-here" title="Add subsection">▸</button>' : ''}
         <button class="nt-btn" data-action="delete" title="Delete">✕</button>
       </div>
     `;
   }
-  if (selectedId === n.id) el.classList.add('selected'); else el.classList.remove('selected');
+  if (selectedIds.has(n.id)) el.classList.add('selected'); else el.classList.remove('selected');
 }
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+// Sync the .selected class on every node element to match selectedIds.
+function updateSelectionUI(){
+  for (const [id, el] of els) {
+    el.classList.toggle('selected', selectedIds.has(id));
+  }
+  try { rebuildToc(); } catch {}
 }
 function escapeAttr(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -758,13 +780,11 @@ document.getElementById('tocList').addEventListener('click', (e) => {
   const id = entry.dataset.id;
   const n = nodes.get(id);
   if (!n) return;
+  selectedIds.clear();
+  selectedIds.add(id);
   selectedId = id;
   focusOnRect({ x: n.x, y: n.y, w: n.w, h: n.h }, 80);
-  rebuildToc();
-  // Highlight selected node briefly
-  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
-  const el = els.get(id);
-  if (el) el.classList.add('selected');
+  updateSelectionUI();
 });
 
 // ============= Snapshot listeners =============
@@ -869,9 +889,13 @@ let panStart = null;
 wrap.addEventListener('mousedown', (e) => {
   // Only pan when clicking the canvas background, not a node.
   if (e.target !== wrap && !e.target.matches('#canvas')) return;
-  // Clicking empty canvas also deselects.
-  selectedId = null;
-  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+  // Clicking empty canvas also deselects (unless shift is held — that's a
+  // selection extender that just happened to miss).
+  if (!e.shiftKey) {
+    selectedId = null;
+    selectedIds.clear();
+    updateSelectionUI();
+  }
   hideContextMenu();
   panStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
   wrap.classList.add('panning');
@@ -1013,27 +1037,55 @@ function attachNodeListeners(el){
     if (e.target.closest('.sticky-check')) return;
     if (e.target.closest('.row-link')) return;       // clicking the link chip
     if (e.target.closest('.sticky-image')) return;   // clicking the image opens it
-    // Section / subsection drag is normally via the header bar only — but
-    // hold Shift to grab the body too ("isolate move" — see below).
+    // Shift+click on a node = toggle that node in the selection set; do NOT
+    // start a drag. The user is building up a group. The first plain
+    // mousedown on any selected node afterward will move them as a unit.
+    if (e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else                     selectedIds.add(id);
+      selectedId = id;
+      updateSelectionUI();
+      return;
+    }
+    // Plain mousedown:
+    //   - If target IS in the current selection → drag the whole selection
+    //     (no descendant carry; the user explicitly chose this group).
+    //   - If target is NOT in the selection → clear, select just this node,
+    //     drag with legacy behavior (containers carry their children).
+    const isGroupDrag = selectedIds.has(id) && selectedIds.size >= 1;
+    if (!isGroupDrag) {
+      selectedIds.clear();
+      selectedIds.add(id);
+      selectedId = id;
+      updateSelectionUI();
+    }
+    // Section / subsection drag normally requires the header bar. But when
+    // the section is part of an explicit selection, any part of it works.
     if (n.type === 'section' || n.type === 'subsection') {
-      if (!e.target.closest('.sec-head') && !e.shiftKey) return;
+      if (!e.target.closest('.sec-head') && !isGroupDrag) return;
     }
     e.preventDefault();
     e.stopPropagation();
-    selectedId = id;
-    document.querySelectorAll('.node.selected').forEach(x => x.classList.remove('selected'));
-    el.classList.add('selected', 'dragging');
+    el.classList.add('dragging');
     _writingNode.add(id);
     const startX = e.clientX, startY = e.clientY;
     const origX = n.x, origY = n.y;
-    // When dragging a container, gather every descendant so they move as a
-    // group. Holding Shift at mousedown turns this into an "isolate move" —
-    // we skip the descendant grab so only the section/sticky under the
-    // cursor moves, even if it had children sitting inside it. The Shift
-    // state at drag-start is the decision; mid-drag toggles don't change it.
-    const isolateMove = e.shiftKey;
-    const isContainer = (n.type === 'section' || n.type === 'subsection') && !isolateMove;
-    const descendants = isContainer ? collectDescendants(id) : [];
+    // Movement set:
+    //   - Group drag: every selected node moves together (no descendant carry).
+    //   - Single drag of a container: its descendants come along.
+    //   - Single drag of a sticky: just itself.
+    let descendants;
+    if (isGroupDrag && selectedIds.size > 1) {
+      descendants = [...selectedIds]
+        .filter(sid => sid !== id)
+        .map(sid => nodes.get(sid))
+        .filter(Boolean);
+    } else {
+      const isContainer = (n.type === 'section' || n.type === 'subsection');
+      descendants = isContainer ? collectDescendants(id) : [];
+    }
     descendants.forEach(d => { d._origX = d.x; d._origY = d.y; _writingNode.add(d.id); });
     function move(ev){
       const dx = (ev.clientX - startX) / view.zoom;
@@ -1471,161 +1523,282 @@ async function createNode(type, opts){
 document.getElementById('addSectionBtn').onclick = () => createNode('section');
 document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
 document.getElementById('addRecipeBtn').onclick  = () => createRecipeTemplate();
-document.getElementById('pullRecipeBtn').onclick = () => openRecipePicker();
+document.getElementById('ezRecipeBtn').onclick   = () => openEzRecipePicker();
 
-// ============= "Pull from existing" picker ==================================
-// Browses every top-level section (recipe-ish or otherwise) across every
-// board, lets the user search, and drops a deep-cloned copy of the picked
-// section (plus all descendants) onto the active board, centered.
-let _rpQuery = '';
-function openRecipePicker(){
-  const bd = document.getElementById('rpBd');
-  if (!bd) return;
-  bd.classList.add('open');
-  _rpQuery = '';
-  const si = document.getElementById('rpSearch');
-  si.value = '';
-  drawRecipePicker();
-  setTimeout(() => si.focus(), 30);
-}
-function closeRecipePicker(){
-  document.getElementById('rpBd')?.classList.remove('open');
-}
-function drawRecipePicker(){
-  const list = document.getElementById('rpList');
-  // Candidate sections = top-level sections (no parent in geometry). We use
-  // findContainer so this stays accurate even when stored parentId lags.
-  const candidates = [...nodes.values()]
-    .filter(n => n.type === 'section');
-  const q = _rpQuery.trim().toLowerCase();
-  const matches = candidates.filter(n => {
-    if (!q) return true;
-    return (n.title || '').toLowerCase().includes(q);
+// ============= EZ Recipes (PotLuck Supabase) integration ===================
+// The user's recipes live in the PotLuck Supabase project — same backend that
+// powers the iezuri22.github.io PotLuck site and the (now retired) meal
+// tracker page in this repo. The picker either shows a login form (if not
+// signed in) or lists the user's recipes; clicking one drops a recipe
+// scaffold on the active board with the title, image, ingredients, and steps
+// pre-filled.
+const EZ_URL  = 'https://blqbxduxgimarrhgyfgn.supabase.co';
+const EZ_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscWJ4ZHV4Z2ltYXJyaGd5ZmduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc1NjgyNDcsImV4cCI6MjA4MzE0NDI0N30.iNrBLJLSQEUEV24VCnhrMPTTJ6A_0rIuSAOinuFd-vM';
+const EZ_EMAIL_KEY = 'ez-recipes-email';
+let _ezClient = null;
+let _ezRecipes = [];
+let _ezQuery = '';
+let _ezBusy = false;
+function ezClient(){
+  if (_ezClient) return _ezClient;
+  if (!window.supabase || !window.supabase.createClient) return null;
+  _ezClient = window.supabase.createClient(EZ_URL, EZ_ANON, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ez-recipes-auth' }
   });
-  if (!matches.length) {
-    list.innerHTML = `<div id="rpEmpty">${
-      candidates.length
-        ? 'No sections match — try a different search.'
-        : 'No sections yet. Create a recipe on any board first, then come back here to copy it.'
-    }</div>`;
-    return;
-  }
-  // Group by board
-  const byBoard = new Map();
-  for (const n of matches) {
-    const bid = n.boardId || '_none';
-    if (!byBoard.has(bid)) byBoard.set(bid, []);
-    byBoard.get(bid).push(n);
-  }
-  const html = [];
-  for (const [bid, group] of byBoard) {
-    const b = boards.get(bid);
-    const boardName = b?.name || 'Other';
-    html.push(`<div class="rp-group-h">${escapeHtml(boardName)}${bid === activeBoardId ? ' (current)' : ''}</div>`);
-    for (const n of group.sort((a,b)=> (a.title || '').localeCompare(b.title || ''))) {
-      // Count descendants for a quick "how big is this" preview.
-      const kids = collectDescendantsAcross(n.id);
-      html.push(`<button type="button" class="rp-item" data-rp-id="${n.id}">
-        <span>${escapeHtml(n.title || 'Untitled section')}</span>
-        <span class="rp-meta">${kids.length} item${kids.length===1?'':'s'}</span>
-      </button>`);
-    }
-  }
-  list.innerHTML = html.join('');
-  list.querySelectorAll('[data-rp-id]').forEach(b =>
-    b.addEventListener('click', () => duplicateSectionToActiveBoard(b.getAttribute('data-rp-id'))));
+  return _ezClient;
 }
-// Geometric descendant scan that works across boards (the existing
-// collectDescendants filters by boardId; this one doesn't, so the picker can
-// preview cross-board sections accurately).
-function collectDescendantsAcross(rootId){
-  const root = nodes.get(rootId);
-  if (!root) return [];
+function ezSavedEmail(){
+  try { return localStorage.getItem(EZ_EMAIL_KEY) || ''; } catch { return ''; }
+}
+function ezTags(v){
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+  return String(v).split(/[,#]/).map(x => x.trim()).filter(Boolean);
+}
+function ezIngredients(r){
+  const fromRow = x => (typeof x === 'string')
+    ? x.trim()
+    : [x.qty, x.unit, x.name].map(y => (y || '').toString().trim()).filter(Boolean).join(' ').trim();
+  if (Array.isArray(r.ingredientsRows)) return r.ingredientsRows.map(fromRow).filter(Boolean);
+  if (Array.isArray(r.ingredients))     return r.ingredients.map(fromRow).filter(Boolean);
+  if (typeof r.ingredients === 'string') return r.ingredients.split('\n').map(s => s.trim()).filter(Boolean);
+  return [];
+}
+function ezSteps(r){
   const out = [];
-  const seen = new Set([rootId]);
-  const queue = [rootId];
-  while (queue.length) {
-    const pid = queue.shift();
-    const parent = nodes.get(pid);
-    for (const c of nodes.values()) {
-      if (seen.has(c.id)) continue;
-      if ((c.boardId || null) !== (root.boardId || null)) continue;
-      // Geometry test against the parent.
-      const cx = c.x + c.w/2, cy = c.y + c.h/2;
-      if (parent && cx >= parent.x && cx <= parent.x + parent.w && cy >= parent.y && cy <= parent.y + parent.h
-          && !(c.id === parent.id) && (c.w * c.h <= parent.w * parent.h || c.parentId === parent.id)) {
-        out.push(c); seen.add(c.id); queue.push(c.id);
-      } else if (c.parentId === pid) {
-        out.push(c); seen.add(c.id); queue.push(c.id);
-      }
-    }
+  const pull = arr => { if (Array.isArray(arr)) arr.forEach(s => {
+    const t = (s && (s.text || s.caption)) || (typeof s === 'string' ? s : '');
+    if (t && t.trim()) out.push(t.trim());
+  }); };
+  pull(r.prepSteps); pull(r.cookSteps);
+  if (!out.length && r.instructions) {
+    const t = Array.isArray(r.instructions) ? r.instructions : String(r.instructions).split('\n');
+    t.forEach(x => { if (x && x.trim()) out.push(x.trim()); });
   }
   return out;
 }
-async function duplicateSectionToActiveBoard(sourceId){
-  const source = nodes.get(sourceId);
-  if (!source) { setStatus('Source missing', 'error'); return; }
-  closeRecipePicker();
-  setStatus('Copying…', 'sticky');
+
+async function openEzRecipePicker(){
+  const bd = document.getElementById('rpBd');
+  if (!bd) return;
+  bd.classList.add('open');
+  // Decide what to show: login form or recipe list.
+  const c = ezClient();
+  if (!c) { drawEzPickerError('Recipe sync still loading — try again in a sec.'); return; }
+  let sess = null;
+  try { sess = (await c.auth.getSession()).data.session; } catch {}
+  if (!sess) { drawEzLogin(); return; }
+  await loadEzRecipes();
+}
+function closeEzPicker(){ document.getElementById('rpBd')?.classList.remove('open'); }
+
+function drawEzLogin(){
+  const card = document.getElementById('rpCard');
+  card.innerHTML = `
+    <h3>Sign in to EZ Recipes</h3>
+    <p style="margin:0;font-size:12px;color:var(--muted);line-height:1.5">
+      Use the same email + password as the PotLuck site.
+    </p>
+    <input id="ezEmail" type="email" placeholder="Email" autocomplete="email"
+           value="${escapeAttr(ezSavedEmail())}"
+           style="width:100%;height:34px;padding:0 10px;border-radius:7px;background:var(--w03,#1a1f27);border:1px solid var(--line);color:var(--ink);font-size:13px">
+    <input id="ezPass"  type="password" placeholder="Password" autocomplete="current-password"
+           style="width:100%;height:34px;padding:0 10px;border-radius:7px;background:var(--w03,#1a1f27);border:1px solid var(--line);color:var(--ink);font-size:13px">
+    <div id="ezError" style="font-size:12px;color:#f87171;min-height:14px"></div>
+    <div id="rpFoot">
+      <button class="tb-btn" id="ezLoginCancel">Cancel</button>
+      <button class="tb-btn" id="ezLoginGo" style="background:var(--accent);color:#fff;border:none">Sign in</button>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('ezEmail')?.focus(), 30);
+  document.getElementById('ezLoginCancel').addEventListener('click', closeEzPicker);
+  document.getElementById('ezLoginGo').addEventListener('click', ezDoLogin);
+  card.querySelectorAll('input').forEach(i => i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') ezDoLogin();
+  }));
+}
+async function ezDoLogin(){
+  const email = document.getElementById('ezEmail').value.trim();
+  const pass  = document.getElementById('ezPass').value;
+  const errEl = document.getElementById('ezError');
+  if (!email || !pass) { errEl.textContent = 'Enter email and password.'; return; }
+  const c = ezClient();
+  errEl.textContent = 'Signing in…';
+  const { error } = await c.auth.signInWithPassword({ email, password: pass });
+  document.getElementById('ezPass').value = '';
+  if (error) { errEl.textContent = error.message || 'Login failed.'; return; }
+  try { localStorage.setItem(EZ_EMAIL_KEY, email); } catch {}
+  errEl.textContent = '';
+  await loadEzRecipes();
+}
+
+async function loadEzRecipes(){
+  const card = document.getElementById('rpCard');
+  card.innerHTML = `
+    <h3>EZ Recipes</h3>
+    <input id="rpSearch" type="search" placeholder="Search recipes…">
+    <div id="rpList"><div id="rpEmpty">Loading…</div></div>
+    <div id="rpFoot">
+      <button class="tb-btn ghost" id="ezSignOut">Sign out</button>
+      <span class="sp" style="flex:1"></span>
+      <button class="tb-btn" id="rpClose">Close</button>
+    </div>
+  `;
+  document.getElementById('rpClose').addEventListener('click', closeEzPicker);
+  document.getElementById('ezSignOut').addEventListener('click', async () => {
+    try { await ezClient()?.auth.signOut(); } catch {}
+    drawEzLogin();
+  });
+  document.getElementById('rpSearch').addEventListener('input', (e) => {
+    _ezQuery = e.target.value || ''; drawEzRecipeList();
+  });
+  if (_ezBusy) return;
+  _ezBusy = true;
   try {
-    // 1. Gather the full subtree (section + descendants).
-    const subtree = [source, ...collectDescendantsAcross(sourceId)];
-    // 2. Compute target offset: center the source's bounding box in the
-    //    current viewport.
-    const minX = Math.min(...subtree.map(n => n.x));
-    const minY = Math.min(...subtree.map(n => n.y));
-    const maxX = Math.max(...subtree.map(n => n.x + n.w));
-    const maxY = Math.max(...subtree.map(n => n.y + n.h));
-    const wrapR = wrap.getBoundingClientRect();
-    const targetCenter = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
-    const dx = targetCenter.x - (minX + maxX) / 2;
-    const dy = targetCenter.y - (minY + maxY) / 2;
-    // 3. Clone each node with new ids; remap parentId where it stays inside
-    //    the subtree.
-    const idMap = new Map();
-    subtree.forEach(n => idMap.set(n.id, uid()));
-    const clones = subtree.map(n => {
-      const cloneId = idMap.get(n.id);
-      const newParent = (n.parentId && idMap.has(n.parentId)) ? idMap.get(n.parentId) : null;
-      const c = {
-        ...n,
-        id: cloneId,
-        parentId: newParent,
-        boardId: activeBoardId || null,
-        x: n.x + dx,
-        y: n.y + dy,
-        z: Date.now()
-      };
-      // Deep-clone any items[] on stickies so edits to one don't leak.
-      if (Array.isArray(n.items)) c.items = n.items.map(it => ({ ...it, id: itemUid(), linkedTaskId: null }));
-      delete c.linkedTaskId;
-      return c;
-    });
-    // 4. Persist + render. Nodes go in via the snapshot listener, but we also
-    //    seed them locally so the UI is responsive.
-    for (const c of clones) {
-      nodes.set(c.id, c);
-      renderNode(c);
-      await saveNode(c);
-    }
-    reconcileBoard();
-    setStatus(`Copied “${escapeHtml(source.title || 'section')}” — ${clones.length} items`);
+    const c = ezClient();
+    const sess = (await c.auth.getSession()).data.session;
+    if (!sess) { drawEzLogin(); return; }
+    const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
+    if (error) { drawEzPickerError('Couldn\'t load recipes: ' + (error.message || 'error')); return; }
+    _ezRecipes = (data || [])
+      .filter(r => r.id && String(r.id).startsWith('recipe_'))
+      .map(r => ({ rid: r.id, ...(r.data || {}) }))
+      .filter(r => r.title && !r.isDraft)
+      .map(r => ({
+        title: r.title,
+        url:   (r.recipe_url || r.sourceUrl || '').trim(),
+        img:   (r.image_url || '').trim(),
+        tags:  ezTags(r.tags),
+        notes: (r.notes || '').trim(),
+        ingredients: ezIngredients(r),
+        steps:       ezSteps(r)
+      }));
+    drawEzRecipeList();
   } catch (e) {
-    console.error('[goals] duplicate failed', e);
-    setStatus('Copy failed — see console', 'error');
+    console.error('[ez] load failed', e);
+    drawEzPickerError('Couldn\'t reach EZ Recipes — check your connection.');
+  } finally {
+    _ezBusy = false;
   }
 }
-// Wire picker controls.
-document.getElementById('rpSearch')?.addEventListener('input', (e) => {
-  _rpQuery = e.target.value || '';
-  drawRecipePicker();
-});
-document.getElementById('rpClose')?.addEventListener('click', closeRecipePicker);
+function drawEzPickerError(msg){
+  const card = document.getElementById('rpCard');
+  card.innerHTML = `
+    <h3>EZ Recipes</h3>
+    <div id="rpEmpty">${escapeHtml(msg)}</div>
+    <div id="rpFoot"><button class="tb-btn" id="rpClose">Close</button></div>
+  `;
+  document.getElementById('rpClose').addEventListener('click', closeEzPicker);
+}
+function drawEzRecipeList(){
+  const list = document.getElementById('rpList');
+  if (!list) return;
+  const q = _ezQuery.trim().toLowerCase();
+  const matches = _ezRecipes
+    .filter(r => !q || (r.title || '').toLowerCase().includes(q)
+               || (r.tags || []).join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  if (!matches.length) {
+    list.innerHTML = `<div id="rpEmpty">${
+      _ezRecipes.length
+        ? 'No recipes match — try a different search.'
+        : 'No saved recipes found in your EZ account yet.'
+    }</div>`;
+    return;
+  }
+  list.innerHTML = matches.map((r, i) => `
+    <button type="button" class="rp-item" data-ez-i="${i}" data-q="${escapeAttr((r.title || '').toLowerCase())}">
+      <span>${escapeHtml(r.title)}</span>
+      <span class="rp-meta">${r.ingredients.length} ing · ${r.steps.length} step${r.steps.length===1?'':'s'}</span>
+    </button>
+  `).join('');
+  // Index back into matches via the q dataset (search-tolerant click)
+  list.querySelectorAll('[data-ez-i]').forEach(b => {
+    b.addEventListener('click', () => {
+      const idx = parseInt(b.getAttribute('data-ez-i'), 10);
+      const r = matches[idx];
+      if (r) createRecipeFromEz(r);
+    });
+  });
+}
+
+// Build a recipe scaffold on the active board from an EZ recipe payload.
+// Section title = recipe.title, with imageUrl banner. Ingredients subsection
+// has one sticky containing one item per ingredient (each with a checkbox so
+// the user can mark off shopping). Steps subsection has one sticky per step
+// numbered to keep order.
+async function createRecipeFromEz(r){
+  closeEzPicker();
+  setStatus('Building “' + r.title + '”…', 'sticky');
+  try {
+    const wrapR = wrap.getBoundingClientRect();
+    const c = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+    const SW = 700, SH = 540;
+    const section = await createNode('section', {
+      x: c.x - SW/2, y: c.y - SH/2, title: r.title, color: 'sec-amber'
+    });
+    section.w = SW; section.h = SH;
+    if (r.img)  section.imageUrl = r.img;
+    if (r.url)  section.sourceUrl = r.url;
+    await saveNode(section);
+    renderNode(section);
+
+    const padX = 16, padTop = section.imageUrl ? 200 : 60, gap = 16;
+    const colW = (SW - padX*2 - gap) / 2;
+    const colH = SH - padTop - 16;
+    // Ingredients column
+    const ing = await createNode('subsection', {
+      x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green'
+    });
+    ing.w = colW; ing.h = colH;
+    await saveNode(ing);
+    renderNode(ing);
+    if (r.ingredients.length) {
+      const ingSticky = await createNode('sticky', {
+        x: ing.x + 12, y: ing.y + 48, text: r.ingredients[0]
+      });
+      ingSticky.w = colW - 28;
+      // Add the rest as items[] on the same sticky
+      const rest = r.ingredients.slice(1).map(t => ({ id: itemUid(), text: t, done: false, linkedTaskId: null }));
+      ingSticky.items = [...ingSticky.items, ...rest];
+      ingSticky.h = Math.max(140, 50 + r.ingredients.length * 28);
+      await saveNode(ingSticky);
+      renderNode(ingSticky);
+    }
+    // Steps column
+    const steps = await createNode('subsection', {
+      x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue'
+    });
+    steps.w = colW; steps.h = colH;
+    await saveNode(steps);
+    renderNode(steps);
+    if (r.steps.length) {
+      const stepSticky = await createNode('sticky', {
+        x: steps.x + 12, y: steps.y + 48, text: '1. ' + r.steps[0]
+      });
+      stepSticky.w = colW - 28;
+      const restSteps = r.steps.slice(1).map((t, i) => ({
+        id: itemUid(), text: (i + 2) + '. ' + t, done: false, linkedTaskId: null
+      }));
+      stepSticky.items = [...stepSticky.items, ...restSteps];
+      stepSticky.h = Math.max(180, 50 + r.steps.length * 38);
+      await saveNode(stepSticky);
+      renderNode(stepSticky);
+    }
+    reconcileBoard();
+    setStatus(`Added “${r.title}” — ${r.ingredients.length} ingredients, ${r.steps.length} steps`);
+  } catch (e) {
+    console.error('[ez] build failed', e);
+    setStatus('Couldn\'t build recipe — see console', 'error');
+  }
+}
+
+// Modal scaffolding (close on backdrop click + Escape)
 document.getElementById('rpBd')?.addEventListener('click', (e) => {
-  if (e.target.id === 'rpBd') closeRecipePicker();
+  if (e.target.id === 'rpBd') closeEzPicker();
 });
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.getElementById('rpBd')?.classList.contains('open')) closeRecipePicker();
+  if (e.key === 'Escape' && document.getElementById('rpBd')?.classList.contains('open')) closeEzPicker();
 });
 document.getElementById('firstAddBtn').onclick   = () => createNode('section');
 
@@ -1795,9 +1968,16 @@ window.addEventListener('click', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') hideContextMenu();
   if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) {
-    if (selectedId && !document.activeElement?.matches('[contenteditable]')) {
-      const n = nodes.get(selectedId);
-      if (n && confirm('Delete this ' + n.type + '?')) deleteNode(selectedId);
+    if (selectedIds.size && !document.activeElement?.matches('[contenteditable]')) {
+      const ids = [...selectedIds];
+      const label = ids.length === 1
+        ? ('this ' + (nodes.get(ids[0])?.type || 'item'))
+        : (ids.length + ' items');
+      if (confirm('Delete ' + label + '?')) {
+        ids.forEach(id => deleteNode(id));
+        selectedIds.clear();
+        selectedId = null;
+      }
     }
   }
 });
