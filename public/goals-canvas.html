@@ -319,6 +319,7 @@
   <span class="spacer"></span>
   <button class="tb-btn" id="addSectionBtn">+ Section</button>
   <button class="tb-btn" id="addStickyBtn">+ Note</button>
+  <button class="tb-btn" id="addRecipeBtn" title="Drop a recipe scaffold — Ingredients + Steps">+ Recipe</button>
   <div class="zoom-widget">
     <button id="zoomOut" title="Zoom out">−</button>
     <button class="pct" id="zoomReset" title="Reset zoom to 100%">100%</button>
@@ -1350,7 +1351,47 @@ async function createNode(type, opts){
 
 document.getElementById('addSectionBtn').onclick = () => createNode('section');
 document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
+document.getElementById('addRecipeBtn').onclick  = () => createRecipeTemplate();
 document.getElementById('firstAddBtn').onclick   = () => createNode('section');
+
+// Drop a "recipe" scaffold centered in the viewport: an amber section titled
+// "New recipe" with two subsections inside — Ingredients (left) and Steps
+// (right) — each seeded with a starter sticky bullet. The user retitles the
+// section to the dish name and types ingredients/steps as checkbox bullets.
+async function createRecipeTemplate(){
+  const wrapR = document.getElementById('canvasWrap').getBoundingClientRect();
+  const c = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+  const SW = 660, SH = 480;
+  // 1. Outer section
+  const section = await createNode('section', {
+    x: c.x - SW/2, y: c.y - SH/2, title: 'New recipe', color: 'sec-amber'
+  });
+  section.w = SW; section.h = SH;
+  await saveNode(section);
+  renderNode(section);
+  // Geometry of the two columns inside the section.
+  const padX = 16, padTop = 56, gap = 16;
+  const colW = (SW - padX*2 - gap) / 2;
+  const colH = SH - padTop - 16;
+  // 2. Ingredients subsection (left)
+  const ing = await createNode('subsection', {
+    x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green'
+  });
+  ing.w = colW; ing.h = colH;
+  await saveNode(ing);
+  renderNode(ing);
+  await createNode('sticky', { x: ing.x + 14, y: ing.y + 48, text: 'First ingredient…' });
+  // 3. Steps subsection (right)
+  const steps = await createNode('subsection', {
+    x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue'
+  });
+  steps.w = colW; steps.h = colH;
+  await saveNode(steps);
+  renderNode(steps);
+  await createNode('sticky', { x: steps.x + 14, y: steps.y + 48, text: 'Step 1…' });
+  // Recompute parent/type so the subsections + stickies all map to the right tree.
+  reconcileBoard();
+}
 
 // Toggle TOC
 document.getElementById('tocToggle').onclick = () => {
