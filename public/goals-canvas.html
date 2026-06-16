@@ -769,6 +769,10 @@ let _nodeResizeDebounce = new Map();   // nodeId -> timer for persist-after-resi
 wrap.addEventListener('wheel', (e) => {
   if (e.shiftKey || e.ctrlKey) {
     e.preventDefault();
+    // macOS quirk: Shift+wheel translates vertical wheel motion into deltaX,
+    // so e.deltaY arrives as 0 and naive math zeroes out. Always pull the
+    // larger-magnitude axis, normalized to a vertical sign.
+    const raw = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
     // If the cursor is over a node, resize THAT node instead of zooming the
     // whole canvas. Lets the user "grow / shrink the thing I'm pointing at."
     const nodeEl = e.target.closest('.node');
@@ -776,7 +780,7 @@ wrap.addEventListener('wheel', (e) => {
       const id = nodeEl.dataset.id;
       const n = nodes.get(id);
       if (n) {
-        const scale = 1 + (-e.deltaY * 0.0025);
+        const scale = 1 + (-raw * 0.0025);
         n.w = clamp(Math.round(n.w * scale), 120, 4000);
         n.h = clamp(Math.round(n.h * scale), 80,  3000);
         nodeEl.style.width  = n.w + 'px';
@@ -794,7 +798,7 @@ wrap.addEventListener('wheel', (e) => {
       }
     }
     // Background → zoom the canvas around the cursor.
-    const dz = -e.deltaY * 0.0015;
+    const dz = -raw * 0.0015;
     const targetZoom = clamp(view.zoom * (1 + dz), 0.15, 3);
     const { x, y } = viewportToCanvas(e.clientX, e.clientY);
     view.zoom = targetZoom;
