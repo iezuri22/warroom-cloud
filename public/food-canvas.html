@@ -1,0 +1,1718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Food — War Room</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root{
+    --bg:#0e1116;
+    --ink:#e6e8eb;
+    --muted:#8a9099;
+    --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.14);
+    --panel:#161a21;
+    --panel2:#1c2129;
+    --accent:#4a9eff;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --red:#f87171;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    overflow:hidden;-webkit-user-select:none;user-select:none}
+  body.embed{background:transparent}
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    position:fixed;top:0;left:0;right:0;height:44px;z-index:30;
+    display:flex;align-items:center;gap:8px;padding:0 12px;
+    background:rgba(14,17,22,.85);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)
+  }
+  #topbar .title{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.2px}
+  #topbar .spacer{flex:1}
+  .tb-btn{
+    height:30px;padding:0 10px;border-radius:8px;
+    background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px
+  }
+  .tb-btn:hover{background:var(--panel2);border-color:var(--line2)}
+  .tb-btn.icon{padding:0 8px;width:30px;justify-content:center}
+  .zoom-widget{
+    display:inline-flex;align-items:center;gap:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;height:30px
+  }
+  .zoom-widget button{
+    background:transparent;border:none;color:var(--ink);width:28px;height:28px;
+    cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center
+  }
+  .zoom-widget button:hover{background:rgba(255,255,255,.05)}
+  .zoom-widget .pct{
+    min-width:50px;text-align:center;font-size:12px;color:var(--muted);
+    border-left:1px solid var(--line);border-right:1px solid var(--line);height:28px;
+    display:inline-flex;align-items:center;justify-content:center;cursor:pointer
+  }
+
+  /* ---------- Board switcher (sits between topbar and canvas) ---------- */
+  #boardBar{
+    position:fixed;top:44px;left:0;right:0;height:38px;z-index:28;
+    display:flex;align-items:center;gap:4px;padding:0 10px;
+    background:rgba(14,17,22,.78);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch
+  }
+  #boardBar::-webkit-scrollbar{height:4px}
+  #boardBar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+  .board-tab{
+    height:26px;padding:0 10px;border-radius:13px;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted);
+    font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+    white-space:nowrap;flex:0 0 auto;font-weight:500
+  }
+  .board-tab:hover{color:var(--ink);border-color:var(--line2)}
+  .board-tab.active{color:var(--ink);border-color:var(--accent);background:rgba(74,158,255,.12)}
+  .board-tab .b-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  .board-add{
+    height:26px;min-width:26px;padding:0 8px;border-radius:13px;
+    background:transparent;border:1px dashed var(--line2);color:var(--muted);
+    cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center
+  }
+  .board-add:hover{color:var(--ink);border-color:var(--accent)}
+  .board-bar-empty{color:var(--muted);font-size:12px;padding:0 8px}
+
+  /* ---------- Layout ---------- */
+  #layout{position:fixed;top:82px;left:0;right:0;bottom:0;display:flex}
+  #toc{
+    width:240px;flex:0 0 240px;border-right:1px solid var(--line);
+    background:rgba(14,17,22,.65);overflow:auto;padding:10px 8px;
+    transition:margin-left .2s ease
+  }
+  body.toc-collapsed #toc{margin-left:-240px}
+  #toc .toc-head{
+    font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--muted);padding:6px 8px;margin-bottom:4px
+  }
+  .toc-entry{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+    cursor:pointer;font-size:13px;color:var(--ink)
+  }
+  .toc-entry:hover{background:rgba(255,255,255,.04)}
+  .toc-entry.active{background:rgba(74,158,255,.12);color:var(--accent)}
+  .toc-entry .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  .toc-entry.sub{padding-left:24px;font-size:12px;color:var(--muted)}
+  .toc-entry.sub:hover{color:var(--ink)}
+  .toc-empty{padding:14px 10px;color:var(--muted);font-size:12px;line-height:1.5}
+
+  /* ---------- Canvas viewport ---------- */
+  #canvasWrap{
+    flex:1;position:relative;overflow:hidden;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 0) 0 0/24px 24px,
+      var(--bg);
+    cursor:grab
+  }
+  #canvasWrap.panning{cursor:grabbing}
+  #canvas{position:absolute;top:0;left:0;width:1px;height:1px;
+    transform-origin:0 0;will-change:transform}
+
+  /* ---------- Nodes ---------- */
+  .node{
+    position:absolute;border-radius:10px;cursor:default;
+    box-shadow:0 4px 14px rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.25);
+    transition:box-shadow .12s ease, transform .12s ease
+  }
+  .node.dragging{box-shadow:0 12px 28px rgba(0,0,0,.55);z-index:9999;cursor:grabbing}
+  .node.selected{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* Section + Subsection — translucent container with header bar */
+  .node.section, .node.subsection{
+    background:rgba(20,25,33,.82);
+    border:1px solid var(--line2);
+    backdrop-filter:blur(6px);
+    overflow:hidden;display:flex;flex-direction:column
+  }
+  .node.section{min-width:320px;min-height:200px}
+  .node.subsection{min-width:240px;min-height:160px}
+  .node .sec-head{
+    display:flex;align-items:center;gap:8px;padding:8px 12px;
+    border-bottom:1px solid var(--line);cursor:grab;
+    background:rgba(255,255,255,.04)
+  }
+  .node.section .sec-head{padding:10px 14px}
+  .node .sec-tag{
+    width:10px;height:10px;border-radius:2px;flex:0 0 10px
+  }
+  /* Tint the section header + border with the section color so the chosen
+     color is actually visible at a glance (not just the tiny tag dot). */
+  .node.sec-blue   .sec-head{background:rgba(74,158,255,.18);  border-bottom-color:rgba(74,158,255,.35)}
+  .node.sec-blue                                              {border-color:rgba(74,158,255,.35)}
+  .node.sec-green  .sec-head{background:rgba(74,222,128,.18); border-bottom-color:rgba(74,222,128,.35)}
+  .node.sec-green                                             {border-color:rgba(74,222,128,.35)}
+  .node.sec-amber  .sec-head{background:rgba(251,191,36,.18); border-bottom-color:rgba(251,191,36,.35)}
+  .node.sec-amber                                             {border-color:rgba(251,191,36,.35)}
+  .node.sec-red    .sec-head{background:rgba(248,113,113,.18);border-bottom-color:rgba(248,113,113,.35)}
+  .node.sec-red                                               {border-color:rgba(248,113,113,.35)}
+  .node.sec-purple .sec-head{background:rgba(167,139,250,.18);border-bottom-color:rgba(167,139,250,.35)}
+  .node.sec-purple                                            {border-color:rgba(167,139,250,.35)}
+  .node.sec-gray   .sec-head{background:rgba(156,163,175,.16);border-bottom-color:rgba(156,163,175,.32)}
+  .node.sec-gray                                              {border-color:rgba(156,163,175,.32)}
+  .node .sec-title{
+    flex:1;font-weight:600;font-size:15px;color:var(--ink);
+    outline:none;-webkit-user-select:text;user-select:text;
+    padding:2px 4px;border-radius:4px
+  }
+  .node.subsection .sec-title{font-size:13px;font-weight:500}
+  .node .sec-title:focus{background:rgba(255,255,255,.06)}
+  .node .sec-body{flex:1;position:relative;padding:8px}
+  /* Allow drop-into hover state */
+  .node.section.drop-target, .node.subsection.drop-target{
+    border-color:var(--accent);background:rgba(74,158,255,.06)
+  }
+
+  /* Sticky note — colored card with pin dot + slight rotation */
+  .node.sticky{
+    width:180px;min-height:120px;
+    padding:14px 14px 12px;
+    color:#1a1a1a;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    display:flex;flex-direction:column;gap:8px
+  }
+  .node.sticky .sticky-pin{
+    position:absolute;top:-4px;left:50%;transform:translateX(-50%);
+    width:10px;height:10px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%, #fff 0%, #999 60%, #444 100%);
+    box-shadow:0 2px 3px rgba(0,0,0,.5);pointer-events:none
+  }
+  .node.sticky .sticky-items{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;overflow:auto}
+  .node.sticky .sticky-row{display:flex;align-items:flex-start;gap:8px}
+  .node.sticky .sticky-check{
+    width:16px;height:16px;border-radius:4px;border:1.5px solid rgba(0,0,0,.35);
+    background:rgba(255,255,255,.4);cursor:pointer;flex:0 0 16px;margin-top:2px;
+    display:flex;align-items:center;justify-content:center
+  }
+  .node.sticky .sticky-row.done .sticky-check{background:#22c55e;border-color:#16a34a}
+  .node.sticky .sticky-row.done .sticky-check::after{
+    content:'';width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;
+    transform:translate(0,-1px) rotate(-45deg);display:block
+  }
+  .node.sticky .sticky-text{
+    flex:1;outline:none;-webkit-user-select:text;user-select:text;
+    font-size:14px;line-height:1.35;min-height:1em;font-weight:500;
+    white-space:pre-wrap;word-break:break-word
+  }
+  .node.sticky .sticky-row.done .sticky-text{text-decoration:line-through;opacity:.55}
+  .node.sticky .sticky-row .row-badge{
+    display:none;font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.4px;color:rgba(0,0,0,.55);
+    background:rgba(0,0,0,.1);padding:2px 6px;border-radius:8px;margin-top:1px
+  }
+  .node.sticky .sticky-row.linked .row-badge{display:inline-flex;align-items:center;gap:2px}
+  .node.sticky .sticky-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:6px;
+    margin-top:auto;font-size:10px;color:rgba(0,0,0,.55);font-weight:500
+  }
+  .node.sticky .focus5-badge{
+    display:inline-flex;align-items:center;gap:3px;
+    background:rgba(0,0,0,.12);padding:2px 6px;border-radius:10px;
+    font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.4px
+  }
+
+  /* Sticky color palette */
+  .stk-yellow{background:#fef3c7}
+  .stk-pink{background:#fbcfe8}
+  .stk-blue{background:#bfdbfe}
+  .stk-green{background:#bbf7d0}
+  .stk-purple{background:#ddd6fe}
+  .stk-orange{background:#fed7aa}
+  .stk-gray{background:#e5e7eb}
+
+  /* Section color tag */
+  .sec-blue   .sec-tag{background:#4a9eff}
+  .sec-green  .sec-tag{background:#4ade80}
+  .sec-amber  .sec-tag{background:#fbbf24}
+  .sec-red    .sec-tag{background:#f87171}
+  .sec-purple .sec-tag{background:#a78bfa}
+  .sec-gray   .sec-tag{background:#9ca3af}
+
+  /* Resize handle */
+  .resize{
+    position:absolute;right:0;bottom:0;width:14px;height:14px;
+    cursor:nwse-resize;border-radius:0 0 10px 0;
+    background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,.18) 50%)
+  }
+  .node.sticky .resize{background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,.18) 50%)}
+
+  /* Hover toolbar (delete + color) */
+  .node-tools{
+    position:absolute;top:-32px;right:0;display:none;gap:4px;
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;
+    box-shadow:0 4px 12px rgba(0,0,0,.5)
+  }
+  .node:hover > .node-tools, .node.selected > .node-tools{display:flex}
+  .nt-btn{
+    width:22px;height:22px;border-radius:5px;background:transparent;border:none;color:var(--ink);
+    cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:12px
+  }
+  .nt-btn:hover{background:rgba(255,255,255,.08)}
+  .nt-swatch{width:14px;height:14px;border-radius:3px;cursor:pointer;border:1px solid rgba(0,0,0,.2)}
+
+  /* ---------- Context menu ---------- */
+  #contextMenu{
+    position:fixed;z-index:100;min-width:180px;
+    background:var(--panel);border:1px solid var(--line2);border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.6);padding:4px;font-size:13px
+  }
+  #contextMenu.hidden{display:none}
+  .cm-item{
+    padding:7px 12px;border-radius:5px;cursor:pointer;color:var(--ink);
+    display:flex;align-items:center;gap:8px
+  }
+  .cm-item:hover{background:rgba(255,255,255,.06)}
+  .cm-item.danger{color:var(--red)}
+  .cm-sep{height:1px;background:var(--line);margin:4px 0}
+  .cm-row{display:flex;gap:4px;padding:6px 8px}
+  .cm-swatch{width:18px;height:18px;border-radius:4px;cursor:pointer;border:1px solid rgba(0,0,0,.25)}
+  .cm-swatch.active{outline:2px solid var(--accent);outline-offset:1px}
+
+  /* ---------- Empty state ---------- */
+  #emptyHint{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;color:var(--muted);pointer-events:none
+  }
+  #emptyHint h2{margin:0 0 6px;font-size:20px;font-weight:600;color:var(--ink)}
+  #emptyHint p{margin:0;font-size:13px}
+  #emptyHint .pill{
+    display:inline-block;margin-top:14px;padding:8px 14px;
+    background:var(--panel);border:1px solid var(--line2);border-radius:20px;
+    color:var(--ink);font-size:13px;pointer-events:auto;cursor:pointer
+  }
+  #emptyHint .pill:hover{background:var(--panel2)}
+
+  /* ---------- Loading / login bar ---------- */
+  #status{
+    position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
+    background:var(--panel);border:1px solid var(--line);border-radius:20px;
+    padding:6px 14px;font-size:11px;color:var(--muted);z-index:50;
+    transition:opacity .25s;pointer-events:none
+  }
+  #status.hidden{opacity:0}
+  #status.error{color:var(--red);border-color:rgba(248,113,113,.3)}
+
+  /* Mobile */
+  @media (max-width:740px){
+    #toc{position:fixed;top:44px;left:0;bottom:0;width:240px;z-index:25;
+      transform:translateX(-100%);transition:transform .2s ease;margin:0}
+    body.toc-open #toc{transform:translateX(0)}
+    body.toc-collapsed #toc{transform:translateX(-100%)}
+    #topbar .title{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <button class="tb-btn icon" id="tocToggle" title="Toggle table of contents">☰</button>
+  <span class="title">Goals</span>
+  <span class="spacer"></span>
+  <button class="tb-btn" id="addSectionBtn">+ Section</button>
+  <button class="tb-btn" id="addStickyBtn">+ Note</button>
+  <div class="zoom-widget">
+    <button id="zoomOut" title="Zoom out">−</button>
+    <button class="pct" id="zoomReset" title="Reset zoom to 100%">100%</button>
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomFit" title="Fit all">⛶</button>
+  </div>
+</div>
+
+<div id="boardBar">
+  <div class="board-bar-empty">Loading boards…</div>
+</div>
+
+<div id="layout">
+  <aside id="toc">
+    <div class="toc-head">Table of contents</div>
+    <div id="tocList">
+      <div class="toc-empty">Sections and subsections appear here. Click one to jump.</div>
+    </div>
+  </aside>
+  <main id="canvasWrap">
+    <div id="canvas"></div>
+    <div id="emptyHint">
+      <h2>Your food board</h2>
+      <p>Pan with mouse drag · zoom with Shift+scroll, pinch, or the buttons above.</p>
+      <span class="pill" id="firstAddBtn">+ Add your first section</span>
+    </div>
+  </main>
+</div>
+
+<div id="contextMenu" class="hidden"></div>
+<div id="status" class="hidden">Loading…</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, getDocs, getDoc, setDoc, deleteDoc, onSnapshot, addDoc, query, where }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+// ============= Firebase =============
+const firebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "566644863130",
+  appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+};
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+const nodesCol      = collection(db, 'food_canvas_nodes');
+// The Focus-5 promote queue is shared across canvas pages — the drainer in
+// personal-todos.html resolves the linked todo by id without caring where
+// the push came from. Keep the original collection name for compatibility.
+const pushQueueCol  = collection(db, 'goals_priority_pushes');
+const boardsCol     = collection(db, 'food_canvas_boards');
+const viewDoc       = doc(db, 'food_canvas_view', 'me');  // map of { [boardId]: {panX, panY, zoom} }
+const todosCol      = collection(db, 'tv_todos');
+
+// ============= State =============
+const nodes  = new Map();       // id -> node data (ALL nodes from cloud)
+const els    = new Map();       // id -> DOM element (only nodes on the ACTIVE board)
+const boards = new Map();       // id -> { id, name, color, order, createdAt, updatedAt }
+let activeBoardId = null;
+let view = { panX: 0, panY: 0, zoom: 1 };
+const viewPerBoard = {};        // boardId -> { panX, panY, zoom } from Firestore
+let selectedId = null;
+let _writingView = false;
+let _writingNode = new Set();   // nodes the local user is mid-drag/edit on (don't clobber from snapshot)
+let _suppressEmpty = false;
+let _nodesUnsub = null;
+
+const NODE_TYPES = {
+  section:    { w: 600, h: 400, color: 'sec-blue'   },
+  subsection: { w: 320, h: 240, color: 'sec-gray'   },
+  sticky:     { w: 180, h: 130, color: 'stk-yellow' }
+};
+const SECTION_COLORS = ['sec-blue','sec-green','sec-amber','sec-red','sec-purple','sec-gray'];
+const STICKY_COLORS  = ['stk-yellow','stk-pink','stk-blue','stk-green','stk-purple','stk-orange','stk-gray'];
+const STICKY_HEX = {
+  'stk-yellow':'#fef3c7','stk-pink':'#fbcfe8','stk-blue':'#bfdbfe',
+  'stk-green':'#bbf7d0','stk-purple':'#ddd6fe','stk-orange':'#fed7aa','stk-gray':'#e5e7eb'
+};
+const SECTION_HEX = {
+  'sec-blue':'#4a9eff','sec-green':'#4ade80','sec-amber':'#fbbf24',
+  'sec-red':'#f87171','sec-purple':'#a78bfa','sec-gray':'#9ca3af'
+};
+
+// ============= Status helper =============
+const statusEl = document.getElementById('status');
+let _statusTimer = null;
+function setStatus(msg, kind){
+  if (_statusTimer) clearTimeout(_statusTimer);
+  statusEl.textContent = msg;
+  statusEl.classList.remove('hidden','error');
+  if (kind === 'error') statusEl.classList.add('error');
+  if (kind !== 'sticky') _statusTimer = setTimeout(()=>statusEl.classList.add('hidden'), 1800);
+}
+
+// ============= Helpers =============
+function uid(){ return 'g_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,7); }
+function nowISO(){ return new Date().toISOString(); }
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function genRotation(){ return (Math.random() * 4 - 2).toFixed(2); }  // -2..2deg
+
+// Convert a viewport pixel to a canvas (logical) coordinate.
+function viewportToCanvas(px, py){
+  const r = document.getElementById('canvasWrap').getBoundingClientRect();
+  return {
+    x: (px - r.left - view.panX) / view.zoom,
+    y: (py - r.top  - view.panY) / view.zoom
+  };
+}
+
+// Apply current pan/zoom to the canvas element.
+function applyTransform(){
+  const c = document.getElementById('canvas');
+  c.style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
+  document.querySelector('#zoomReset').textContent = Math.round(view.zoom * 100) + '%';
+}
+
+// Center viewport on a canvas-space rect (used by TOC jumps + fit-all).
+function focusOnRect(rect, padding){
+  const wrap = document.getElementById('canvasWrap').getBoundingClientRect();
+  const pad = padding ?? 40;
+  const sx = (wrap.width - pad*2) / rect.w;
+  const sy = (wrap.height - pad*2) / rect.h;
+  const targetZoom = clamp(Math.min(sx, sy), 0.2, 1.4);
+  const targetPanX = wrap.width/2  - (rect.x + rect.w/2) * targetZoom;
+  const targetPanY = wrap.height/2 - (rect.y + rect.h/2) * targetZoom;
+  animateView(targetPanX, targetPanY, targetZoom);
+}
+
+// Animate pan/zoom over ~250ms.
+function animateView(toPanX, toPanY, toZoom){
+  const fromX = view.panX, fromY = view.panY, fromZ = view.zoom;
+  const t0 = performance.now(), dur = 260;
+  function step(t){
+    const k = clamp((t - t0) / dur, 0, 1);
+    const e = k < .5 ? 2*k*k : 1 - Math.pow(-2*k+2,2)/2;  // easeInOutQuad
+    view.panX = fromX + (toPanX - fromX) * e;
+    view.panY = fromY + (toPanY - fromY) * e;
+    view.zoom = fromZ + (toZoom - fromZ) * e;
+    applyTransform();
+    if (k < 1) requestAnimationFrame(step);
+    else queueViewSave();
+  }
+  requestAnimationFrame(step);
+}
+
+// ============= Persist nodes =============
+async function saveNode(n){
+  if (!n || !n.id) return;
+  try {
+    await setDoc(doc(nodesCol, n.id), {
+      ...n, updatedAt: nowISO()
+    }, { merge: true });
+  } catch (e) {
+    console.warn('[goals] saveNode failed', e);
+    setStatus('Couldn\'t save — retrying', 'error');
+  }
+}
+async function deleteNode(id){
+  if (!id) return;
+  // Children-first: any nodes parented to this one orphan up to the parent's parent.
+  const orphans = [...nodes.values()].filter(n => n.parentId === id);
+  for (const o of orphans) {
+    o.parentId = nodes.get(id)?.parentId || null;
+    await saveNode(o);
+  }
+  try { await deleteDoc(doc(nodesCol, id)); } catch (e) { console.warn('[goals] delete failed', e); }
+  // Local cleanup is handled by the snapshot listener.
+}
+
+// ============= Persist view (per-board pan/zoom) =============
+let _viewSaveTimer = null;
+function queueViewSave(){
+  if (_viewSaveTimer) clearTimeout(_viewSaveTimer);
+  _viewSaveTimer = setTimeout(async () => {
+    _viewSaveTimer = null;
+    if (!activeBoardId) return;
+    viewPerBoard[activeBoardId] = { panX: view.panX, panY: view.panY, zoom: view.zoom };
+    _writingView = true;
+    try {
+      await setDoc(viewDoc, {
+        [activeBoardId]: viewPerBoard[activeBoardId],
+        updatedAt: nowISO()
+      }, { merge: true });
+    } catch (e) { console.warn('[goals] view save failed', e); }
+    setTimeout(()=>{ _writingView = false; }, 300);
+  }, 400);
+}
+
+// ============= Render ============================
+function renderNode(n){
+  let el = els.get(n.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'node ' + n.type;
+    el.dataset.id = n.id;
+    el.dataset.type = n.type;
+    document.getElementById('canvas').appendChild(el);
+    els.set(n.id, el);
+    attachNodeListeners(el);
+  }
+  // Position / size
+  el.style.left = (n.x || 0) + 'px';
+  el.style.top  = (n.y || 0) + 'px';
+  el.style.width  = (n.w || NODE_TYPES[n.type].w) + 'px';
+  el.style.height = (n.h || NODE_TYPES[n.type].h) + 'px';
+  el.style.zIndex = String(n.z || 1);
+
+  if (n.type === 'sticky') {
+    ensureItems(n);
+    el.className = 'node sticky ' + (n.color || 'stk-yellow');
+    el.style.transform = `rotate(${n.rotation || 0}deg)`;
+    const rowsHtml = n.items.map(it => `
+      <div class="sticky-row${it.done?' done':''}${it.linkedTaskId?' linked':''}" data-item-id="${it.id}">
+        <div class="sticky-check" data-action="toggle-item" title="Mark done"></div>
+        <div class="sticky-text" contenteditable="plaintext-only" data-action="edit-item">${escapeHtml(it.text || '')}</div>
+        <span class="row-badge" title="In Focus 5">↗</span>
+      </div>
+    `).join('');
+    el.innerHTML = `
+      <div class="sticky-pin"></div>
+      <div class="sticky-items">${rowsHtml}</div>
+      <div class="resize" data-action="resize"></div>
+      <div class="node-tools">
+        ${swatchesFor('sticky')}
+        <button class="nt-btn" data-action="focus5" title="Promote first unlinked bullet to Focus 5">★</button>
+        <button class="nt-btn" data-action="delete" title="Delete">✕</button>
+      </div>
+    `;
+  } else {
+    // section / subsection
+    el.className = 'node ' + n.type + ' ' + (n.color || NODE_TYPES[n.type].color);
+    el.style.transform = '';
+    el.innerHTML = `
+      <div class="sec-head" data-action="drag-handle">
+        <span class="sec-tag"></span>
+        <div class="sec-title" contenteditable="plaintext-only" data-field="title">${escapeHtml(n.title || (n.type === 'section' ? 'New section' : 'New subsection'))}</div>
+      </div>
+      <div class="sec-body"></div>
+      <div class="resize" data-action="resize"></div>
+      <div class="node-tools">
+        ${swatchesFor('section')}
+        <button class="nt-btn" data-action="add-sticky-here" title="Add sticky inside">+</button>
+        ${n.type === 'section' ? '<button class="nt-btn" data-action="add-subsection-here" title="Add subsection">▸</button>' : ''}
+        <button class="nt-btn" data-action="delete" title="Delete">✕</button>
+      </div>
+    `;
+  }
+  if (selectedId === n.id) el.classList.add('selected'); else el.classList.remove('selected');
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function itemUid(){ return 'i_' + Math.random().toString(36).slice(2, 9); }
+// Migrate the legacy single-text sticky shape into items[]. Idempotent.
+function ensureItems(n){
+  if (Array.isArray(n.items) && n.items.length) {
+    // Belt + suspenders: every item gets an id.
+    n.items.forEach(it => { if (!it.id) it.id = itemUid(); });
+    return;
+  }
+  n.items = [{
+    id: itemUid(),
+    text: n.text || '',
+    done: !!n.done,
+    linkedTaskId: n.linkedTaskId || null
+  }];
+}
+function swatchesFor(kind){
+  const colors = kind === 'sticky' ? STICKY_COLORS : SECTION_COLORS;
+  return colors.map(c => {
+    const hex = (kind === 'sticky' ? STICKY_HEX : SECTION_HEX)[c];
+    return `<span class="nt-swatch" data-action="color" data-color="${c}" style="background:${hex}"></span>`;
+  }).join('');
+}
+
+function removeNodeEl(id){
+  const el = els.get(id);
+  if (el) el.remove();
+  els.delete(id);
+}
+
+function activeNodes(){
+  if (!activeBoardId) return [...nodes.values()];
+  return [...nodes.values()].filter(n => (n.boardId || null) === activeBoardId);
+}
+
+function rerenderAll(){
+  // Only nodes on the active board live in the DOM. Remove any element whose
+  // node is gone or belongs to a different board.
+  const liveOnBoard = new Set(activeNodes().map(n => n.id));
+  for (const id of [...els.keys()]) {
+    if (!liveOnBoard.has(id)) removeNodeEl(id);
+  }
+  for (const n of activeNodes()) renderNode(n);
+  updateEmptyHint();
+  rebuildToc();
+}
+
+function updateEmptyHint(){
+  document.getElementById('emptyHint').style.display = activeNodes().length === 0 ? '' : 'none';
+}
+
+// ============= TOC =============
+function rebuildToc(){
+  const list = document.getElementById('tocList');
+  const pool = activeNodes();
+  // Group by geometry, not by stored parentId — that field can lag behind a
+  // resize. A "top-level section" is any container whose findContainer is
+  // null; a subsection is any container whose findContainer points at it.
+  const containers = pool.filter(n => n.type === 'section' || n.type === 'subsection');
+  const parentOf = new Map();
+  for (const c of containers) parentOf.set(c.id, findContainer(c));
+  const topLevel = containers.filter(c => !parentOf.get(c.id))
+    .sort((a,b)=>a.y - b.y || a.x - b.x);
+  if (!topLevel.length) {
+    list.innerHTML = '<div class="toc-empty">Sections appear here. Click + Section above to start.</div>';
+    return;
+  }
+  const html = [];
+  for (const s of topLevel) {
+    const c = SECTION_HEX[s.color] || '#9ca3af';
+    html.push(`<div class="toc-entry${selectedId===s.id?' active':''}" data-id="${s.id}">
+      <span class="dot" style="background:${c}"></span>
+      <span>${escapeHtml(s.title || 'Untitled section')}</span>
+    </div>`);
+    const subs = containers
+      .filter(x => parentOf.get(x.id) === s.id)
+      .sort((a,b)=>a.y - b.y || a.x - b.x);
+    for (const sub of subs) {
+      html.push(`<div class="toc-entry sub${selectedId===sub.id?' active':''}" data-id="${sub.id}">
+        <span>· ${escapeHtml(sub.title || 'Untitled subsection')}</span>
+      </div>`);
+    }
+  }
+  list.innerHTML = html.join('');
+}
+
+document.getElementById('tocList').addEventListener('click', (e) => {
+  const entry = e.target.closest('.toc-entry');
+  if (!entry) return;
+  const id = entry.dataset.id;
+  const n = nodes.get(id);
+  if (!n) return;
+  selectedId = id;
+  focusOnRect({ x: n.x, y: n.y, w: n.w, h: n.h }, 80);
+  rebuildToc();
+  // Highlight selected node briefly
+  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+  const el = els.get(id);
+  if (el) el.classList.add('selected');
+});
+
+// ============= Snapshot listeners =============
+function subscribeNodes(){
+  if (_nodesUnsub) try { _nodesUnsub(); } catch {}
+  _nodesUnsub = onSnapshot(nodesCol, (snap) => {
+    let dirty = false;
+    snap.docChanges().forEach(ch => {
+      const id = ch.doc.id;
+      if (ch.type === 'removed') {
+        nodes.delete(id);
+        removeNodeEl(id);
+        dirty = true;
+        return;
+      }
+      if (_writingNode.has(id)) return;
+      const data = ch.doc.data();
+      const n = { id, ...data };
+      nodes.set(id, n);
+      // Only render if it's on the active board; otherwise just track state.
+      if ((n.boardId || null) === activeBoardId) renderNode(n);
+      else removeNodeEl(id);
+      dirty = true;
+    });
+    if (dirty) { updateEmptyHint(); rebuildToc(); }
+  }, (err) => {
+    console.error('[goals] nodes snapshot error', err);
+    setStatus('Sync error', 'error');
+  });
+}
+function subscribeView(){
+  onSnapshot(viewDoc, (snap) => {
+    if (!snap.exists()) return;
+    if (_writingView) return;
+    const d = snap.data() || {};
+    // New shape: map of { [boardId]: {panX, panY, zoom} }. Legacy single-board
+    // docs had panX/panY/zoom at the top level — adopt them into the active
+    // board's slot so nothing is lost when this update lands.
+    Object.keys(d).forEach(k => {
+      if (k === 'updatedAt' || k === 'panX' || k === 'panY' || k === 'zoom') return;
+      const v = d[k];
+      if (v && typeof v.panX === 'number') {
+        viewPerBoard[k] = { panX: v.panX, panY: v.panY, zoom: clamp(v.zoom, 0.15, 3) };
+      }
+    });
+    if (activeBoardId && viewPerBoard[activeBoardId]) {
+      const v = viewPerBoard[activeBoardId];
+      view.panX = v.panX; view.panY = v.panY; view.zoom = v.zoom;
+      applyTransform();
+    }
+  });
+}
+function subscribeBoards(){
+  onSnapshot(boardsCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') boards.delete(ch.doc.id);
+      else boards.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    renderBoardBar();
+    // If the active board was deleted by another client, fall back to the first.
+    if (activeBoardId && !boards.has(activeBoardId)) {
+      const first = [...boards.values()].sort(boardSort)[0];
+      if (first) switchToBoard(first.id);
+    }
+  });
+}
+function boardSort(a, b){ return (a.order || 0) - (b.order || 0) || String(a.createdAt||'').localeCompare(String(b.createdAt||'')); }
+// Subscribe to tv_todos that are linked from goal bullets — back-sync done
+// state and (on delete) clear the linked badge. goalBulletId is "<stickyId>/<itemId>"
+// for items-shape stickies and just "<stickyId>" for legacy ones.
+function subscribeLinkedTodos(){
+  const qry = query(todosCol, where('goalBulletId', '!=', null));
+  onSnapshot(qry, (snap) => {
+    snap.docChanges().forEach(ch => {
+      const t = ch.doc.data() || {};
+      const key = t.goalBulletId;
+      if (!key) return;
+      const [stickyId, itemId] = String(key).split('/');
+      const n = nodes.get(stickyId);
+      if (!n || n.type !== 'sticky') return;
+      ensureItems(n);
+      // Find the item: by itemId if compound, else just the first one.
+      const item = itemId ? n.items.find(it => it.id === itemId) : n.items[0];
+      if (!item) return;
+      const todoDone = !!t.done;
+      let mutated = false;
+      if (item.done !== todoDone) { item.done = todoDone; mutated = true; }
+      if (ch.type === 'removed' && item.linkedTaskId === ch.doc.id) {
+        item.linkedTaskId = null; mutated = true;
+      }
+      if (mutated && !_writingNode.has(stickyId)) {
+        saveNode(n);
+        renderNode(n);
+      }
+    });
+  }, (e) => console.warn('[goals] linked todos subscribe error', e));
+}
+
+// ============= Pan / Zoom =============
+const wrap = document.getElementById('canvasWrap');
+let panStart = null;
+wrap.addEventListener('mousedown', (e) => {
+  // Only pan when clicking the canvas background, not a node.
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  // Clicking empty canvas also deselects.
+  selectedId = null;
+  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+  hideContextMenu();
+  panStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
+  wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panStart) return;
+  view.panX = panStart.panX + (e.clientX - panStart.x);
+  view.panY = panStart.panY + (e.clientY - panStart.y);
+  applyTransform();
+});
+window.addEventListener('mouseup', () => {
+  if (panStart) { panStart = null; wrap.classList.remove('panning'); queueViewSave(); }
+});
+
+// Wheel: shift + wheel = zoom canvas (or resize a hovered node);
+// pinch trackpad fires wheel with ctrlKey so it keeps zooming too. We do NOT
+// listen for metaKey (Cmd) here because macOS's Accessibility "scroll to
+// zoom" feature intercepts Cmd+scroll at the OS level before the browser
+// ever sees it — it would zoom the whole desktop, not just our canvas.
+// Plain wheel = pan (natural for trackpad two-finger scroll).
+let _nodeResizeDebounce = new Map();   // nodeId -> timer for persist-after-resize
+wrap.addEventListener('wheel', (e) => {
+  if (e.shiftKey || e.ctrlKey) {
+    e.preventDefault();
+    // macOS quirk: Shift+wheel translates vertical wheel motion into deltaX,
+    // so e.deltaY arrives as 0 and naive math zeroes out. Always pull the
+    // larger-magnitude axis, normalized to a vertical sign.
+    const raw = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    // If the cursor is over a node, resize THAT node instead of zooming the
+    // whole canvas. Lets the user "grow / shrink the thing I'm pointing at."
+    const nodeEl = e.target.closest('.node');
+    if (nodeEl) {
+      const id = nodeEl.dataset.id;
+      const n = nodes.get(id);
+      if (n) {
+        const scale = 1 + (-raw * 0.0025);
+        n.w = clamp(Math.round(n.w * scale), 120, 4000);
+        n.h = clamp(Math.round(n.h * scale), 80,  3000);
+        nodeEl.style.width  = n.w + 'px';
+        nodeEl.style.height = n.h + 'px';
+        // Debounce the Firestore write so a continuous scroll doesn't spam.
+        const t = _nodeResizeDebounce.get(id);
+        if (t) clearTimeout(t);
+        _writingNode.add(id);
+        _nodeResizeDebounce.set(id, setTimeout(() => {
+          saveNode(n);
+          _nodeResizeDebounce.delete(id);
+          setTimeout(() => _writingNode.delete(id), 250);
+          reconcileBoard();  // resize may have changed containment
+        }, 200));
+        return;
+      }
+    }
+    // Background → zoom the canvas around the cursor.
+    const dz = -raw * 0.0015;
+    const targetZoom = clamp(view.zoom * (1 + dz), 0.15, 3);
+    const { x, y } = viewportToCanvas(e.clientX, e.clientY);
+    view.zoom = targetZoom;
+    const r = wrap.getBoundingClientRect();
+    view.panX = e.clientX - r.left - x * view.zoom;
+    view.panY = e.clientY - r.top  - y * view.zoom;
+    applyTransform();
+    queueViewSave();
+  } else {
+    e.preventDefault();
+    view.panX -= e.deltaX;
+    view.panY -= e.deltaY;
+    applyTransform();
+    queueViewSave();
+  }
+}, { passive: false });
+
+// Touch: one-finger pan, two-finger pinch zoom
+let touchState = null;
+wrap.addEventListener('touchstart', (e) => {
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchState = { mode: 'pan', x: t.clientX, y: t.clientY, panX: view.panX, panY: view.panY };
+  } else if (e.touches.length === 2) {
+    const [a,b] = e.touches;
+    const mid = { x: (a.clientX + b.clientX)/2, y: (a.clientY + b.clientY)/2 };
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    touchState = { mode: 'pinch', dist, zoom: view.zoom, mid, anchor: viewportToCanvas(mid.x, mid.y) };
+  }
+}, { passive: true });
+wrap.addEventListener('touchmove', (e) => {
+  if (!touchState) return;
+  if (touchState.mode === 'pan' && e.touches.length === 1) {
+    e.preventDefault();
+    const t = e.touches[0];
+    view.panX = touchState.panX + (t.clientX - touchState.x);
+    view.panY = touchState.panY + (t.clientY - touchState.y);
+    applyTransform();
+  } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+    e.preventDefault();
+    const [a,b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const ratio = dist / touchState.dist;
+    view.zoom = clamp(touchState.zoom * ratio, 0.15, 3);
+    const r = wrap.getBoundingClientRect();
+    view.panX = touchState.mid.x - r.left - touchState.anchor.x * view.zoom;
+    view.panY = touchState.mid.y - r.top  - touchState.anchor.y * view.zoom;
+    applyTransform();
+  }
+}, { passive: false });
+wrap.addEventListener('touchend', () => {
+  if (touchState) { touchState = null; queueViewSave(); }
+});
+
+// Zoom widget buttons
+document.getElementById('zoomIn').onclick = () => animateView(view.panX, view.panY, clamp(view.zoom * 1.2, 0.15, 3));
+document.getElementById('zoomOut').onclick = () => animateView(view.panX, view.panY, clamp(view.zoom / 1.2, 0.15, 3));
+document.getElementById('zoomReset').onclick = () => animateView(view.panX, view.panY, 1);
+document.getElementById('zoomFit').onclick = () => fitAll();
+
+function fitAll(){
+  if (nodes.size === 0) { animateView(0, 0, 1); return; }
+  const xs = [...nodes.values()];
+  const minX = Math.min(...xs.map(n => n.x));
+  const minY = Math.min(...xs.map(n => n.y));
+  const maxX = Math.max(...xs.map(n => n.x + n.w));
+  const maxY = Math.max(...xs.map(n => n.y + n.h));
+  focusOnRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, 60);
+}
+
+// ============= Node interactions =============
+function attachNodeListeners(el){
+  // Drag (whole sticky, or the section header bar)
+  el.addEventListener('mousedown', (e) => {
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    const action = e.target.dataset.action;
+    if (action === 'resize') { startResize(e, id); return; }
+    // editable text — let the user type, don't drag
+    if (e.target.matches('[contenteditable]')) return;
+    if (e.target.closest('.node-tools')) return;
+    if (e.target.closest('.sticky-check')) return;
+    // Section drag only via header; subsection drag via header.
+    if (n.type === 'section' || n.type === 'subsection') {
+      if (!e.target.closest('.sec-head')) return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    selectedId = id;
+    document.querySelectorAll('.node.selected').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected', 'dragging');
+    _writingNode.add(id);
+    const startX = e.clientX, startY = e.clientY;
+    const origX = n.x, origY = n.y;
+    // When dragging a container, gather every descendant so they move as a
+    // group (subsections + stickies inside subsections, stickies, etc).
+    // Snapshot each descendant's original position so we can translate them
+    // by exactly (dx, dy) on every mousemove.
+    const isContainer = n.type === 'section' || n.type === 'subsection';
+    const descendants = isContainer ? collectDescendants(id) : [];
+    descendants.forEach(d => { d._origX = d.x; d._origY = d.y; _writingNode.add(d.id); });
+    function move(ev){
+      const dx = (ev.clientX - startX) / view.zoom;
+      const dy = (ev.clientY - startY) / view.zoom;
+      n.x = origX + dx;
+      n.y = origY + dy;
+      el.style.left = n.x + 'px';
+      el.style.top  = n.y + 'px';
+      // Translate descendants by the same delta.
+      descendants.forEach(d => {
+        d.x = d._origX + dx;
+        d.y = d._origY + dy;
+        const childEl = els.get(d.id);
+        if (childEl) {
+          childEl.style.left = d.x + 'px';
+          childEl.style.top  = d.y + 'px';
+        }
+      });
+      // Highlight drop target as we hover ANY movable node over a container.
+      // Sections light up too, so it's obvious when a drop will convert one
+      // into a subsection.
+      updateDropTargetHighlight(n);
+    }
+    function up(){
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      el.classList.remove('dragging');
+      // Snap-into-container for every movable node type. A section dropped
+      // inside another container auto-converts to a subsection; a subsection
+      // dropped at top level promotes back to a section. Stickies just get
+      // a parent (no type change). collectDescendants ran at drag-start, so
+      // child stickies/subsections were carried along by the move handler —
+      // their parentId is unchanged, which means a later drag of THIS node
+      // will still carry them via the parentId chain.
+      const wasType = n.type;
+      const newParent = findContainer(n);
+      n.parentId = newParent;
+      if (n.type === 'section' && newParent) {
+        n.type = 'subsection';
+      } else if (n.type === 'subsection' && !newParent) {
+        n.type = 'section';
+      }
+      clearDropTargetHighlight();
+      // Re-render so the type/class change is reflected immediately.
+      if (n.type !== wasType) renderNode(n);
+      saveNode(n);
+      // Persist every descendant we dragged along, then clear the write locks.
+      descendants.forEach(d => { delete d._origX; delete d._origY; saveNode(d); });
+      setTimeout(()=> {
+        _writingNode.delete(id);
+        descendants.forEach(d => _writingNode.delete(d.id));
+      }, 250);
+      rebuildToc();
+      // Catch any indirect parent/type changes the drop caused for OTHER
+      // nodes (e.g. moving a section out of a container promotes nodes that
+      // were inside it).
+      reconcileBoard();
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+
+  // Click actions inside the node
+  el.addEventListener('click', (e) => {
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    const a = e.target.dataset.action;
+    if (a === 'toggle-item') {
+      const row = e.target.closest('.sticky-row');
+      const itemId = row?.dataset.itemId;
+      if (itemId) toggleItemDone(n, itemId);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'delete') {
+      if (confirm('Delete this ' + n.type + '?')) deleteNode(id);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'color') {
+      n.color = e.target.dataset.color;
+      saveNode(n);
+      renderNode(n);
+      rebuildToc();
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'focus5') {
+      promoteToFocus5(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'add-sticky-here') {
+      createNode('sticky', { x: n.x + 20, y: n.y + (n.type==='section'?60:40), parentId: id });
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'add-subsection-here') {
+      createNode('subsection', { x: n.x + 20, y: n.y + 60, parentId: id });
+      e.stopPropagation();
+      return;
+    }
+  });
+
+  // Enter / Backspace inside sticky items — Enter splits at caret into a new
+  // checkbox row; Backspace at start of an empty row deletes it (and merges
+  // any trailing text into the previous row).
+  el.addEventListener('keydown', (e) => {
+    if (!e.target.matches('.sticky-text')) return;
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n || n.type !== 'sticky') return;
+    const row = e.target.closest('.sticky-row');
+    const itemId = row?.dataset.itemId;
+    if (!itemId) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const sel = document.getSelection();
+      const fullText = e.target.textContent || '';
+      let caret = fullText.length;
+      try {
+        if (sel && sel.rangeCount) {
+          const r = sel.getRangeAt(0);
+          // Caret offset works for plaintext-only contenteditable.
+          caret = r.startOffset;
+        }
+      } catch {}
+      const before = fullText.slice(0, caret);
+      const after  = fullText.slice(caret);
+      const item = (n.items || []).find(it => it.id === itemId);
+      if (!item) return;
+      item.text = before;
+      e.target.textContent = before;
+      const newItem = { id: itemUid(), text: after, done: false, linkedTaskId: null };
+      const idx = n.items.findIndex(it => it.id === itemId);
+      n.items.splice(idx + 1, 0, newItem);
+      // Re-render so the new row is in the DOM, then focus it.
+      renderNode(n);
+      saveNode(n);
+      setTimeout(() => {
+        const newRow = el.querySelector(`.sticky-row[data-item-id="${newItem.id}"] .sticky-text`);
+        if (newRow) {
+          newRow.focus();
+          // Caret at start (where the split happened).
+          const r = document.createRange();
+          r.setStart(newRow, 0);
+          r.collapse(true);
+          const s = document.getSelection();
+          s.removeAllRanges(); s.addRange(r);
+        }
+      }, 0);
+    } else if (e.key === 'Backspace') {
+      const text = e.target.textContent || '';
+      if (text.length > 0) return;   // normal backspace inside text
+      // Empty row + Backspace: delete this row, focus previous.
+      const idx = n.items.findIndex(it => it.id === itemId);
+      if (idx <= 0) return;          // can't delete the first row from here
+      e.preventDefault();
+      n.items.splice(idx, 1);
+      renderNode(n);
+      saveNode(n);
+      setTimeout(() => {
+        const prev = n.items[idx - 1];
+        const prevEl = el.querySelector(`.sticky-row[data-item-id="${prev.id}"] .sticky-text`);
+        if (prevEl) {
+          prevEl.focus();
+          const r = document.createRange();
+          r.selectNodeContents(prevEl);
+          r.collapse(false);
+          const s = document.getSelection();
+          s.removeAllRanges(); s.addRange(r);
+        }
+      }, 0);
+    }
+  });
+
+  // Contenteditable persistence
+  el.addEventListener('blur', (e) => {
+    const t = e.target;
+    if (!t.matches('[contenteditable]')) return;
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    // Section/subsection title
+    if (t.dataset.field === 'title') {
+      const val = (t.textContent || '').trim();
+      if (n.title === val) return;
+      n.title = val;
+      saveNode(n);
+      rebuildToc();
+      return;
+    }
+    // Sticky bullet text
+    if (n.type === 'sticky' && t.dataset.action === 'edit-item') {
+      const row = t.closest('.sticky-row');
+      const itemId = row?.dataset.itemId;
+      const item = (n.items || []).find(it => it.id === itemId);
+      if (!item) return;
+      const val = (t.textContent || '').trim();
+      if (item.text === val) return;
+      item.text = val;
+      saveNode(n);
+      // Mirror to linked todo if this bullet was promoted.
+      if (item.linkedTaskId) {
+        setDoc(doc(todosCol, item.linkedTaskId), { text: val }, { merge: true }).catch(()=>{});
+      }
+    }
+  }, true);
+
+  // Right-click context menu
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    showNodeContextMenu(e.clientX, e.clientY, n);
+  });
+}
+
+function toggleItemDone(n, itemId){
+  if (n.type !== 'sticky') return;
+  ensureItems(n);
+  const it = n.items.find(x => x.id === itemId);
+  if (!it) return;
+  it.done = !it.done;
+  saveNode(n);
+  renderNode(n);
+  if (it.linkedTaskId) {
+    setDoc(doc(todosCol, it.linkedTaskId), {
+      done: it.done,
+      completedAt: it.done ? nowISO() : null
+    }, { merge: true }).catch(()=>{});
+  }
+}
+// Legacy entry-point kept for the right-click "toggle done" menu item — flips
+// the first unchecked bullet (or the first bullet if all are checked).
+function toggleDone(n){
+  if (n.type !== 'sticky') return;
+  ensureItems(n);
+  const target = n.items.find(it => !it.done) || n.items[0];
+  if (target) toggleItemDone(n, target.id);
+}
+
+// Resize: drag the corner handle. Stickies stay rect (no rotation snap during resize).
+function startResize(e, id){
+  e.preventDefault();
+  e.stopPropagation();
+  const n = nodes.get(id);
+  const el = els.get(id);
+  if (!n) return;
+  _writingNode.add(id);
+  const startX = e.clientX, startY = e.clientY;
+  const origW = n.w, origH = n.h;
+  function move(ev){
+    n.w = Math.max(120, origW + (ev.clientX - startX) / view.zoom);
+    n.h = Math.max(80,  origH + (ev.clientY - startY) / view.zoom);
+    el.style.width  = n.w + 'px';
+    el.style.height = n.h + 'px';
+  }
+  function up(){
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+    saveNode(n);
+    setTimeout(()=> _writingNode.delete(id), 250);
+    // A resize may make this container wrap around other nodes (or stop
+    // wrapping them) — recompute everyone's parent/type.
+    reconcileBoard();
+  }
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+}
+
+// Collect every descendant of `rootId` using GEOMETRY as the source of truth
+// (not stored parentId, which may be stale until reconcileBoard runs). A node
+// is a descendant if findContainer(node) === rootId, transitively.
+function collectDescendants(rootId){
+  const root = nodes.get(rootId);
+  if (!root) return [];
+  if (root.type !== 'section' && root.type !== 'subsection') return [];
+  const out = [];
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const pid = queue.shift();
+    for (const c of nodes.values()) {
+      if (seen.has(c.id)) continue;
+      if ((c.boardId || null) !== (root.boardId || null)) continue;
+      if (findContainer(c) === pid) {
+        out.push(c);
+        seen.add(c.id);
+        queue.push(c.id);
+      }
+    }
+  }
+  return out;
+}
+
+// Containment: a node belongs to the smallest container (section or
+// subsection) whose box contains its center. We derive this from GEOMETRY,
+// not from the stored parentId — that field is just a cache so that when
+// nothing has moved, lookups are fast. Whenever geometry changes (drag end,
+// resize end, scroll-resize end) we run reconcileBoard() which recomputes
+// every node's parentId from scratch.
+//
+// Cycle prevention: if candidate c sits geometrically inside n AND c is no
+// larger than n, c can't be n's parent (n is wrapping c, so c is the
+// descendant). This handles the common "resize a section to wrap around
+// existing stuff" case correctly.
+function findContainer(n){
+  const cx = n.x + n.w/2, cy = n.y + n.h/2;
+  let best = null;
+  for (const c of nodes.values()) {
+    if (c.id === n.id) continue;
+    if ((c.boardId || null) !== (n.boardId || null)) continue;
+    if (c.type !== 'section' && c.type !== 'subsection') continue;
+    // Skip candidates that n itself wraps around.
+    const ccx = c.x + c.w/2, ccy = c.y + c.h/2;
+    const cInsideN = (ccx >= n.x && ccx <= n.x + n.w && ccy >= n.y && ccy <= n.y + n.h);
+    if (cInsideN && c.w * c.h <= n.w * n.h) continue;
+    if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) {
+      if (!best || c.w * c.h < best.w * best.h) best = c;
+    }
+  }
+  return best ? best.id : null;
+}
+
+// Run after any geometry change. Recomputes parentId for every node on the
+// active board; flips section ↔ subsection based on whether it has a
+// parent. Only saves/redraws nodes whose stored state actually changed, so
+// this is cheap to run liberally.
+let _reconcileTimer = null;
+function reconcileBoard(){
+  if (_reconcileTimer) return;
+  _reconcileTimer = setTimeout(() => {
+    _reconcileTimer = null;
+    if (!activeBoardId) return;
+    const board = [...nodes.values()].filter(n => (n.boardId || null) === activeBoardId);
+    const changed = [];
+    for (const n of board) {
+      const newParent = findContainer(n);
+      let newType = n.type;
+      if (n.type === 'section' && newParent) newType = 'subsection';
+      else if (n.type === 'subsection' && !newParent) newType = 'section';
+      if (n.parentId !== newParent || n.type !== newType) {
+        n.parentId = newParent;
+        n.type = newType;
+        changed.push(n);
+      }
+    }
+    for (const n of changed) {
+      renderNode(n);
+      saveNode(n);
+    }
+    if (changed.length) rebuildToc();
+  }, 0);
+}
+function updateDropTargetHighlight(n){
+  const target = findContainer(n);
+  document.querySelectorAll('.node.drop-target').forEach(x => x.classList.remove('drop-target'));
+  if (target) els.get(target)?.classList.add('drop-target');
+}
+function clearDropTargetHighlight(){
+  document.querySelectorAll('.node.drop-target').forEach(x => x.classList.remove('drop-target'));
+}
+
+// ============= Create =============
+async function createNode(type, opts){
+  opts = opts || {};
+  const def = NODE_TYPES[type];
+  // Default position: visible center of viewport
+  let { x, y } = opts;
+  if (x == null || y == null) {
+    const wrapR = wrap.getBoundingClientRect();
+    const center = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+    x = (x == null) ? center.x - def.w/2 : x;
+    y = (y == null) ? center.y - def.h/2 : y;
+  }
+  const n = {
+    id: uid(),
+    type,
+    x, y,
+    w: def.w, h: def.h,
+    color: opts.color || def.color,
+    title: opts.title || '',
+    done: false,
+    parentId: opts.parentId || null,
+    rotation: type === 'sticky' ? parseFloat(genRotation()) : 0,
+    boardId: activeBoardId || null,
+    z: Date.now()
+  };
+  if (type === 'sticky') {
+    n.items = [{ id: itemUid(), text: opts.text || '', done: false, linkedTaskId: null }];
+  }
+  // If creating loose (no parent), spatial test will pick up any container we land on.
+  if (!n.parentId && (type === 'sticky' || type === 'subsection')) {
+    n.parentId = findContainer(n);
+  }
+  nodes.set(n.id, n);
+  renderNode(n);
+  await saveNode(n);
+  // Auto-focus the new editable field.
+  setTimeout(()=>{
+    const el = els.get(n.id);
+    if (!el) return;
+    const target = el.querySelector('[contenteditable]');
+    if (target) { target.focus(); document.getSelection()?.selectAllChildren(target); }
+  }, 30);
+  updateEmptyHint();
+  rebuildToc();
+  return n;
+}
+
+document.getElementById('addSectionBtn').onclick = () => createNode('section');
+document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
+document.getElementById('firstAddBtn').onclick   = () => createNode('section');
+
+// Toggle TOC
+document.getElementById('tocToggle').onclick = () => {
+  if (window.innerWidth <= 740) {
+    document.body.classList.toggle('toc-open');
+  } else {
+    document.body.classList.toggle('toc-collapsed');
+  }
+};
+
+// ============= Context menu =============
+const cm = document.getElementById('contextMenu');
+function showCanvasContextMenu(px, py, canvasPt){
+  cm.innerHTML = `
+    <div class="cm-item" data-cm="add-sticky">+ Sticky note</div>
+    <div class="cm-item" data-cm="add-section">+ Section</div>
+    <div class="cm-item" data-cm="add-subsection">+ Subsection</div>
+  `;
+  cm.style.left = px + 'px';
+  cm.style.top  = py + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (e) => {
+    const c = e.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'add-sticky')     createNode('sticky',     { x: canvasPt.x - 90,  y: canvasPt.y - 60 });
+    if (c === 'add-section')    createNode('section',    { x: canvasPt.x - 300, y: canvasPt.y - 200 });
+    if (c === 'add-subsection') createNode('subsection', { x: canvasPt.x - 160, y: canvasPt.y - 120 });
+  };
+}
+function showNodeContextMenu(px, py, n){
+  let extra = '';
+  if (n.type === 'sticky') {
+    extra = `
+      <div class="cm-item" data-cm="focus5">${n.linkedTaskId ? '↗ Already in Focus 5' : '★ Add to Focus 5'}</div>
+      <div class="cm-item" data-cm="toggle-done">${n.done ? '○ Mark not done' : '✓ Mark done'}</div>
+      <div class="cm-sep"></div>
+    `;
+  }
+  cm.innerHTML = `
+    ${extra}
+    <div class="cm-row">${swatchesFor(n.type === 'sticky' ? 'sticky' : 'section')
+      .replace(/data-action="color"/g, 'data-cm="color"')}</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item danger" data-cm="delete">✕ Delete</div>
+  `;
+  cm.style.left = px + 'px';
+  cm.style.top  = py + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (e) => {
+    const c = e.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'focus5')      promoteToFocus5(n);
+    if (c === 'toggle-done') toggleDone(n);
+    if (c === 'color')       { n.color = e.target.dataset.color; saveNode(n); renderNode(n); rebuildToc(); }
+    if (c === 'delete')      { if (confirm('Delete this ' + n.type + '?')) deleteNode(n.id); }
+  };
+}
+function hideContextMenu(){ cm.classList.add('hidden'); }
+wrap.addEventListener('contextmenu', (e) => {
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  e.preventDefault();
+  const pt = viewportToCanvas(e.clientX, e.clientY);
+  showCanvasContextMenu(e.clientX, e.clientY, pt);
+});
+window.addEventListener('click', (e) => {
+  if (!cm.contains(e.target)) hideContextMenu();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideContextMenu();
+  if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) {
+    if (selectedId && !document.activeElement?.matches('[contenteditable]')) {
+      const n = nodes.get(selectedId);
+      if (n && confirm('Delete this ' + n.type + '?')) deleteNode(selectedId);
+    }
+  }
+});
+
+// ============= Promote to Focus 5 =============
+// Promotes a specific item (bullet) inside a sticky. If no itemId is passed,
+// promotes the first unlinked, non-empty bullet. Each bullet gets its own
+// linkedTaskId and its own tv_todo doc.
+async function promoteToFocus5(n, itemId){
+  if (n.type !== 'sticky') return;
+  ensureItems(n);
+  let target;
+  if (itemId) target = n.items.find(it => it.id === itemId);
+  else        target = n.items.find(it => !it.linkedTaskId && (it.text || '').trim());
+  if (!target) {
+    setStatus(itemId ? 'Bullet not found' : 'Nothing to promote', 'error');
+    return;
+  }
+  if (target.linkedTaskId) { setStatus('Already in Focus 5'); return; }
+  const text = (target.text || '').trim();
+  if (!text) { setStatus('Type something first', 'error'); return; }
+  setStatus('Adding to Focus 5…', 'sticky');
+  try {
+    const today = new Date();
+    const tk = today.getFullYear() + '-' +
+               String(today.getMonth()+1).padStart(2,'0') + '-' +
+               String(today.getDate()).padStart(2,'0');
+    const payload = {
+      text,
+      done: !!target.done,
+      date: tk,
+      position: Date.now(),
+      timeSpent: 0,
+      countdownSecs: 0,
+      createdAt: nowISO(),
+      goalBulletId: n.id + '/' + target.id,  // compound key: sticky id + item id
+      details: 'From Goals board',
+      job: 'personal'
+    };
+    const ref = await addDoc(todosCol, payload);
+    target.linkedTaskId = ref.id;
+    await saveNode(n);
+    renderNode(n);
+    await addDoc(pushQueueCol, {
+      todoId: ref.id,
+      bulletId: n.id,
+      itemId: target.id,
+      text,
+      createdAt: nowISO()
+    });
+    setStatus('Added to Focus 5 ✓');
+  } catch (e) {
+    console.error('[goals] promote failed', e);
+    setStatus('Couldn\'t promote — try again', 'error');
+  }
+}
+
+// ============= Boards (multiple "jobs") =============
+const ACTIVE_BOARD_KEY = 'foodCanvas:activeBoardId';
+
+function renderBoardBar(){
+  const bar = document.getElementById('boardBar');
+  const list = [...boards.values()].sort(boardSort);
+  if (!list.length) {
+    bar.innerHTML = `<div class="board-bar-empty">Loading boards…</div>`;
+    return;
+  }
+  bar.innerHTML = list.map(b => {
+    const color = SECTION_HEX[b.color] || '#9ca3af';
+    const act = b.id === activeBoardId ? ' active' : '';
+    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for options">
+      <span class="b-dot" style="background:${color}"></span>
+      <span>${escapeHtml(b.name || 'Untitled')}</span>
+    </div>`;
+  }).join('') + `<button class="board-add" id="boardAddBtn" title="New board">+</button>`;
+}
+
+async function switchToBoard(id){
+  if (!id || !boards.has(id) || id === activeBoardId) return;
+  // Save the current view before swapping so it persists per-board.
+  if (activeBoardId) {
+    viewPerBoard[activeBoardId] = { panX: view.panX, panY: view.panY, zoom: view.zoom };
+  }
+  activeBoardId = id;
+  try { localStorage.setItem(ACTIVE_BOARD_KEY, id); } catch {}
+  selectedId = null;
+  // Swap to this board's last-saved view, or reset.
+  const v = viewPerBoard[id];
+  if (v) { view.panX = v.panX; view.panY = v.panY; view.zoom = v.zoom; }
+  else   { view.panX = 0; view.panY = 0; view.zoom = 1; }
+  applyTransform();
+  renderBoardBar();
+  rerenderAll();
+}
+
+async function createBoard(name){
+  const id = uid();
+  const used = new Set([...boards.values()].map(b => b.color));
+  const color = SECTION_COLORS.find(c => !used.has(c)) || SECTION_COLORS[boards.size % SECTION_COLORS.length];
+  const order = boards.size;
+  const board = {
+    id, name: name || 'New board', color, order,
+    createdAt: nowISO(), updatedAt: nowISO()
+  };
+  boards.set(id, board);
+  await setDoc(doc(boardsCol, id), board);
+  renderBoardBar();
+  switchToBoard(id);
+  return board;
+}
+
+async function renameBoard(id, name){
+  const b = boards.get(id);
+  if (!b) return;
+  b.name = name;
+  b.updatedAt = nowISO();
+  await setDoc(doc(boardsCol, id), { name, updatedAt: b.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function setBoardColor(id, color){
+  const b = boards.get(id);
+  if (!b) return;
+  b.color = color;
+  b.updatedAt = nowISO();
+  await setDoc(doc(boardsCol, id), { color, updatedAt: b.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function deleteBoard(id){
+  if (boards.size <= 1) { alert('At least one board is required.'); return; }
+  const onBoard = [...nodes.values()].filter(n => (n.boardId || null) === id).length;
+  const msg = onBoard
+    ? `Delete this board and its ${onBoard} item${onBoard===1?'':'s'}?`
+    : 'Delete this board?';
+  if (!confirm(msg)) return;
+  // Delete every node on this board, then the board itself.
+  const toDelete = [...nodes.values()].filter(n => (n.boardId || null) === id);
+  for (const n of toDelete) {
+    try { await deleteDoc(doc(nodesCol, n.id)); } catch {}
+    nodes.delete(n.id);
+  }
+  try { await deleteDoc(doc(boardsCol, id)); } catch {}
+  boards.delete(id);
+  if (activeBoardId === id) {
+    const first = [...boards.values()].sort(boardSort)[0];
+    if (first) await switchToBoard(first.id);
+  }
+  renderBoardBar();
+  rerenderAll();
+}
+
+// Board-bar click + right-click handlers (delegated).
+document.getElementById('boardBar').addEventListener('click', (e) => {
+  if (e.target.id === 'boardAddBtn' || e.target.closest('#boardAddBtn')) {
+    const name = prompt('Name this board (e.g. Meals, Pantry, Recipes):', '');
+    if (name && name.trim()) createBoard(name.trim());
+    return;
+  }
+  const tab = e.target.closest('.board-tab');
+  if (tab) switchToBoard(tab.dataset.id);
+});
+document.getElementById('boardBar').addEventListener('contextmenu', (e) => {
+  const tab = e.target.closest('.board-tab');
+  if (!tab) return;
+  e.preventDefault();
+  const id = tab.dataset.id;
+  const b = boards.get(id);
+  if (!b) return;
+  const items = SECTION_COLORS.map(c => {
+    const hex = SECTION_HEX[c];
+    const active = c === b.color ? ' active' : '';
+    return `<span class="cm-swatch${active}" data-cm="color" data-color="${c}" style="background:${hex}"></span>`;
+  }).join('');
+  cm.innerHTML = `
+    <div class="cm-item" data-cm="rename">✏︎ Rename</div>
+    <div class="cm-row">${items}</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item danger" data-cm="delete">✕ Delete board</div>
+  `;
+  cm.style.left = e.clientX + 'px';
+  cm.style.top  = e.clientY + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (ev) => {
+    const c = ev.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'rename') {
+      const name = prompt('New name:', b.name || '');
+      if (name && name.trim()) renameBoard(id, name.trim());
+    } else if (c === 'color') {
+      setBoardColor(id, ev.target.dataset.color);
+    } else if (c === 'delete') {
+      deleteBoard(id);
+    }
+  };
+});
+
+// ============= Initial load =============
+async function bootstrap(){
+  setStatus('Loading…', 'sticky');
+  try {
+    // 1. Boards. Seed a "Goals" board if none exist; migrate any unparented
+    //    legacy nodes to it.
+    const bsnap = await getDocs(boardsCol);
+    bsnap.forEach(d => boards.set(d.id, { id: d.id, ...d.data() }));
+    if (boards.size === 0) {
+      const seed = {
+        id: uid(), name: 'Food', color: 'sec-blue', order: 0,
+        createdAt: nowISO(), updatedAt: nowISO()
+      };
+      await setDoc(doc(boardsCol, seed.id), seed);
+      boards.set(seed.id, seed);
+    }
+    // Pick active board: last-used (localStorage), else first by order.
+    const sorted = [...boards.values()].sort(boardSort);
+    let pick = null;
+    try { pick = localStorage.getItem(ACTIVE_BOARD_KEY); } catch {}
+    if (!pick || !boards.has(pick)) pick = sorted[0].id;
+    activeBoardId = pick;
+    try { localStorage.setItem(ACTIVE_BOARD_KEY, activeBoardId); } catch {}
+
+    // 2. View map (per-board). Adopt any legacy top-level pan/zoom into the
+    //    first board's slot so existing data isn't lost.
+    try {
+      const vs = await getDoc(viewDoc);
+      if (vs.exists()) {
+        const d = vs.data() || {};
+        Object.keys(d).forEach(k => {
+          if (k === 'updatedAt' || k === 'panX' || k === 'panY' || k === 'zoom') return;
+          const v = d[k];
+          if (v && typeof v.panX === 'number') viewPerBoard[k] = { panX: v.panX, panY: v.panY, zoom: clamp(v.zoom, 0.15, 3) };
+        });
+        if (!viewPerBoard[activeBoardId] && typeof d.panX === 'number') {
+          viewPerBoard[activeBoardId] = { panX: d.panX, panY: d.panY, zoom: clamp(d.zoom || 1, 0.15, 3) };
+        }
+      }
+    } catch {}
+    const av = viewPerBoard[activeBoardId];
+    if (av) { view.panX = av.panX; view.panY = av.panY; view.zoom = av.zoom; }
+    applyTransform();
+
+    // 3. Nodes. Pull all of them (we filter by board in render), then backfill
+    //    boardId on any pre-board-era nodes so they have a home.
+    const nsnap = await getDocs(nodesCol);
+    const unparented = [];
+    nsnap.forEach(d => {
+      const data = d.data() || {};
+      const n = { id: d.id, ...data };
+      if (!n.boardId) unparented.push(n);
+      nodes.set(d.id, n);
+    });
+    if (unparented.length) {
+      const home = activeBoardId;
+      for (const n of unparented) {
+        n.boardId = home;
+        try { await setDoc(doc(nodesCol, n.id), { boardId: home }, { merge: true }); } catch {}
+      }
+    }
+    renderBoardBar();
+    rerenderAll();
+    // Heal any stale parentId/type from previous sessions (e.g. user resized
+    // a section to wrap around another one and the data never caught up).
+    reconcileBoard();
+
+    // 4. Live subscriptions
+    subscribeBoards();
+    subscribeNodes();
+    subscribeView();
+    subscribeLinkedTodos();
+
+    setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
+    setTimeout(()=> statusEl.classList.add('hidden'), 1200);
+  } catch (e) {
+    console.error('[goals] bootstrap failed', e);
+    setStatus('Failed to load — refresh to retry', 'error');
+  }
+}
+
+bootstrap();
+
+// Embed mode (loaded inside daily-planner iframe)
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+</script>
+
+</body>
+</html>
