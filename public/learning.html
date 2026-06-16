@@ -134,12 +134,53 @@
   .section-head .st-duration{font-weight:500}
   .section-head .st-deadline{
     padding:3px 9px;border-radius:6px;font-weight:600;letter-spacing:.2px;
-    background:var(--w05);color:var(--muted);cursor:pointer;transition:.12s
+    background:var(--w05);color:var(--muted);cursor:pointer;transition:.12s;
+    display:inline-flex;align-items:center;gap:4px;position:relative
   }
   .section-head .st-deadline:hover{color:var(--ink);background:var(--w05)}
   .section-head .st-deadline.soon{background:rgba(251,191,36,.16);color:#fcd34d}
-  .section-head .st-deadline.overdue{background:rgba(248,113,113,.16);color:#fca5a5}
-  .section-head .st-deadline.set{color:var(--accent)}
+  .section-head .st-deadline.set{
+    background:rgba(74,158,255,.14);color:#93c5fd;cursor:default
+  }
+  .section-head .st-deadline.set:hover{background:rgba(74,158,255,.14);color:#93c5fd}
+  .section-head .st-deadline.set-completed{
+    background:rgba(74,222,128,.16);color:#86efac;cursor:default
+  }
+  .section-head .st-deadline.locked{
+    background:transparent;color:var(--muted);opacity:.55;cursor:not-allowed;
+    border:1px dashed var(--line)
+  }
+  .section-head .st-deadline.locked:hover{background:transparent;color:var(--muted)}
+  /* OVERDUE — loud red pill that pulses. Pair with the inline banner below
+     the section head for the full guilt-trip effect. */
+  .section-head .st-deadline.overdue{
+    background:rgba(248,113,113,.22);color:#fca5a5;cursor:default;
+    font-weight:800;text-transform:uppercase;letter-spacing:.5px;font-size:10.5px;
+    padding:4px 10px;border:1px solid rgba(248,113,113,.4);
+    animation:learn-pulse 1.8s ease-in-out infinite
+  }
+  .section-head .st-deadline.overdue:hover{background:rgba(248,113,113,.22);color:#fca5a5}
+  @keyframes learn-pulse{
+    0%, 100%{box-shadow:0 0 0 0 rgba(248,113,113,0)}
+    50%     {box-shadow:0 0 0 5px rgba(248,113,113,.18)}
+  }
+  /* Whole section card gets a red wash when one of its deadlines is overdue. */
+  .section.is-overdue{border-color:rgba(248,113,113,.45) !important;background:rgba(248,113,113,.04)}
+  .section.is-overdue .section-head{background:rgba(248,113,113,.04)}
+  .overdue-banner{
+    padding:11px 16px;background:rgba(248,113,113,.10);
+    border-top:1px solid rgba(248,113,113,.28);
+    color:#fca5a5;font-size:13px;line-height:1.55;
+    display:flex;align-items:flex-start;gap:12px
+  }
+  .overdue-banner .ob-icon{font-size:18px;flex:0 0 auto;line-height:1.4}
+  .overdue-banner .ob-body{flex:1}
+  .overdue-banner strong{color:#f87171;font-weight:700}
+  .overdue-banner em{color:var(--red);font-style:normal;font-weight:600}
+  /* Hidden native date input — driven by the pill click via showPicker(). */
+  .st-deadline-input{
+    position:absolute;left:0;top:0;width:0;height:0;opacity:0;pointer-events:none
+  }
 
   .section-body{display:none;padding:6px 14px 14px;border-top:1px solid var(--line);background:rgba(255,255,255,.015)}
   .section.expanded .section-body{display:block}
@@ -338,23 +379,55 @@ function fmtDuration(mins){
   const h = Math.floor(mins / 60), m = mins % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
 }
-function fmtDeadline(iso){
-  if (!iso) return { label: '+ Deadline', cls: '' };
+function todayISO(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+// Returns { hasDeadline, days, label, overdue, completedOnTime }
+// "days" is negative if past, positive if future, 0 if today.
+function deadlineStatus(iso, isComplete){
+  if (!iso) return { hasDeadline: false };
   const d = new Date(iso + 'T12:00:00');
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const days = Math.round((target - today) / 86400000);
   let label;
-  if (days < 0)      label = `${Math.abs(days)}d overdue`;
+  if (days < 0)        label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   else if (days === 0) label = 'Today';
   else if (days === 1) label = 'Tomorrow';
   else if (days < 7)   label = `In ${days} days`;
   else                 label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  let cls = 'set';
-  if (days < 0) cls = 'overdue';
-  else if (days <= 3) cls = 'soon';
-  return { label, cls };
+  return {
+    hasDeadline: true,
+    days,
+    label,
+    overdue: !isComplete && days < 0,
+    completedOnTime: isComplete && days >= 0
+  };
+}
+// Pressure message for an overdue section — no sugar.
+function overdueMessage(daysOverdue, sectionTitle, deadlineISO){
+  const d = new Date(deadlineISO + 'T12:00:00');
+  const dateStr = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+  if (daysOverdue === 1) {
+    return `<strong>You said you'd finish this by ${esc(dateStr)}.</strong> That was <em>yesterday</em>. Still open.`;
+  }
+  if (daysOverdue < 7) {
+    return `<strong>${daysOverdue} days overdue.</strong> You committed to finishing <em>${esc(sectionTitle)}</em> by ${esc(dateStr)}. The next section's deadline is locked until you close this one.`;
+  }
+  if (daysOverdue < 30) {
+    return `<strong>${daysOverdue} days past your own deadline.</strong> You said ${esc(dateStr)}. Every day you don't finish this is a day you broke the commitment to yourself.`;
+  }
+  return `<strong>${daysOverdue} days. Past. Due.</strong> Your deadline was ${esc(dateStr)}. You're letting this rot. Either finish it tonight or sit with the fact that you stopped showing up.`;
+}
+function isSectionComplete(section){
+  const p = sectionProgress(section);
+  return p.total > 0 && p.done === p.total;
+}
+function isPrevSectionComplete(course, idx){
+  if (idx <= 0) return true;
+  return isSectionComplete(course.sections[idx - 1]);
 }
 function setToast(msg, kind){
   const t = document.getElementById('toast');
@@ -459,9 +532,39 @@ function renderSectionRow(c, s, n){
   const p = sectionProgress(s);
   const isDone = p.total > 0 && p.done === p.total;
   const isExpanded = expandedSections.has(c.id + '/' + s.id);
-  const dl = fmtDeadline(s.deadline);
+  const sectionIdx = (c.sections || []).indexOf(s);
+  const prevDone = isPrevSectionComplete(c, sectionIdx);
+  const status = deadlineStatus(s.deadline, isDone);
+
+  // Pill rendering: 4 states.
+  //  1. Has deadline + overdue + not done → loud red pulsing pill
+  //  2. Has deadline + done → green ✓ pill (locked)
+  //  3. Has deadline + not done + not overdue → blue "Due X" pill (locked)
+  //  4. No deadline + prev done → blue "+ Set deadline" pill (clickable)
+  //  5. No deadline + prev NOT done → gray locked pill
+  let pill;
+  if (status.hasDeadline && status.overdue) {
+    pill = `<span class="st-deadline overdue">⚠ ${Math.abs(status.days)} days overdue</span>`;
+  } else if (status.hasDeadline && isDone) {
+    pill = `<span class="st-deadline set-completed" title="Locked in once set">✓ Done · ${esc(status.label)}</span>`;
+  } else if (status.hasDeadline) {
+    pill = `<span class="st-deadline set" title="Once set, this can't be changed.">Due ${esc(status.label)}</span>`;
+  } else if (!prevDone) {
+    pill = `<span class="st-deadline locked" title="Finish Section ${sectionIdx} first">🔒 Locked</span>`;
+  } else {
+    pill = `<span class="st-deadline" data-action="set-deadline" title="Pick a date. You can't change it after.">+ Set deadline</span>
+            <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${todayISO()}">`;
+  }
+
+  const overdueBanner = (status.hasDeadline && status.overdue)
+    ? `<div class="overdue-banner">
+         <span class="ob-icon">🚨</span>
+         <span class="ob-body">${overdueMessage(Math.abs(status.days), s.title, s.deadline)}</span>
+       </div>`
+    : '';
+
   return `
-    <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''}" data-section="${s.id}">
+    <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''}" data-section="${s.id}">
       <div class="section-head" data-action="toggle-section">
         <span class="chev">▶</span>
         <span class="st-num">Section ${n}</span>
@@ -472,9 +575,10 @@ function renderSectionRow(c, s, n){
             <span class="mini-bar"><div style="width:${p.pct}%"></div></span>
           </span>
           <span class="st-duration">${fmtDuration(s.durationMins)}</span>
-          <span class="st-deadline ${dl.cls}" data-action="set-deadline" title="${s.deadline ? 'Click to change' : 'Set a deadline'}">${dl.label}</span>
+          ${pill}
         </span>
       </div>
+      ${overdueBanner}
       <div class="section-body">
         <div class="subsections">
           ${(s.subsections || []).map(u => `
@@ -547,12 +651,41 @@ function wireEvents(){
       });
       sectionEl.querySelector('[data-action="set-deadline"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Inline date prompt — quick and works on mobile.
-        const cur = s.deadline || '';
-        const next = prompt('Deadline (YYYY-MM-DD, blank to clear):', cur);
-        if (next === null) return;
-        const v = next.trim();
-        s.deadline = v ? v : null;
+        // Guard: still locked? (cascade)
+        if (!isPrevSectionComplete(c, (c.sections || []).indexOf(s))) {
+          setToast('Finish the previous section first');
+          return;
+        }
+        // Guard: already set? Immutable by design.
+        if (s.deadline) {
+          setToast('Deadlines lock once set');
+          return;
+        }
+        const input = sectionEl.querySelector('.st-deadline-input');
+        if (!input) return;
+        // Native calendar popup. showPicker() is the cleanest UX; older
+        // browsers fall back to clicking the (zero-size) input to open the
+        // wheel/keypad picker.
+        try {
+          if (typeof input.showPicker === 'function') input.showPicker();
+          else input.click();
+        } catch { input.click(); }
+      });
+      sectionEl.querySelector('[data-action="apply-deadline"]')?.addEventListener('change', (e) => {
+        const v = (e.target.value || '').trim();
+        if (!v) return;
+        // One more guard — and a firm confirmation since this is irreversible.
+        const pretty = new Date(v + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+        if (!confirm(
+          `Commit: finish "${s.title}" by ${pretty}?\n\n` +
+          `This can't be changed. Future sections stay locked until this one's done. ` +
+          `If you blow past the date, the section will publicly shame you on the page.`
+        )) {
+          e.target.value = '';
+          return;
+        }
+        s.deadline = v;
+        s.deadlineSetAt = nowISO();
         saveCourse(c);
         render();
       });
