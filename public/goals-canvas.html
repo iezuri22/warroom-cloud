@@ -341,6 +341,36 @@
   }
   #rpFoot{ display:flex; justify-content:flex-end; gap:8px; padding-top:8px; border-top:1px solid var(--line) }
 
+  /* Detail view inside the picker — single recipe with editable defaults */
+  #rpDetail{ display:flex; flex-direction:column; gap:14px; flex:1; min-height:0; overflow:auto; padding:2px 2px 6px }
+  #rpDetail .rpd-hero{ display:flex; gap:18px; align-items:flex-start }
+  #rpDetail .rpd-hero img{
+    width:200px; height:140px; object-fit:cover; border-radius:10px;
+    border:1px solid var(--line); flex:0 0 200px
+  }
+  #rpDetail .rpd-hero .rpd-no-img{
+    width:200px; height:140px; border-radius:10px; border:1px solid var(--line);
+    background:rgba(255,255,255,.04); display:flex; align-items:center; justify-content:center;
+    font-size:42px; opacity:.4; flex:0 0 200px
+  }
+  #rpDetail .rpd-meta{ flex:1; min-width:0; display:flex; flex-direction:column; gap:8px }
+  #rpDetail .rpd-title{ font-size:20px; font-weight:700; line-height:1.2 }
+  #rpDetail .rpd-source{ font-size:12px; color:var(--accent, #4a9eff); text-decoration:none }
+  #rpDetail .rpd-labels{ display:flex; flex-wrap:wrap; gap:6px }
+  #rpDetail .rpd-labels .rp-tag-chip{ font-size:12px; padding:4px 11px }
+  #rpDetail .rpd-section h4{
+    margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.6px;
+    color:var(--muted); font-weight:600
+  }
+  #rpDetail textarea{
+    width:100%; min-height:140px; padding:10px 12px;
+    background:var(--w03); border:1px solid var(--line); border-radius:8px;
+    color:var(--ink); font-size:13px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    line-height:1.5; resize:vertical; outline:none
+  }
+  #rpDetail .rpd-hint{ font-size:11px; color:var(--muted); margin-top:4px }
+  .rpd-foot-info{ font-size:12px; color:var(--muted); margin-right:auto; align-self:center }
+
   /* Sticky color palette */
   .stk-yellow{background:#fef3c7}
   .stk-pink{background:#fbcfe8}
@@ -1831,11 +1861,69 @@ async function ezDoLogin(){
 }
 
 let _ezSelectedTags = new Set();
+let _ezSelectedLabels = new Set();
+let _ezViewMode = 'grid';        // 'grid' | 'detail'
+let _ezDetailRid = null;
+// Editable working copies for the detail view — flushed on Save/Add.
+let _ezDetailIngredients = '';
+let _ezDetailSteps = '';
+let _ezDetailLabels = new Set();
+const DEFAULT_RECIPE_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
+let _recipeLabels = DEFAULT_RECIPE_LABELS.slice();
+const _recipeMeta = new Map();   // rid -> { labels:[], overrideIngredients?:[], overrideSteps?:[] }
+const recipeLabelsDoc = doc(db, 'goals_canvas_config', 'recipe_labels');
+const recipeMetaCol   = collection(db, 'goals_canvas_recipe_meta');
+
+function subscribeRecipeLabels(){
+  onSnapshot(recipeLabelsDoc, (snap) => {
+    if (snap.exists() && Array.isArray(snap.data()?.labels) && snap.data().labels.length) {
+      _recipeLabels = snap.data().labels.slice();
+    }
+    if (_ezViewMode === 'grid' && document.getElementById('rpBd')?.classList.contains('open')) {
+      drawEzLabelFilters();
+    }
+  });
+}
+function subscribeRecipeMeta(){
+  onSnapshot(recipeMetaCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') _recipeMeta.delete(ch.doc.id);
+      else _recipeMeta.set(ch.doc.id, ch.doc.data() || {});
+    });
+    if (document.getElementById('rpBd')?.classList.contains('open')) {
+      if (_ezViewMode === 'detail') drawEzDetail();
+      else { drawEzLabelFilters(); drawEzRecipeList(); }
+    }
+  });
+}
+// Seed defaults on first run if the doc is missing.
+async function ensureLabelDefaults(){
+  try {
+    const snap = await getDoc(recipeLabelsDoc);
+    if (!snap.exists()) {
+      await setDoc(recipeLabelsDoc, { labels: DEFAULT_RECIPE_LABELS, updatedAt: nowISO() });
+    }
+  } catch (e) { console.warn('[ez labels] seed failed', e); }
+}
+// Merge an EZ recipe with our local meta overrides.
+function recipeWithMeta(r){
+  const meta = _recipeMeta.get(r.rid) || {};
+  return {
+    ...r,
+    labels: Array.isArray(meta.labels) ? meta.labels : [],
+    ingredients: Array.isArray(meta.overrideIngredients) ? meta.overrideIngredients : r.ingredients,
+    steps:       Array.isArray(meta.overrideSteps)       ? meta.overrideSteps       : r.steps,
+    _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps)
+  };
+}
 async function loadEzRecipes(){
   const card = document.getElementById('rpCard');
+  _ezViewMode = 'grid';
+  _ezDetailRid = null;
   card.innerHTML = `
-    <h3>EZ Recipes</h3>
+    <h3 id="rpHeader">EZ Recipes</h3>
     <input id="rpSearch" type="search" placeholder="Search title, ingredient, tag…">
+    <div id="rpLabels"></div>
     <div id="rpTags"></div>
     <div id="rpList"><div id="rpEmpty">Loading…</div></div>
     <div id="rpFoot">
@@ -1852,6 +1940,7 @@ async function loadEzRecipes(){
   document.getElementById('rpSearch').addEventListener('input', (e) => {
     _ezQuery = e.target.value || ''; drawEzRecipeList();
   });
+  ensureLabelDefaults();
   if (_ezBusy) return;
   _ezBusy = true;
   try {
@@ -1865,6 +1954,7 @@ async function loadEzRecipes(){
       .map(r => ({ rid: r.id, ...(r.data || {}) }))
       .filter(r => r.title && !r.isDraft)
       .map(r => ({
+        rid:   r.rid,
         title: r.title,
         url:   (r.recipe_url || r.sourceUrl || '').trim(),
         img:   (r.image_url || '').trim(),
@@ -1890,6 +1980,46 @@ function drawEzPickerError(msg){
   `;
   document.getElementById('rpClose').addEventListener('click', closeEzPicker);
 }
+function drawEzLabelFilters(){
+  const bar = document.getElementById('rpLabels');
+  if (!bar) return;
+  // Count how many recipes carry each label (across the whole library,
+  // post-search-filter so chips don't disappear when toggled).
+  const q = _ezQuery.trim().toLowerCase();
+  const pool = _ezRecipes.filter(r => {
+    if (!q) return true;
+    const hay = ((r.title || '') + ' ' + (r.tags || []).join(' ') + ' ' + r.ingredients.join(' ')).toLowerCase();
+    return hay.includes(q);
+  });
+  const counts = new Map();
+  for (const r of pool) {
+    const meta = _recipeMeta.get(r.rid);
+    for (const L of (meta?.labels || [])) counts.set(L, (counts.get(L) || 0) + 1);
+  }
+  bar.innerHTML = _recipeLabels.map(L => {
+    const n = counts.get(L) || 0;
+    return `<button type="button" class="rp-tag-chip${_ezSelectedLabels.has(L) ? ' active' : ''}" data-rp-label="${escapeAttr(L)}">
+      ${escapeHtml(L)}<span class="rp-tag-count">${n}</span>
+    </button>`;
+  }).join('') + (_ezSelectedLabels.size
+      ? '<button class="rp-tag-clear" id="rpLabelClear">Clear labels</button>'
+      : '');
+  bar.querySelectorAll('[data-rp-label]').forEach(b => {
+    b.addEventListener('click', () => {
+      const L = b.getAttribute('data-rp-label');
+      if (_ezSelectedLabels.has(L)) _ezSelectedLabels.delete(L);
+      else _ezSelectedLabels.add(L);
+      drawEzLabelFilters();
+      drawEzRecipeList();
+    });
+  });
+  document.getElementById('rpLabelClear')?.addEventListener('click', () => {
+    _ezSelectedLabels.clear();
+    drawEzLabelFilters();
+    drawEzRecipeList();
+  });
+}
+
 function drawEzTagBar(){
   const bar = document.getElementById('rpTags');
   if (!bar) return;
@@ -1943,8 +2073,15 @@ function drawEzRecipeList(){
       const has = (r.tags || []).some(t => _ezSelectedTags.has(t));
       if (!has) return false;
     }
+    if (_ezSelectedLabels.size) {
+      const meta = _recipeMeta.get(r.rid);
+      const labels = meta?.labels || [];
+      const has = labels.some(L => _ezSelectedLabels.has(L));
+      if (!has) return false;
+    }
     return true;
   }).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  drawEzLabelFilters();
   drawEzTagBar();
   if (!matches.length) {
     list.innerHTML = `<div id="rpEmpty">${
@@ -1955,24 +2092,27 @@ function drawEzRecipeList(){
     return;
   }
   list.innerHTML = matches.map((r, i) => {
-    // Real <img> with a sibling placeholder we hide on successful load. If
-    // the image errors, JS swaps to the placeholder. Explicit 140px height
-    // on both elements so cards never collapse, even before images decode.
+    const merged = recipeWithMeta(r);
     const thumb = r.img
       ? `<img class="rp-thumb" src="${escapeAttr(r.img)}" alt="" loading="lazy"
               onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='flex')">
          <div class="rp-thumb-empty" style="display:none">🍳</div>`
       : `<div class="rp-thumb-empty">🍳</div>`;
-    const tags = (r.tags || []).slice(0, 4).map(t => `<span class="rp-tag">${escapeHtml(t)}</span>`).join('');
+    // Labels live above tags so the user-defined "Want to eat" jumps out.
+    const labelChips = (merged.labels || []).map(L =>
+      `<span class="rp-tag" style="background:rgba(74,222,128,.16);color:#86efac">${escapeHtml(L)}</span>`).join('');
+    const tagChips = (r.tags || []).slice(0, 3).map(t => `<span class="rp-tag">${escapeHtml(t)}</span>`).join('');
+    const chips = labelChips + tagChips;
     return `
-      <div role="button" tabindex="0" class="rp-item" data-ez-i="${i}" title="Click to add to board">
+      <div role="button" tabindex="0" class="rp-item" data-ez-i="${i}" title="Click to view + edit, then add to board">
         ${thumb}
         <div class="rp-body">
           <div class="rp-title">${escapeHtml(r.title)}</div>
-          ${tags ? `<div class="rp-tags">${tags}</div>` : ''}
+          ${chips ? `<div class="rp-tags">${chips}</div>` : ''}
           <div class="rp-meta">
-            <span>${r.ingredients.length} ingredients</span>
-            <span>${r.steps.length} step${r.steps.length===1?'':'s'}</span>
+            <span>${merged.ingredients.length} ingredients</span>
+            <span>${merged.steps.length} step${merged.steps.length===1?'':'s'}</span>
+            ${merged._hasOverride ? '<span style="color:#86efac">· edited</span>' : ''}
           </div>
         </div>
       </div>`;
@@ -1981,9 +2121,155 @@ function drawEzRecipeList(){
     b.addEventListener('click', () => {
       const idx = parseInt(b.getAttribute('data-ez-i'), 10);
       const r = matches[idx];
-      if (r) createRecipeFromEz(r);
+      if (r) openEzDetail(r.rid);
     });
   });
+}
+
+// ============= Detail view (edit defaults + labels) ========================
+function openEzDetail(rid){
+  const r = _ezRecipes.find(x => x.rid === rid);
+  if (!r) return;
+  const merged = recipeWithMeta(r);
+  _ezViewMode = 'detail';
+  _ezDetailRid = rid;
+  _ezDetailIngredients = merged.ingredients.join('\n');
+  _ezDetailSteps       = merged.steps.join('\n');
+  _ezDetailLabels = new Set(merged.labels || []);
+  drawEzDetail();
+}
+function backToEzGrid(){
+  _ezViewMode = 'grid';
+  _ezDetailRid = null;
+  loadEzRecipes();
+}
+function drawEzDetail(){
+  const card = document.getElementById('rpCard');
+  const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
+  if (!r) { backToEzGrid(); return; }
+  const merged = recipeWithMeta(r);
+  const heroImg = r.img
+    ? `<img src="${escapeAttr(r.img)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="rpd-no-img" style="display:none">🍳</div>`
+    : `<div class="rpd-no-img">🍳</div>`;
+  const labelChips = _recipeLabels.map(L => `
+    <button type="button" class="rp-tag-chip${_ezDetailLabels.has(L) ? ' active' : ''}" data-rpd-label="${escapeAttr(L)}">
+      ${escapeHtml(L)}
+    </button>
+  `).join('');
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="tb-btn" id="rpdBack" title="Back to list">← Back</button>
+      <h3 style="margin:0">${escapeHtml(r.title)}</h3>
+      ${merged._hasOverride ? '<span style="font-size:11px;color:#86efac">Edited</span>' : ''}
+    </div>
+    <div id="rpDetail">
+      <div class="rpd-hero">
+        ${heroImg}
+        <div class="rpd-meta">
+          ${r.url ? `<a class="rpd-source" href="${escapeAttr(r.url)}" target="_blank" rel="noopener">↗ View source</a>` : ''}
+          <div class="rpd-section" style="margin-top:6px">
+            <h4>Labels</h4>
+            <div class="rpd-labels" id="rpdLabels">${labelChips}</div>
+            <div class="rpd-hint">Tap to add / remove. Labels live alongside EZ tags and let you filter the picker.</div>
+          </div>
+        </div>
+      </div>
+      <div class="rpd-section">
+        <h4>Ingredients</h4>
+        <textarea id="rpdIngredients" placeholder="One ingredient per line">${escapeHtml(_ezDetailIngredients)}</textarea>
+        <div class="rpd-hint">One per line. These replace the EZ defaults when you Save defaults.</div>
+      </div>
+      <div class="rpd-section">
+        <h4>Steps</h4>
+        <textarea id="rpdSteps" placeholder="One step per line">${escapeHtml(_ezDetailSteps)}</textarea>
+        <div class="rpd-hint">One per line — numbering is added automatically when the recipe drops on the board.</div>
+      </div>
+    </div>
+    <div id="rpFoot">
+      <span class="rpd-foot-info" id="rpdFootInfo"></span>
+      ${merged._hasOverride ? '<button class="tb-btn" id="rpdReset" title="Discard saved defaults; restore the EZ originals">Reset to EZ</button>' : ''}
+      <button class="tb-btn" id="rpdSave">💾 Save defaults</button>
+      <button class="tb-btn" id="rpdAdd" style="background:var(--accent,#4a9eff);color:#fff;border-color:transparent">+ Add to board</button>
+    </div>
+  `;
+  document.getElementById('rpdBack').addEventListener('click', backToEzGrid);
+  document.getElementById('rpdIngredients').addEventListener('input', (e) => { _ezDetailIngredients = e.target.value; });
+  document.getElementById('rpdSteps')      .addEventListener('input', (e) => { _ezDetailSteps       = e.target.value; });
+  document.querySelectorAll('[data-rpd-label]').forEach(b => {
+    b.addEventListener('click', () => {
+      const L = b.getAttribute('data-rpd-label');
+      if (_ezDetailLabels.has(L)) _ezDetailLabels.delete(L);
+      else _ezDetailLabels.add(L);
+      drawEzDetail();
+      // Re-focus the textareas if user was editing — minor UX nicety
+      // (actually drawEzDetail blew away the DOM, so labels-only change
+      // shouldn't cost much).
+    });
+  });
+  document.getElementById('rpdSave').addEventListener('click', saveEzDefaults);
+  document.getElementById('rpdAdd').addEventListener('click', addEzDetailToBoard);
+  document.getElementById('rpdReset')?.addEventListener('click', resetEzDefaults);
+}
+
+async function saveEzDefaults(){
+  if (!_ezDetailRid) return;
+  const payload = {
+    labels: [..._ezDetailLabels],
+    overrideIngredients: _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean),
+    overrideSteps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean),
+    updatedAt: nowISO()
+  };
+  setStatus('Saving defaults…', 'sticky');
+  try {
+    await setDoc(doc(recipeMetaCol, _ezDetailRid), payload, { merge: true });
+    _recipeMeta.set(_ezDetailRid, { ..._recipeMeta.get(_ezDetailRid), ...payload });
+    setStatus('Defaults saved ✓');
+    drawEzDetail();   // re-render so the "Edited" badge appears
+  } catch (e) {
+    console.error('[ez] save defaults failed', e);
+    setStatus('Save failed — see console', 'error');
+  }
+}
+async function resetEzDefaults(){
+  if (!_ezDetailRid) return;
+  if (!confirm('Discard your edits and use EZ originals for this recipe?')) return;
+  try {
+    await setDoc(doc(recipeMetaCol, _ezDetailRid),
+      { overrideIngredients: null, overrideSteps: null, updatedAt: nowISO() },
+      { merge: true });
+    _recipeMeta.delete(_ezDetailRid);
+    const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
+    _ezDetailIngredients = (r?.ingredients || []).join('\n');
+    _ezDetailSteps       = (r?.steps       || []).join('\n');
+    drawEzDetail();
+    setStatus('Reset to EZ originals');
+  } catch (e) {
+    console.error('[ez] reset failed', e);
+    setStatus('Reset failed', 'error');
+  }
+}
+async function addEzDetailToBoard(){
+  const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
+  if (!r) return;
+  // Build a synthetic recipe payload using the (possibly edited) current
+  // textarea contents. Bypass the saved override so the user gets exactly
+  // what they see on screen.
+  const synth = {
+    ...r,
+    ingredients: _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean),
+    steps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean)
+  };
+  // Persist the labels selection silently (most users expect labels to
+  // stick when they hit Add — without forcing them to click Save first).
+  if (_ezDetailRid) {
+    try {
+      await setDoc(doc(recipeMetaCol, _ezDetailRid),
+        { labels: [..._ezDetailLabels], updatedAt: nowISO() },
+        { merge: true });
+      _recipeMeta.set(_ezDetailRid, { ..._recipeMeta.get(_ezDetailRid), labels: [..._ezDetailLabels] });
+    } catch {}
+  }
+  await createRecipeFromEz(synth);
 }
 
 // Build a recipe scaffold on the active board from an EZ recipe payload.
@@ -2510,6 +2796,8 @@ async function bootstrap(){
     subscribeNodes();
     subscribeView();
     subscribeLinkedTodos();
+    subscribeRecipeLabels();
+    subscribeRecipeMeta();
 
     setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
     setTimeout(()=> statusEl.classList.add('hidden'), 1200);
