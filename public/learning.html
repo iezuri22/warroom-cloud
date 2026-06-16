@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Learning — War Room</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root {
+    --bg:#0e1116;
+    --bg2:#161a21;
+    --ink:#e6e8eb;
+    --muted:#8a9099;
+    --w03:rgba(255,255,255,.03);
+    --w05:rgba(255,255,255,.05);
+    --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.14);
+    --accent:#4a9eff;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --red:#f87171;
+    --purple:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  body.embed{background:transparent}
+  body{min-height:100vh}
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    position:sticky;top:0;z-index:30;
+    display:flex;align-items:center;gap:12px;padding:14px 20px;
+    background:rgba(14,17,22,.92);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)
+  }
+  #topbar h1{margin:0;font-size:18px;font-weight:700;letter-spacing:-.2px}
+  #topbar .sp{flex:1}
+  .tb-btn{
+    height:32px;padding:0 14px;border-radius:8px;
+    background:var(--bg2);border:1px solid var(--line);color:var(--ink);
+    font-size:13px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px
+  }
+  .tb-btn:hover{background:var(--w05);border-color:var(--line2)}
+  .tb-btn.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
+  .tb-btn.primary:hover{filter:brightness(1.1)}
+
+  /* ---------- Course grid ---------- */
+  #main{max-width:1100px;margin:0 auto;padding:24px 20px 80px}
+  .empty-state{
+    padding:60px 24px;text-align:center;color:var(--muted);
+    border:1px dashed var(--line);border-radius:14px;margin-top:20px
+  }
+  .empty-state h2{margin:0 0 8px;font-size:20px;color:var(--ink);font-weight:600}
+  .empty-state p{margin:0 0 20px;font-size:13px;line-height:1.6}
+  .empty-state .seed-options{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+
+  .course{
+    background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+    padding:0;margin-bottom:22px;overflow:hidden
+  }
+  .course-head{
+    display:flex;align-items:center;gap:16px;padding:18px 22px;
+    border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)
+  }
+  .course-head .ch-main{flex:1;min-width:0}
+  .course-head .ch-title{font-size:18px;font-weight:700;margin:0 0 4px;letter-spacing:-.1px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .course-head .ch-title .ch-srctag{
+    font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;
+    padding:2px 8px;border-radius:6px;background:rgba(167,139,250,.18);color:#c4b5fd
+  }
+  .course-head .ch-meta{font-size:12px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
+  .course-head .ch-meta a{color:var(--accent);text-decoration:none}
+  .course-head .ch-meta a:hover{text-decoration:underline}
+  .course-head .ch-tools{display:flex;gap:6px;align-items:center}
+  .ch-icon-btn{
+    width:30px;height:30px;border-radius:7px;border:1px solid var(--line);
+    background:transparent;color:var(--muted);cursor:pointer;font-size:14px;
+    display:inline-flex;align-items:center;justify-content:center
+  }
+  .ch-icon-btn:hover{color:var(--ink);background:var(--w05);border-color:var(--line2)}
+  .ch-icon-btn.danger:hover{color:var(--red);border-color:rgba(248,113,113,.3)}
+
+  /* Progress bar across the whole course */
+  .course-progress{padding:12px 22px;background:var(--w03)}
+  .course-progress .row{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted);margin-bottom:8px}
+  .course-progress .row strong{color:var(--ink);font-weight:600}
+  .course-progress .bar{
+    height:6px;background:var(--w05);border-radius:99px;overflow:hidden
+  }
+  .course-progress .bar > div{
+    height:100%;background:linear-gradient(90deg, var(--green), #16a34a);
+    border-radius:99px;transition:width .4s ease
+  }
+
+  /* Sections */
+  .sections{padding:8px 14px 14px}
+  .section{
+    border:1px solid var(--line);border-radius:10px;margin-top:10px;
+    background:var(--w03);overflow:hidden
+  }
+  .section.done{border-color:rgba(74,222,128,.28)}
+  .section-head{
+    display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;
+    transition:background .12s;user-select:none
+  }
+  .section-head:hover{background:var(--w05)}
+  .section-head .chev{
+    width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;
+    color:var(--muted);font-size:10px;transition:transform .15s;flex:0 0 18px
+  }
+  .section.expanded .section-head .chev{transform:rotate(90deg)}
+  .section-head .st-num{
+    font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.4px;
+    background:var(--w05);padding:2px 8px;border-radius:8px;flex:0 0 auto;
+    text-transform:uppercase
+  }
+  .section-head .st-title{flex:1;font-size:14px;font-weight:600;min-width:0;line-height:1.35}
+  .section-head .st-meta{
+    display:flex;gap:12px;align-items:center;font-size:11px;color:var(--muted);flex:0 0 auto
+  }
+  .section-head .st-progress{
+    display:inline-flex;align-items:center;gap:6px;
+    font-weight:600;color:var(--ink)
+  }
+  .section-head .st-progress .mini-bar{
+    width:60px;height:5px;background:var(--w05);border-radius:99px;overflow:hidden
+  }
+  .section-head .st-progress .mini-bar > div{
+    height:100%;background:var(--green);border-radius:99px;transition:width .3s
+  }
+  .section.done .st-progress{color:var(--green)}
+  .section-head .st-duration{font-weight:500}
+  .section-head .st-deadline{
+    padding:3px 9px;border-radius:6px;font-weight:600;letter-spacing:.2px;
+    background:var(--w05);color:var(--muted);cursor:pointer;transition:.12s
+  }
+  .section-head .st-deadline:hover{color:var(--ink);background:var(--w05)}
+  .section-head .st-deadline.soon{background:rgba(251,191,36,.16);color:#fcd34d}
+  .section-head .st-deadline.overdue{background:rgba(248,113,113,.16);color:#fca5a5}
+  .section-head .st-deadline.set{color:var(--accent)}
+
+  .section-body{display:none;padding:6px 14px 14px;border-top:1px solid var(--line);background:rgba(255,255,255,.015)}
+  .section.expanded .section-body{display:block}
+  .subsections{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+  .sub-row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;
+    transition:.12s;font-size:13px;color:var(--ink)
+  }
+  .sub-row:hover{background:var(--w05)}
+  .sub-check{
+    width:18px;height:18px;border-radius:5px;border:1.5px solid var(--line2);
+    background:var(--w03);cursor:pointer;flex:0 0 18px;display:inline-flex;align-items:center;justify-content:center;
+    transition:.12s
+  }
+  .sub-row.done .sub-check{background:var(--green);border-color:var(--green)}
+  .sub-row.done .sub-check::after{
+    content:'';width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;
+    transform:translate(0,-1px) rotate(-45deg)
+  }
+  .sub-title{
+    flex:1;cursor:text;padding:2px 4px;border-radius:4px;outline:none;min-width:0;
+    -webkit-user-select:text;user-select:text
+  }
+  .sub-title:focus{background:var(--w05)}
+  .sub-row.done .sub-title{color:var(--muted);text-decoration:line-through}
+  .sub-tools{display:flex;gap:4px;opacity:0;transition:opacity .12s}
+  .sub-row:hover .sub-tools{opacity:1}
+  .sub-tools .study-btn{
+    padding:4px 9px;border-radius:6px;background:transparent;border:1px solid var(--line);
+    color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px
+  }
+  .sub-tools .study-btn:hover{background:rgba(74,158,255,.12);border-color:var(--accent)}
+  .sub-tools .del-btn{
+    width:24px;height:24px;border-radius:6px;background:transparent;border:none;
+    color:var(--muted);cursor:pointer;font-size:13px
+  }
+  .sub-tools .del-btn:hover{color:var(--red);background:rgba(248,113,113,.1)}
+  .add-sub-row{
+    margin-top:6px;padding:8px 10px;border-radius:6px;background:transparent;
+    border:1px dashed var(--line2);color:var(--muted);font-size:12px;
+    cursor:pointer;font-family:inherit;width:auto
+  }
+  .add-sub-row:hover{color:var(--ink);border-color:var(--accent)}
+
+  /* ---------- Modal ---------- */
+  .modal-bd{
+    position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);
+    z-index:100;display:none;align-items:flex-start;justify-content:center;padding:60px 20px
+  }
+  .modal-bd.open{display:flex}
+  .modal{
+    background:var(--bg);border:1px solid var(--line2);border-radius:14px;
+    width:100%;max-width:560px;padding:22px 24px;max-height:80vh;overflow:auto;
+    box-shadow:0 12px 40px rgba(0,0,0,.6)
+  }
+  .modal h2{margin:0 0 16px;font-size:18px;font-weight:600}
+  .modal .field{margin-bottom:12px}
+  .modal label{display:block;font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .modal input, .modal select, .modal textarea{
+    width:100%;padding:9px 11px;background:var(--w03);border:1px solid var(--line);
+    border-radius:7px;color:var(--ink);font-size:13px;font-family:inherit;outline:none
+  }
+  .modal input:focus, .modal textarea:focus{border-color:var(--accent)}
+  .modal textarea{min-height:140px;resize:vertical;line-height:1.5;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .modal .hint{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+  .modal .row{display:flex;gap:10px}
+  .modal .row .field{flex:1}
+  .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;border-top:1px solid var(--line);padding-top:16px}
+
+  /* Toast */
+  #toast{
+    position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+    background:var(--bg2);border:1px solid var(--line);border-radius:99px;
+    padding:8px 16px;font-size:12px;color:var(--muted);z-index:200;
+    transition:opacity .25s;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.4)
+  }
+  #toast.hidden{opacity:0}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>Learning</h1>
+  <span class="sp"></span>
+  <button class="tb-btn primary" id="addCourseBtn">+ Add course</button>
+</div>
+
+<main id="main">
+  <div id="courses"></div>
+</main>
+
+<!-- Add / edit course modal -->
+<div class="modal-bd" id="courseModalBd">
+  <div class="modal">
+    <h2 id="cmTitle">Add a course</h2>
+    <input type="hidden" id="cmId">
+    <div class="field">
+      <label>Course title</label>
+      <input type="text" id="cmName" placeholder="e.g. The Ultimate Digital Marketing Course 2026">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Source</label>
+        <select id="cmSource">
+          <option value="udemy">Udemy</option>
+          <option value="coursera">Coursera</option>
+          <option value="youtube">YouTube</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>URL (optional)</label>
+        <input type="url" id="cmUrl" placeholder="https://www.udemy.com/course/…">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Total hours (optional)</label>
+        <input type="number" id="cmHours" min="0" step="0.5" placeholder="40">
+      </div>
+      <div class="field">
+        <label>Rating (optional)</label>
+        <input type="number" id="cmRating" min="0" max="5" step="0.1" placeholder="4.7">
+      </div>
+    </div>
+    <div class="field">
+      <label>Sections (paste one per line)</label>
+      <textarea id="cmSections" placeholder="Section title | subsection count | duration
+Section 1: Introduction | 2 | 4min
+Section 2: Market Research | 8 | 48min
+Section 3: SEO | 36 | 4hr 3min"></textarea>
+      <div class="hint">
+        Format: <code>Section title | count | duration</code>.<br>
+        Duration accepts <code>4min</code>, <code>1hr 15min</code>, or just a number (minutes).<br>
+        Subsections are auto-generated as "Lecture 1, 2, 3…" — rename them inline.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="tb-btn" id="cmCancel">Cancel</button>
+      <button class="tb-btn primary" id="cmSave">Save course</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, getDocs, getDoc, setDoc, deleteDoc, onSnapshot, addDoc }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+// ============= Firebase =============
+const firebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "566644863130",
+  appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const coursesCol = collection(db, 'learning_courses');
+
+// ============= State =============
+const courses = new Map();         // id -> course doc
+const expandedSections = new Set(); // courseId + '/' + sectionId
+const expandedCourses  = new Set(); // courseId
+
+// ============= Helpers =============
+function uid(){ return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6); }
+function nowISO(){ return new Date().toISOString(); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function attr(s){ return esc(s).replace(/'/g, '&#39;'); }
+
+// Parse durations like "4min", "1hr 15min", "75" (minutes), "1:15".
+function parseDuration(str){
+  if (!str) return 0;
+  const s = String(str).toLowerCase().trim();
+  if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s));
+  let total = 0;
+  const hr = s.match(/(\d+(?:\.\d+)?)\s*hr/);
+  if (hr) total += Math.round(parseFloat(hr[1]) * 60);
+  const min = s.match(/(\d+(?:\.\d+)?)\s*min/);
+  if (min) total += Math.round(parseFloat(min[1]));
+  if (!total) {
+    const m = s.match(/(\d+):(\d+)/);
+    if (m) total = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  }
+  return total;
+}
+function fmtDuration(mins){
+  if (!mins) return '—';
+  if (mins < 60) return mins + ' min';
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+function fmtDeadline(iso){
+  if (!iso) return { label: '+ Deadline', cls: '' };
+  const d = new Date(iso + 'T12:00:00');
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((target - today) / 86400000);
+  let label;
+  if (days < 0)      label = `${Math.abs(days)}d overdue`;
+  else if (days === 0) label = 'Today';
+  else if (days === 1) label = 'Tomorrow';
+  else if (days < 7)   label = `In ${days} days`;
+  else                 label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  let cls = 'set';
+  if (days < 0) cls = 'overdue';
+  else if (days <= 3) cls = 'soon';
+  return { label, cls };
+}
+function setToast(msg, kind){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  if (kind === 'error') t.style.borderColor = 'rgba(248,113,113,.4)';
+  else t.style.borderColor = 'var(--line)';
+  clearTimeout(setToast._t);
+  setToast._t = setTimeout(() => t.classList.add('hidden'), 2400);
+}
+
+// ============= Course persistence ============
+async function saveCourse(c){
+  c.updatedAt = nowISO();
+  try { await setDoc(doc(coursesCol, c.id), c, { merge: false }); }
+  catch (e) { console.error('[learning] save failed', e); setToast('Save failed', 'error'); }
+}
+async function delCourse(id){
+  try { await deleteDoc(doc(coursesCol, id)); }
+  catch (e) { console.error('[learning] delete failed', e); }
+}
+
+// ============= Render ==============================
+function progressFor(course){
+  let total = 0, done = 0;
+  for (const s of (course.sections || [])) {
+    for (const u of (s.subsections || [])) {
+      total++;
+      if (u.done) done++;
+    }
+  }
+  return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
+}
+function sectionProgress(section){
+  const total = (section.subsections || []).length;
+  const done  = (section.subsections || []).filter(u => u.done).length;
+  return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
+}
+
+function render(){
+  const root = document.getElementById('courses');
+  if (!courses.size) {
+    root.innerHTML = `
+      <div class="empty-state">
+        <h2>No courses yet</h2>
+        <p>Track Udemy, Coursera, YouTube — anything broken into sections + lectures.<br>
+           Add deadlines per section. Check off lectures as you go.<br>
+           Hit ▶ Study on a lecture to launch a Focus session pre-filled with its title.</p>
+        <div class="seed-options">
+          <button class="tb-btn primary" onclick="window._seedUdemy()">+ Add the Digital Marketing course</button>
+          <button class="tb-btn" onclick="window._openAddCourse()">+ Add a different course</button>
+        </div>
+      </div>`;
+    return;
+  }
+  const sorted = [...courses.values()].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  root.innerHTML = sorted.map(c => renderCourseCard(c)).join('');
+  wireEvents();
+}
+
+function renderCourseCard(c){
+  const p = progressFor(c);
+  const srcLabel = { udemy:'Udemy', coursera:'Coursera', youtube:'YouTube', other:'Course' }[c.source] || 'Course';
+  const meta = [];
+  if (c.totalHours) meta.push(`${c.totalHours} hours`);
+  if (c.rating)     meta.push(`★ ${c.rating}`);
+  if (c.students)   meta.push(`${c.students.toLocaleString()} students`);
+  const metaStr = meta.join(' · ');
+  return `
+    <div class="course" data-course="${c.id}">
+      <div class="course-head">
+        <div class="ch-main">
+          <div class="ch-title">
+            <span class="ch-srctag">${esc(srcLabel)}</span>
+            ${esc(c.title)}
+          </div>
+          <div class="ch-meta">
+            ${metaStr ? `<span>${esc(metaStr)}</span>` : ''}
+            ${c.url ? `<a href="${attr(c.url)}" target="_blank" rel="noopener">↗ Open course</a>` : ''}
+          </div>
+        </div>
+        <div class="ch-tools">
+          <button class="ch-icon-btn" data-action="edit-course" title="Edit course details">✎</button>
+          <button class="ch-icon-btn danger" data-action="delete-course" title="Delete course">✕</button>
+        </div>
+      </div>
+      <div class="course-progress">
+        <div class="row">
+          <span><strong>${p.done}</strong> / ${p.total} lectures</span>
+          <span><strong>${p.pct}%</strong> complete</span>
+        </div>
+        <div class="bar"><div style="width:${p.pct}%"></div></div>
+      </div>
+      <div class="sections">
+        ${(c.sections || []).map((s, idx) => renderSectionRow(c, s, idx + 1)).join('')}
+        <button class="add-sub-row" data-action="add-section" style="margin-top:12px;width:100%">+ Add section</button>
+      </div>
+    </div>`;
+}
+
+function renderSectionRow(c, s, n){
+  const p = sectionProgress(s);
+  const isDone = p.total > 0 && p.done === p.total;
+  const isExpanded = expandedSections.has(c.id + '/' + s.id);
+  const dl = fmtDeadline(s.deadline);
+  return `
+    <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''}" data-section="${s.id}">
+      <div class="section-head" data-action="toggle-section">
+        <span class="chev">▶</span>
+        <span class="st-num">Section ${n}</span>
+        <span class="st-title">${esc(s.title)}</span>
+        <span class="st-meta">
+          <span class="st-progress">
+            <span>${p.done}/${p.total}</span>
+            <span class="mini-bar"><div style="width:${p.pct}%"></div></span>
+          </span>
+          <span class="st-duration">${fmtDuration(s.durationMins)}</span>
+          <span class="st-deadline ${dl.cls}" data-action="set-deadline" title="${s.deadline ? 'Click to change' : 'Set a deadline'}">${dl.label}</span>
+        </span>
+      </div>
+      <div class="section-body">
+        <div class="subsections">
+          ${(s.subsections || []).map(u => `
+            <div class="sub-row ${u.done ? 'done' : ''}" data-sub="${u.id}">
+              <div class="sub-check" data-action="toggle-sub" title="Mark complete"></div>
+              <div class="sub-title" contenteditable="plaintext-only" data-action="edit-sub-title">${esc(u.title)}</div>
+              <div class="sub-tools">
+                <button class="study-btn" data-action="study-sub" title="Open Focus session pre-filled with this lecture">▶ Study</button>
+                <button class="del-btn" data-action="del-sub" title="Remove lecture">✕</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <button class="add-sub-row" data-action="add-sub">+ Add lecture</button>
+      </div>
+    </div>`;
+}
+
+// ============= Event wiring ==============
+function wireEvents(){
+  document.querySelectorAll('.course').forEach(courseEl => {
+    const courseId = courseEl.dataset.course;
+    const c = courses.get(courseId);
+    if (!c) return;
+
+    // Course-level
+    courseEl.querySelectorAll('[data-action="edit-course"]').forEach(b =>
+      b.addEventListener('click', () => openCourseModal(courseId)));
+    courseEl.querySelectorAll('[data-action="delete-course"]').forEach(b =>
+      b.addEventListener('click', () => {
+        if (!confirm('Delete "' + c.title + '"? This wipes its sections and progress.')) return;
+        courses.delete(courseId);
+        delCourse(courseId);
+        render();
+      }));
+    courseEl.querySelectorAll('[data-action="add-section"]').forEach(b =>
+      b.addEventListener('click', () => {
+        const title = prompt('Section title:', '');
+        if (!title || !title.trim()) return;
+        const sCount = parseInt(prompt('How many lectures?', '5'), 10) || 0;
+        const dur = parseDuration(prompt('Total duration (e.g. 1hr 30min):', ''));
+        const newSection = {
+          id: 's_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+          title: title.trim(),
+          durationMins: dur,
+          deadline: null,
+          subsections: Array.from({ length: sCount }, (_, i) => ({
+            id: 'u_' + Date.now().toString(36) + '_' + i,
+            title: 'Lecture ' + (i + 1),
+            done: false
+          }))
+        };
+        c.sections = [...(c.sections || []), newSection];
+        saveCourse(c);
+        render();
+      }));
+
+    // Section-level
+    courseEl.querySelectorAll('.section').forEach(sectionEl => {
+      const sectionId = sectionEl.dataset.section;
+      const s = (c.sections || []).find(x => x.id === sectionId);
+      if (!s) return;
+      sectionEl.querySelector('[data-action="toggle-section"]')?.addEventListener('click', (e) => {
+        // Don't fire when clicking the deadline pill.
+        if (e.target.closest('[data-action="set-deadline"]')) return;
+        const key = courseId + '/' + sectionId;
+        if (expandedSections.has(key)) expandedSections.delete(key);
+        else expandedSections.add(key);
+        render();
+      });
+      sectionEl.querySelector('[data-action="set-deadline"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Inline date prompt — quick and works on mobile.
+        const cur = s.deadline || '';
+        const next = prompt('Deadline (YYYY-MM-DD, blank to clear):', cur);
+        if (next === null) return;
+        const v = next.trim();
+        s.deadline = v ? v : null;
+        saveCourse(c);
+        render();
+      });
+      sectionEl.querySelectorAll('[data-action="toggle-sub"]').forEach(b =>
+        b.addEventListener('click', () => {
+          const subId = b.closest('.sub-row')?.dataset.sub;
+          const u = (s.subsections || []).find(x => x.id === subId);
+          if (!u) return;
+          u.done = !u.done;
+          u.doneAt = u.done ? nowISO() : null;
+          saveCourse(c);
+          render();
+        }));
+      sectionEl.querySelectorAll('[data-action="study-sub"]').forEach(b =>
+        b.addEventListener('click', () => {
+          const subId = b.closest('.sub-row')?.dataset.sub;
+          const u = (s.subsections || []).find(x => x.id === subId);
+          if (!u) return;
+          // Pre-fill the Focus session with the lecture title. Opens in a new
+          // tab so the Learning page stays in place.
+          const intent = `${c.title} — ${s.title} · ${u.title}`;
+          const qs = new URLSearchParams({ intent });
+          window.open('/focus-session.html?' + qs.toString(), '_blank');
+        }));
+      sectionEl.querySelectorAll('[data-action="del-sub"]').forEach(b =>
+        b.addEventListener('click', () => {
+          const subId = b.closest('.sub-row')?.dataset.sub;
+          if (!confirm('Remove this lecture?')) return;
+          s.subsections = (s.subsections || []).filter(x => x.id !== subId);
+          saveCourse(c);
+          render();
+        }));
+      sectionEl.querySelectorAll('[data-action="edit-sub-title"]').forEach(el =>
+        el.addEventListener('blur', () => {
+          const subId = el.closest('.sub-row')?.dataset.sub;
+          const u = (s.subsections || []).find(x => x.id === subId);
+          if (!u) return;
+          const v = (el.textContent || '').trim();
+          if (u.title === v) return;
+          u.title = v;
+          saveCourse(c);  // no full render — text already shows in DOM
+        }));
+      sectionEl.querySelectorAll('[data-action="add-sub"]').forEach(b =>
+        b.addEventListener('click', () => {
+          const newU = {
+            id: 'u_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
+            title: 'Lecture ' + ((s.subsections || []).length + 1),
+            done: false
+          };
+          s.subsections = [...(s.subsections || []), newU];
+          saveCourse(c);
+          render();
+        }));
+    });
+  });
+}
+
+// ============= Add / edit course modal ==============
+function openCourseModal(editId){
+  const c = editId ? courses.get(editId) : null;
+  document.getElementById('cmTitle').textContent = c ? 'Edit course' : 'Add a course';
+  document.getElementById('cmId').value     = editId || '';
+  document.getElementById('cmName').value   = (c && c.title) || '';
+  document.getElementById('cmSource').value = (c && c.source) || 'udemy';
+  document.getElementById('cmUrl').value    = (c && c.url) || '';
+  document.getElementById('cmHours').value  = (c && c.totalHours) || '';
+  document.getElementById('cmRating').value = (c && c.rating) || '';
+  // For existing courses, pre-fill the sections textarea with the current shape
+  // so the user can edit / extend.
+  if (c) {
+    document.getElementById('cmSections').value = (c.sections || []).map(s =>
+      `${s.title} | ${(s.subsections || []).length} | ${fmtDuration(s.durationMins)}`
+    ).join('\n');
+  } else {
+    document.getElementById('cmSections').value = '';
+  }
+  document.getElementById('courseModalBd').classList.add('open');
+  setTimeout(() => document.getElementById('cmName').focus(), 50);
+}
+function closeCourseModal(){ document.getElementById('courseModalBd').classList.remove('open'); }
+async function saveCourseFromModal(){
+  const id    = document.getElementById('cmId').value || uid();
+  const title = document.getElementById('cmName').value.trim();
+  if (!title) { alert('Give the course a title.'); return; }
+  const existing = courses.get(id);
+  const c = existing ? { ...existing } : {
+    id, addedAt: nowISO(), sections: []
+  };
+  c.title       = title;
+  c.source      = document.getElementById('cmSource').value;
+  c.url         = document.getElementById('cmUrl').value.trim() || null;
+  c.totalHours  = parseFloat(document.getElementById('cmHours').value) || null;
+  c.rating      = parseFloat(document.getElementById('cmRating').value) || null;
+
+  // Section list parsing — only rebuild sections if the textarea is non-empty
+  // (so editing other fields without touching sections doesn't wipe progress).
+  const sectionsText = document.getElementById('cmSections').value.trim();
+  if (sectionsText) {
+    const lines = sectionsText.split('\n').map(l => l.trim()).filter(Boolean);
+    const newSections = lines.map((line, i) => {
+      const parts = line.split('|').map(s => s.trim());
+      const stitle = parts[0] || `Section ${i + 1}`;
+      const count = parseInt(parts[1], 10) || 0;
+      const dur   = parseDuration(parts[2] || '');
+      // If editing, try to reuse the prior section's id + subsection done state.
+      const prior = (c.sections || []).find(p => p.title === stitle);
+      const subs = Array.from({ length: count }, (_, ix) => {
+        const priorSub = prior && prior.subsections && prior.subsections[ix];
+        return {
+          id: priorSub?.id || ('u_' + Date.now().toString(36) + '_' + i + '_' + ix),
+          title: priorSub?.title || ('Lecture ' + (ix + 1)),
+          done: !!(priorSub && priorSub.done),
+          doneAt: priorSub?.doneAt || null
+        };
+      });
+      return {
+        id: prior?.id || ('s_' + Date.now().toString(36) + '_' + i),
+        title: stitle,
+        durationMins: dur || prior?.durationMins || 0,
+        deadline: prior?.deadline || null,
+        subsections: subs
+      };
+    });
+    c.sections = newSections;
+  }
+  courses.set(c.id, c);
+  await saveCourse(c);
+  closeCourseModal();
+  render();
+}
+
+document.getElementById('addCourseBtn').addEventListener('click', () => openCourseModal());
+document.getElementById('cmCancel').addEventListener('click', closeCourseModal);
+document.getElementById('cmSave').addEventListener('click', saveCourseFromModal);
+document.getElementById('courseModalBd').addEventListener('click', (e) => {
+  if (e.target.id === 'courseModalBd') closeCourseModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('courseModalBd').classList.contains('open')) closeCourseModal();
+});
+
+// ============= Udemy seed ==============================
+window._openAddCourse = () => openCourseModal();
+window._seedUdemy = async () => {
+  // Counts + durations transcribed from the user's Udemy screenshots. First
+  // five sections were already marked complete in the screenshot, so we seed
+  // those subsections as `done: true`.
+  const SEED = [
+    ['Introduction', 2, '4min', true],
+    ['What To Expect From This Course', 2, '6min', true],
+    ["Market Research - Understand Who You're Targeting", 8, '48min', true],
+    ['Website Creation - How To Make Your Own Website', 9, '1hr 15min', true],
+    ['Copywriting', 11, '1hr 42min', true],
+    ['Search Engine Optimisation (SEO)', 36, '4hr 3min', false],
+    ['Google Ads (Formerly Google Adwords)', 35, '6hr 28min', false],
+    ['Email Marketing', 11, '2hr 8min', false],
+    ['Facebook Marketing', 12, '2hr 32min', false],
+    ['Facebook Ads', 32, '8hr 42min', false],
+    ['Twitter Marketing', 15, '3hr 33min', false],
+    ['Twitter Ads', 19, '3hr 41min', false],
+    ['Cold Emailing', 43, '5hr 1min', false],
+    ['Conclusion, what next?', 1, '1min', false],
+    ['What Next?', 1, '5min', false]
+  ];
+  const id = uid();
+  const c = {
+    id,
+    title: 'The Ultimate Digital Marketing Course 2026: 11 Courses in 1',
+    source: 'udemy',
+    url: 'https://www.udemy.com/',
+    totalHours: 40,
+    rating: 4.7,
+    students: 13417,
+    addedAt: nowISO(),
+    sections: SEED.map(([stitle, count, dur, done], i) => ({
+      id: 's_' + Date.now().toString(36) + '_' + i,
+      title: stitle,
+      durationMins: parseDuration(dur),
+      deadline: null,
+      subsections: Array.from({ length: count }, (_, ix) => ({
+        id: 'u_' + Date.now().toString(36) + '_' + i + '_' + ix,
+        title: 'Lecture ' + (ix + 1),
+        done: !!done,
+        doneAt: done ? nowISO() : null
+      }))
+    }))
+  };
+  courses.set(id, c);
+  await saveCourse(c);
+  setToast('Course added ✓');
+  render();
+};
+
+// ============= Initial load + live sync ===============
+async function bootstrap(){
+  try {
+    const snap = await getDocs(coursesCol);
+    snap.forEach(d => courses.set(d.id, { id: d.id, ...d.data() }));
+    render();
+  } catch (e) {
+    console.error('[learning] bootstrap failed', e);
+    document.getElementById('courses').innerHTML = `<div class="empty-state"><h2>Couldn't load</h2><p>${esc(e.message || 'error')}</p></div>`;
+  }
+  // Live updates from other devices.
+  onSnapshot(coursesCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') courses.delete(ch.doc.id);
+      else courses.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    render();
+  });
+}
+bootstrap();
+
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+</script>
+
+</body>
+</html>
