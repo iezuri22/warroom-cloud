@@ -401,7 +401,7 @@
     <div id="canvas"></div>
     <div id="emptyHint">
       <h2>Your goal board</h2>
-      <p>Pan with mouse drag · zoom with Shift+scroll, pinch, or the buttons above.</p>
+      <p>Pan with mouse drag · zoom with Shift+scroll, pinch, or the buttons above.<br>Shift+drag a node to move just it, leaving anything inside in place.</p>
       <span class="pill" id="firstAddBtn">+ Add your first section</span>
     </div>
   </main>
@@ -1013,9 +1013,10 @@ function attachNodeListeners(el){
     if (e.target.closest('.sticky-check')) return;
     if (e.target.closest('.row-link')) return;       // clicking the link chip
     if (e.target.closest('.sticky-image')) return;   // clicking the image opens it
-    // Section drag only via header; subsection drag via header.
+    // Section / subsection drag is normally via the header bar only — but
+    // hold Shift to grab the body too ("isolate move" — see below).
     if (n.type === 'section' || n.type === 'subsection') {
-      if (!e.target.closest('.sec-head')) return;
+      if (!e.target.closest('.sec-head') && !e.shiftKey) return;
     }
     e.preventDefault();
     e.stopPropagation();
@@ -1026,10 +1027,12 @@ function attachNodeListeners(el){
     const startX = e.clientX, startY = e.clientY;
     const origX = n.x, origY = n.y;
     // When dragging a container, gather every descendant so they move as a
-    // group (subsections + stickies inside subsections, stickies, etc).
-    // Snapshot each descendant's original position so we can translate them
-    // by exactly (dx, dy) on every mousemove.
-    const isContainer = n.type === 'section' || n.type === 'subsection';
+    // group. Holding Shift at mousedown turns this into an "isolate move" —
+    // we skip the descendant grab so only the section/sticky under the
+    // cursor moves, even if it had children sitting inside it. The Shift
+    // state at drag-start is the decision; mid-drag toggles don't change it.
+    const isolateMove = e.shiftKey;
+    const isContainer = (n.type === 'section' || n.type === 'subsection') && !isolateMove;
     const descendants = isContainer ? collectDescendants(id) : [];
     descendants.forEach(d => { d._origX = d.x; d._origY = d.y; _writingNode.add(d.id); });
     function move(ev){
@@ -1708,6 +1711,11 @@ function showNodeContextMenu(px, py, n){
     <div class="cm-row">${swatchesFor(n.type === 'sticky' ? 'sticky' : 'section')
       .replace(/data-action="color"/g, 'data-cm="color"')}</div>
     <div class="cm-sep"></div>
+    <div class="cm-item" data-cm="z-front">↑ Bring to front</div>
+    <div class="cm-item" data-cm="z-forward">↥ Move forward</div>
+    <div class="cm-item" data-cm="z-backward">↧ Move backward</div>
+    <div class="cm-item" data-cm="z-back">↓ Send to back</div>
+    <div class="cm-sep"></div>
     <div class="cm-item danger" data-cm="delete">✕ Delete</div>
   `;
   cm.style.left = px + 'px';
@@ -1720,8 +1728,59 @@ function showNodeContextMenu(px, py, n){
     if (c === 'focus5')      promoteToFocus5(n);
     if (c === 'toggle-done') toggleDone(n);
     if (c === 'color')       { n.color = e.target.dataset.color; saveNode(n); renderNode(n); rebuildToc(); }
+    if (c === 'z-front')     bringToFront(n);
+    if (c === 'z-forward')   bumpZ(n, +1);
+    if (c === 'z-backward')  bumpZ(n, -1);
+    if (c === 'z-back')      sendToBack(n);
     if (c === 'delete')      { if (confirm('Delete this ' + n.type + '?')) deleteNode(n.id); }
   };
+}
+
+// ============= Z-order helpers ============================================
+// Only count nodes on the active board for the min/max so reordering doesn't
+// jump nodes past entirely unrelated boards' z values.
+function _boardPeers(n){
+  return [...nodes.values()].filter(x => (x.boardId || null) === (n.boardId || null));
+}
+function bringToFront(n){
+  const maxZ = Math.max(0, ..._boardPeers(n).map(x => x.z || 1));
+  n.z = maxZ + 1;
+  const el = els.get(n.id);
+  if (el) el.style.zIndex = String(n.z);
+  saveNode(n);
+}
+function sendToBack(n){
+  const minZ = Math.min(...[..._boardPeers(n).map(x => x.z || 1), 1]);
+  n.z = minZ - 1;
+  const el = els.get(n.id);
+  if (el) el.style.zIndex = String(n.z);
+  saveNode(n);
+}
+function bumpZ(n, dir){
+  // dir: +1 = one step forward, -1 = one step backward. Swap z with the
+  // immediately-adjacent peer in that direction so the stacking visibly
+  // changes a single step at a time.
+  const peers = _boardPeers(n).filter(x => x.id !== n.id);
+  peers.sort((a, b) => (a.z || 1) - (b.z || 1));
+  const myZ = n.z || 1;
+  let target;
+  if (dir > 0) target = peers.find(p => (p.z || 1) > myZ);
+  else         target = [...peers].reverse().find(p => (p.z || 1) < myZ);
+  if (!target) {
+    // Already at the extreme — push past it by 1.
+    n.z = myZ + dir;
+  } else {
+    // Swap z values for a clean reorder.
+    const tZ = target.z || 1;
+    target.z = myZ;
+    n.z = tZ;
+    const tEl = els.get(target.id);
+    if (tEl) tEl.style.zIndex = String(target.z);
+    saveNode(target);
+  }
+  const el = els.get(n.id);
+  if (el) el.style.zIndex = String(n.z);
+  saveNode(n);
 }
 function hideContextMenu(){ cm.classList.add('hidden'); }
 wrap.addEventListener('contextmenu', (e) => {
