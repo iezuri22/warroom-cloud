@@ -391,6 +391,10 @@ body{padding:16px 14px 120px}
 @media(min-width:720px){
   .horizon{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
   .h-group-head{display:none}
+  /* Priority filter renders as a clean vertical list instead of wrapping
+     across columns — easier to scan when each item is a deliberate choice. */
+  .horizon.priority-list{grid-template-columns:1fr;max-width:560px;margin:0 auto}
+  .horizon.priority-list .h-group-head{display:flex}
 }
 .h-group-title-wrap{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
 .h-group-title{font-size:13px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--text)}
@@ -978,7 +982,7 @@ let state={
   gcalPriority:{}, // map of gcal event id -> true
   gcalTitles:{},   // map of gcal event id -> overridden title
   gcalNotes:{},    // map of gcal event id -> user-added notes
-  filter:'priority',// 'all' | 'priority' | 'manual' | calendar label (Personal/TWEG/Partiful)
+  filter:'all',    // 'all' | 'priority' | 'manual' | calendar label (Personal/TWEG/Partiful)
   syncStatus:'idle',// idle | syncing | connected | needs_auth | error
   syncedAt:null,
   lastError:null,
@@ -1065,7 +1069,9 @@ function saveGcalCache(){
   localStorage.setItem(GCAL_CACHE_KEY,JSON.stringify({events:state.gcal,syncedAt:state.syncedAt}));
 }
 function loadFilter(){
-  return localStorage.getItem(FILTER_KEY)||'priority';
+  // Default to "All" — used to default to "priority" but that hid most events
+  // on first open. New users see everything; the chip strip exposes filtering.
+  return localStorage.getItem(FILTER_KEY)||'all';
 }
 function saveFilter(){
   localStorage.setItem(FILTER_KEY,state.filter);
@@ -1425,6 +1431,8 @@ function renderSyncBanner(){
 
 function renderHorizon(){
   const container=document.getElementById('horizon');
+  // Single-column vertical list when filtering by Priority; multi-column grid otherwise.
+  container.classList.toggle('priority-list', state.filter==='priority');
   let list=applyFilter(unified());
   // ?view=today wallpaper mode — limit to events on today's date only
   if(state.todayOnly){
