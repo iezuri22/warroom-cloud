@@ -150,6 +150,15 @@
     background:transparent;color:var(--muted);opacity:.55;cursor:not-allowed;
     border:1px dashed var(--line)
   }
+  /* Section-level Focus button — kicks the focus timer with section title */
+  .section-head .st-focus{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:4px 10px;border-radius:6px;
+    background:rgba(255,138,61,.16);color:#fb923c;border:1px solid rgba(255,138,61,.32);
+    font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.3px;
+    text-transform:uppercase;font-family:inherit;transition:.12s
+  }
+  .section-head .st-focus:hover{background:rgba(255,138,61,.28);color:#fed7aa}
   .section-head .st-deadline.locked:hover{background:transparent;color:var(--muted)}
   /* OVERDUE — loud red pill that pulses. Pair with the inline banner below
      the section head for the full guilt-trip effect. */
@@ -650,6 +659,7 @@ function renderSectionRow(c, s, n){
           </span>
           <span class="st-duration">${fmtDuration(s.durationMins)}</span>
           ${pill}
+          ${isDone ? '' : `<button type="button" class="st-focus" data-action="focus-section" title="Open focus timer with this section's title">▶ Focus</button>`}
         </span>
       </div>
       ${overdueBanner}
@@ -660,7 +670,6 @@ function renderSectionRow(c, s, n){
               <div class="sub-check" data-action="toggle-sub" title="Mark complete"></div>
               <div class="sub-title" contenteditable="plaintext-only" data-action="edit-sub-title">${esc(u.title)}</div>
               <div class="sub-tools">
-                <button class="study-btn" data-action="study-sub" title="Open Focus session pre-filled with this lecture">▶ Study</button>
                 <button class="del-btn" data-action="del-sub" title="Remove lecture">✕</button>
               </div>
             </div>
@@ -773,14 +782,11 @@ function wireEvents(){
           saveCourse(c);
           render();
         }));
-      sectionEl.querySelectorAll('[data-action="study-sub"]').forEach(b =>
-        b.addEventListener('click', () => {
-          const subId = b.closest('.sub-row')?.dataset.sub;
-          const u = (s.subsections || []).find(x => x.id === subId);
-          if (!u) return;
-          const intent = `${c.title} — ${s.title} · ${u.title}`;
-          openFocusPanel(intent);
-        }));
+      sectionEl.querySelector('[data-action="focus-section"]')?.addEventListener('click', (e) => {
+        // Don't trigger the section-head toggle when starting a focus.
+        e.stopPropagation();
+        openFocusPanel(s.title);
+      });
       sectionEl.querySelectorAll('[data-action="del-sub"]').forEach(b =>
         b.addEventListener('click', () => {
           const subId = b.closest('.sub-row')?.dataset.sub;
