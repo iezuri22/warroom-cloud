@@ -56,8 +56,35 @@
     display:inline-flex;align-items:center;justify-content:center;cursor:pointer
   }
 
+  /* ---------- Board switcher (sits between topbar and canvas) ---------- */
+  #boardBar{
+    position:fixed;top:44px;left:0;right:0;height:38px;z-index:28;
+    display:flex;align-items:center;gap:4px;padding:0 10px;
+    background:rgba(14,17,22,.78);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch
+  }
+  #boardBar::-webkit-scrollbar{height:4px}
+  #boardBar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+  .board-tab{
+    height:26px;padding:0 10px;border-radius:13px;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted);
+    font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+    white-space:nowrap;flex:0 0 auto;font-weight:500
+  }
+  .board-tab:hover{color:var(--ink);border-color:var(--line2)}
+  .board-tab.active{color:var(--ink);border-color:var(--accent);background:rgba(74,158,255,.12)}
+  .board-tab .b-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  .board-add{
+    height:26px;min-width:26px;padding:0 8px;border-radius:13px;
+    background:transparent;border:1px dashed var(--line2);color:var(--muted);
+    cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center
+  }
+  .board-add:hover{color:var(--ink);border-color:var(--accent)}
+  .board-bar-empty{color:var(--muted);font-size:12px;padding:0 8px}
+
   /* ---------- Layout ---------- */
-  #layout{position:fixed;top:44px;left:0;right:0;bottom:0;display:flex}
+  #layout{position:fixed;top:82px;left:0;right:0;bottom:0;display:flex}
   #toc{
     width:240px;flex:0 0 240px;border-right:1px solid var(--line);
     background:rgba(14,17,22,.65);overflow:auto;padding:10px 8px;
@@ -118,6 +145,20 @@
   .node .sec-tag{
     width:10px;height:10px;border-radius:2px;flex:0 0 10px
   }
+  /* Tint the section header + border with the section color so the chosen
+     color is actually visible at a glance (not just the tiny tag dot). */
+  .node.sec-blue   .sec-head{background:rgba(74,158,255,.18);  border-bottom-color:rgba(74,158,255,.35)}
+  .node.sec-blue                                              {border-color:rgba(74,158,255,.35)}
+  .node.sec-green  .sec-head{background:rgba(74,222,128,.18); border-bottom-color:rgba(74,222,128,.35)}
+  .node.sec-green                                             {border-color:rgba(74,222,128,.35)}
+  .node.sec-amber  .sec-head{background:rgba(251,191,36,.18); border-bottom-color:rgba(251,191,36,.35)}
+  .node.sec-amber                                             {border-color:rgba(251,191,36,.35)}
+  .node.sec-red    .sec-head{background:rgba(248,113,113,.18);border-bottom-color:rgba(248,113,113,.35)}
+  .node.sec-red                                               {border-color:rgba(248,113,113,.35)}
+  .node.sec-purple .sec-head{background:rgba(167,139,250,.18);border-bottom-color:rgba(167,139,250,.35)}
+  .node.sec-purple                                            {border-color:rgba(167,139,250,.35)}
+  .node.sec-gray   .sec-head{background:rgba(156,163,175,.16);border-bottom-color:rgba(156,163,175,.32)}
+  .node.sec-gray                                              {border-color:rgba(156,163,175,.32)}
   .node .sec-title{
     flex:1;font-weight:600;font-size:15px;color:var(--ink);
     outline:none;-webkit-user-select:text;user-select:text;
@@ -278,6 +319,10 @@
   </div>
 </div>
 
+<div id="boardBar">
+  <div class="board-bar-empty">Loading boards…</div>
+</div>
+
 <div id="layout">
   <aside id="toc">
     <div class="toc-head">Table of contents</div>
@@ -316,17 +361,22 @@ const app = initializeApp(firebaseConfig);
 const db  = getFirestore(app);
 const nodesCol      = collection(db, 'goals_canvas_nodes');
 const pushQueueCol  = collection(db, 'goals_priority_pushes');
-const viewDoc       = doc(db, 'goals_canvas_view', 'me');
+const boardsCol     = collection(db, 'goals_canvas_boards');
+const viewDoc       = doc(db, 'goals_canvas_view', 'me');  // map of { [boardId]: {panX, panY, zoom} }
 const todosCol      = collection(db, 'tv_todos');
 
 // ============= State =============
-const nodes = new Map();        // id -> node data
-const els   = new Map();        // id -> DOM element
+const nodes  = new Map();       // id -> node data (ALL nodes from cloud)
+const els    = new Map();       // id -> DOM element (only nodes on the ACTIVE board)
+const boards = new Map();       // id -> { id, name, color, order, createdAt, updatedAt }
+let activeBoardId = null;
 let view = { panX: 0, panY: 0, zoom: 1 };
+const viewPerBoard = {};        // boardId -> { panX, panY, zoom } from Firestore
 let selectedId = null;
 let _writingView = false;
 let _writingNode = new Set();   // nodes the local user is mid-drag/edit on (don't clobber from snapshot)
 let _suppressEmpty = false;
+let _nodesUnsub = null;
 
 const NODE_TYPES = {
   section:    { w: 600, h: 400, color: 'sec-blue'   },
@@ -430,15 +480,20 @@ async function deleteNode(id){
   // Local cleanup is handled by the snapshot listener.
 }
 
-// ============= Persist view (per-user pan/zoom) =============
+// ============= Persist view (per-board pan/zoom) =============
 let _viewSaveTimer = null;
 function queueViewSave(){
   if (_viewSaveTimer) clearTimeout(_viewSaveTimer);
   _viewSaveTimer = setTimeout(async () => {
     _viewSaveTimer = null;
+    if (!activeBoardId) return;
+    viewPerBoard[activeBoardId] = { panX: view.panX, panY: view.panY, zoom: view.zoom };
     _writingView = true;
     try {
-      await setDoc(viewDoc, { ...view, updatedAt: nowISO() }, { merge: true });
+      await setDoc(viewDoc, {
+        [activeBoardId]: viewPerBoard[activeBoardId],
+        updatedAt: nowISO()
+      }, { merge: true });
     } catch (e) { console.warn('[goals] view save failed', e); }
     setTimeout(()=>{ _writingView = false; }, 300);
   }, 400);
@@ -522,24 +577,32 @@ function removeNodeEl(id){
   els.delete(id);
 }
 
+function activeNodes(){
+  if (!activeBoardId) return [...nodes.values()];
+  return [...nodes.values()].filter(n => (n.boardId || null) === activeBoardId);
+}
+
 function rerenderAll(){
-  const live = new Set([...nodes.keys()]);
+  // Only nodes on the active board live in the DOM. Remove any element whose
+  // node is gone or belongs to a different board.
+  const liveOnBoard = new Set(activeNodes().map(n => n.id));
   for (const id of [...els.keys()]) {
-    if (!live.has(id)) removeNodeEl(id);
+    if (!liveOnBoard.has(id)) removeNodeEl(id);
   }
-  for (const n of nodes.values()) renderNode(n);
+  for (const n of activeNodes()) renderNode(n);
   updateEmptyHint();
   rebuildToc();
 }
 
 function updateEmptyHint(){
-  document.getElementById('emptyHint').style.display = nodes.size === 0 ? '' : 'none';
+  document.getElementById('emptyHint').style.display = activeNodes().length === 0 ? '' : 'none';
 }
 
 // ============= TOC =============
 function rebuildToc(){
   const list = document.getElementById('tocList');
-  const sections = [...nodes.values()].filter(n => n.type === 'section').sort((a,b)=>a.y - b.y || a.x - b.x);
+  const pool = activeNodes();
+  const sections = pool.filter(n => n.type === 'section').sort((a,b)=>a.y - b.y || a.x - b.x);
   if (!sections.length) {
     list.innerHTML = '<div class="toc-empty">Sections appear here. Click + Section above to start.</div>';
     return;
@@ -551,7 +614,7 @@ function rebuildToc(){
       <span class="dot" style="background:${c}"></span>
       <span>${escapeHtml(s.title || 'Untitled section')}</span>
     </div>`);
-    const subs = [...nodes.values()]
+    const subs = pool
       .filter(n => n.type === 'subsection' && n.parentId === s.id)
       .sort((a,b)=>a.y - b.y || a.x - b.x);
     for (const sub of subs) {
@@ -580,7 +643,8 @@ document.getElementById('tocList').addEventListener('click', (e) => {
 
 // ============= Snapshot listeners =============
 function subscribeNodes(){
-  onSnapshot(nodesCol, (snap) => {
+  if (_nodesUnsub) try { _nodesUnsub(); } catch {}
+  _nodesUnsub = onSnapshot(nodesCol, (snap) => {
     let dirty = false;
     snap.docChanges().forEach(ch => {
       const id = ch.doc.id;
@@ -590,11 +654,13 @@ function subscribeNodes(){
         dirty = true;
         return;
       }
-      // skip incoming snapshot while local is editing this node
       if (_writingNode.has(id)) return;
       const data = ch.doc.data();
-      nodes.set(id, { id, ...data });
-      renderNode({ id, ...data });
+      const n = { id, ...data };
+      nodes.set(id, n);
+      // Only render if it's on the active board; otherwise just track state.
+      if ((n.boardId || null) === activeBoardId) renderNode(n);
+      else removeNodeEl(id);
       dirty = true;
     });
     if (dirty) { updateEmptyHint(); rebuildToc(); }
@@ -608,12 +674,38 @@ function subscribeView(){
     if (!snap.exists()) return;
     if (_writingView) return;
     const d = snap.data() || {};
-    if (typeof d.panX === 'number') view.panX = d.panX;
-    if (typeof d.panY === 'number') view.panY = d.panY;
-    if (typeof d.zoom === 'number') view.zoom = clamp(d.zoom, 0.15, 3);
-    applyTransform();
+    // New shape: map of { [boardId]: {panX, panY, zoom} }. Legacy single-board
+    // docs had panX/panY/zoom at the top level — adopt them into the active
+    // board's slot so nothing is lost when this update lands.
+    Object.keys(d).forEach(k => {
+      if (k === 'updatedAt' || k === 'panX' || k === 'panY' || k === 'zoom') return;
+      const v = d[k];
+      if (v && typeof v.panX === 'number') {
+        viewPerBoard[k] = { panX: v.panX, panY: v.panY, zoom: clamp(v.zoom, 0.15, 3) };
+      }
+    });
+    if (activeBoardId && viewPerBoard[activeBoardId]) {
+      const v = viewPerBoard[activeBoardId];
+      view.panX = v.panX; view.panY = v.panY; view.zoom = v.zoom;
+      applyTransform();
+    }
   });
 }
+function subscribeBoards(){
+  onSnapshot(boardsCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') boards.delete(ch.doc.id);
+      else boards.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    renderBoardBar();
+    // If the active board was deleted by another client, fall back to the first.
+    if (activeBoardId && !boards.has(activeBoardId)) {
+      const first = [...boards.values()].sort(boardSort)[0];
+      if (first) switchToBoard(first.id);
+    }
+  });
+}
+function boardSort(a, b){ return (a.order || 0) - (b.order || 0) || String(a.createdAt||'').localeCompare(String(b.createdAt||'')); }
 // Subscribe to tv_todos that are linked from goal bullets — back-sync done state.
 function subscribeLinkedTodos(){
   const qry = query(todosCol, where('goalBulletId', '!=', null));
@@ -667,15 +759,41 @@ window.addEventListener('mouseup', () => {
   if (panStart) { panStart = null; wrap.classList.remove('panning'); queueViewSave(); }
 });
 
-// Wheel: cmd/ctrl/alt + wheel = zoom; pinch trackpad sets ctrlKey too.
-// Plain wheel = pan vertically (more natural for trackpad two-finger scroll).
+// Wheel: cmd/ctrl/alt + wheel = zoom canvas (or resize a hovered node);
+// pinch trackpad sets ctrlKey too. Plain wheel = pan vertically (natural for
+// trackpad two-finger scroll).
+let _nodeResizeDebounce = new Map();   // nodeId -> timer for persist-after-resize
 wrap.addEventListener('wheel', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) {
     e.preventDefault();
+    // If the cursor is over a node, resize THAT node instead of zooming the
+    // whole canvas. Lets the user "grow / shrink the thing I'm pointing at."
+    const nodeEl = e.target.closest('.node');
+    if (nodeEl) {
+      const id = nodeEl.dataset.id;
+      const n = nodes.get(id);
+      if (n) {
+        const scale = 1 + (-e.deltaY * 0.0025);
+        n.w = clamp(Math.round(n.w * scale), 120, 4000);
+        n.h = clamp(Math.round(n.h * scale), 80,  3000);
+        nodeEl.style.width  = n.w + 'px';
+        nodeEl.style.height = n.h + 'px';
+        // Debounce the Firestore write so a continuous scroll doesn't spam.
+        const t = _nodeResizeDebounce.get(id);
+        if (t) clearTimeout(t);
+        _writingNode.add(id);
+        _nodeResizeDebounce.set(id, setTimeout(() => {
+          saveNode(n);
+          _nodeResizeDebounce.delete(id);
+          setTimeout(() => _writingNode.delete(id), 250);
+        }, 200));
+        return;
+      }
+    }
+    // Background → zoom the canvas around the cursor.
     const dz = -e.deltaY * 0.0015;
     const targetZoom = clamp(view.zoom * (1 + dz), 0.15, 3);
     const { x, y } = viewportToCanvas(e.clientX, e.clientY);
-    // Zoom around cursor: keep that canvas point under the cursor.
     view.zoom = targetZoom;
     const r = wrap.getBoundingClientRect();
     view.panX = e.clientX - r.left - x * view.zoom;
@@ -770,6 +888,13 @@ function attachNodeListeners(el){
     _writingNode.add(id);
     const startX = e.clientX, startY = e.clientY;
     const origX = n.x, origY = n.y;
+    // When dragging a container, gather every descendant so they move as a
+    // group (subsections + stickies inside subsections, stickies, etc).
+    // Snapshot each descendant's original position so we can translate them
+    // by exactly (dx, dy) on every mousemove.
+    const isContainer = n.type === 'section' || n.type === 'subsection';
+    const descendants = isContainer ? collectDescendants(id) : [];
+    descendants.forEach(d => { d._origX = d.x; d._origY = d.y; _writingNode.add(d.id); });
     function move(ev){
       const dx = (ev.clientX - startX) / view.zoom;
       const dy = (ev.clientY - startY) / view.zoom;
@@ -777,6 +902,16 @@ function attachNodeListeners(el){
       n.y = origY + dy;
       el.style.left = n.x + 'px';
       el.style.top  = n.y + 'px';
+      // Translate descendants by the same delta.
+      descendants.forEach(d => {
+        d.x = d._origX + dx;
+        d.y = d._origY + dy;
+        const childEl = els.get(d.id);
+        if (childEl) {
+          childEl.style.left = d.x + 'px';
+          childEl.style.top  = d.y + 'px';
+        }
+      });
       // Highlight section drop target as we hover stickies over them.
       if (n.type === 'sticky') updateDropTargetHighlight(n);
     }
@@ -790,7 +925,12 @@ function attachNodeListeners(el){
       }
       clearDropTargetHighlight();
       saveNode(n);
-      setTimeout(()=> _writingNode.delete(id), 250);
+      // Persist every descendant we dragged along, then clear the write locks.
+      descendants.forEach(d => { delete d._origX; delete d._origY; saveNode(d); });
+      setTimeout(()=> {
+        _writingNode.delete(id);
+        descendants.forEach(d => _writingNode.delete(d.id));
+      }, 250);
       rebuildToc();
     }
     window.addEventListener('mousemove', move);
@@ -908,6 +1048,42 @@ function startResize(e, id){
   window.addEventListener('mouseup', up);
 }
 
+// Walk the parentId tree downward and collect every descendant of `rootId`.
+// Used when dragging a container so children move together. We also pick up
+// any node whose center is currently inside the root's box but whose
+// parentId hasn't been set yet (legacy data, or a sticky placed before its
+// section was drawn) — feels right visually.
+function collectDescendants(rootId){
+  const root = nodes.get(rootId);
+  const out = [];
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const pid = queue.shift();
+    for (const c of nodes.values()) {
+      if (seen.has(c.id)) continue;
+      if (c.parentId === pid) {
+        out.push(c);
+        seen.add(c.id);
+        queue.push(c.id);
+      }
+    }
+  }
+  if (root && (root.type === 'section' || root.type === 'subsection')) {
+    for (const c of nodes.values()) {
+      if (seen.has(c.id)) continue;
+      if (c.parentId) continue;   // already parented to something else
+      const cx = c.x + c.w/2, cy = c.y + c.h/2;
+      if (cx >= root.x && cx <= root.x + root.w && cy >= root.y && cy <= root.y + root.h) {
+        out.push(c);
+        seen.add(c.id);
+        queue.push(c.id);   // walk this one's subtree too
+      }
+    }
+  }
+  return out;
+}
+
 // Containment: a sticky belongs to the smallest (subsection > section) box that contains its center.
 function findContainer(n){
   const cx = n.x + n.w/2, cy = n.y + n.h/2;
@@ -954,6 +1130,7 @@ async function createNode(type, opts){
     parentId: opts.parentId || null,
     rotation: type === 'sticky' ? parseFloat(genRotation()) : 0,
     linkedTaskId: null,
+    boardId: activeBoardId || null,
     z: Date.now()
   };
   // If creating loose (no parent), spatial test will pick up any container we land on.
@@ -1104,33 +1281,216 @@ async function promoteToFocus5(n){
   }
 }
 
+// ============= Boards (multiple "jobs") =============
+const ACTIVE_BOARD_KEY = 'goalsCanvas:activeBoardId';
+
+function renderBoardBar(){
+  const bar = document.getElementById('boardBar');
+  const list = [...boards.values()].sort(boardSort);
+  if (!list.length) {
+    bar.innerHTML = `<div class="board-bar-empty">Loading boards…</div>`;
+    return;
+  }
+  bar.innerHTML = list.map(b => {
+    const color = SECTION_HEX[b.color] || '#9ca3af';
+    const act = b.id === activeBoardId ? ' active' : '';
+    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for options">
+      <span class="b-dot" style="background:${color}"></span>
+      <span>${escapeHtml(b.name || 'Untitled')}</span>
+    </div>`;
+  }).join('') + `<button class="board-add" id="boardAddBtn" title="New board">+</button>`;
+}
+
+async function switchToBoard(id){
+  if (!id || !boards.has(id) || id === activeBoardId) return;
+  // Save the current view before swapping so it persists per-board.
+  if (activeBoardId) {
+    viewPerBoard[activeBoardId] = { panX: view.panX, panY: view.panY, zoom: view.zoom };
+  }
+  activeBoardId = id;
+  try { localStorage.setItem(ACTIVE_BOARD_KEY, id); } catch {}
+  selectedId = null;
+  // Swap to this board's last-saved view, or reset.
+  const v = viewPerBoard[id];
+  if (v) { view.panX = v.panX; view.panY = v.panY; view.zoom = v.zoom; }
+  else   { view.panX = 0; view.panY = 0; view.zoom = 1; }
+  applyTransform();
+  renderBoardBar();
+  rerenderAll();
+}
+
+async function createBoard(name){
+  const id = uid();
+  const used = new Set([...boards.values()].map(b => b.color));
+  const color = SECTION_COLORS.find(c => !used.has(c)) || SECTION_COLORS[boards.size % SECTION_COLORS.length];
+  const order = boards.size;
+  const board = {
+    id, name: name || 'New board', color, order,
+    createdAt: nowISO(), updatedAt: nowISO()
+  };
+  boards.set(id, board);
+  await setDoc(doc(boardsCol, id), board);
+  renderBoardBar();
+  switchToBoard(id);
+  return board;
+}
+
+async function renameBoard(id, name){
+  const b = boards.get(id);
+  if (!b) return;
+  b.name = name;
+  b.updatedAt = nowISO();
+  await setDoc(doc(boardsCol, id), { name, updatedAt: b.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function setBoardColor(id, color){
+  const b = boards.get(id);
+  if (!b) return;
+  b.color = color;
+  b.updatedAt = nowISO();
+  await setDoc(doc(boardsCol, id), { color, updatedAt: b.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function deleteBoard(id){
+  if (boards.size <= 1) { alert('At least one board is required.'); return; }
+  const onBoard = [...nodes.values()].filter(n => (n.boardId || null) === id).length;
+  const msg = onBoard
+    ? `Delete this board and its ${onBoard} item${onBoard===1?'':'s'}?`
+    : 'Delete this board?';
+  if (!confirm(msg)) return;
+  // Delete every node on this board, then the board itself.
+  const toDelete = [...nodes.values()].filter(n => (n.boardId || null) === id);
+  for (const n of toDelete) {
+    try { await deleteDoc(doc(nodesCol, n.id)); } catch {}
+    nodes.delete(n.id);
+  }
+  try { await deleteDoc(doc(boardsCol, id)); } catch {}
+  boards.delete(id);
+  if (activeBoardId === id) {
+    const first = [...boards.values()].sort(boardSort)[0];
+    if (first) await switchToBoard(first.id);
+  }
+  renderBoardBar();
+  rerenderAll();
+}
+
+// Board-bar click + right-click handlers (delegated).
+document.getElementById('boardBar').addEventListener('click', (e) => {
+  if (e.target.id === 'boardAddBtn' || e.target.closest('#boardAddBtn')) {
+    const name = prompt('Name this board (e.g. VitalTouch, Personal, Fitness):', '');
+    if (name && name.trim()) createBoard(name.trim());
+    return;
+  }
+  const tab = e.target.closest('.board-tab');
+  if (tab) switchToBoard(tab.dataset.id);
+});
+document.getElementById('boardBar').addEventListener('contextmenu', (e) => {
+  const tab = e.target.closest('.board-tab');
+  if (!tab) return;
+  e.preventDefault();
+  const id = tab.dataset.id;
+  const b = boards.get(id);
+  if (!b) return;
+  const items = SECTION_COLORS.map(c => {
+    const hex = SECTION_HEX[c];
+    const active = c === b.color ? ' active' : '';
+    return `<span class="cm-swatch${active}" data-cm="color" data-color="${c}" style="background:${hex}"></span>`;
+  }).join('');
+  cm.innerHTML = `
+    <div class="cm-item" data-cm="rename">✏︎ Rename</div>
+    <div class="cm-row">${items}</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item danger" data-cm="delete">✕ Delete board</div>
+  `;
+  cm.style.left = e.clientX + 'px';
+  cm.style.top  = e.clientY + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (ev) => {
+    const c = ev.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'rename') {
+      const name = prompt('New name:', b.name || '');
+      if (name && name.trim()) renameBoard(id, name.trim());
+    } else if (c === 'color') {
+      setBoardColor(id, ev.target.dataset.color);
+    } else if (c === 'delete') {
+      deleteBoard(id);
+    }
+  };
+});
+
 // ============= Initial load =============
 async function bootstrap(){
   setStatus('Loading…', 'sticky');
   try {
-    // View first
+    // 1. Boards. Seed a "Goals" board if none exist; migrate any unparented
+    //    legacy nodes to it.
+    const bsnap = await getDocs(boardsCol);
+    bsnap.forEach(d => boards.set(d.id, { id: d.id, ...d.data() }));
+    if (boards.size === 0) {
+      const seed = {
+        id: uid(), name: 'Goals', color: 'sec-blue', order: 0,
+        createdAt: nowISO(), updatedAt: nowISO()
+      };
+      await setDoc(doc(boardsCol, seed.id), seed);
+      boards.set(seed.id, seed);
+    }
+    // Pick active board: last-used (localStorage), else first by order.
+    const sorted = [...boards.values()].sort(boardSort);
+    let pick = null;
+    try { pick = localStorage.getItem(ACTIVE_BOARD_KEY); } catch {}
+    if (!pick || !boards.has(pick)) pick = sorted[0].id;
+    activeBoardId = pick;
+    try { localStorage.setItem(ACTIVE_BOARD_KEY, activeBoardId); } catch {}
+
+    // 2. View map (per-board). Adopt any legacy top-level pan/zoom into the
+    //    first board's slot so existing data isn't lost.
     try {
       const vs = await getDoc(viewDoc);
       if (vs.exists()) {
         const d = vs.data() || {};
-        if (typeof d.panX === 'number') view.panX = d.panX;
-        if (typeof d.panY === 'number') view.panY = d.panY;
-        if (typeof d.zoom === 'number') view.zoom = clamp(d.zoom, 0.15, 3);
+        Object.keys(d).forEach(k => {
+          if (k === 'updatedAt' || k === 'panX' || k === 'panY' || k === 'zoom') return;
+          const v = d[k];
+          if (v && typeof v.panX === 'number') viewPerBoard[k] = { panX: v.panX, panY: v.panY, zoom: clamp(v.zoom, 0.15, 3) };
+        });
+        if (!viewPerBoard[activeBoardId] && typeof d.panX === 'number') {
+          viewPerBoard[activeBoardId] = { panX: d.panX, panY: d.panY, zoom: clamp(d.zoom || 1, 0.15, 3) };
+        }
       }
     } catch {}
+    const av = viewPerBoard[activeBoardId];
+    if (av) { view.panX = av.panX; view.panY = av.panY; view.zoom = av.zoom; }
     applyTransform();
 
-    // Nodes
-    const snap = await getDocs(nodesCol);
-    snap.forEach(d => nodes.set(d.id, { id: d.id, ...d.data() }));
+    // 3. Nodes. Pull all of them (we filter by board in render), then backfill
+    //    boardId on any pre-board-era nodes so they have a home.
+    const nsnap = await getDocs(nodesCol);
+    const unparented = [];
+    nsnap.forEach(d => {
+      const data = d.data() || {};
+      const n = { id: d.id, ...data };
+      if (!n.boardId) unparented.push(n);
+      nodes.set(d.id, n);
+    });
+    if (unparented.length) {
+      const home = activeBoardId;
+      for (const n of unparented) {
+        n.boardId = home;
+        try { await setDoc(doc(nodesCol, n.id), { boardId: home }, { merge: true }); } catch {}
+      }
+    }
+    renderBoardBar();
     rerenderAll();
 
-    // Live subscriptions
+    // 4. Live subscriptions
+    subscribeBoards();
     subscribeNodes();
     subscribeView();
     subscribeLinkedTodos();
 
-    setStatus(nodes.size ? '' : 'Empty board — click + Section to begin');
+    setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
     setTimeout(()=> statusEl.classList.add('hidden'), 1200);
   } catch (e) {
     console.error('[goals] bootstrap failed', e);
