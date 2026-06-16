@@ -678,7 +678,7 @@ async function deleteNode(id, opts){
   const cascade = opts.cascade !== false; // default true
   let toDelete;
   if (cascade && (victim.type === 'section' || victim.type === 'subsection')) {
-    toDelete = [victim, ...collectDescendants(id)];
+    toDelete = [victim, ...collectFullSubtree(id)];
   } else {
     toDelete = [victim];
   }
@@ -1420,7 +1420,7 @@ function attachNodeListeners(el){
       return;
     }
     if (a === 'delete') {
-      const desc = (n.type === 'section' || n.type === 'subsection') ? collectDescendants(id).length : 0;
+      const desc = (n.type === 'section' || n.type === 'subsection') ? collectFullSubtree(id).length : 0;
       const msg = desc
         ? `Delete this ${n.type} and the ${desc} item${desc===1?'':'s'} inside it?`
         : `Delete this ${n.type}?`;
@@ -1658,10 +1658,28 @@ function startResize(e, id){
   window.addEventListener('mouseup', up);
 }
 
-// Collect every descendant of `rootId` using GEOMETRY as the source of truth
-// (not stored parentId, which may be stale until reconcileBoard runs). A node
-// is a descendant if findContainer(node) === rootId, transitively.
+// "Carry set" for moving / restacking a container. Returns ONLY the sticky
+// notes directly inside this container (findContainer === rootId). Does NOT
+// include subsections or anything nested inside them — those have their own
+// independent identity and stay where they are when you move the section
+// they happen to sit on top of. Stickies belonging to a sibling section
+// (different findContainer) are also excluded.
 function collectDescendants(rootId){
+  const root = nodes.get(rootId);
+  if (!root) return [];
+  if (root.type !== 'section' && root.type !== 'subsection') return [];
+  const out = [];
+  for (const c of nodes.values()) {
+    if (c.id === rootId) continue;
+    if ((c.boardId || null) !== (root.boardId || null)) continue;
+    if (c.type !== 'sticky') continue;
+    if (findContainer(c) === rootId) out.push(c);
+  }
+  return out;
+}
+// Full subtree (every descendant transitively). Used by the cascade-delete
+// path, where we DO want to wipe everything inside.
+function collectFullSubtree(rootId){
   const root = nodes.get(rootId);
   if (!root) return [];
   if (root.type !== 'section' && root.type !== 'subsection') return [];
@@ -2522,45 +2540,64 @@ function showNodeContextMenu(px, py, n){
 function _boardPeers(n){
   return [...nodes.values()].filter(x => (x.boardId || null) === (n.boardId || null));
 }
-function bringToFront(n){
-  const maxZ = Math.max(0, ..._boardPeers(n).map(x => x.z || 1));
-  n.z = maxZ + 1;
+// Return the "rider" set for a z-order op: when restacking a container, the
+// stickies sitting directly on top of it should ride along so they stay
+// visually above. Same scoping rule as drag carry — direct stickies only.
+function _zRiders(n){
+  if (n.type !== 'section' && n.type !== 'subsection') return [];
+  return collectDescendants(n.id);
+}
+function _applyZ(n, z){
+  n.z = z;
   const el = els.get(n.id);
   if (el) el.style.zIndex = String(n.z);
   saveNode(n);
 }
+function bringToFront(n){
+  const peers = _boardPeers(n).map(x => x.z || 1);
+  let maxZ = Math.max(0, ...peers);
+  // Container goes to the top, then its direct stickies stack above it so
+  // they remain visible (otherwise sending a section forward would obscure
+  // the notes laid on top of it).
+  _applyZ(n, ++maxZ);
+  for (const r of _zRiders(n)) _applyZ(r, ++maxZ);
+}
 function sendToBack(n){
-  const minZ = Math.min(...[..._boardPeers(n).map(x => x.z || 1), 1]);
-  n.z = minZ - 1;
-  const el = els.get(n.id);
-  if (el) el.style.zIndex = String(n.z);
-  saveNode(n);
+  const peers = _boardPeers(n).map(x => x.z || 1);
+  let minZ = Math.min(...[...peers, 1]);
+  // Direct stickies go just above the section so they stay readable even
+  // after the section drops behind everything else.
+  const riders = _zRiders(n);
+  _applyZ(n, --minZ);
+  for (const r of riders) _applyZ(r, ++minZ);
 }
 function bumpZ(n, dir){
   // dir: +1 = one step forward, -1 = one step backward. Swap z with the
   // immediately-adjacent peer in that direction so the stacking visibly
-  // changes a single step at a time.
-  const peers = _boardPeers(n).filter(x => x.id !== n.id);
+  // changes a single step at a time. We exclude this node's z-riders from
+  // the swap target list so the section never "passes through" its own
+  // stickies (they should move with it instead).
+  const riderIds = new Set(_zRiders(n).map(r => r.id));
+  const peers = _boardPeers(n).filter(x => x.id !== n.id && !riderIds.has(x.id));
   peers.sort((a, b) => (a.z || 1) - (b.z || 1));
   const myZ = n.z || 1;
   let target;
   if (dir > 0) target = peers.find(p => (p.z || 1) > myZ);
   else         target = [...peers].reverse().find(p => (p.z || 1) < myZ);
+  let newZ;
   if (!target) {
-    // Already at the extreme — push past it by 1.
-    n.z = myZ + dir;
+    newZ = myZ + dir;
   } else {
-    // Swap z values for a clean reorder.
     const tZ = target.z || 1;
-    target.z = myZ;
-    n.z = tZ;
-    const tEl = els.get(target.id);
-    if (tEl) tEl.style.zIndex = String(target.z);
-    saveNode(target);
+    _applyZ(target, myZ);
+    newZ = tZ;
   }
-  const el = els.get(n.id);
-  if (el) el.style.zIndex = String(n.z);
-  saveNode(n);
+  // Move the rider stickies in lockstep with the section's delta.
+  const delta = newZ - myZ;
+  _applyZ(n, newZ);
+  if (delta) {
+    for (const r of _zRiders(n)) _applyZ(r, (r.z || 1) + delta);
+  }
 }
 function hideContextMenu(){ cm.classList.add('hidden'); }
 wrap.addEventListener('contextmenu', (e) => {
@@ -2582,7 +2619,7 @@ window.addEventListener('keydown', (e) => {
       ids.forEach(id => {
         const n = nodes.get(id);
         if (n && (n.type === 'section' || n.type === 'subsection')) {
-          totalNested += collectDescendants(id).length;
+          totalNested += collectFullSubtree(id).length;
         }
       });
       const label = ids.length === 1
