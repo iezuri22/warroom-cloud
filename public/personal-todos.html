@@ -14335,8 +14335,63 @@ const VOICE = {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         try { drainEcmPriorityPushes(); } catch {}
+        try { drainGoalsPriorityPushes(); } catch {}
       }
     });
+
+    // ===== Goals canvas → Personal priority push queue =====
+    // The Goals board (goals-canvas.html) writes directly to tv_todos with a
+    // `goalBulletId` field, then drops a push doc here so the cascade logic
+    // puts the new todo at the top of the first priority list. Same pattern
+    // as the ECM drain — kept separate so the two flows can't interfere.
+    let _goalsPushDrainBusy = false;
+    let _goalsPushLastDrain = 0;
+    async function drainGoalsPriorityPushes(){
+      if (_goalsPushDrainBusy) return;
+      if (Date.now() - _goalsPushLastDrain < 15000) return;
+      _goalsPushDrainBusy = true;
+      _goalsPushLastDrain = Date.now();
+      try {
+        const snap = await getDocs(collection(db, 'goals_priority_pushes'));
+        if (snap.empty) return;
+        let landed = 0;
+        for (const d of snap.docs) {
+          const p = d.data() || {};
+          try {
+            if (!p.todoId) { await deleteDoc(d.ref); continue; }
+            // Find the todo Goals canvas already created (it stamped goalBulletId).
+            let todo = todos.find(t => t.id === p.todoId);
+            if (!todo) {
+              const ds = await getDoc(doc(db, 'tv_todos', p.todoId));
+              if (ds.exists()) {
+                todo = { id: ds.id, ...(ds.data() || {}) };
+                if (!todos.find(t => t.id === todo.id)) todos.push(todo);
+              }
+            }
+            if (!todo) {
+              // Goals doc must have been rolled back — drop the push and move on.
+              await deleteDoc(d.ref);
+              continue;
+            }
+            const lists = getPriorityLists();
+            if (lists.length) cascadeAddTaskToList(todo.id, lists[0].id, 'top');
+            await deleteDoc(d.ref);
+            landed++;
+          } catch (e) {
+            console.warn('[goals push] failed for', p && p.text, e);
+          }
+        }
+        if (landed) {
+          console.log('[goals push] landed ' + landed + ' bullet(s) at the top of priorities');
+          try { await ensureFocus5TasksLoaded(); } catch {}
+          try { render(); } catch {}
+        }
+      } catch (e) {
+        console.warn('[goals push] drain failed', e);
+      } finally {
+        _goalsPushDrainBusy = false;
+      }
+    }
     // Seed defaults on load — but ONLY after sync-client.js has loaded cloud
     // state into localStorage. Running before hydration nukes the user's
     // real focus5State by saving empty defaults over it. The seed function
@@ -14350,6 +14405,8 @@ const VOICE = {
       // initial todo load has a chance to land first (dedupe still holds
       // either way via the Firestore query).
       setTimeout(() => { try { drainEcmPriorityPushes(); } catch {} }, 1500);
+      // Same drain for the Goals canvas push queue.
+      setTimeout(() => { try { drainGoalsPriorityPushes(); } catch {} }, 1700);
       // Load the planned ledger, then knock if anything is due today.
       setTimeout(() => {
         try { loadPlannedTodos(true).then(() => { try { render(); maybeShowPlannedPrompt(); } catch {} }); } catch {}

@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Goals — War Room</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root{
+    --bg:#0e1116;
+    --ink:#e6e8eb;
+    --muted:#8a9099;
+    --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.14);
+    --panel:#161a21;
+    --panel2:#1c2129;
+    --accent:#4a9eff;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --red:#f87171;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    overflow:hidden;-webkit-user-select:none;user-select:none}
+  body.embed{background:transparent}
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    position:fixed;top:0;left:0;right:0;height:44px;z-index:30;
+    display:flex;align-items:center;gap:8px;padding:0 12px;
+    background:rgba(14,17,22,.85);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)
+  }
+  #topbar .title{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.2px}
+  #topbar .spacer{flex:1}
+  .tb-btn{
+    height:30px;padding:0 10px;border-radius:8px;
+    background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px
+  }
+  .tb-btn:hover{background:var(--panel2);border-color:var(--line2)}
+  .tb-btn.icon{padding:0 8px;width:30px;justify-content:center}
+  .zoom-widget{
+    display:inline-flex;align-items:center;gap:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;height:30px
+  }
+  .zoom-widget button{
+    background:transparent;border:none;color:var(--ink);width:28px;height:28px;
+    cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center
+  }
+  .zoom-widget button:hover{background:rgba(255,255,255,.05)}
+  .zoom-widget .pct{
+    min-width:50px;text-align:center;font-size:12px;color:var(--muted);
+    border-left:1px solid var(--line);border-right:1px solid var(--line);height:28px;
+    display:inline-flex;align-items:center;justify-content:center;cursor:pointer
+  }
+
+  /* ---------- Layout ---------- */
+  #layout{position:fixed;top:44px;left:0;right:0;bottom:0;display:flex}
+  #toc{
+    width:240px;flex:0 0 240px;border-right:1px solid var(--line);
+    background:rgba(14,17,22,.65);overflow:auto;padding:10px 8px;
+    transition:margin-left .2s ease
+  }
+  body.toc-collapsed #toc{margin-left:-240px}
+  #toc .toc-head{
+    font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--muted);padding:6px 8px;margin-bottom:4px
+  }
+  .toc-entry{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+    cursor:pointer;font-size:13px;color:var(--ink)
+  }
+  .toc-entry:hover{background:rgba(255,255,255,.04)}
+  .toc-entry.active{background:rgba(74,158,255,.12);color:var(--accent)}
+  .toc-entry .dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  .toc-entry.sub{padding-left:24px;font-size:12px;color:var(--muted)}
+  .toc-entry.sub:hover{color:var(--ink)}
+  .toc-empty{padding:14px 10px;color:var(--muted);font-size:12px;line-height:1.5}
+
+  /* ---------- Canvas viewport ---------- */
+  #canvasWrap{
+    flex:1;position:relative;overflow:hidden;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 0) 0 0/24px 24px,
+      var(--bg);
+    cursor:grab
+  }
+  #canvasWrap.panning{cursor:grabbing}
+  #canvas{position:absolute;top:0;left:0;width:1px;height:1px;
+    transform-origin:0 0;will-change:transform}
+
+  /* ---------- Nodes ---------- */
+  .node{
+    position:absolute;border-radius:10px;cursor:default;
+    box-shadow:0 4px 14px rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.25);
+    transition:box-shadow .12s ease, transform .12s ease
+  }
+  .node.dragging{box-shadow:0 12px 28px rgba(0,0,0,.55);z-index:9999;cursor:grabbing}
+  .node.selected{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* Section + Subsection — translucent container with header bar */
+  .node.section, .node.subsection{
+    background:rgba(20,25,33,.82);
+    border:1px solid var(--line2);
+    backdrop-filter:blur(6px);
+    overflow:hidden;display:flex;flex-direction:column
+  }
+  .node.section{min-width:320px;min-height:200px}
+  .node.subsection{min-width:240px;min-height:160px}
+  .node .sec-head{
+    display:flex;align-items:center;gap:8px;padding:8px 12px;
+    border-bottom:1px solid var(--line);cursor:grab;
+    background:rgba(255,255,255,.04)
+  }
+  .node.section .sec-head{padding:10px 14px}
+  .node .sec-tag{
+    width:10px;height:10px;border-radius:2px;flex:0 0 10px
+  }
+  .node .sec-title{
+    flex:1;font-weight:600;font-size:15px;color:var(--ink);
+    outline:none;-webkit-user-select:text;user-select:text;
+    padding:2px 4px;border-radius:4px
+  }
+  .node.subsection .sec-title{font-size:13px;font-weight:500}
+  .node .sec-title:focus{background:rgba(255,255,255,.06)}
+  .node .sec-body{flex:1;position:relative;padding:8px}
+  /* Allow drop-into hover state */
+  .node.section.drop-target, .node.subsection.drop-target{
+    border-color:var(--accent);background:rgba(74,158,255,.06)
+  }
+
+  /* Sticky note — colored card with pin dot + slight rotation */
+  .node.sticky{
+    width:180px;min-height:120px;
+    padding:14px 14px 12px;
+    color:#1a1a1a;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    display:flex;flex-direction:column;gap:8px
+  }
+  .node.sticky .sticky-pin{
+    position:absolute;top:-4px;left:50%;transform:translateX(-50%);
+    width:10px;height:10px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%, #fff 0%, #999 60%, #444 100%);
+    box-shadow:0 2px 3px rgba(0,0,0,.5);pointer-events:none
+  }
+  .node.sticky .sticky-row{display:flex;align-items:flex-start;gap:8px}
+  .node.sticky .sticky-check{
+    width:16px;height:16px;border-radius:4px;border:1.5px solid rgba(0,0,0,.35);
+    background:rgba(255,255,255,.4);cursor:pointer;flex:0 0 16px;margin-top:2px;
+    display:flex;align-items:center;justify-content:center
+  }
+  .node.sticky.done .sticky-check{background:#22c55e;border-color:#16a34a}
+  .node.sticky.done .sticky-check::after{
+    content:'';width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;
+    transform:translate(0,-1px) rotate(-45deg);display:block
+  }
+  .node.sticky .sticky-text{
+    flex:1;outline:none;-webkit-user-select:text;user-select:text;
+    font-size:14px;line-height:1.35;min-height:1em;font-weight:500
+  }
+  .node.sticky.done .sticky-text{text-decoration:line-through;opacity:.55}
+  .node.sticky .sticky-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:6px;
+    margin-top:auto;font-size:10px;color:rgba(0,0,0,.55);font-weight:500
+  }
+  .node.sticky .focus5-badge{
+    display:inline-flex;align-items:center;gap:3px;
+    background:rgba(0,0,0,.12);padding:2px 6px;border-radius:10px;
+    font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.4px
+  }
+
+  /* Sticky color palette */
+  .stk-yellow{background:#fef3c7}
+  .stk-pink{background:#fbcfe8}
+  .stk-blue{background:#bfdbfe}
+  .stk-green{background:#bbf7d0}
+  .stk-purple{background:#ddd6fe}
+  .stk-orange{background:#fed7aa}
+  .stk-gray{background:#e5e7eb}
+
+  /* Section color tag */
+  .sec-blue   .sec-tag{background:#4a9eff}
+  .sec-green  .sec-tag{background:#4ade80}
+  .sec-amber  .sec-tag{background:#fbbf24}
+  .sec-red    .sec-tag{background:#f87171}
+  .sec-purple .sec-tag{background:#a78bfa}
+  .sec-gray   .sec-tag{background:#9ca3af}
+
+  /* Resize handle */
+  .resize{
+    position:absolute;right:0;bottom:0;width:14px;height:14px;
+    cursor:nwse-resize;border-radius:0 0 10px 0;
+    background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,.18) 50%)
+  }
+  .node.sticky .resize{background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,.18) 50%)}
+
+  /* Hover toolbar (delete + color) */
+  .node-tools{
+    position:absolute;top:-32px;right:0;display:none;gap:4px;
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;
+    box-shadow:0 4px 12px rgba(0,0,0,.5)
+  }
+  .node:hover > .node-tools, .node.selected > .node-tools{display:flex}
+  .nt-btn{
+    width:22px;height:22px;border-radius:5px;background:transparent;border:none;color:var(--ink);
+    cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:12px
+  }
+  .nt-btn:hover{background:rgba(255,255,255,.08)}
+  .nt-swatch{width:14px;height:14px;border-radius:3px;cursor:pointer;border:1px solid rgba(0,0,0,.2)}
+
+  /* ---------- Context menu ---------- */
+  #contextMenu{
+    position:fixed;z-index:100;min-width:180px;
+    background:var(--panel);border:1px solid var(--line2);border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.6);padding:4px;font-size:13px
+  }
+  #contextMenu.hidden{display:none}
+  .cm-item{
+    padding:7px 12px;border-radius:5px;cursor:pointer;color:var(--ink);
+    display:flex;align-items:center;gap:8px
+  }
+  .cm-item:hover{background:rgba(255,255,255,.06)}
+  .cm-item.danger{color:var(--red)}
+  .cm-sep{height:1px;background:var(--line);margin:4px 0}
+  .cm-row{display:flex;gap:4px;padding:6px 8px}
+  .cm-swatch{width:18px;height:18px;border-radius:4px;cursor:pointer;border:1px solid rgba(0,0,0,.25)}
+  .cm-swatch.active{outline:2px solid var(--accent);outline-offset:1px}
+
+  /* ---------- Empty state ---------- */
+  #emptyHint{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;color:var(--muted);pointer-events:none
+  }
+  #emptyHint h2{margin:0 0 6px;font-size:20px;font-weight:600;color:var(--ink)}
+  #emptyHint p{margin:0;font-size:13px}
+  #emptyHint .pill{
+    display:inline-block;margin-top:14px;padding:8px 14px;
+    background:var(--panel);border:1px solid var(--line2);border-radius:20px;
+    color:var(--ink);font-size:13px;pointer-events:auto;cursor:pointer
+  }
+  #emptyHint .pill:hover{background:var(--panel2)}
+
+  /* ---------- Loading / login bar ---------- */
+  #status{
+    position:fixed;left:50%;bottom:14px;transform:translateX(-50%);
+    background:var(--panel);border:1px solid var(--line);border-radius:20px;
+    padding:6px 14px;font-size:11px;color:var(--muted);z-index:50;
+    transition:opacity .25s;pointer-events:none
+  }
+  #status.hidden{opacity:0}
+  #status.error{color:var(--red);border-color:rgba(248,113,113,.3)}
+
+  /* Mobile */
+  @media (max-width:740px){
+    #toc{position:fixed;top:44px;left:0;bottom:0;width:240px;z-index:25;
+      transform:translateX(-100%);transition:transform .2s ease;margin:0}
+    body.toc-open #toc{transform:translateX(0)}
+    body.toc-collapsed #toc{transform:translateX(-100%)}
+    #topbar .title{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <button class="tb-btn icon" id="tocToggle" title="Toggle table of contents">☰</button>
+  <span class="title">Goals</span>
+  <span class="spacer"></span>
+  <button class="tb-btn" id="addSectionBtn">+ Section</button>
+  <button class="tb-btn" id="addStickyBtn">+ Note</button>
+  <div class="zoom-widget">
+    <button id="zoomOut" title="Zoom out">−</button>
+    <button class="pct" id="zoomReset" title="Reset zoom to 100%">100%</button>
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomFit" title="Fit all">⛶</button>
+  </div>
+</div>
+
+<div id="layout">
+  <aside id="toc">
+    <div class="toc-head">Table of contents</div>
+    <div id="tocList">
+      <div class="toc-empty">Sections and subsections appear here. Click one to jump.</div>
+    </div>
+  </aside>
+  <main id="canvasWrap">
+    <div id="canvas"></div>
+    <div id="emptyHint">
+      <h2>Your goal board</h2>
+      <p>Pan with mouse drag · zoom with ⌘+scroll or the buttons above.</p>
+      <span class="pill" id="firstAddBtn">+ Add your first section</span>
+    </div>
+  </main>
+</div>
+
+<div id="contextMenu" class="hidden"></div>
+<div id="status" class="hidden">Loading…</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, getDocs, getDoc, setDoc, deleteDoc, onSnapshot, addDoc, query, where }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+// ============= Firebase =============
+const firebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "566644863130",
+  appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+};
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+const nodesCol      = collection(db, 'goals_canvas_nodes');
+const pushQueueCol  = collection(db, 'goals_priority_pushes');
+const viewDoc       = doc(db, 'goals_canvas_view', 'me');
+const todosCol      = collection(db, 'tv_todos');
+
+// ============= State =============
+const nodes = new Map();        // id -> node data
+const els   = new Map();        // id -> DOM element
+let view = { panX: 0, panY: 0, zoom: 1 };
+let selectedId = null;
+let _writingView = false;
+let _writingNode = new Set();   // nodes the local user is mid-drag/edit on (don't clobber from snapshot)
+let _suppressEmpty = false;
+
+const NODE_TYPES = {
+  section:    { w: 600, h: 400, color: 'sec-blue'   },
+  subsection: { w: 320, h: 240, color: 'sec-gray'   },
+  sticky:     { w: 180, h: 130, color: 'stk-yellow' }
+};
+const SECTION_COLORS = ['sec-blue','sec-green','sec-amber','sec-red','sec-purple','sec-gray'];
+const STICKY_COLORS  = ['stk-yellow','stk-pink','stk-blue','stk-green','stk-purple','stk-orange','stk-gray'];
+const STICKY_HEX = {
+  'stk-yellow':'#fef3c7','stk-pink':'#fbcfe8','stk-blue':'#bfdbfe',
+  'stk-green':'#bbf7d0','stk-purple':'#ddd6fe','stk-orange':'#fed7aa','stk-gray':'#e5e7eb'
+};
+const SECTION_HEX = {
+  'sec-blue':'#4a9eff','sec-green':'#4ade80','sec-amber':'#fbbf24',
+  'sec-red':'#f87171','sec-purple':'#a78bfa','sec-gray':'#9ca3af'
+};
+
+// ============= Status helper =============
+const statusEl = document.getElementById('status');
+let _statusTimer = null;
+function setStatus(msg, kind){
+  if (_statusTimer) clearTimeout(_statusTimer);
+  statusEl.textContent = msg;
+  statusEl.classList.remove('hidden','error');
+  if (kind === 'error') statusEl.classList.add('error');
+  if (kind !== 'sticky') _statusTimer = setTimeout(()=>statusEl.classList.add('hidden'), 1800);
+}
+
+// ============= Helpers =============
+function uid(){ return 'g_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,7); }
+function nowISO(){ return new Date().toISOString(); }
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function genRotation(){ return (Math.random() * 4 - 2).toFixed(2); }  // -2..2deg
+
+// Convert a viewport pixel to a canvas (logical) coordinate.
+function viewportToCanvas(px, py){
+  const r = document.getElementById('canvasWrap').getBoundingClientRect();
+  return {
+    x: (px - r.left - view.panX) / view.zoom,
+    y: (py - r.top  - view.panY) / view.zoom
+  };
+}
+
+// Apply current pan/zoom to the canvas element.
+function applyTransform(){
+  const c = document.getElementById('canvas');
+  c.style.transform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
+  document.querySelector('#zoomReset').textContent = Math.round(view.zoom * 100) + '%';
+}
+
+// Center viewport on a canvas-space rect (used by TOC jumps + fit-all).
+function focusOnRect(rect, padding){
+  const wrap = document.getElementById('canvasWrap').getBoundingClientRect();
+  const pad = padding ?? 40;
+  const sx = (wrap.width - pad*2) / rect.w;
+  const sy = (wrap.height - pad*2) / rect.h;
+  const targetZoom = clamp(Math.min(sx, sy), 0.2, 1.4);
+  const targetPanX = wrap.width/2  - (rect.x + rect.w/2) * targetZoom;
+  const targetPanY = wrap.height/2 - (rect.y + rect.h/2) * targetZoom;
+  animateView(targetPanX, targetPanY, targetZoom);
+}
+
+// Animate pan/zoom over ~250ms.
+function animateView(toPanX, toPanY, toZoom){
+  const fromX = view.panX, fromY = view.panY, fromZ = view.zoom;
+  const t0 = performance.now(), dur = 260;
+  function step(t){
+    const k = clamp((t - t0) / dur, 0, 1);
+    const e = k < .5 ? 2*k*k : 1 - Math.pow(-2*k+2,2)/2;  // easeInOutQuad
+    view.panX = fromX + (toPanX - fromX) * e;
+    view.panY = fromY + (toPanY - fromY) * e;
+    view.zoom = fromZ + (toZoom - fromZ) * e;
+    applyTransform();
+    if (k < 1) requestAnimationFrame(step);
+    else queueViewSave();
+  }
+  requestAnimationFrame(step);
+}
+
+// ============= Persist nodes =============
+async function saveNode(n){
+  if (!n || !n.id) return;
+  try {
+    await setDoc(doc(nodesCol, n.id), {
+      ...n, updatedAt: nowISO()
+    }, { merge: true });
+  } catch (e) {
+    console.warn('[goals] saveNode failed', e);
+    setStatus('Couldn\'t save — retrying', 'error');
+  }
+}
+async function deleteNode(id){
+  if (!id) return;
+  // Children-first: any nodes parented to this one orphan up to the parent's parent.
+  const orphans = [...nodes.values()].filter(n => n.parentId === id);
+  for (const o of orphans) {
+    o.parentId = nodes.get(id)?.parentId || null;
+    await saveNode(o);
+  }
+  try { await deleteDoc(doc(nodesCol, id)); } catch (e) { console.warn('[goals] delete failed', e); }
+  // Local cleanup is handled by the snapshot listener.
+}
+
+// ============= Persist view (per-user pan/zoom) =============
+let _viewSaveTimer = null;
+function queueViewSave(){
+  if (_viewSaveTimer) clearTimeout(_viewSaveTimer);
+  _viewSaveTimer = setTimeout(async () => {
+    _viewSaveTimer = null;
+    _writingView = true;
+    try {
+      await setDoc(viewDoc, { ...view, updatedAt: nowISO() }, { merge: true });
+    } catch (e) { console.warn('[goals] view save failed', e); }
+    setTimeout(()=>{ _writingView = false; }, 300);
+  }, 400);
+}
+
+// ============= Render ============================
+function renderNode(n){
+  let el = els.get(n.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'node ' + n.type;
+    el.dataset.id = n.id;
+    el.dataset.type = n.type;
+    document.getElementById('canvas').appendChild(el);
+    els.set(n.id, el);
+    attachNodeListeners(el);
+  }
+  // Position / size
+  el.style.left = (n.x || 0) + 'px';
+  el.style.top  = (n.y || 0) + 'px';
+  el.style.width  = (n.w || NODE_TYPES[n.type].w) + 'px';
+  el.style.height = (n.h || NODE_TYPES[n.type].h) + 'px';
+  el.style.zIndex = String(n.z || 1);
+
+  if (n.type === 'sticky') {
+    el.className = 'node sticky ' + (n.color || 'stk-yellow') + (n.done ? ' done' : '');
+    el.style.transform = `rotate(${n.rotation || 0}deg)`;
+    el.innerHTML = `
+      <div class="sticky-pin"></div>
+      <div class="sticky-row">
+        <div class="sticky-check" data-action="toggle-done" title="Mark done"></div>
+        <div class="sticky-text" contenteditable="plaintext-only" data-field="text">${escapeHtml(n.text || '')}</div>
+      </div>
+      <div class="sticky-foot">
+        <span class="${n.linkedTaskId ? 'focus5-badge' : ''}">${n.linkedTaskId ? '↗ Focus 5' : ''}</span>
+        <span>${n.done ? '✓' : ''}</span>
+      </div>
+      <div class="resize" data-action="resize"></div>
+      <div class="node-tools">
+        ${swatchesFor('sticky')}
+        <button class="nt-btn" data-action="focus5" title="Add to Focus 5">★</button>
+        <button class="nt-btn" data-action="delete" title="Delete">✕</button>
+      </div>
+    `;
+  } else {
+    // section / subsection
+    el.className = 'node ' + n.type + ' ' + (n.color || NODE_TYPES[n.type].color);
+    el.style.transform = '';
+    el.innerHTML = `
+      <div class="sec-head" data-action="drag-handle">
+        <span class="sec-tag"></span>
+        <div class="sec-title" contenteditable="plaintext-only" data-field="title">${escapeHtml(n.title || (n.type === 'section' ? 'New section' : 'New subsection'))}</div>
+      </div>
+      <div class="sec-body"></div>
+      <div class="resize" data-action="resize"></div>
+      <div class="node-tools">
+        ${swatchesFor('section')}
+        <button class="nt-btn" data-action="add-sticky-here" title="Add sticky inside">+</button>
+        ${n.type === 'section' ? '<button class="nt-btn" data-action="add-subsection-here" title="Add subsection">▸</button>' : ''}
+        <button class="nt-btn" data-action="delete" title="Delete">✕</button>
+      </div>
+    `;
+  }
+  if (selectedId === n.id) el.classList.add('selected'); else el.classList.remove('selected');
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function swatchesFor(kind){
+  const colors = kind === 'sticky' ? STICKY_COLORS : SECTION_COLORS;
+  return colors.map(c => {
+    const hex = (kind === 'sticky' ? STICKY_HEX : SECTION_HEX)[c];
+    return `<span class="nt-swatch" data-action="color" data-color="${c}" style="background:${hex}"></span>`;
+  }).join('');
+}
+
+function removeNodeEl(id){
+  const el = els.get(id);
+  if (el) el.remove();
+  els.delete(id);
+}
+
+function rerenderAll(){
+  const live = new Set([...nodes.keys()]);
+  for (const id of [...els.keys()]) {
+    if (!live.has(id)) removeNodeEl(id);
+  }
+  for (const n of nodes.values()) renderNode(n);
+  updateEmptyHint();
+  rebuildToc();
+}
+
+function updateEmptyHint(){
+  document.getElementById('emptyHint').style.display = nodes.size === 0 ? '' : 'none';
+}
+
+// ============= TOC =============
+function rebuildToc(){
+  const list = document.getElementById('tocList');
+  const sections = [...nodes.values()].filter(n => n.type === 'section').sort((a,b)=>a.y - b.y || a.x - b.x);
+  if (!sections.length) {
+    list.innerHTML = '<div class="toc-empty">Sections appear here. Click + Section above to start.</div>';
+    return;
+  }
+  const html = [];
+  for (const s of sections) {
+    const c = SECTION_HEX[s.color] || '#9ca3af';
+    html.push(`<div class="toc-entry${selectedId===s.id?' active':''}" data-id="${s.id}">
+      <span class="dot" style="background:${c}"></span>
+      <span>${escapeHtml(s.title || 'Untitled section')}</span>
+    </div>`);
+    const subs = [...nodes.values()]
+      .filter(n => n.type === 'subsection' && n.parentId === s.id)
+      .sort((a,b)=>a.y - b.y || a.x - b.x);
+    for (const sub of subs) {
+      html.push(`<div class="toc-entry sub${selectedId===sub.id?' active':''}" data-id="${sub.id}">
+        <span>· ${escapeHtml(sub.title || 'Untitled subsection')}</span>
+      </div>`);
+    }
+  }
+  list.innerHTML = html.join('');
+}
+
+document.getElementById('tocList').addEventListener('click', (e) => {
+  const entry = e.target.closest('.toc-entry');
+  if (!entry) return;
+  const id = entry.dataset.id;
+  const n = nodes.get(id);
+  if (!n) return;
+  selectedId = id;
+  focusOnRect({ x: n.x, y: n.y, w: n.w, h: n.h }, 80);
+  rebuildToc();
+  // Highlight selected node briefly
+  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+  const el = els.get(id);
+  if (el) el.classList.add('selected');
+});
+
+// ============= Snapshot listeners =============
+function subscribeNodes(){
+  onSnapshot(nodesCol, (snap) => {
+    let dirty = false;
+    snap.docChanges().forEach(ch => {
+      const id = ch.doc.id;
+      if (ch.type === 'removed') {
+        nodes.delete(id);
+        removeNodeEl(id);
+        dirty = true;
+        return;
+      }
+      // skip incoming snapshot while local is editing this node
+      if (_writingNode.has(id)) return;
+      const data = ch.doc.data();
+      nodes.set(id, { id, ...data });
+      renderNode({ id, ...data });
+      dirty = true;
+    });
+    if (dirty) { updateEmptyHint(); rebuildToc(); }
+  }, (err) => {
+    console.error('[goals] nodes snapshot error', err);
+    setStatus('Sync error', 'error');
+  });
+}
+function subscribeView(){
+  onSnapshot(viewDoc, (snap) => {
+    if (!snap.exists()) return;
+    if (_writingView) return;
+    const d = snap.data() || {};
+    if (typeof d.panX === 'number') view.panX = d.panX;
+    if (typeof d.panY === 'number') view.panY = d.panY;
+    if (typeof d.zoom === 'number') view.zoom = clamp(d.zoom, 0.15, 3);
+    applyTransform();
+  });
+}
+// Subscribe to tv_todos that are linked from goal bullets — back-sync done state.
+function subscribeLinkedTodos(){
+  const qry = query(todosCol, where('goalBulletId', '!=', null));
+  onSnapshot(qry, (snap) => {
+    snap.docChanges().forEach(ch => {
+      const t = ch.doc.data() || {};
+      const bulletId = t.goalBulletId;
+      if (!bulletId) return;
+      const n = nodes.get(bulletId);
+      if (!n || n.type !== 'sticky') return;
+      const todoDone = !!t.done;
+      if (n.done !== todoDone) {
+        n.done = todoDone;
+        nodes.set(bulletId, n);
+        if (!_writingNode.has(bulletId)) {
+          saveNode(n);   // mirror back to canvas doc
+          renderNode(n);
+        }
+      }
+      // If the linked todo was deleted, clear the badge.
+      if (ch.type === 'removed' && n.linkedTaskId === ch.doc.id) {
+        n.linkedTaskId = null;
+        nodes.set(bulletId, n);
+        saveNode(n);
+        renderNode(n);
+      }
+    });
+  }, (e) => console.warn('[goals] linked todos subscribe error', e));
+}
+
+// ============= Pan / Zoom =============
+const wrap = document.getElementById('canvasWrap');
+let panStart = null;
+wrap.addEventListener('mousedown', (e) => {
+  // Only pan when clicking the canvas background, not a node.
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  // Clicking empty canvas also deselects.
+  selectedId = null;
+  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+  hideContextMenu();
+  panStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
+  wrap.classList.add('panning');
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panStart) return;
+  view.panX = panStart.panX + (e.clientX - panStart.x);
+  view.panY = panStart.panY + (e.clientY - panStart.y);
+  applyTransform();
+});
+window.addEventListener('mouseup', () => {
+  if (panStart) { panStart = null; wrap.classList.remove('panning'); queueViewSave(); }
+});
+
+// Wheel: cmd/ctrl/alt + wheel = zoom; pinch trackpad sets ctrlKey too.
+// Plain wheel = pan vertically (more natural for trackpad two-finger scroll).
+wrap.addEventListener('wheel', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) {
+    e.preventDefault();
+    const dz = -e.deltaY * 0.0015;
+    const targetZoom = clamp(view.zoom * (1 + dz), 0.15, 3);
+    const { x, y } = viewportToCanvas(e.clientX, e.clientY);
+    // Zoom around cursor: keep that canvas point under the cursor.
+    view.zoom = targetZoom;
+    const r = wrap.getBoundingClientRect();
+    view.panX = e.clientX - r.left - x * view.zoom;
+    view.panY = e.clientY - r.top  - y * view.zoom;
+    applyTransform();
+    queueViewSave();
+  } else {
+    e.preventDefault();
+    view.panX -= e.deltaX;
+    view.panY -= e.deltaY;
+    applyTransform();
+    queueViewSave();
+  }
+}, { passive: false });
+
+// Touch: one-finger pan, two-finger pinch zoom
+let touchState = null;
+wrap.addEventListener('touchstart', (e) => {
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchState = { mode: 'pan', x: t.clientX, y: t.clientY, panX: view.panX, panY: view.panY };
+  } else if (e.touches.length === 2) {
+    const [a,b] = e.touches;
+    const mid = { x: (a.clientX + b.clientX)/2, y: (a.clientY + b.clientY)/2 };
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    touchState = { mode: 'pinch', dist, zoom: view.zoom, mid, anchor: viewportToCanvas(mid.x, mid.y) };
+  }
+}, { passive: true });
+wrap.addEventListener('touchmove', (e) => {
+  if (!touchState) return;
+  if (touchState.mode === 'pan' && e.touches.length === 1) {
+    e.preventDefault();
+    const t = e.touches[0];
+    view.panX = touchState.panX + (t.clientX - touchState.x);
+    view.panY = touchState.panY + (t.clientY - touchState.y);
+    applyTransform();
+  } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+    e.preventDefault();
+    const [a,b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const ratio = dist / touchState.dist;
+    view.zoom = clamp(touchState.zoom * ratio, 0.15, 3);
+    const r = wrap.getBoundingClientRect();
+    view.panX = touchState.mid.x - r.left - touchState.anchor.x * view.zoom;
+    view.panY = touchState.mid.y - r.top  - touchState.anchor.y * view.zoom;
+    applyTransform();
+  }
+}, { passive: false });
+wrap.addEventListener('touchend', () => {
+  if (touchState) { touchState = null; queueViewSave(); }
+});
+
+// Zoom widget buttons
+document.getElementById('zoomIn').onclick = () => animateView(view.panX, view.panY, clamp(view.zoom * 1.2, 0.15, 3));
+document.getElementById('zoomOut').onclick = () => animateView(view.panX, view.panY, clamp(view.zoom / 1.2, 0.15, 3));
+document.getElementById('zoomReset').onclick = () => animateView(view.panX, view.panY, 1);
+document.getElementById('zoomFit').onclick = () => fitAll();
+
+function fitAll(){
+  if (nodes.size === 0) { animateView(0, 0, 1); return; }
+  const xs = [...nodes.values()];
+  const minX = Math.min(...xs.map(n => n.x));
+  const minY = Math.min(...xs.map(n => n.y));
+  const maxX = Math.max(...xs.map(n => n.x + n.w));
+  const maxY = Math.max(...xs.map(n => n.y + n.h));
+  focusOnRect({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, 60);
+}
+
+// ============= Node interactions =============
+function attachNodeListeners(el){
+  // Drag (whole sticky, or the section header bar)
+  el.addEventListener('mousedown', (e) => {
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    const action = e.target.dataset.action;
+    if (action === 'resize') { startResize(e, id); return; }
+    // editable text — let the user type, don't drag
+    if (e.target.matches('[contenteditable]')) return;
+    if (e.target.closest('.node-tools')) return;
+    if (e.target.closest('.sticky-check')) return;
+    // Section drag only via header; subsection drag via header.
+    if (n.type === 'section' || n.type === 'subsection') {
+      if (!e.target.closest('.sec-head')) return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    selectedId = id;
+    document.querySelectorAll('.node.selected').forEach(x => x.classList.remove('selected'));
+    el.classList.add('selected', 'dragging');
+    _writingNode.add(id);
+    const startX = e.clientX, startY = e.clientY;
+    const origX = n.x, origY = n.y;
+    function move(ev){
+      const dx = (ev.clientX - startX) / view.zoom;
+      const dy = (ev.clientY - startY) / view.zoom;
+      n.x = origX + dx;
+      n.y = origY + dy;
+      el.style.left = n.x + 'px';
+      el.style.top  = n.y + 'px';
+      // Highlight section drop target as we hover stickies over them.
+      if (n.type === 'sticky') updateDropTargetHighlight(n);
+    }
+    function up(){
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      el.classList.remove('dragging');
+      // Snap-into-section for stickies + subsections
+      if (n.type === 'sticky' || n.type === 'subsection') {
+        n.parentId = findContainer(n);
+      }
+      clearDropTargetHighlight();
+      saveNode(n);
+      setTimeout(()=> _writingNode.delete(id), 250);
+      rebuildToc();
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+
+  // Click actions inside the node
+  el.addEventListener('click', (e) => {
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    const a = e.target.dataset.action;
+    if (a === 'toggle-done') {
+      toggleDone(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'delete') {
+      if (confirm('Delete this ' + n.type + '?')) deleteNode(id);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'color') {
+      n.color = e.target.dataset.color;
+      saveNode(n);
+      renderNode(n);
+      rebuildToc();
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'focus5') {
+      promoteToFocus5(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'add-sticky-here') {
+      createNode('sticky', { x: n.x + 20, y: n.y + (n.type==='section'?60:40), parentId: id });
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'add-subsection-here') {
+      createNode('subsection', { x: n.x + 20, y: n.y + 60, parentId: id });
+      e.stopPropagation();
+      return;
+    }
+  });
+
+  // Contenteditable persistence
+  el.addEventListener('blur', (e) => {
+    const t = e.target;
+    if (!t.matches('[contenteditable]')) return;
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    const field = t.dataset.field;
+    const val = (t.textContent || '').trim();
+    if (n[field] === val) return;
+    n[field] = val;
+    saveNode(n);
+    // If this is a linked sticky, sync text back to the linked todo too.
+    if (n.type === 'sticky' && n.linkedTaskId && field === 'text') {
+      setDoc(doc(todosCol, n.linkedTaskId), { text: val }, { merge: true }).catch(()=>{});
+    }
+    rebuildToc();
+  }, true);
+
+  // Right-click context menu
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n) return;
+    showNodeContextMenu(e.clientX, e.clientY, n);
+  });
+}
+
+function toggleDone(n){
+  if (n.type !== 'sticky') return;
+  n.done = !n.done;
+  saveNode(n);
+  renderNode(n);
+  // Mirror to linked todo if any.
+  if (n.linkedTaskId) {
+    setDoc(doc(todosCol, n.linkedTaskId), {
+      done: n.done,
+      completedAt: n.done ? nowISO() : null
+    }, { merge: true }).catch(()=>{});
+  }
+}
+
+// Resize: drag the corner handle. Stickies stay rect (no rotation snap during resize).
+function startResize(e, id){
+  e.preventDefault();
+  e.stopPropagation();
+  const n = nodes.get(id);
+  const el = els.get(id);
+  if (!n) return;
+  _writingNode.add(id);
+  const startX = e.clientX, startY = e.clientY;
+  const origW = n.w, origH = n.h;
+  function move(ev){
+    n.w = Math.max(120, origW + (ev.clientX - startX) / view.zoom);
+    n.h = Math.max(80,  origH + (ev.clientY - startY) / view.zoom);
+    el.style.width  = n.w + 'px';
+    el.style.height = n.h + 'px';
+  }
+  function up(){
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+    saveNode(n);
+    setTimeout(()=> _writingNode.delete(id), 250);
+  }
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+}
+
+// Containment: a sticky belongs to the smallest (subsection > section) box that contains its center.
+function findContainer(n){
+  const cx = n.x + n.w/2, cy = n.y + n.h/2;
+  let best = null;
+  for (const c of nodes.values()) {
+    if (c.id === n.id) continue;
+    if (c.type !== 'section' && c.type !== 'subsection') continue;
+    if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) {
+      if (!best || c.w * c.h < best.w * best.h) best = c;
+    }
+  }
+  return best ? best.id : null;
+}
+function updateDropTargetHighlight(n){
+  const target = findContainer(n);
+  document.querySelectorAll('.node.drop-target').forEach(x => x.classList.remove('drop-target'));
+  if (target) els.get(target)?.classList.add('drop-target');
+}
+function clearDropTargetHighlight(){
+  document.querySelectorAll('.node.drop-target').forEach(x => x.classList.remove('drop-target'));
+}
+
+// ============= Create =============
+async function createNode(type, opts){
+  opts = opts || {};
+  const def = NODE_TYPES[type];
+  // Default position: visible center of viewport
+  let { x, y } = opts;
+  if (x == null || y == null) {
+    const wrapR = wrap.getBoundingClientRect();
+    const center = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+    x = (x == null) ? center.x - def.w/2 : x;
+    y = (y == null) ? center.y - def.h/2 : y;
+  }
+  const n = {
+    id: uid(),
+    type,
+    x, y,
+    w: def.w, h: def.h,
+    color: opts.color || def.color,
+    title: opts.title || '',
+    text: opts.text || '',
+    done: false,
+    parentId: opts.parentId || null,
+    rotation: type === 'sticky' ? parseFloat(genRotation()) : 0,
+    linkedTaskId: null,
+    z: Date.now()
+  };
+  // If creating loose (no parent), spatial test will pick up any container we land on.
+  if (!n.parentId && (type === 'sticky' || type === 'subsection')) {
+    n.parentId = findContainer(n);
+  }
+  nodes.set(n.id, n);
+  renderNode(n);
+  await saveNode(n);
+  // Auto-focus the new editable field.
+  setTimeout(()=>{
+    const el = els.get(n.id);
+    if (!el) return;
+    const target = el.querySelector('[contenteditable]');
+    if (target) { target.focus(); document.getSelection()?.selectAllChildren(target); }
+  }, 30);
+  updateEmptyHint();
+  rebuildToc();
+  return n;
+}
+
+document.getElementById('addSectionBtn').onclick = () => createNode('section');
+document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
+document.getElementById('firstAddBtn').onclick   = () => createNode('section');
+
+// Toggle TOC
+document.getElementById('tocToggle').onclick = () => {
+  if (window.innerWidth <= 740) {
+    document.body.classList.toggle('toc-open');
+  } else {
+    document.body.classList.toggle('toc-collapsed');
+  }
+};
+
+// ============= Context menu =============
+const cm = document.getElementById('contextMenu');
+function showCanvasContextMenu(px, py, canvasPt){
+  cm.innerHTML = `
+    <div class="cm-item" data-cm="add-sticky">+ Sticky note</div>
+    <div class="cm-item" data-cm="add-section">+ Section</div>
+    <div class="cm-item" data-cm="add-subsection">+ Subsection</div>
+  `;
+  cm.style.left = px + 'px';
+  cm.style.top  = py + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (e) => {
+    const c = e.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'add-sticky')     createNode('sticky',     { x: canvasPt.x - 90,  y: canvasPt.y - 60 });
+    if (c === 'add-section')    createNode('section',    { x: canvasPt.x - 300, y: canvasPt.y - 200 });
+    if (c === 'add-subsection') createNode('subsection', { x: canvasPt.x - 160, y: canvasPt.y - 120 });
+  };
+}
+function showNodeContextMenu(px, py, n){
+  let extra = '';
+  if (n.type === 'sticky') {
+    extra = `
+      <div class="cm-item" data-cm="focus5">${n.linkedTaskId ? '↗ Already in Focus 5' : '★ Add to Focus 5'}</div>
+      <div class="cm-item" data-cm="toggle-done">${n.done ? '○ Mark not done' : '✓ Mark done'}</div>
+      <div class="cm-sep"></div>
+    `;
+  }
+  cm.innerHTML = `
+    ${extra}
+    <div class="cm-row">${swatchesFor(n.type === 'sticky' ? 'sticky' : 'section')
+      .replace(/data-action="color"/g, 'data-cm="color"')}</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item danger" data-cm="delete">✕ Delete</div>
+  `;
+  cm.style.left = px + 'px';
+  cm.style.top  = py + 'px';
+  cm.classList.remove('hidden');
+  cm.onclick = (e) => {
+    const c = e.target.dataset.cm;
+    if (!c) return;
+    hideContextMenu();
+    if (c === 'focus5')      promoteToFocus5(n);
+    if (c === 'toggle-done') toggleDone(n);
+    if (c === 'color')       { n.color = e.target.dataset.color; saveNode(n); renderNode(n); rebuildToc(); }
+    if (c === 'delete')      { if (confirm('Delete this ' + n.type + '?')) deleteNode(n.id); }
+  };
+}
+function hideContextMenu(){ cm.classList.add('hidden'); }
+wrap.addEventListener('contextmenu', (e) => {
+  if (e.target !== wrap && !e.target.matches('#canvas')) return;
+  e.preventDefault();
+  const pt = viewportToCanvas(e.clientX, e.clientY);
+  showCanvasContextMenu(e.clientX, e.clientY, pt);
+});
+window.addEventListener('click', (e) => {
+  if (!cm.contains(e.target)) hideContextMenu();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideContextMenu();
+  if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) {
+    if (selectedId && !document.activeElement?.matches('[contenteditable]')) {
+      const n = nodes.get(selectedId);
+      if (n && confirm('Delete this ' + n.type + '?')) deleteNode(selectedId);
+    }
+  }
+});
+
+// ============= Promote to Focus 5 =============
+async function promoteToFocus5(n){
+  if (n.type !== 'sticky') return;
+  if (n.linkedTaskId) {
+    setStatus('Already in Focus 5');
+    return;
+  }
+  const text = (n.text || '').trim();
+  if (!text) { setStatus('Type something first', 'error'); return; }
+  setStatus('Adding to Focus 5…', 'sticky');
+  try {
+    // 1. Create the tv_todo directly so we get the id back synchronously,
+    //    AND stamp it with goalBulletId for the back-sync subscription.
+    const today = new Date();
+    const tk = today.getFullYear() + '-' +
+               String(today.getMonth()+1).padStart(2,'0') + '-' +
+               String(today.getDate()).padStart(2,'0');
+    const payload = {
+      text,
+      done: !!n.done,
+      date: tk,
+      position: Date.now(),
+      timeSpent: 0,
+      countdownSecs: 0,
+      createdAt: nowISO(),
+      goalBulletId: n.id,
+      details: 'From Goals board',
+      job: 'personal'
+    };
+    const ref = await addDoc(todosCol, payload);
+    n.linkedTaskId = ref.id;
+    await saveNode(n);
+    renderNode(n);
+    // 2. Queue a push to Focus 5 so personal-todos puts it on the priority list.
+    await addDoc(pushQueueCol, {
+      todoId: ref.id,
+      bulletId: n.id,
+      text,
+      createdAt: nowISO()
+    });
+    setStatus('Added to Focus 5 ✓');
+  } catch (e) {
+    console.error('[goals] promote failed', e);
+    setStatus('Couldn\'t promote — try again', 'error');
+  }
+}
+
+// ============= Initial load =============
+async function bootstrap(){
+  setStatus('Loading…', 'sticky');
+  try {
+    // View first
+    try {
+      const vs = await getDoc(viewDoc);
+      if (vs.exists()) {
+        const d = vs.data() || {};
+        if (typeof d.panX === 'number') view.panX = d.panX;
+        if (typeof d.panY === 'number') view.panY = d.panY;
+        if (typeof d.zoom === 'number') view.zoom = clamp(d.zoom, 0.15, 3);
+      }
+    } catch {}
+    applyTransform();
+
+    // Nodes
+    const snap = await getDocs(nodesCol);
+    snap.forEach(d => nodes.set(d.id, { id: d.id, ...d.data() }));
+    rerenderAll();
+
+    // Live subscriptions
+    subscribeNodes();
+    subscribeView();
+    subscribeLinkedTodos();
+
+    setStatus(nodes.size ? '' : 'Empty board — click + Section to begin');
+    setTimeout(()=> statusEl.classList.add('hidden'), 1200);
+  } catch (e) {
+    console.error('[goals] bootstrap failed', e);
+    setStatus('Failed to load — refresh to retry', 'error');
+  }
+}
+
+bootstrap();
+
+// Embed mode (loaded inside daily-planner iframe)
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+</script>
+
+</body>
+</html>
