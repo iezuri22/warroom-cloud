@@ -769,10 +769,9 @@
   /* Dev / Reports + Notifications views: hide the standard ECM filter
      chrome (owner pills, search row, status chips). These views have
      their own controls and don't share the standard filter strip. */
-  body.view-dev .search-row,
-  body.view-dev .status-bar,
   body.view-notif .status-bar { display: none !important }
   body.view-starred .status-bar { display: none !important }
+  /* Dev/Reports now shares the standard chrome (search + chips) with Non-Dev and All. */
   /* Acknowledge view keeps the owner pills + search (they scope the queue)
      and shows the bulk-select checkboxes. */
   body.view-notif .row-check { display: inline-flex }
@@ -971,22 +970,23 @@
   }
   .status-chip.muted { opacity: .35 }
   .status-chip.muted:hover { opacity: .7 }
-  /* Issue chips — data-quality filters. Amber when populated, dimmed when empty. */
+  /* Issue chips — data-quality filters. Red so unresolved data problems
+     stand out at a glance. */
   .status-chip.issue {
-    border-color: rgba(255,200,77,.32);
-    color: rgba(255,200,77,.85);
+    border-color: rgba(248,113,113,.32);
+    color: rgba(248,113,113,.85);
   }
-  .status-chip.issue:hover { color: var(--amber); border-color: var(--amber) }
+  .status-chip.issue:hover { color: var(--red, #f87171); border-color: var(--red, #f87171); }
   .status-chip.issue.active {
-    background: rgba(255,200,77,.16);
-    color: var(--amber); border-color: var(--amber);
+    background: rgba(248,113,113,.14);
+    color: var(--red, #f87171); border-color: var(--red, #f87171);
   }
   .status-chip.issue .ct {
-    background: rgba(255,200,77,.16);
-    color: var(--amber);
+    background: rgba(248,113,113,.16);
+    color: var(--red, #f87171);
   }
   .status-chip.issue.active .ct {
-    background: rgba(255,200,77,.28);
+    background: rgba(248,113,113,.28);
     color: var(--ink);
   }
   /* Completed status chip — green to signal "shipped" at a glance */
@@ -2526,6 +2526,10 @@
       Dev / Reports
       <span class="view-tab-ct" id="devReportsCount"></span>
     </button>
+    <button type="button" class="view-tab" data-view="allrows">
+      All
+      <span class="view-tab-ct" id="allRowsCount"></span>
+    </button>
     <button type="button" class="view-tab" data-view="weekly">
       This Week
       <span class="view-tab-ct" id="weeklyCount"></span>
@@ -3673,7 +3677,7 @@ function jumpToRow(rowId){
   currentView = targetView;
   document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === targetView));
   document.body.classList.remove('view-notif', 'view-weekly', 'view-starred');
-  document.body.classList.toggle('view-dev', targetView === 'dev');
+  // Dev/Reports and All views share the standard chrome — no special body class.
   // Clear filters that could swallow the row. Search filter especially can
   // narrow the pool down to nothing matching the row's task text.
   if (targetView === 'all') {
@@ -3791,11 +3795,27 @@ function applyFilters(){
   // work that's tracked elsewhere. EXCEPT when the data-quality filters
   // (No ticket / Missing date) are active — those are global hygiene
   // problems that need visibility no matter the type.
+  // Items marked for deletion belong ONLY on the deletion list (Review tab,
+  // 'del' sub-tab). Drop them from every other view so they don't clutter
+  // active work surfaces — Smartsheet still has them; deletion happens there.
+  if (!(currentView === 'notif' && _ackTab === 'del')) {
+    pool = pool.filter(r => !r.deletion);
+  }
+  // Type scope per tab:
+  //   - 'all'      (Non-Dev/Non-Report) → exclude dev/report rows
+  //   - 'dev'      (Dev/Reports)        → INCLUDE ONLY dev/report rows
+  //   - 'allrows'  (All)                → no type filter
+  //   - everything else                  → no type filter (Review, Starred, etc.)
+  // Issue filters (No ticket / Missing date) override the type scope so
+  // data-quality problems surface no matter where they live.
   const isIssueFilter = filterStatus === '__no_ticket__' || filterStatus === '__no_completion_date__';
   if (!isIssueFilter) {
-    // The currently-expanded row is exempt — the Dev/Reports "open drawer"
-    // jump lands here, and the row must be visible for the drawer to open.
-    pool = pool.filter(r => !isDevOrReportRow(r) || String(r.id) === String(expandedId));
+    if (currentView === 'all') {
+      pool = pool.filter(r => !isDevOrReportRow(r) || String(r.id) === String(expandedId));
+    } else if (currentView === 'dev') {
+      pool = pool.filter(r => isDevOrReportRow(r) || String(r.id) === String(expandedId));
+    }
+    // 'allrows' keeps everything.
   }
   // Ack view: hide already-acked rows by default so the queue clears as you go.
   // Acked tasks remain visible if filter is on All status (so you can still
@@ -4236,11 +4256,9 @@ function render(){
     renderStarred();
     return;
   }
-  // Dev / Reports view — dedicated layout showing limbo time + last update.
-  if (currentView === 'dev') {
-    renderDevReports();
-    return;
-  }
+  // Dev / Reports view used to have a custom layout (renderDevReports).
+  // It now uses the same row UI as the All / Non-Dev views — the only
+  // difference is what applyFilters() includes.
   if (currentView === 'activity') {
     renderActivity();
     return;
@@ -4535,11 +4553,17 @@ function drStatusBucket(status){
 }
 function updateDevReportsCount(){
   const el = document.getElementById('devReportsCount');
-  if (!el) return;
-  // Tab badge = items in the Open bucket. Parked and Completed don't count
-  // as "needs attention right now".
-  const openDev = rows.filter(r => isDevOrReportRow(r) && drStatusBucket(r.status) === 'open').length;
-  el.textContent = openDev > 0 ? String(openDev) : '';
+  if (el) {
+    // Tab badge = open dev/report items.
+    const openDev = rows.filter(r => !r.deletion && isDevOrReportRow(r) && drStatusBucket(r.status) === 'open').length;
+    el.textContent = openDev > 0 ? String(openDev) : '';
+  }
+  const allEl = document.getElementById('allRowsCount');
+  if (allEl) {
+    // "All" tab badge = all open rows (dev + non-dev) excluding deletion-marked ones.
+    const openAll = rows.filter(r => (r.task || '').trim() && !r.deletion && !_rowClosed(r)).length;
+    allEl.textContent = openAll > 0 ? String(openAll) : '';
+  }
 }
 // Dev/Reports view local filter state. Resets when you navigate away.
 let _drTypeFilter = 'all';     // 'all' | 'dev' | 'report'
@@ -6214,7 +6238,6 @@ function renderActivity(){
     // switching programmatically).
     document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x.dataset.view === targetView));
     document.body.classList.toggle('view-ack',     targetView === 'ack');
-    document.body.classList.toggle('view-dev',     targetView === 'dev');
     document.body.classList.toggle('view-notif',   targetView === 'notif');
     document.body.classList.toggle('view-weekly',  targetView === 'weekly');
     document.body.classList.toggle('view-starred', targetView === 'starred');
@@ -6985,7 +7008,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
     currentView = v;
     document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x === b));
     document.body.classList.toggle('view-ack', currentView === 'ack');
-    document.body.classList.toggle('view-dev', currentView === 'dev');
+    // 'dev' and 'allrows' now share the standard look — no body class.
     document.body.classList.toggle('view-notif', currentView === 'notif');
     document.body.classList.toggle('view-weekly', currentView === 'weekly');
     document.body.classList.toggle('view-starred', currentView === 'starred');
