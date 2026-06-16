@@ -186,22 +186,30 @@
     background:radial-gradient(circle at 30% 30%, #fff 0%, #999 60%, #444 100%);
     box-shadow:0 2px 3px rgba(0,0,0,.5);pointer-events:none
   }
+  .node.sticky .sticky-items{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;overflow:auto}
   .node.sticky .sticky-row{display:flex;align-items:flex-start;gap:8px}
   .node.sticky .sticky-check{
     width:16px;height:16px;border-radius:4px;border:1.5px solid rgba(0,0,0,.35);
     background:rgba(255,255,255,.4);cursor:pointer;flex:0 0 16px;margin-top:2px;
     display:flex;align-items:center;justify-content:center
   }
-  .node.sticky.done .sticky-check{background:#22c55e;border-color:#16a34a}
-  .node.sticky.done .sticky-check::after{
+  .node.sticky .sticky-row.done .sticky-check{background:#22c55e;border-color:#16a34a}
+  .node.sticky .sticky-row.done .sticky-check::after{
     content:'';width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;
     transform:translate(0,-1px) rotate(-45deg);display:block
   }
   .node.sticky .sticky-text{
     flex:1;outline:none;-webkit-user-select:text;user-select:text;
-    font-size:14px;line-height:1.35;min-height:1em;font-weight:500
+    font-size:14px;line-height:1.35;min-height:1em;font-weight:500;
+    white-space:pre-wrap;word-break:break-word
   }
-  .node.sticky.done .sticky-text{text-decoration:line-through;opacity:.55}
+  .node.sticky .sticky-row.done .sticky-text{text-decoration:line-through;opacity:.55}
+  .node.sticky .sticky-row .row-badge{
+    display:none;font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.4px;color:rgba(0,0,0,.55);
+    background:rgba(0,0,0,.1);padding:2px 6px;border-radius:8px;margin-top:1px
+  }
+  .node.sticky .sticky-row.linked .row-badge{display:inline-flex;align-items:center;gap:2px}
   .node.sticky .sticky-foot{
     display:flex;align-items:center;justify-content:space-between;gap:6px;
     margin-top:auto;font-size:10px;color:rgba(0,0,0,.55);font-weight:500
@@ -519,22 +527,23 @@ function renderNode(n){
   el.style.zIndex = String(n.z || 1);
 
   if (n.type === 'sticky') {
-    el.className = 'node sticky ' + (n.color || 'stk-yellow') + (n.done ? ' done' : '');
+    ensureItems(n);
+    el.className = 'node sticky ' + (n.color || 'stk-yellow');
     el.style.transform = `rotate(${n.rotation || 0}deg)`;
+    const rowsHtml = n.items.map(it => `
+      <div class="sticky-row${it.done?' done':''}${it.linkedTaskId?' linked':''}" data-item-id="${it.id}">
+        <div class="sticky-check" data-action="toggle-item" title="Mark done"></div>
+        <div class="sticky-text" contenteditable="plaintext-only" data-action="edit-item">${escapeHtml(it.text || '')}</div>
+        <span class="row-badge" title="In Focus 5">↗</span>
+      </div>
+    `).join('');
     el.innerHTML = `
       <div class="sticky-pin"></div>
-      <div class="sticky-row">
-        <div class="sticky-check" data-action="toggle-done" title="Mark done"></div>
-        <div class="sticky-text" contenteditable="plaintext-only" data-field="text">${escapeHtml(n.text || '')}</div>
-      </div>
-      <div class="sticky-foot">
-        <span class="${n.linkedTaskId ? 'focus5-badge' : ''}">${n.linkedTaskId ? '↗ Focus 5' : ''}</span>
-        <span>${n.done ? '✓' : ''}</span>
-      </div>
+      <div class="sticky-items">${rowsHtml}</div>
       <div class="resize" data-action="resize"></div>
       <div class="node-tools">
         ${swatchesFor('sticky')}
-        <button class="nt-btn" data-action="focus5" title="Add to Focus 5">★</button>
+        <button class="nt-btn" data-action="focus5" title="Promote first unlinked bullet to Focus 5">★</button>
         <button class="nt-btn" data-action="delete" title="Delete">✕</button>
       </div>
     `;
@@ -562,6 +571,21 @@ function renderNode(n){
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function itemUid(){ return 'i_' + Math.random().toString(36).slice(2, 9); }
+// Migrate the legacy single-text sticky shape into items[]. Idempotent.
+function ensureItems(n){
+  if (Array.isArray(n.items) && n.items.length) {
+    // Belt + suspenders: every item gets an id.
+    n.items.forEach(it => { if (!it.id) it.id = itemUid(); });
+    return;
+  }
+  n.items = [{
+    id: itemUid(),
+    text: n.text || '',
+    done: !!n.done,
+    linkedTaskId: n.linkedTaskId || null
+  }];
 }
 function swatchesFor(kind){
   const colors = kind === 'sticky' ? STICKY_COLORS : SECTION_COLORS;
@@ -713,29 +737,30 @@ function subscribeBoards(){
   });
 }
 function boardSort(a, b){ return (a.order || 0) - (b.order || 0) || String(a.createdAt||'').localeCompare(String(b.createdAt||'')); }
-// Subscribe to tv_todos that are linked from goal bullets — back-sync done state.
+// Subscribe to tv_todos that are linked from goal bullets — back-sync done
+// state and (on delete) clear the linked badge. goalBulletId is "<stickyId>/<itemId>"
+// for items-shape stickies and just "<stickyId>" for legacy ones.
 function subscribeLinkedTodos(){
   const qry = query(todosCol, where('goalBulletId', '!=', null));
   onSnapshot(qry, (snap) => {
     snap.docChanges().forEach(ch => {
       const t = ch.doc.data() || {};
-      const bulletId = t.goalBulletId;
-      if (!bulletId) return;
-      const n = nodes.get(bulletId);
+      const key = t.goalBulletId;
+      if (!key) return;
+      const [stickyId, itemId] = String(key).split('/');
+      const n = nodes.get(stickyId);
       if (!n || n.type !== 'sticky') return;
+      ensureItems(n);
+      // Find the item: by itemId if compound, else just the first one.
+      const item = itemId ? n.items.find(it => it.id === itemId) : n.items[0];
+      if (!item) return;
       const todoDone = !!t.done;
-      if (n.done !== todoDone) {
-        n.done = todoDone;
-        nodes.set(bulletId, n);
-        if (!_writingNode.has(bulletId)) {
-          saveNode(n);   // mirror back to canvas doc
-          renderNode(n);
-        }
+      let mutated = false;
+      if (item.done !== todoDone) { item.done = todoDone; mutated = true; }
+      if (ch.type === 'removed' && item.linkedTaskId === ch.doc.id) {
+        item.linkedTaskId = null; mutated = true;
       }
-      // If the linked todo was deleted, clear the badge.
-      if (ch.type === 'removed' && n.linkedTaskId === ch.doc.id) {
-        n.linkedTaskId = null;
-        nodes.set(bulletId, n);
+      if (mutated && !_writingNode.has(stickyId)) {
         saveNode(n);
         renderNode(n);
       }
@@ -977,8 +1002,10 @@ function attachNodeListeners(el){
     const n = nodes.get(id);
     if (!n) return;
     const a = e.target.dataset.action;
-    if (a === 'toggle-done') {
-      toggleDone(n);
+    if (a === 'toggle-item') {
+      const row = e.target.closest('.sticky-row');
+      const itemId = row?.dataset.itemId;
+      if (itemId) toggleItemDone(n, itemId);
       e.stopPropagation();
       return;
     }
@@ -1012,6 +1039,78 @@ function attachNodeListeners(el){
     }
   });
 
+  // Enter / Backspace inside sticky items — Enter splits at caret into a new
+  // checkbox row; Backspace at start of an empty row deletes it (and merges
+  // any trailing text into the previous row).
+  el.addEventListener('keydown', (e) => {
+    if (!e.target.matches('.sticky-text')) return;
+    const id = el.dataset.id;
+    const n = nodes.get(id);
+    if (!n || n.type !== 'sticky') return;
+    const row = e.target.closest('.sticky-row');
+    const itemId = row?.dataset.itemId;
+    if (!itemId) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const sel = document.getSelection();
+      const fullText = e.target.textContent || '';
+      let caret = fullText.length;
+      try {
+        if (sel && sel.rangeCount) {
+          const r = sel.getRangeAt(0);
+          // Caret offset works for plaintext-only contenteditable.
+          caret = r.startOffset;
+        }
+      } catch {}
+      const before = fullText.slice(0, caret);
+      const after  = fullText.slice(caret);
+      const item = (n.items || []).find(it => it.id === itemId);
+      if (!item) return;
+      item.text = before;
+      e.target.textContent = before;
+      const newItem = { id: itemUid(), text: after, done: false, linkedTaskId: null };
+      const idx = n.items.findIndex(it => it.id === itemId);
+      n.items.splice(idx + 1, 0, newItem);
+      // Re-render so the new row is in the DOM, then focus it.
+      renderNode(n);
+      saveNode(n);
+      setTimeout(() => {
+        const newRow = el.querySelector(`.sticky-row[data-item-id="${newItem.id}"] .sticky-text`);
+        if (newRow) {
+          newRow.focus();
+          // Caret at start (where the split happened).
+          const r = document.createRange();
+          r.setStart(newRow, 0);
+          r.collapse(true);
+          const s = document.getSelection();
+          s.removeAllRanges(); s.addRange(r);
+        }
+      }, 0);
+    } else if (e.key === 'Backspace') {
+      const text = e.target.textContent || '';
+      if (text.length > 0) return;   // normal backspace inside text
+      // Empty row + Backspace: delete this row, focus previous.
+      const idx = n.items.findIndex(it => it.id === itemId);
+      if (idx <= 0) return;          // can't delete the first row from here
+      e.preventDefault();
+      n.items.splice(idx, 1);
+      renderNode(n);
+      saveNode(n);
+      setTimeout(() => {
+        const prev = n.items[idx - 1];
+        const prevEl = el.querySelector(`.sticky-row[data-item-id="${prev.id}"] .sticky-text`);
+        if (prevEl) {
+          prevEl.focus();
+          const r = document.createRange();
+          r.selectNodeContents(prevEl);
+          r.collapse(false);
+          const s = document.getSelection();
+          s.removeAllRanges(); s.addRange(r);
+        }
+      }, 0);
+    }
+  });
+
   // Contenteditable persistence
   el.addEventListener('blur', (e) => {
     const t = e.target;
@@ -1019,16 +1118,30 @@ function attachNodeListeners(el){
     const id = el.dataset.id;
     const n = nodes.get(id);
     if (!n) return;
-    const field = t.dataset.field;
-    const val = (t.textContent || '').trim();
-    if (n[field] === val) return;
-    n[field] = val;
-    saveNode(n);
-    // If this is a linked sticky, sync text back to the linked todo too.
-    if (n.type === 'sticky' && n.linkedTaskId && field === 'text') {
-      setDoc(doc(todosCol, n.linkedTaskId), { text: val }, { merge: true }).catch(()=>{});
+    // Section/subsection title
+    if (t.dataset.field === 'title') {
+      const val = (t.textContent || '').trim();
+      if (n.title === val) return;
+      n.title = val;
+      saveNode(n);
+      rebuildToc();
+      return;
     }
-    rebuildToc();
+    // Sticky bullet text
+    if (n.type === 'sticky' && t.dataset.action === 'edit-item') {
+      const row = t.closest('.sticky-row');
+      const itemId = row?.dataset.itemId;
+      const item = (n.items || []).find(it => it.id === itemId);
+      if (!item) return;
+      const val = (t.textContent || '').trim();
+      if (item.text === val) return;
+      item.text = val;
+      saveNode(n);
+      // Mirror to linked todo if this bullet was promoted.
+      if (item.linkedTaskId) {
+        setDoc(doc(todosCol, item.linkedTaskId), { text: val }, { merge: true }).catch(()=>{});
+      }
+    }
   }, true);
 
   // Right-click context menu
@@ -1042,18 +1155,28 @@ function attachNodeListeners(el){
   });
 }
 
-function toggleDone(n){
+function toggleItemDone(n, itemId){
   if (n.type !== 'sticky') return;
-  n.done = !n.done;
+  ensureItems(n);
+  const it = n.items.find(x => x.id === itemId);
+  if (!it) return;
+  it.done = !it.done;
   saveNode(n);
   renderNode(n);
-  // Mirror to linked todo if any.
-  if (n.linkedTaskId) {
-    setDoc(doc(todosCol, n.linkedTaskId), {
-      done: n.done,
-      completedAt: n.done ? nowISO() : null
+  if (it.linkedTaskId) {
+    setDoc(doc(todosCol, it.linkedTaskId), {
+      done: it.done,
+      completedAt: it.done ? nowISO() : null
     }, { merge: true }).catch(()=>{});
   }
+}
+// Legacy entry-point kept for the right-click "toggle done" menu item — flips
+// the first unchecked bullet (or the first bullet if all are checked).
+function toggleDone(n){
+  if (n.type !== 'sticky') return;
+  ensureItems(n);
+  const target = n.items.find(it => !it.done) || n.items[0];
+  if (target) toggleItemDone(n, target.id);
 }
 
 // Resize: drag the corner handle. Stickies stay rect (no rotation snap during resize).
@@ -1197,14 +1320,15 @@ async function createNode(type, opts){
     w: def.w, h: def.h,
     color: opts.color || def.color,
     title: opts.title || '',
-    text: opts.text || '',
     done: false,
     parentId: opts.parentId || null,
     rotation: type === 'sticky' ? parseFloat(genRotation()) : 0,
-    linkedTaskId: null,
     boardId: activeBoardId || null,
     z: Date.now()
   };
+  if (type === 'sticky') {
+    n.items = [{ id: itemUid(), text: opts.text || '', done: false, linkedTaskId: null }];
+  }
   // If creating loose (no parent), spatial test will pick up any container we land on.
   if (!n.parentId && (type === 'sticky' || type === 'subsection')) {
     n.parentId = findContainer(n);
@@ -1307,42 +1431,48 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ============= Promote to Focus 5 =============
-async function promoteToFocus5(n){
+// Promotes a specific item (bullet) inside a sticky. If no itemId is passed,
+// promotes the first unlinked, non-empty bullet. Each bullet gets its own
+// linkedTaskId and its own tv_todo doc.
+async function promoteToFocus5(n, itemId){
   if (n.type !== 'sticky') return;
-  if (n.linkedTaskId) {
-    setStatus('Already in Focus 5');
+  ensureItems(n);
+  let target;
+  if (itemId) target = n.items.find(it => it.id === itemId);
+  else        target = n.items.find(it => !it.linkedTaskId && (it.text || '').trim());
+  if (!target) {
+    setStatus(itemId ? 'Bullet not found' : 'Nothing to promote', 'error');
     return;
   }
-  const text = (n.text || '').trim();
+  if (target.linkedTaskId) { setStatus('Already in Focus 5'); return; }
+  const text = (target.text || '').trim();
   if (!text) { setStatus('Type something first', 'error'); return; }
   setStatus('Adding to Focus 5…', 'sticky');
   try {
-    // 1. Create the tv_todo directly so we get the id back synchronously,
-    //    AND stamp it with goalBulletId for the back-sync subscription.
     const today = new Date();
     const tk = today.getFullYear() + '-' +
                String(today.getMonth()+1).padStart(2,'0') + '-' +
                String(today.getDate()).padStart(2,'0');
     const payload = {
       text,
-      done: !!n.done,
+      done: !!target.done,
       date: tk,
       position: Date.now(),
       timeSpent: 0,
       countdownSecs: 0,
       createdAt: nowISO(),
-      goalBulletId: n.id,
+      goalBulletId: n.id + '/' + target.id,  // compound key: sticky id + item id
       details: 'From Goals board',
       job: 'personal'
     };
     const ref = await addDoc(todosCol, payload);
-    n.linkedTaskId = ref.id;
+    target.linkedTaskId = ref.id;
     await saveNode(n);
     renderNode(n);
-    // 2. Queue a push to Focus 5 so personal-todos puts it on the priority list.
     await addDoc(pushQueueCol, {
       todoId: ref.id,
       bulletId: n.id,
+      itemId: target.id,
       text,
       createdAt: nowISO()
     });
