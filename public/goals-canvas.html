@@ -219,6 +219,63 @@
     background:rgba(0,0,0,.12);padding:2px 6px;border-radius:10px;
     font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.4px
   }
+  /* Sticky image — sits at the top of the sticky body, full-width, cropped */
+  .node.sticky .sticky-image{
+    width:100%; height:0; padding-bottom:56%;   /* 16:9-ish */
+    border-radius:6px; background:rgba(0,0,0,.05) center/cover no-repeat;
+    margin-bottom:6px; flex:0 0 auto; position:relative; cursor:zoom-in
+  }
+  .node.sticky .sticky-image.is-loading{
+    background:rgba(0,0,0,.08) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2.4"><circle cx="12" cy="12" r="4"/><path d="M3 12a9 9 0 0 1 9-9"/></svg>') center/24px no-repeat
+  }
+  /* Inline link chip — appears at the end of a bullet row when its text
+     contains a URL. Tap to open in a new tab; doesn't get in the way of
+     editing the text. */
+  .node.sticky .sticky-row .row-link{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:18px; height:18px; border-radius:50%;
+    color:rgba(0,0,0,.55); background:rgba(0,0,0,.08);
+    margin-top:1px; text-decoration:none; font-size:11px; font-weight:700;
+    cursor:pointer; flex:0 0 18px
+  }
+  .node.sticky .sticky-row .row-link:hover{ background:rgba(0,0,0,.15); color:rgba(0,0,0,.85) }
+
+  /* "Pull from existing" recipe picker modal */
+  #rpBd{
+    position:fixed; inset:0; background:rgba(0,0,0,.55); backdrop-filter:blur(4px);
+    z-index:200; display:none; align-items:flex-start; justify-content:center; padding:80px 16px
+  }
+  #rpBd.open{ display:flex }
+  #rpCard{
+    background:var(--bg, #0e1116); border:1px solid var(--line2);
+    border-radius:14px; width:100%; max-width:520px; max-height:70vh;
+    padding:18px 20px; display:flex; flex-direction:column; gap:10px;
+    box-shadow:0 12px 40px rgba(0,0,0,.6)
+  }
+  #rpCard h3{ margin:0; font-size:16px; font-weight:600 }
+  #rpSearch{
+    width:100%; height:32px; padding:0 10px; border-radius:7px;
+    background:var(--w03,#1a1f27); border:1px solid var(--line);
+    color:var(--ink); font-size:13px; outline:none
+  }
+  #rpList{ overflow:auto; display:flex; flex-direction:column; gap:4px; min-height:120px }
+  #rpList .rp-group-h{
+    font-size:10px; text-transform:uppercase; letter-spacing:.6px;
+    color:var(--muted); padding:8px 6px 4px
+  }
+  #rpList .rp-item{
+    display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:6px;
+    cursor:pointer; font-size:13px; color:var(--ink); background:transparent;
+    border:1px solid transparent; text-align:left
+  }
+  #rpList .rp-item:hover{ background:rgba(255,255,255,.05); border-color:var(--line) }
+  #rpList .rp-item .rp-meta{
+    margin-left:auto; font-size:11px; color:var(--muted); white-space:nowrap
+  }
+  #rpEmpty{
+    padding:30px 16px; text-align:center; color:var(--muted); font-size:13px; line-height:1.5
+  }
+  #rpFoot{ display:flex; justify-content:flex-end; gap:8px; padding-top:6px; border-top:1px solid var(--line) }
 
   /* Sticky color palette */
   .stk-yellow{background:#fef3c7}
@@ -320,6 +377,7 @@
   <button class="tb-btn" id="addSectionBtn">+ Section</button>
   <button class="tb-btn" id="addStickyBtn">+ Note</button>
   <button class="tb-btn" id="addRecipeBtn" title="Drop a recipe scaffold — Ingredients + Steps">+ Recipe</button>
+  <button class="tb-btn" id="pullRecipeBtn" title="Duplicate an existing section/recipe onto this board">↓ From existing</button>
   <div class="zoom-widget">
     <button id="zoomOut" title="Zoom out">−</button>
     <button class="pct" id="zoomReset" title="Reset zoom to 100%">100%</button>
@@ -350,6 +408,18 @@
 </div>
 
 <div id="contextMenu" class="hidden"></div>
+
+<!-- "Pull from existing" picker — duplicate a section (recipe) from any board -->
+<div id="rpBd">
+  <div id="rpCard">
+    <h3>Pull from existing</h3>
+    <input id="rpSearch" type="search" placeholder="Search title…">
+    <div id="rpList"></div>
+    <div id="rpFoot">
+      <button class="tb-btn" id="rpClose">Cancel</button>
+    </div>
+  </div>
+</div>
 <div id="status" class="hidden">Loading…</div>
 
 <script type="module">
@@ -531,19 +601,30 @@ function renderNode(n){
     ensureItems(n);
     el.className = 'node sticky ' + (n.color || 'stk-yellow');
     el.style.transform = `rotate(${n.rotation || 0}deg)`;
-    const rowsHtml = n.items.map(it => `
+    const imageHtml = n.imageUrl
+      ? `<div class="sticky-image" data-action="open-image" style="background-image:url('${escapeAttr(n.imageUrl)}')"></div>`
+      : '';
+    const rowsHtml = n.items.map(it => {
+      const firstUrl = extractFirstUrl(it.text || '');
+      const link = firstUrl
+        ? `<a class="row-link" href="${escapeAttr(firstUrl)}" target="_blank" rel="noopener" title="Open link">↗</a>`
+        : '';
+      return `
       <div class="sticky-row${it.done?' done':''}${it.linkedTaskId?' linked':''}" data-item-id="${it.id}">
         <div class="sticky-check" data-action="toggle-item" title="Mark done"></div>
         <div class="sticky-text" contenteditable="plaintext-only" data-action="edit-item">${escapeHtml(it.text || '')}</div>
+        ${link}
         <span class="row-badge" title="In Focus 5">↗</span>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
     el.innerHTML = `
       <div class="sticky-pin"></div>
+      ${imageHtml}
       <div class="sticky-items">${rowsHtml}</div>
       <div class="resize" data-action="resize"></div>
       <div class="node-tools">
         ${swatchesFor('sticky')}
+        <button class="nt-btn" data-action="set-image" title="Set image URL">📷</button>
         <button class="nt-btn" data-action="focus5" title="Promote first unlinked bullet to Focus 5">★</button>
         <button class="nt-btn" data-action="delete" title="Delete">✕</button>
       </div>
@@ -572,6 +653,19 @@ function renderNode(n){
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function escapeAttr(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// Pull the first http(s) URL out of a string. Used to detect a bullet that
+// has a link in it so we can offer a "↗ Open" tap target. Trailing
+// punctuation like commas/periods is stripped so "see https://foo.com." opens
+// foo.com, not foo.com.
+const URL_RX = /https?:\/\/[^\s)]+/i;
+function extractFirstUrl(text){
+  const m = String(text || '').match(URL_RX);
+  if (!m) return null;
+  return m[0].replace(/[.,;:!?)\]'"]+$/, '');
 }
 function itemUid(){ return 'i_' + Math.random().toString(36).slice(2, 9); }
 // Migrate the legacy single-text sticky shape into items[]. Idempotent.
@@ -917,6 +1011,8 @@ function attachNodeListeners(el){
     if (e.target.matches('[contenteditable]')) return;
     if (e.target.closest('.node-tools')) return;
     if (e.target.closest('.sticky-check')) return;
+    if (e.target.closest('.row-link')) return;       // clicking the link chip
+    if (e.target.closest('.sticky-image')) return;   // clicking the image opens it
     // Section drag only via header; subsection drag via header.
     if (n.type === 'section' || n.type === 'subsection') {
       if (!e.target.closest('.sec-head')) return;
@@ -1025,6 +1121,26 @@ function attachNodeListeners(el){
     }
     if (a === 'focus5') {
       promoteToFocus5(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'set-image') {
+      const cur = n.imageUrl || '';
+      const next = prompt('Paste an image URL (leave blank to remove):', cur);
+      if (next === null) return;   // cancelled
+      n.imageUrl = next.trim() || null;
+      saveNode(n);
+      renderNode(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'open-image') {
+      if (n.imageUrl) window.open(n.imageUrl, '_blank', 'noopener');
+      e.stopPropagation();
+      return;
+    }
+    // Tapping the row's link chip — don't let it bubble to the drag handler.
+    if (e.target.classList.contains('row-link')) {
       e.stopPropagation();
       return;
     }
@@ -1352,6 +1468,162 @@ async function createNode(type, opts){
 document.getElementById('addSectionBtn').onclick = () => createNode('section');
 document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
 document.getElementById('addRecipeBtn').onclick  = () => createRecipeTemplate();
+document.getElementById('pullRecipeBtn').onclick = () => openRecipePicker();
+
+// ============= "Pull from existing" picker ==================================
+// Browses every top-level section (recipe-ish or otherwise) across every
+// board, lets the user search, and drops a deep-cloned copy of the picked
+// section (plus all descendants) onto the active board, centered.
+let _rpQuery = '';
+function openRecipePicker(){
+  const bd = document.getElementById('rpBd');
+  if (!bd) return;
+  bd.classList.add('open');
+  _rpQuery = '';
+  const si = document.getElementById('rpSearch');
+  si.value = '';
+  drawRecipePicker();
+  setTimeout(() => si.focus(), 30);
+}
+function closeRecipePicker(){
+  document.getElementById('rpBd')?.classList.remove('open');
+}
+function drawRecipePicker(){
+  const list = document.getElementById('rpList');
+  // Candidate sections = top-level sections (no parent in geometry). We use
+  // findContainer so this stays accurate even when stored parentId lags.
+  const candidates = [...nodes.values()]
+    .filter(n => n.type === 'section');
+  const q = _rpQuery.trim().toLowerCase();
+  const matches = candidates.filter(n => {
+    if (!q) return true;
+    return (n.title || '').toLowerCase().includes(q);
+  });
+  if (!matches.length) {
+    list.innerHTML = `<div id="rpEmpty">${
+      candidates.length
+        ? 'No sections match — try a different search.'
+        : 'No sections yet. Create a recipe on any board first, then come back here to copy it.'
+    }</div>`;
+    return;
+  }
+  // Group by board
+  const byBoard = new Map();
+  for (const n of matches) {
+    const bid = n.boardId || '_none';
+    if (!byBoard.has(bid)) byBoard.set(bid, []);
+    byBoard.get(bid).push(n);
+  }
+  const html = [];
+  for (const [bid, group] of byBoard) {
+    const b = boards.get(bid);
+    const boardName = b?.name || 'Other';
+    html.push(`<div class="rp-group-h">${escapeHtml(boardName)}${bid === activeBoardId ? ' (current)' : ''}</div>`);
+    for (const n of group.sort((a,b)=> (a.title || '').localeCompare(b.title || ''))) {
+      // Count descendants for a quick "how big is this" preview.
+      const kids = collectDescendantsAcross(n.id);
+      html.push(`<button type="button" class="rp-item" data-rp-id="${n.id}">
+        <span>${escapeHtml(n.title || 'Untitled section')}</span>
+        <span class="rp-meta">${kids.length} item${kids.length===1?'':'s'}</span>
+      </button>`);
+    }
+  }
+  list.innerHTML = html.join('');
+  list.querySelectorAll('[data-rp-id]').forEach(b =>
+    b.addEventListener('click', () => duplicateSectionToActiveBoard(b.getAttribute('data-rp-id'))));
+}
+// Geometric descendant scan that works across boards (the existing
+// collectDescendants filters by boardId; this one doesn't, so the picker can
+// preview cross-board sections accurately).
+function collectDescendantsAcross(rootId){
+  const root = nodes.get(rootId);
+  if (!root) return [];
+  const out = [];
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const pid = queue.shift();
+    const parent = nodes.get(pid);
+    for (const c of nodes.values()) {
+      if (seen.has(c.id)) continue;
+      if ((c.boardId || null) !== (root.boardId || null)) continue;
+      // Geometry test against the parent.
+      const cx = c.x + c.w/2, cy = c.y + c.h/2;
+      if (parent && cx >= parent.x && cx <= parent.x + parent.w && cy >= parent.y && cy <= parent.y + parent.h
+          && !(c.id === parent.id) && (c.w * c.h <= parent.w * parent.h || c.parentId === parent.id)) {
+        out.push(c); seen.add(c.id); queue.push(c.id);
+      } else if (c.parentId === pid) {
+        out.push(c); seen.add(c.id); queue.push(c.id);
+      }
+    }
+  }
+  return out;
+}
+async function duplicateSectionToActiveBoard(sourceId){
+  const source = nodes.get(sourceId);
+  if (!source) { setStatus('Source missing', 'error'); return; }
+  closeRecipePicker();
+  setStatus('Copying…', 'sticky');
+  try {
+    // 1. Gather the full subtree (section + descendants).
+    const subtree = [source, ...collectDescendantsAcross(sourceId)];
+    // 2. Compute target offset: center the source's bounding box in the
+    //    current viewport.
+    const minX = Math.min(...subtree.map(n => n.x));
+    const minY = Math.min(...subtree.map(n => n.y));
+    const maxX = Math.max(...subtree.map(n => n.x + n.w));
+    const maxY = Math.max(...subtree.map(n => n.y + n.h));
+    const wrapR = wrap.getBoundingClientRect();
+    const targetCenter = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+    const dx = targetCenter.x - (minX + maxX) / 2;
+    const dy = targetCenter.y - (minY + maxY) / 2;
+    // 3. Clone each node with new ids; remap parentId where it stays inside
+    //    the subtree.
+    const idMap = new Map();
+    subtree.forEach(n => idMap.set(n.id, uid()));
+    const clones = subtree.map(n => {
+      const cloneId = idMap.get(n.id);
+      const newParent = (n.parentId && idMap.has(n.parentId)) ? idMap.get(n.parentId) : null;
+      const c = {
+        ...n,
+        id: cloneId,
+        parentId: newParent,
+        boardId: activeBoardId || null,
+        x: n.x + dx,
+        y: n.y + dy,
+        z: Date.now()
+      };
+      // Deep-clone any items[] on stickies so edits to one don't leak.
+      if (Array.isArray(n.items)) c.items = n.items.map(it => ({ ...it, id: itemUid(), linkedTaskId: null }));
+      delete c.linkedTaskId;
+      return c;
+    });
+    // 4. Persist + render. Nodes go in via the snapshot listener, but we also
+    //    seed them locally so the UI is responsive.
+    for (const c of clones) {
+      nodes.set(c.id, c);
+      renderNode(c);
+      await saveNode(c);
+    }
+    reconcileBoard();
+    setStatus(`Copied “${escapeHtml(source.title || 'section')}” — ${clones.length} items`);
+  } catch (e) {
+    console.error('[goals] duplicate failed', e);
+    setStatus('Copy failed — see console', 'error');
+  }
+}
+// Wire picker controls.
+document.getElementById('rpSearch')?.addEventListener('input', (e) => {
+  _rpQuery = e.target.value || '';
+  drawRecipePicker();
+});
+document.getElementById('rpClose')?.addEventListener('click', closeRecipePicker);
+document.getElementById('rpBd')?.addEventListener('click', (e) => {
+  if (e.target.id === 'rpBd') closeRecipePicker();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('rpBd')?.classList.contains('open')) closeRecipePicker();
+});
 document.getElementById('firstAddBtn').onclick   = () => createNode('section');
 
 // Drop a "recipe" scaffold centered in the viewport: an amber section titled
