@@ -2889,15 +2889,9 @@
   <div class="visits-modal">
     <h3 id="visitsModalTitle">Log a visit</h3>
     <input type="hidden" id="vmId">
-    <div class="vm-row">
-      <div class="vm-field">
-        <label>Date</label>
-        <input type="date" id="vmDate">
-      </div>
-      <div class="vm-field">
-        <label>Duration (minutes)</label>
-        <input type="number" id="vmDuration" min="0" step="15" placeholder="60">
-      </div>
+    <div class="vm-field">
+      <label>Date</label>
+      <input type="date" id="vmDate">
     </div>
     <div class="vm-row">
       <div class="vm-field">
@@ -2932,11 +2926,11 @@
     </div>
     <div class="vm-row">
       <div class="vm-field">
-        <label>Client attendees</label>
-        <input type="text" id="vmClient" placeholder="Karen, Jack, Syed…">
+        <label>Client team</label>
+        <input type="text" id="vmClient" placeholder="CAS team, DFSS leadership, HOP outreach team…">
       </div>
       <div class="vm-field">
-        <label>Adsystech / WE Group attendees</label>
+        <label>Our attendees</label>
         <input type="text" id="vmEcm" placeholder="Ifeanyi, Talha, Nick…">
       </div>
     </div>
@@ -6643,14 +6637,13 @@ function renderVisits(){
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
   // Summary block — totals + breakdown by purpose for the filtered slice.
+  // We don't track hours on site or unique client names — clients are
+  // referenced as teams ("CAS team", "DFSS leadership") in the visit rows,
+  // not as individual contacts.
   const byPurpose = filtered.reduce((m, v) => (m[v.purpose || 'other'] = (m[v.purpose || 'other'] || 0) + 1, m), {});
-  const totalHours = filtered.reduce((s, v) => s + (parseInt(v.durationMins, 10) || 0), 0) / 60;
-  const uniqueClients = new Set(filtered.flatMap(v => (v.clientContacts || []))).size;
   const summaryHtml = filtered.length ? `
     <div class="visits-summary">
       <div class="stat"><span class="n">${filtered.length}</span><span class="l">Visits</span></div>
-      <div class="stat"><span class="n">${totalHours ? totalHours.toFixed(1) : '0'}</span><span class="l">Hours</span></div>
-      <div class="stat"><span class="n">${uniqueClients}</span><span class="l">Client contacts</span></div>
       ${visitsConfig.purposes.map(p => {
         const n = byPurpose[p.key] || 0;
         return n ? `<div class="stat"><span class="n">${n}</span><span class="l">${esc(p.label)}${n===1?'':'s'}</span></div>` : '';
@@ -6671,7 +6664,6 @@ function renderVisits(){
             <span class="vc-date">${fmtVisitDate(v.date)}</span>
             <span class="vc-prog">${esc(v.program || '—')}</span>
             <span class="vc-purp ${esc(purp)}">${esc(purpLabel)}</span>
-            ${v.durationMins ? `<span class="vc-dur">· ${v.durationMins} min</span>` : ''}
             <span class="vc-sp"></span>
             <div class="vc-tools">
               <button class="v-tool-btn" data-vedit="${v.id}" title="Edit">✎</button>
@@ -6681,7 +6673,7 @@ function renderVisits(){
           ${v.topic ? `<div class="vc-topic">${esc(v.topic)}</div>` : ''}
           <div class="vc-meta">
             ${v.location ? `<span class="vc-meta-item"><span class="lbl">Location</span> ${esc(v.location)}</span>` : ''}
-            ${(v.clientContacts || []).length ? `<span class="vc-meta-item"><span class="lbl">Client</span> ${esc((v.clientContacts || []).join(', '))}</span>` : ''}
+            ${(v.clientContacts || []).length ? `<span class="vc-meta-item"><span class="lbl">Team</span> ${esc((v.clientContacts || []).join(', '))}</span>` : ''}
             ${(v.ecmAttendees   || []).length ? `<span class="vc-meta-item"><span class="lbl">Us</span> ${esc((v.ecmAttendees   || []).join(', '))}</span>` : ''}
           </div>
           ${v.notes ? `<div class="vc-notes">${esc(v.notes)}</div>` : ''}
@@ -6756,7 +6748,6 @@ function openVisitModal(editId){
   // Default date: today (Chicago).
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
   document.getElementById('vmDate').value     = (v && v.date) || today;
-  document.getElementById('vmDuration').value = (v && v.durationMins) || '';
   document.getElementById('vmProgram').value  = (v && v.program) || (visitFilterProgram || '');
   document.getElementById('vmPurpose').value  = (v && v.purpose) || (visitsConfig.purposes[0]?.key || 'meeting');
   document.getElementById('vmTopic').value    = (v && v.topic) || '';
@@ -6865,7 +6856,6 @@ async function saveVisitFromModal(){
     purpose:  document.getElementById('vmPurpose').value,
     topic:    document.getElementById('vmTopic').value.trim(),
     location: document.getElementById('vmLocation').value.trim(),
-    durationMins: parseInt(document.getElementById('vmDuration').value, 10) || null,
     clientContacts: document.getElementById('vmClient').value.split(',').map(s => s.trim()).filter(Boolean),
     ecmAttendees:   document.getElementById('vmEcm').value.split(',').map(s => s.trim()).filter(Boolean),
     notes:    document.getElementById('vmNotes').value.trim(),
@@ -7758,8 +7748,6 @@ function renderPrintLayout(program, q){
              (v.clientContacts || []).join(' ').toLowerCase().includes(q);
     })
     .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-  const totalHours = filtered.reduce((s, v) => s + (parseInt(v.durationMins, 10) || 0), 0) / 60;
-  const uniqueClients = new Set(filtered.flatMap(v => (v.clientContacts || []))).size;
   const dateFrom = filtered[0]?.date ? fmtVisitDate(filtered[0].date) : '';
   const dateTo   = filtered[filtered.length-1]?.date ? fmtVisitDate(filtered[filtered.length-1].date) : '';
   const byPurpose = filtered.reduce((m, v) => (m[v.purpose || 'other'] = (m[v.purpose || 'other'] || 0) + 1, m), {});
@@ -7775,17 +7763,18 @@ function renderPrintLayout(program, q){
             <div class="print-brand-sub">Adsystech · WE Group</div>
           </div>
         </div>
-        <h1 class="print-title">In-Person Visit Log${program ? ' — ' + esc(program) : ''}</h1>
+        ${program ? `<div class="print-program">${esc(program)}</div>` : ''}
+        <h1 class="print-title">In-Person Visit Log</h1>
         <div class="print-meta">
           ${dateFrom ? `<span>${esc(dateFrom)} — ${esc(dateTo)}</span>` : ''}
           <span>Generated ${new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}</span>
         </div>
         <div class="print-stats">
           <div class="print-stat"><div class="n">${filtered.length}</div><div class="l">Visits</div></div>
-          <div class="print-stat"><div class="n">${totalHours ? totalHours.toFixed(1) : '0'}</div><div class="l">Hours on-site</div></div>
-          <div class="print-stat"><div class="n">${uniqueClients}</div><div class="l">Client contacts</div></div>
-          ${(byPurpose.training||0) ? `<div class="print-stat"><div class="n">${byPurpose.training}</div><div class="l">Trainings</div></div>` : ''}
-          ${(byPurpose.meeting ||0) ? `<div class="print-stat"><div class="n">${byPurpose.meeting}</div><div class="l">Meetings</div></div>` : ''}
+          ${visitsConfig.purposes.map(p => {
+            const n = byPurpose[p.key] || 0;
+            return n ? `<div class="print-stat"><div class="n">${n}</div><div class="l">${esc(p.label)}${n===1?'':'s'}</div></div>` : '';
+          }).join('')}
         </div>
       </div>
       ${filtered.length ? `
@@ -7799,14 +7788,13 @@ function renderPrintLayout(program, q){
               <tr>
                 <td class="pt-date">
                   ${fmtVisitDate(v.date)}
-                  ${v.durationMins ? `<div class="pt-sub">${v.durationMins} min</div>` : ''}
                   ${!program ? `<div class="pt-sub">${esc(v.program || '')}</div>` : ''}
                 </td>
                 <td><span class="pt-purp pt-purp-${v.purpose || 'other'}">${purposeLabelFromConfig(v.purpose)}</span></td>
                 <td><strong>${esc(v.topic || '')}</strong></td>
                 <td>
                   ${v.location ? `<div>${esc(v.location)}</div>` : ''}
-                  ${(v.clientContacts || []).length ? `<div class="pt-sub"><strong>Client:</strong> ${esc((v.clientContacts || []).join(', '))}</div>` : ''}
+                  ${(v.clientContacts || []).length ? `<div class="pt-sub"><strong>Team:</strong> ${esc((v.clientContacts || []).join(', '))}</div>` : ''}
                   ${(v.ecmAttendees   || []).length ? `<div class="pt-sub"><strong>Us:</strong> ${esc((v.ecmAttendees   || []).join(', '))}</div>` : ''}
                 </td>
                 <td>${esc(v.notes || '')}</td>
@@ -7836,7 +7824,14 @@ function renderPrintLayout(program, q){
       }
       .print-brand-name { font-size:14px; font-weight:700; color:#0f172a; letter-spacing:.3px }
       .print-brand-sub  { font-size:11px; color:#64748b; margin-top:1px; letter-spacing:.4px; text-transform:uppercase }
-      .print-title { margin:22px 0 10px; font-size:32px; font-weight:800; letter-spacing:-.5px; color:#0f172a }
+      .print-program {
+        display:inline-block; margin-top:22px;
+        padding:6px 18px; background:linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+        color:#fff; border-radius:6px;
+        font-size:13px; font-weight:800; letter-spacing:2px; text-transform:uppercase;
+        box-shadow:0 2px 4px rgba(30,58,138,.25)
+      }
+      .print-title { margin:10px 0 10px; font-size:42px; font-weight:800; letter-spacing:-.8px; color:#0f172a; line-height:1.1 }
       .print-meta { display:flex; gap:18px; color:#64748b; font-size:13px; margin-bottom:18px }
       .print-stats { display:flex; gap:20px; flex-wrap:wrap }
       .print-stat {
