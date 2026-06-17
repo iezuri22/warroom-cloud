@@ -2410,16 +2410,29 @@ function collectFullSubtree(rootId){
 function findContainer(n){
   const cx = n.x + n.w/2, cy = n.y + n.h/2;
   let best = null;
+  let bestArea = Infinity;
+  let bestDist = Infinity;
   for (const c of nodes.values()) {
     if (c.id === n.id) continue;
     if ((c.boardId || null) !== (n.boardId || null)) continue;
     if (c.type !== 'section' && c.type !== 'subsection') continue;
-    // Skip candidates that n itself wraps around.
+    // Cycle guard: skip candidates n itself wraps around.
     const ccx = c.x + c.w/2, ccy = c.y + c.h/2;
     const cInsideN = (ccx >= n.x && ccx <= n.x + n.w && ccy >= n.y && ccy <= n.y + n.h);
     if (cInsideN && c.w * c.h <= n.w * n.h) continue;
     if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) {
-      if (!best || c.w * c.h < best.w * best.h) best = c;
+      const area = c.w * c.h;
+      const dist = Math.hypot(cx - ccx, cy - ccy);
+      // Tiebreaker: smaller area wins; if AREA TIES (two overlapping recipes
+      // of the same size), pick the one whose center is closer to n's
+      // center. Without this fallback findContainer just returns the first
+      // one iterated in insertion order — which is how a newly-imported
+      // recipe ended up parented to an OLDER overlapping recipe.
+      if (area < bestArea || (area === bestArea && dist < bestDist)) {
+        best = c;
+        bestArea = area;
+        bestDist = dist;
+      }
     }
   }
   return best ? best.id : null;
@@ -3222,6 +3235,25 @@ async function realignRecipeParts(sectionId){
   if (!parts) return;
   const { section } = parts;
   let { ingSub, stepSub } = parts;
+
+  // Pre-pass: find any "Ingredients" or "Steps" subsection that's visually
+  // inside THIS section but whose parentId points at a different one (or
+  // none). Pick it as our ing/stepSub if we don't have one yet — this
+  // heals old recipes that were saved with the wrong parentId because of
+  // the same-area findContainer tiebreaker bug.
+  const inThisSectionBox = (sub) => {
+    const ccx = sub.x + sub.w/2, ccy = sub.y + sub.h/2;
+    return ccx >= section.x && ccx <= section.x + section.w &&
+           ccy >= section.y && ccy <= section.y + section.h;
+  };
+  for (const sub of nodes.values()) {
+    if (sub.type !== 'subsection') continue;
+    if ((sub.boardId || null) !== (section.boardId || null)) continue;
+    if (sub.id === ingSub?.id || sub.id === stepSub?.id) continue;
+    if (!inThisSectionBox(sub)) continue;
+    if (!ingSub && /ingredient/i.test(sub.title || '')) ingSub = sub;
+    else if (!stepSub && /step/i.test(sub.title || '')) stepSub = sub;
+  }
   // Bring the section to the front so it's not hidden under a sibling.
   bringToFront(section);
   // Figure out how tall the row of subsections needs to be: the tallest
@@ -3244,6 +3276,9 @@ async function realignRecipeParts(sectionId){
   // Snap each subsection into place + reparent + resize.
   async function placeSub(sub, leftCol){
     if (!sub) return;
+    // Snapshot the OLD subsection box so we can find stickies that were
+    // visually inside it — even if their parentId is wrong.
+    const oldBox = { x: sub.x, y: sub.y, w: sub.w, h: sub.h };
     sub.x = section.x + padX + (leftCol ? 0 : colW + gap);
     sub.y = section.y + padTop;
     sub.w = colW;
@@ -3254,12 +3289,32 @@ async function realignRecipeParts(sectionId){
     sub.type     = 'subsection';
     await saveNode(sub);
     renderNode(sub);
-    // Move every direct sticky to sit inside the subsection.
-    const stickies = [...nodes.values()].filter(n => n.type === 'sticky' && n.parentId === sub.id);
+    // Gather every sticky that BELONGS to this subsection. Three sources,
+    // dedup'd: (1) parentId == sub.id, (2) geometrically inside sub's OLD
+    // box (catches mis-parented), (3) parentId == section.id but with text
+    // that smells like an ingredient/step.
+    const claimed = new Set();
+    const ofMine = [];
+    function claim(stk){ if (claimed.has(stk.id)) return; claimed.add(stk.id); ofMine.push(stk); }
+    for (const n of nodes.values()) {
+      if (n.type !== 'sticky') continue;
+      if (n.parentId === sub.id) { claim(n); continue; }
+      // Geometric check against the OLD subsection box.
+      const ncx = n.x + n.w/2, ncy = n.y + n.h/2;
+      const insideOld = ncx >= oldBox.x && ncx <= oldBox.x + oldBox.w &&
+                        ncy >= oldBox.y && ncy <= oldBox.y + oldBox.h;
+      if (insideOld) {
+        // Don't poach a sticky that's already attached to a sibling subsection.
+        const cur = nodes.get(n.parentId);
+        if (!cur || cur.type !== 'subsection' || cur.id === sub.id) claim(n);
+      }
+    }
+    // Move + relink everything we claimed.
     let yCursor = sub.y + 48;
-    for (const c of stickies) {
+    for (const c of ofMine) {
       c.x = sub.x + 14;
       c.y = yCursor;
+      c.parentId = sub.id;
       yCursor += (c.h || 140) + 12;
       await saveNode(c);
       renderNode(c);
@@ -3293,12 +3348,14 @@ async function saveRecipeEditor(){
   // sparse recipes (the user just drops a section + types into the textareas).
   if (!ingSub) {
     ingSub = await createNode('subsection', {
-      x: section.x + 16, y: section.y + 56, title: 'Ingredients', color: 'sec-green'
+      x: section.x + 16, y: section.y + 56, title: 'Ingredients', color: 'sec-green',
+      parentId: section.id
     });
   }
   if (!stepSub) {
     stepSub = await createNode('subsection', {
-      x: section.x + 16 + (ingSub?.w || 280) + 16, y: section.y + 56, title: 'Steps', color: 'sec-blue'
+      x: section.x + 16 + (ingSub?.w || 280) + 16, y: section.y + 56, title: 'Steps', color: 'sec-blue',
+      parentId: section.id
     });
   }
   // Update or create the ingredient sticky's items
@@ -3316,7 +3373,8 @@ async function syncListSticky(sticky, parentSub, lines, keepImage){
   if (!sticky) {
     if (!lines.length) return null;
     sticky = await createNode('sticky', {
-      x: parentSub.x + 14, y: parentSub.y + 48, text: lines[0]
+      x: parentSub.x + 14, y: parentSub.y + 48, text: lines[0],
+      parentId: parentSub.id   // explicit so overlap-induced ambiguity doesn't break attachment
     });
     sticky.w = parentSub.w - 28;
   }
@@ -4434,9 +4492,11 @@ async function createRecipeFromEz(r){
     const padX = 16, padTop = section.imageUrl ? 200 : 60, gap = 16;
     const colW = (SW - padX*2 - gap) / 2;
     const colH = SH - padTop - 16;
-    // Ingredients column
+    // Ingredients column — explicit parentId so we don't lose to a same-size
+    // overlapping recipe in findContainer's tiebreaker.
     const ing = await createNode('subsection', {
-      x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green'
+      x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green',
+      parentId: section.id
     });
     ing.w = colW; ing.h = colH;
     await saveNode(ing);
@@ -4448,7 +4508,8 @@ async function createRecipeFromEz(r){
     const ingRows = normalizeIngredientList(r.ingredients);
     if (ingRows.length) {
       const ingSticky = await createNode('sticky', {
-        x: ing.x + 12, y: ing.y + 48, text: ingRows[0].text
+        x: ing.x + 12, y: ing.y + 48, text: ingRows[0].text,
+        parentId: ing.id
       });
       ingSticky.w = colW - 28;
       // Attach imageUrl to the first auto-created item.
@@ -4464,14 +4525,16 @@ async function createRecipeFromEz(r){
     }
     // Steps column
     const steps = await createNode('subsection', {
-      x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue'
+      x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue',
+      parentId: section.id
     });
     steps.w = colW; steps.h = colH;
     await saveNode(steps);
     renderNode(steps);
     if (r.steps.length) {
       const stepSticky = await createNode('sticky', {
-        x: steps.x + 12, y: steps.y + 48, text: '1. ' + r.steps[0]
+        x: steps.x + 12, y: steps.y + 48, text: '1. ' + r.steps[0],
+        parentId: steps.id
       });
       stepSticky.w = colW - 28;
       const restSteps = r.steps.slice(1).map((t, i) => ({
@@ -4521,22 +4584,31 @@ async function createRecipeTemplate(){
   const padX = 16, padTop = 56, gap = 16;
   const colW = (SW - padX*2 - gap) / 2;
   const colH = SH - padTop - 16;
-  // 2. Ingredients subsection (left)
+  // 2. Ingredients subsection (left) — explicit parentId so a same-size
+  //    overlapping recipe can never win findContainer's tiebreaker.
   const ing = await createNode('subsection', {
-    x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green'
+    x: section.x + padX, y: section.y + padTop, title: 'Ingredients', color: 'sec-green',
+    parentId: section.id
   });
   ing.w = colW; ing.h = colH;
   await saveNode(ing);
   renderNode(ing);
-  await createNode('sticky', { x: ing.x + 14, y: ing.y + 48, text: 'First ingredient…' });
+  await createNode('sticky', {
+    x: ing.x + 14, y: ing.y + 48, text: 'First ingredient…',
+    parentId: ing.id
+  });
   // 3. Steps subsection (right)
   const steps = await createNode('subsection', {
-    x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue'
+    x: section.x + padX + colW + gap, y: section.y + padTop, title: 'Steps', color: 'sec-blue',
+    parentId: section.id
   });
   steps.w = colW; steps.h = colH;
   await saveNode(steps);
   renderNode(steps);
-  await createNode('sticky', { x: steps.x + 14, y: steps.y + 48, text: 'Step 1…' });
+  await createNode('sticky', {
+    x: steps.x + 14, y: steps.y + 48, text: 'Step 1…',
+    parentId: steps.id
+  });
   // Recompute parent/type so the subsections + stickies all map to the right tree.
   reconcileBoard();
 }
