@@ -3237,20 +3237,32 @@ async function realignRecipeParts(sectionId){
   let { ingSub, stepSub } = parts;
 
   // Pre-pass: find any "Ingredients" or "Steps" subsection that's visually
-  // inside THIS section but whose parentId points at a different one (or
-  // none). Pick it as our ing/stepSub if we don't have one yet — this
-  // heals old recipes that were saved with the wrong parentId because of
-  // the same-area findContainer tiebreaker bug.
+  // inside THIS section AND not already claimed by some other live recipe.
+  // This heals old data where parentId was wrong, but never steals a
+  // subsection that's correctly bound to a different recipe (which would
+  // make this section start dragging the other recipe's stuff around).
   const inThisSectionBox = (sub) => {
     const ccx = sub.x + sub.w/2, ccy = sub.y + sub.h/2;
     return ccx >= section.x && ccx <= section.x + section.w &&
            ccy >= section.y && ccy <= section.y + section.h;
+  };
+  // A subsection is "free to adopt" if its parentId is missing, points to
+  // this section already, or points to something that no longer exists /
+  // isn't a section.
+  const isFreeToAdopt = (sub) => {
+    if (!sub.parentId) return true;
+    if (sub.parentId === section.id) return true;
+    const owner = nodes.get(sub.parentId);
+    if (!owner) return true;             // dangling pointer
+    if (owner.type !== 'section') return true; // not actually a recipe
+    return false;
   };
   for (const sub of nodes.values()) {
     if (sub.type !== 'subsection') continue;
     if ((sub.boardId || null) !== (section.boardId || null)) continue;
     if (sub.id === ingSub?.id || sub.id === stepSub?.id) continue;
     if (!inThisSectionBox(sub)) continue;
+    if (!isFreeToAdopt(sub)) continue;
     if (!ingSub && /ingredient/i.test(sub.title || '')) ingSub = sub;
     else if (!stepSub && /step/i.test(sub.title || '')) stepSub = sub;
   }
@@ -3303,11 +3315,14 @@ async function realignRecipeParts(sectionId){
       const ncx = n.x + n.w/2, ncy = n.y + n.h/2;
       const insideOld = ncx >= oldBox.x && ncx <= oldBox.x + oldBox.w &&
                         ncy >= oldBox.y && ncy <= oldBox.y + oldBox.h;
-      if (insideOld) {
-        // Don't poach a sticky that's already attached to a sibling subsection.
-        const cur = nodes.get(n.parentId);
-        if (!cur || cur.type !== 'subsection' || cur.id === sub.id) claim(n);
-      }
+      if (!insideOld) continue;
+      // Same conservative rule: never poach a sticky whose parentId points
+      // to a LIVE subsection (it already has a real home). Only adopt true
+      // orphans — null parent, dangling pointer, or parented to a node
+      // that's neither a section nor a subsection.
+      const cur = n.parentId ? nodes.get(n.parentId) : null;
+      if (cur && (cur.type === 'subsection' || cur.type === 'section')) continue;
+      claim(n);
     }
     // Move + relink everything we claimed.
     let yCursor = sub.y + 48;
