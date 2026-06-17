@@ -881,7 +881,10 @@
     <div id="ingLibList"></div>
     <div class="gx-foot">
       <span class="ct">Changing an image here updates every recipe using it.</span>
-      <button class="tb-btn" id="ingLibAdd">+ Add ingredient</button>
+      <span style="display:flex;gap:8px">
+        <button class="tb-btn" id="ingLibSync" title="Scan every sticky on every board and add any ingredient images that aren't in the library yet">⟳ Sync from board</button>
+        <button class="tb-btn" id="ingLibAdd">+ Add ingredient</button>
+      </span>
     </div>
   </div>
 </div>
@@ -2438,6 +2441,12 @@ document.getElementById('ingLibAdd').addEventListener('click', () => {
   if (!name || !name.trim()) return;
   setLibraryImage(name.trim(), null).then(() => drawIngLibModal());
 });
+document.getElementById('ingLibSync').addEventListener('click', async () => {
+  setStatus('Scanning board…', 'sticky');
+  const n = await seedLibraryFromCanvas();
+  setStatus(n ? `Synced ${n} new ingredients ✓` : 'Library is already up to date');
+  drawIngLibModal();
+});
 
 // Count how many recipe items (across all boards) reference a given
 // normalized name. Used as a tiny "in N recipes" tag.
@@ -2465,7 +2474,7 @@ function drawIngLibModal(){
     list.innerHTML = `<div class="ing-empty">
       ${_ingLibrary.size
         ? 'No ingredients match your search.'
-        : 'No ingredients in the library yet. Open the EZ Recipes picker once to seed it from your saved ingredients, or hit + Add ingredient below.'}
+        : 'No ingredients in the library yet.<br><br>Hit <strong>⟳ Sync from board</strong> below to pull every ingredient with a saved photo off your current boards, or open the EZ Recipes picker once to seed from your full saved ingredient library.'}
     </div>`;
     return;
   }
@@ -3238,6 +3247,27 @@ async function seedLibrary(text, imageUrl){
   // Don't overwrite an existing image silently.
   if (_ingLibrary.has(k)) return;
   await setLibraryImage(text, imageUrl);
+}
+
+// Scan every sticky on every board and seed the library from any item that
+// has an imageUrl baked in (pre-library recipes). Runs once after bootstrap
+// and is re-runnable from the "Sync from board" button in the library modal.
+async function seedLibraryFromCanvas(){
+  let seeded = 0;
+  for (const n of nodes.values()) {
+    if (n.type !== 'sticky') continue;
+    for (const it of (n.items || [])) {
+      if (!it.text || !it.imageUrl) continue;
+      const k = normalizeIngredientName(it.text);
+      if (!k || _ingLibrary.has(k)) continue;
+      try {
+        await setLibraryImage(it.text, it.imageUrl);
+        seeded++;
+      } catch {}
+    }
+  }
+  if (seeded) console.log(`[ingLib] Seeded ${seeded} entries from existing canvas sticky items`);
+  return seeded;
 }
 const DEFAULT_RECIPE_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
 let _recipeLabels = DEFAULT_RECIPE_LABELS.slice();
@@ -4350,6 +4380,9 @@ async function bootstrap(){
     subscribeRecipeMeta();
     subscribeGrocery();
     subscribeIngredientLibrary();
+    // Seed the library from existing canvas data once the library snapshot
+    // has had a beat to load. Won't overwrite existing entries.
+    setTimeout(() => { seedLibraryFromCanvas().catch(()=>{}); }, 1200);
 
     setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
     setTimeout(()=> statusEl.classList.add('hidden'), 1200);
