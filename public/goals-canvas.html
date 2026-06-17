@@ -431,11 +431,28 @@
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:3px
   }
   .ing-card .ing-uses{
-    font-size:11px; color:var(--muted); font-weight:500
+    display:inline-flex; align-items:center; gap:5px;
+    font-size:11px; color:var(--muted); font-weight:600;
+    padding:2px 8px; border-radius:10px; background:var(--w03);
+    border:1px solid var(--line)
   }
-  .ing-card .ing-uses.active{color:#86efac}
+  .ing-card .ing-uses.active{
+    color:#86efac; background:rgba(74,222,128,.12); border-color:rgba(74,222,128,.3)
+  }
+  .ing-card .ing-uses .ing-uses-n{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 5px;
+    border-radius:9px; background:rgba(0,0,0,.25); color:#fff;
+    font-weight:700; font-size:11px
+  }
+  .ing-card .ing-uses.active .ing-uses-n{background:rgba(74,222,128,.32)}
+  .ing-card .ing-recipes{
+    margin-top:6px; font-size:11px; color:var(--muted); line-height:1.45;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden
+  }
+  .ing-card .ing-recipes b{color:var(--ink); font-weight:600}
   .ing-card .ing-aliases{
-    font-size:10px; color:var(--muted); margin-top:4px;
+    font-size:10px; color:var(--muted); margin-top:6px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-style:italic
   }
@@ -2558,15 +2575,24 @@ document.getElementById('ingLibSyncEz').addEventListener('click', async () => {
   }
 });
 
-// Precompute usage counts in ONE pass — avoids an O(N×ingredients) sweep
-// when the library has hundreds of entries (after EZ sync).
-let _ingUsageCache = null;
+// Precompute usage counts + the recipe (section) names that use each
+// ingredient — in a single pass so a 469-card library render stays cheap.
+let _ingUsageCache = null;       // Map: normalized -> count
+let _ingRecipesCache = null;     // Map: normalized -> Set of recipe titles
 function _computeIngUsage(){
   const counts = new Map();
+  const recipes = new Map();
   for (const node of nodes.values()) {
     if (node.type !== 'sticky') continue;
-    // Count each sticky once per normalized name (a recipe with 3 mentions
-    // of "butter" still counts as one recipe using butter).
+    // Walk up to find the recipe (top-level section). If it's nested via
+    // parentId chain (sticky → subsection → section), follow that.
+    let recipeName = '';
+    let cur = node;
+    while (cur && cur.parentId) {
+      cur = nodes.get(cur.parentId);
+      if (!cur) break;
+      if (cur.type === 'section') { recipeName = cur.title || ''; break; }
+    }
     const seenInThis = new Set();
     for (const it of (node.items || [])) {
       if (!it.text) continue;
@@ -2574,16 +2600,30 @@ function _computeIngUsage(){
       if (!k || seenInThis.has(k)) continue;
       seenInThis.add(k);
       counts.set(k, (counts.get(k) || 0) + 1);
+      if (recipeName) {
+        if (!recipes.has(k)) recipes.set(k, new Set());
+        recipes.get(k).add(recipeName);
+      }
     }
   }
-  return counts;
+  return { counts, recipes };
+}
+function _ensureIngUsage(){
+  if (_ingUsageCache && _ingRecipesCache) return;
+  const r = _computeIngUsage();
+  _ingUsageCache = r.counts;
+  _ingRecipesCache = r.recipes;
 }
 function countIngredientUses(normalized){
-  if (!_ingUsageCache) _ingUsageCache = _computeIngUsage();
+  _ensureIngUsage();
   return _ingUsageCache.get(normalized) || 0;
 }
+function recipesUsingIngredient(normalized){
+  _ensureIngUsage();
+  return [...(_ingRecipesCache.get(normalized) || [])].sort();
+}
 // Invalidate the cache whenever something changes that could affect counts.
-function _invalidateIngUsage(){ _ingUsageCache = null; }
+function _invalidateIngUsage(){ _ingUsageCache = null; _ingRecipesCache = null; }
 
 function drawIngLibModal(){
   const list = document.getElementById('ingLibList');
@@ -2614,6 +2654,27 @@ function drawIngLibModal(){
     const aliases = (e.aliases && e.aliases.length)
       ? `<div class="ing-aliases" title="${escapeAttr('Also: ' + e.aliases.join(', '))}">Also: ${escapeHtml(e.aliases.join(', '))}</div>`
       : '';
+    // List of recipes using this ingredient — show inline, line-clamped to 2.
+    let recipeLine = '';
+    if (uses > 0) {
+      const recipeNames = recipesUsingIngredient(e.name);
+      // Also count any aliased names — combined ingredients still belong to
+      // their old recipes too.
+      if (Array.isArray(e.aliases)) {
+        for (const a of e.aliases) {
+          for (const r of recipesUsingIngredient(a)) if (!recipeNames.includes(r)) recipeNames.push(r);
+        }
+      }
+      if (recipeNames.length) {
+        const tooltipText = recipeNames.join(', ');
+        const visible = recipeNames.slice(0, 4).join(', ');
+        const more = recipeNames.length > 4 ? ` <b>+${recipeNames.length - 4} more</b>` : '';
+        recipeLine = `<div class="ing-recipes" title="${escapeAttr(tooltipText)}">${escapeHtml(visible)}${more}</div>`;
+      }
+    }
+    const usesLabel = uses
+      ? `<span class="ing-uses active" title="${escapeAttr('In ' + uses + ' recipe' + (uses === 1 ? '' : 's'))}">In recipes <span class="ing-uses-n">${uses}</span></span>`
+      : `<span class="ing-uses">Not on any board yet</span>`;
     return `
       <div class="ing-card" data-ing="${escapeAttr(e.name)}">
         <div class="ing-thumb ${hasImg ? 'has-img' : ''}" data-action="ing-edit-url"
@@ -2623,7 +2684,8 @@ function drawIngLibModal(){
         </div>
         <div class="ing-body">
           <div class="ing-name" title="${escapeAttr(e.name)}">${escapeHtml(e.name)}</div>
-          <div class="ing-uses ${uses ? 'active' : ''}">${uses ? ('In ' + uses + ' recipe' + (uses === 1 ? '' : 's')) : 'Not on any board yet'}</div>
+          ${usesLabel}
+          ${recipeLine}
           ${aliases}
         </div>
       </div>`;
