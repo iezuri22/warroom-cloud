@@ -583,6 +583,69 @@
   .cook-step .cs-ing img{width:100%;height:80px;object-fit:cover;background:rgba(255,255,255,.04)}
   .cook-step .cs-ing .nm{padding:6px 8px;font-size:12px;line-height:1.3;color:var(--ink)}
   .cook-step .cs-empty{font-size:12px;color:var(--muted);font-style:italic}
+  /* Inline-editable step text */
+  .cook-step .cs-text[contenteditable="true"]{
+    background:var(--w03);border:1px solid var(--accent);outline:none;
+    padding:8px 10px;border-radius:6px;margin:-9px -11px 18px
+  }
+  /* Per-step curated ingredients (with amount + image, user-controlled) */
+  .cook-step .cs-step-ings{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .cook-step .cs-step-ing-row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;
+    background:var(--w03);border:1px solid var(--line);border-radius:8px
+  }
+  .cook-step .cs-step-ing-row .thumb{
+    width:38px;height:38px;border-radius:6px;background:var(--w05) center/cover no-repeat;
+    flex:0 0 38px;display:flex;align-items:center;justify-content:center;
+    font-size:18px;color:var(--muted);cursor:pointer;border:1px solid var(--line);overflow:hidden
+  }
+  .cook-step .cs-step-ing-row .thumb img{width:100%;height:100%;object-fit:cover}
+  .cook-step .cs-step-ing-row .ing-name{
+    flex:1;background:transparent;border:none;color:var(--ink);
+    font-size:13px;font-weight:600;outline:none;font-family:inherit;padding:2px 4px;border-radius:4px;min-width:0
+  }
+  .cook-step .cs-step-ing-row .ing-name:focus{background:var(--w05)}
+  .cook-step .cs-step-ing-row .ing-amount{
+    width:110px;flex:0 0 110px;background:transparent;border:1px dashed var(--line);
+    color:var(--ink);font-size:12px;outline:none;font-family:inherit;padding:5px 8px;border-radius:5px
+  }
+  .cook-step .cs-step-ing-row .ing-amount:focus{border-color:var(--accent);border-style:solid}
+  .cook-step .cs-step-ing-row .del{
+    background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:5px
+  }
+  .cook-step .cs-step-ing-row .del:hover{color:#f87171;background:rgba(248,113,113,.1)}
+  .cook-step .cs-add-step-ing{
+    margin-top:6px;padding:8px 12px;border-radius:6px;
+    background:transparent;border:1px dashed var(--line2);color:var(--muted);
+    font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%
+  }
+  .cook-step .cs-add-step-ing:hover{color:var(--ink);border-color:var(--accent)}
+  /* Picker for selecting an ingredient from the library */
+  .cs-ing-picker-bd{
+    position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:250;
+    display:flex;align-items:center;justify-content:center;padding:24px
+  }
+  .cs-ing-picker-card{
+    background:var(--bg,#0e1116);border:1px solid var(--line2);border-radius:12px;
+    width:100%;max-width:520px;max-height:80vh;display:flex;flex-direction:column;
+    padding:18px 20px;gap:10px;box-shadow:0 12px 40px rgba(0,0,0,.7)
+  }
+  .cs-ing-picker-card h4{margin:0;font-size:15px}
+  .cs-ing-picker-card input.search{
+    width:100%;padding:9px 12px;background:var(--w03);border:1px solid var(--line);
+    border-radius:7px;color:var(--ink);font-size:13px;outline:none
+  }
+  .cs-ing-picker-card .row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer
+  }
+  .cs-ing-picker-card .row:hover{background:var(--w05)}
+  .cs-ing-picker-card .row .thumb{
+    width:34px;height:34px;border-radius:5px;background:var(--w05) center/cover no-repeat;flex:0 0 34px;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:15px
+  }
+  .cs-ing-picker-card .row .nm{flex:1;color:var(--ink);font-size:13px}
+  .cs-ing-picker-card .list{overflow:auto;max-height:50vh;display:flex;flex-direction:column;gap:2px}
+  .cs-ing-picker-card .footer{display:flex;justify-content:space-between;gap:8px;padding-top:8px;border-top:1px solid var(--line)}
   /* Per-step user-uploaded media (photo or short video) */
   .cook-step .cs-media-block{
     margin:18px 0 0; padding-top:14px; border-top:1px solid var(--line);
@@ -1450,9 +1513,6 @@ function pickFile(accept){
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept || '*/*';
-    // Position off-screen instead of display:none — Safari/Firefox don't
-    // always honor a programmatic .click() on display:none inputs, which
-    // silently skips the file dialog.
     input.style.position = 'absolute';
     input.style.left = '-9999px';
     input.style.top = '-9999px';
@@ -1465,12 +1525,14 @@ function pickFile(accept){
       try { document.body.removeChild(input); } catch {}
       resolve(val);
     };
+    // The change event fires when a file is picked. We deliberately DON'T
+    // add a focus-based timeout backstop here — it was firing before the
+    // change handler in some browsers and resolving the promise with null,
+    // killing the upload silently. Modern browsers fire a `cancel` event
+    // when the user closes the dialog without picking; older ones won't,
+    // but the dangling promise just gets GC'd next time the user reopens.
     input.addEventListener('change', () => done(input.files && input.files[0] || null), { once: true });
-    // If the user cancels the OS file dialog, no change event fires. We
-    // can't detect that reliably, so add a focus-based "probably cancelled"
-    // backstop after the picker closes.
-    const onFocus = () => setTimeout(() => done(null), 400);
-    window.addEventListener('focus', onFocus, { once: true });
+    input.addEventListener('cancel', () => done(null), { once: true });
     document.body.appendChild(input);
     input.click();
   });
@@ -3548,7 +3610,8 @@ function startCook(sectionId){
           stickyId: s.id,
           itemId: it.id,
           mediaUrl: it.mediaUrl || null,
-          mediaType: it.mediaType || null
+          mediaType: it.mediaType || null,
+          stepIngredients: Array.isArray(it.stepIngredients) ? it.stepIngredients : []
         });
       }
     }
@@ -3562,7 +3625,8 @@ function startCook(sectionId){
         if (!text || !/^(\d+[\.\)]|step\b)/i.test(text)) continue;
         _cookSteps.push({
           text, stickyId: s.id, itemId: it.id,
-          mediaUrl: it.mediaUrl || null, mediaType: it.mediaType || null
+          mediaUrl: it.mediaUrl || null, mediaType: it.mediaType || null,
+          stepIngredients: Array.isArray(it.stepIngredients) ? it.stepIngredients : []
         });
       }
     }
@@ -3658,12 +3722,30 @@ function drawCookStep(){
         ? `<video src="${escapeAttr(step.mediaUrl)}" muted playsinline preload="metadata" data-action="cook-open-media"></video>`
         : `<img src="${escapeAttr(step.mediaUrl)}" alt="" data-action="cook-open-media">`)
     : `<span>+ Add photo or video</span>`;
+  // Curated step ingredients (the user's per-step picks with amounts).
+  // Auto-matched suggestions surface only when the curated list is empty —
+  // they're starter content the user can convert into the curated list.
+  const curated = step.stepIngredients || [];
+  const showAuto = !curated.length;
   body.innerHTML = `
     <div class="cook-step">
       <div class="cs-num">Step ${_cookIdx + 1} of ${total}</div>
-      <div class="cs-text">${escapeHtml(step.text)}</div>
-      <div class="cs-ings-head">Ingredients for this step</div>
-      ${ings.length ? `
+      <div class="cs-text" data-action="edit-step" title="Click to edit this step. Changes save to the recipe.">${escapeHtml(step.text)}</div>
+      <div class="cs-ings-head">${curated.length ? 'Ingredients for this step' : 'Auto-matched ingredients'}</div>
+      ${curated.length ? `
+        <div class="cs-step-ings">
+          ${curated.map((ing, i) => `
+            <div class="cs-step-ing-row" data-step-ing-i="${i}">
+              <div class="thumb ${ing.imageUrl ? 'has-img' : ''}" data-action="step-ing-img"
+                   ${ing.imageUrl ? `style="background-image:url('${escapeAttr(ing.imageUrl)}')"` : ''}>
+                ${ing.imageUrl ? '' : '🥄'}
+              </div>
+              <input type="text" class="ing-name" value="${escapeAttr(ing.name || '')}" data-action="step-ing-name" placeholder="Ingredient">
+              <input type="text" class="ing-amount" value="${escapeAttr(ing.amount || '')}" data-action="step-ing-amount" placeholder="amount">
+              <button class="del" data-action="step-ing-del" title="Remove">✕</button>
+            </div>
+          `).join('')}
+        </div>` : (showAuto && ings.length ? `
         <div class="cs-ings">
           ${ings.map(ing => `
             <div class="cs-ing">
@@ -3671,7 +3753,11 @@ function drawCookStep(){
               <div class="nm">${escapeHtml(ing.text)}</div>
             </div>
           `).join('')}
-        </div>` : `<div class="cs-empty">No ingredients matched in this step.</div>`}
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="tb-btn" data-action="adopt-auto" title="Move these into your curated step list — then you can set amounts">↓ Add these to my step list</button>
+        </div>` : `<div class="cs-empty">No ingredients linked to this step yet.</div>`)}
+      <button class="cs-add-step-ing" data-action="step-ing-add">+ Add ingredient for this step</button>
       <div class="cs-media-block">
         <div class="cs-media-thumb" data-action="cook-upload-media">
           ${mediaThumb}
@@ -3703,6 +3789,177 @@ function drawCookStep(){
     }));
   body.querySelectorAll('[data-action="cook-remove-media"]').forEach(el =>
     el.addEventListener('click', (e) => { e.stopPropagation(); removeStepMedia(); }));
+  // Editable step text — double-click to edit, blur saves back to the
+  // recipe's sticky item so the change persists in the recipe details too.
+  const stepTextEl = body.querySelector('[data-action="edit-step"]');
+  if (stepTextEl) {
+    stepTextEl.addEventListener('dblclick', () => {
+      stepTextEl.setAttribute('contenteditable', 'plaintext-only');
+      stepTextEl.focus();
+      try {
+        const r = document.createRange(); r.selectNodeContents(stepTextEl);
+        const s = document.getSelection(); s.removeAllRanges(); s.addRange(r);
+      } catch {}
+    });
+    stepTextEl.addEventListener('blur', async () => {
+      stepTextEl.setAttribute('contenteditable', 'false');
+      const v = (stepTextEl.textContent || '').trim();
+      if (!v || v === step.text) return;
+      step.text = v;
+      await writeStepUpdate(step);
+      // Refresh the auto-match in case the new wording surfaces different ingredients.
+      drawCookStep();
+    });
+    stepTextEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); stepTextEl.blur(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        stepTextEl.textContent = step.text;
+        stepTextEl.blur();
+      }
+    });
+  }
+  // Curated step-ingredient handlers
+  body.querySelectorAll('[data-action="step-ing-add"]').forEach(el =>
+    el.addEventListener('click', () => openStepIngPicker()));
+  body.querySelectorAll('[data-action="adopt-auto"]').forEach(el =>
+    el.addEventListener('click', async () => {
+      // Pull each auto-matched ingredient into the curated list (with a
+      // copy of its image). User can then set amounts inline.
+      const seedRows = ings.map(ing => {
+        const parsed = parseQtyAndName(ing.text);
+        return {
+          name: parsed.name || ing.text,
+          amount: parsed.amount || '',
+          imageUrl: ing.imageUrl || libImageFor(ing.text) || null
+        };
+      });
+      step.stepIngredients = seedRows;
+      await writeStepUpdate(step);
+      drawCookStep();
+    }));
+  body.querySelectorAll('[data-action="step-ing-name"]').forEach(el =>
+    el.addEventListener('blur', async () => {
+      const i = +el.closest('[data-step-ing-i]').dataset.stepIngI;
+      const newName = el.value.trim();
+      if (!step.stepIngredients[i]) return;
+      step.stepIngredients[i].name = newName;
+      // If this newly-named ingredient exists in the library, pull its image.
+      if (!step.stepIngredients[i].imageUrl) {
+        const libImg = libImageFor(newName);
+        if (libImg) step.stepIngredients[i].imageUrl = libImg;
+      }
+      await writeStepUpdate(step);
+    }));
+  body.querySelectorAll('[data-action="step-ing-amount"]').forEach(el =>
+    el.addEventListener('blur', async () => {
+      const i = +el.closest('[data-step-ing-i]').dataset.stepIngI;
+      if (!step.stepIngredients[i]) return;
+      step.stepIngredients[i].amount = el.value.trim();
+      await writeStepUpdate(step);
+    }));
+  body.querySelectorAll('[data-action="step-ing-del"]').forEach(el =>
+    el.addEventListener('click', async () => {
+      const i = +el.closest('[data-step-ing-i]').dataset.stepIngI;
+      step.stepIngredients.splice(i, 1);
+      await writeStepUpdate(step);
+      drawCookStep();
+    }));
+  body.querySelectorAll('[data-action="step-ing-img"]').forEach(el =>
+    el.addEventListener('click', async () => {
+      const i = +el.closest('[data-step-ing-i]').dataset.stepIngI;
+      const ing = step.stepIngredients[i];
+      if (!ing) return;
+      const next = prompt(`Image URL for "${ing.name || 'this ingredient'}" (this step only — leave blank to clear):`, ing.imageUrl || '');
+      if (next === null) return;
+      ing.imageUrl = next.trim() || null;
+      await writeStepUpdate(step);
+      drawCookStep();
+    }));
+}
+
+// Pull "1 cup blueberries" → { amount: "1 cup", name: "blueberries" }.
+// Best-effort, mainly for adopt-auto.
+function parseQtyAndName(text){
+  const t = (text || '').trim();
+  if (!t) return { amount: '', name: '' };
+  const m = t.match(/^([\d./\s]+\s*(?:cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|grams|kg|ml|l|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bunch|sprig|sprigs)?)\s+(.+)$/i);
+  if (m && m[2]) return { amount: m[1].trim(), name: m[2].trim() };
+  return { amount: '', name: t };
+}
+
+// Persist the current step back to its underlying sticky item.
+async function writeStepUpdate(step){
+  const sticky = nodes.get(step.stickyId);
+  const item = sticky?.items?.find(i => i.id === step.itemId);
+  if (!item) return;
+  item.text = step.text;
+  item.mediaUrl = step.mediaUrl;
+  item.mediaType = step.mediaType;
+  item.stepIngredients = step.stepIngredients || [];
+  await saveNode(sticky);
+}
+
+// Picker modal to choose an ingredient (library + free text) for the step.
+function openStepIngPicker(){
+  let q = '';
+  const bd = document.createElement('div');
+  bd.className = 'cs-ing-picker-bd';
+  bd.innerHTML = `
+    <div class="cs-ing-picker-card">
+      <h4>Add an ingredient for this step</h4>
+      <input class="search" type="search" placeholder="Search library or type a name…" autofocus>
+      <div class="list"></div>
+      <div class="footer">
+        <button class="tb-btn" data-c="cancel">Cancel</button>
+        <button class="tb-btn" data-c="custom" style="background:var(--accent);color:#fff;border:none">+ Add custom</button>
+      </div>
+    </div>`;
+  document.body.appendChild(bd);
+  const input = bd.querySelector('.search');
+  const list  = bd.querySelector('.list');
+  function redraw(){
+    const all = [..._ingLibrary.values()]
+      .filter(e => !q || (e.name || '').toLowerCase().includes(q.toLowerCase())
+                 || (e.aliases || []).some(a => a.toLowerCase().includes(q.toLowerCase())))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    list.innerHTML = all.slice(0, 40).map(e => `
+      <div class="row" data-name="${escapeAttr(e.name)}">
+        <span class="thumb" ${e.imageUrl ? `style="background-image:url('${escapeAttr(e.imageUrl)}')"` : ''}>${e.imageUrl ? '' : '🥬'}</span>
+        <span class="nm">${escapeHtml(e.name)}</span>
+      </div>`).join('') || '<div class="row" style="cursor:default;opacity:.5">No matches — use + Add custom for a new name</div>';
+    list.querySelectorAll('[data-name]').forEach(row => row.addEventListener('click', () => {
+      const name = row.getAttribute('data-name');
+      const lib = _ingLibrary.get(name);
+      addStepIngredient({ name, imageUrl: lib?.imageUrl || null, amount: '' });
+      bd.remove();
+    }));
+  }
+  input.addEventListener('input', () => { q = input.value; redraw(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && input.value.trim()) {
+      addStepIngredient({ name: input.value.trim(), imageUrl: libImageFor(input.value) || null, amount: '' });
+      bd.remove();
+    }
+    if (e.key === 'Escape') bd.remove();
+  });
+  bd.querySelector('[data-c="cancel"]').addEventListener('click', () => bd.remove());
+  bd.querySelector('[data-c="custom"]').addEventListener('click', () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    addStepIngredient({ name, imageUrl: libImageFor(name) || null, amount: '' });
+    bd.remove();
+  });
+  bd.addEventListener('click', (e) => { if (e.target === bd) bd.remove(); });
+  redraw();
+}
+async function addStepIngredient(row){
+  const step = _cookSteps[_cookIdx];
+  if (!step) return;
+  step.stepIngredients = step.stepIngredients || [];
+  step.stepIngredients.push(row);
+  await writeStepUpdate(step);
+  drawCookStep();
 }
 
 async function uploadStepMedia(){
