@@ -395,18 +395,22 @@
     box-shadow:0 12px 40px rgba(0,0,0,.6); color:var(--ink)
   }
   #ingLibList{
-    flex:1; min-height:0; overflow:auto; padding:4px;
-    display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px;
+    flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:4px;
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
+    grid-auto-rows:max-content; gap:12px;
     align-content:start
   }
+  /* Explicit min-height + auto-rows above keep cards from collapsing when
+     the grid contains hundreds of items and the EZ sync triggers a layout
+     reflow with mostly-placeholder thumbs. */
   .ing-card{
     background:var(--w03); border:1px solid var(--line); border-radius:12px;
     overflow:hidden; display:flex; flex-direction:column; transition:.15s;
-    position:relative
+    position:relative; min-height:260px
   }
   .ing-card:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.3)}
   .ing-card .ing-thumb{
-    width:100%; height:160px; background:rgba(255,255,255,.04) center/cover no-repeat;
+    width:100%; height:160px; flex:0 0 160px; background:rgba(255,255,255,.04) center/cover no-repeat;
     position:relative; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
     font-size:40px; opacity:.5; color:var(--muted)
@@ -2523,24 +2527,39 @@ document.getElementById('ingLibSyncEz').addEventListener('click', async () => {
   }
 });
 
-// Count how many recipe items (across all boards) reference a given
-// normalized name. Used as a tiny "in N recipes" tag.
-function countIngredientUses(normalized){
-  let n = 0;
+// Precompute usage counts in ONE pass — avoids an O(N×ingredients) sweep
+// when the library has hundreds of entries (after EZ sync).
+let _ingUsageCache = null;
+function _computeIngUsage(){
+  const counts = new Map();
   for (const node of nodes.values()) {
     if (node.type !== 'sticky') continue;
+    // Count each sticky once per normalized name (a recipe with 3 mentions
+    // of "butter" still counts as one recipe using butter).
+    const seenInThis = new Set();
     for (const it of (node.items || [])) {
       if (!it.text) continue;
-      if (normalizeIngredientName(it.text) === normalized) { n++; break; }
+      const k = normalizeIngredientName(it.text);
+      if (!k || seenInThis.has(k)) continue;
+      seenInThis.add(k);
+      counts.set(k, (counts.get(k) || 0) + 1);
     }
   }
-  return n;
+  return counts;
 }
+function countIngredientUses(normalized){
+  if (!_ingUsageCache) _ingUsageCache = _computeIngUsage();
+  return _ingUsageCache.get(normalized) || 0;
+}
+// Invalidate the cache whenever something changes that could affect counts.
+function _invalidateIngUsage(){ _ingUsageCache = null; }
 
 function drawIngLibModal(){
   const list = document.getElementById('ingLibList');
   const countEl = document.getElementById('ingLibCount');
   const q = _ingLibQuery.trim().toLowerCase();
+  // Freshen the usage cache for this render pass.
+  _invalidateIngUsage();
   const entries = [..._ingLibrary.values()]
     .filter(e => {
       if (!q) return true;
