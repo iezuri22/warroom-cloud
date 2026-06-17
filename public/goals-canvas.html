@@ -319,6 +319,20 @@
     color:var(--muted);font-weight:600
   }
   #grocCard .gx-recipes, #grocCard .gx-list-out{overflow:auto;flex:1;min-height:0}
+  /* Source picker chips at the top of the left column */
+  .gx-source-row{
+    display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+    padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--line)
+  }
+  .gx-source-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600;margin-right:4px}
+  .gx-source-chip{
+    padding:4px 10px;border-radius:13px;background:var(--w03);
+    border:1px solid var(--line);color:var(--muted);
+    font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit;transition:.12s
+  }
+  .gx-source-chip:hover{color:var(--ink);border-color:var(--line2)}
+  .gx-source-chip.active{background:rgba(74,222,128,.16);color:#86efac;border-color:rgba(74,222,128,.4)}
+  .gx-source-chip.gx-source-all{background:transparent;border-style:dashed;margin-left:auto}
   .gx-recipe{
     margin-bottom:14px; padding:10px 12px;
     background:var(--w03); border:1px solid var(--line); border-radius:8px
@@ -359,6 +373,41 @@
     padding-top:8px;border-top:1px solid var(--line)
   }
   #grocCard .gx-foot .ct{font-size:12px;color:var(--muted)}
+
+  /* ============= Edit recipe (on-board) modal ======================= */
+  #redBd{
+    position:fixed; inset:0; background:rgba(0,0,0,.65); backdrop-filter:blur(4px);
+    z-index:200; display:none; align-items:flex-start; justify-content:center; padding:48px 16px
+  }
+  #redBd.open{display:flex}
+  #redCard{
+    background:var(--bg,#0e1116); border:1px solid var(--line2); border-radius:14px;
+    width:100%; max-width:760px; height:min(86vh, 820px);
+    padding:18px 22px; display:flex; flex-direction:column; gap:12px;
+    box-shadow:0 12px 40px rgba(0,0,0,.6); color:var(--ink)
+  }
+  #redCard h3{margin:0;font-size:17px}
+  #redBody{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px}
+  #redBody label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600;display:block;margin-bottom:6px}
+  #redBody input[type="text"], #redBody textarea{
+    width:100%;padding:10px 12px;background:var(--w03);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font-size:13px;font-family:inherit;outline:none
+  }
+  #redBody input[type="text"]:focus, #redBody textarea:focus{border-color:var(--accent)}
+  #redBody textarea{min-height:140px;line-height:1.5;resize:vertical}
+  .red-section{padding:14px 16px;background:var(--w03);border:1px solid var(--line);border-radius:10px}
+  .red-banner{
+    width:100%;height:130px;border-radius:8px;background:rgba(255,255,255,.04) center/cover no-repeat;
+    border:1px solid var(--line);margin-bottom:10px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px
+  }
+  .red-banner.no-img:hover{background:var(--w05)}
+  .red-img-tools{display:flex;gap:6px;margin-bottom:8px}
+  .red-img-tools button{
+    padding:5px 10px;border-radius:6px;background:var(--w03);border:1px solid var(--line);
+    color:var(--ink);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit
+  }
+  .red-img-tools button:hover{background:var(--w05)}
 
   /* ============= Let's Cook modal =================================== */
   #cookBd{
@@ -746,6 +795,25 @@
   </div>
 </div>
 
+<!-- Edit recipe (on-board) modal -->
+<div id="redBd">
+  <div id="redCard">
+    <div class="gx-head">
+      <h3>📋 Recipe details</h3>
+      <span id="redSubtitle" style="font-size:11px;color:var(--muted);margin-left:6px"></span>
+      <span style="flex:1"></span>
+      <button class="tb-btn" id="redClose">Close</button>
+    </div>
+    <div id="redBody"></div>
+    <div class="gx-foot">
+      <span class="ct" id="redSavedHint">Edits write back to the stickies on the board.</span>
+      <span style="display:flex;gap:8px">
+        <button class="tb-btn" id="redSave" style="background:var(--accent);color:#fff;border-color:transparent">Save changes</button>
+      </span>
+    </div>
+  </div>
+</div>
+
 <!-- "Pull from existing" picker — duplicate a section (recipe) from any board -->
 <div id="rpBd">
   <div id="rpCard">
@@ -763,6 +831,8 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
 import { getFirestore, collection, doc, getDocs, getDoc, setDoc, deleteDoc, onSnapshot, addDoc, query, where }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-storage.js';
 
 // ============= Firebase =============
 const firebaseConfig = {
@@ -780,6 +850,8 @@ const pushQueueCol  = collection(db, 'goals_priority_pushes');
 const boardsCol     = collection(db, 'goals_canvas_boards');
 const viewDoc       = doc(db, 'goals_canvas_view', 'me');  // map of { [boardId]: {panX, panY, zoom} }
 const todosCol      = collection(db, 'tv_todos');
+const ingredientLibCol = collection(db, 'ingredient_library');
+const storage = getStorage(app);
 
 // ============= State =============
 const nodes  = new Map();       // id -> node data (ALL nodes from cloud)
@@ -982,15 +1054,19 @@ function renderNode(n){
         : '';
       const expandKey = n.id + '/' + it.id;
       const isExpanded = _expandedItemImages.has(expandKey);
-      const hasImg = !!it.imageUrl;
+      // Resolve image: library wins (canonical), per-item is fallback for
+      // legacy stickies that pre-date the library.
+      const resolvedImg = libImageFor(it.text) || it.imageUrl || null;
+      const hasImg = !!resolvedImg;
       const imgBtn = hasImg
         ? `<button class="item-img-btn has-img" data-action="toggle-item-image" title="${isExpanded ? 'Hide picture' : 'Show picture'}">🖼</button>`
         : `<button class="item-img-btn" data-action="add-item-image" title="Add a picture for this ingredient">📷</button>`;
       const preview = (isExpanded && hasImg)
         ? `<div class="item-image">
-             <img src="${escapeAttr(it.imageUrl)}" alt="${escapeAttr(it.text)}" data-action="open-item-image">
+             <img src="${escapeAttr(resolvedImg)}" alt="${escapeAttr(it.text)}" data-action="open-item-image">
              <div class="item-image-tools">
-               <button data-action="edit-item-image">Change</button>
+               <button data-action="edit-item-image">Change URL</button>
+               <button data-action="upload-item-image">Upload file</button>
                <button data-action="remove-item-image">Remove</button>
              </div>
            </div>`
@@ -1043,6 +1119,7 @@ function renderNode(n){
       <div class="node-tools">
         ${swatchesFor('section')}
         <button class="nt-btn" data-action="set-image" title="Set banner image URL">📷</button>
+        ${n.type === 'section' ? '<button class="nt-btn" data-action="edit-recipe" title="Edit recipe details">📋</button>' : ''}
         <button class="nt-btn" data-action="add-sticky-here" title="Add sticky inside">+</button>
         ${n.type === 'section' ? '<button class="nt-btn" data-action="add-subsection-here" title="Add subsection">▸</button>' : ''}
         <button class="nt-btn" data-action="delete" title="Delete">✕</button>
@@ -1164,6 +1241,40 @@ window.addEventListener('keydown', (e) => {
 function escapeAttr(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// ============= File upload (Firebase Storage) ==============================
+// Pick a file via a hidden input, upload to Storage, write the resulting URL
+// to the master ingredient library. Used for "Upload file" on item images.
+async function uploadIngredientImage(item){
+  const file = await pickFile('image/*');
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    setStatus('Image must be under 8 MB', 'error'); return;
+  }
+  setStatus('Uploading…', 'sticky');
+  const k = normalizeIngredientName(item.text) || ('item-' + Date.now());
+  const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
+  const path = `ingredient-images/${encodeIngredientKey(k)}-${Date.now()}${ext}`;
+  const ref = storageRef(storage, path);
+  await uploadBytes(ref, file, { contentType: file.type || 'image/jpeg' });
+  const url = await getDownloadURL(ref);
+  await setLibraryImage(item.text, url);
+  setStatus('Uploaded ✓');
+}
+function pickFile(accept){
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept || '*/*';
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      resolve(input.files && input.files[0] || null);
+      try { document.body.removeChild(input); } catch {}
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 // Pull the first http(s) URL out of a string. Used to detect a bullet that
 // has a link in it so we can offer a "↗ Open" tap target. Trailing
 // punctuation like commas/periods is stripped so "see https://foo.com." opens
@@ -1672,14 +1783,29 @@ function attachNodeListeners(el){
       const itemId = row?.dataset.itemId;
       const item = (n.items || []).find(x => x.id === itemId);
       if (!item) return;
-      const next = prompt('Image URL for this ingredient:', item.imageUrl || '');
+      const current = libImageFor(item.text) || item.imageUrl || '';
+      const next = prompt('Image URL for "' + (item.text || '').slice(0, 60) + '":\n\nLeave blank to clear. This image will be used for this ingredient EVERYWHERE on every board.', current);
       if (next === null) { e.stopPropagation(); return; }
       const url = next.trim();
-      item.imageUrl = url || null;
-      // Auto-expand when adding so the user sees what they pasted.
+      // Write to the master library — propagates to all recipes with this ingredient.
+      setLibraryImage(item.text, url || null);
+      // Clear the legacy per-item override so the library wins definitively.
+      if (item.imageUrl) { item.imageUrl = null; saveNode(n); }
       if (url) _expandedItemImages.add(n.id + '/' + itemId);
-      saveNode(n);
       renderNode(n);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'upload-item-image') {
+      const row = e.target.closest('.sticky-row');
+      const itemId = row?.dataset.itemId;
+      const item = (n.items || []).find(x => x.id === itemId);
+      if (!item) return;
+      // Trigger a hidden file picker, then upload to Firebase Storage.
+      uploadIngredientImage(item).catch(err => {
+        console.error('[upload] failed', err);
+        setStatus('Upload failed — check the console', 'error');
+      });
       e.stopPropagation();
       return;
     }
@@ -1688,6 +1814,8 @@ function attachNodeListeners(el){
       const itemId = row?.dataset.itemId;
       const item = (n.items || []).find(x => x.id === itemId);
       if (!item) return;
+      // Clear from the library too — removes the picture everywhere.
+      setLibraryImage(item.text, null);
       item.imageUrl = null;
       _expandedItemImages.delete(n.id + '/' + itemId);
       saveNode(n);
@@ -1699,7 +1827,8 @@ function attachNodeListeners(el){
       const row = e.target.closest('.sticky-row');
       const itemId = row?.dataset.itemId;
       const item = (n.items || []).find(x => x.id === itemId);
-      if (item?.imageUrl) window.open(item.imageUrl, '_blank', 'noopener');
+      const url = libImageFor(item?.text) || item?.imageUrl;
+      if (url) window.open(url, '_blank', 'noopener');
       e.stopPropagation();
       return;
     }
@@ -1765,6 +1894,11 @@ function attachNodeListeners(el){
     }
     if (a === 'add-subsection-here') {
       createNode('subsection', { x: n.x + 20, y: n.y + 60, parentId: id });
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'edit-recipe') {
+      openRecipeEditor(n.id);
       e.stopPropagation();
       return;
     }
@@ -2113,20 +2247,27 @@ document.getElementById('cookBtn').onclick       = () => openCookPicker();
 // persist in Firestore so the list survives reloads + syncs across devices.
 const groceryDoc = doc(db, 'goals_canvas_grocery', 'me');
 let _groceryChecked = new Set();   // keys: "<stickyId>/<itemId>"
+let _grocerySources = null;        // Set of section ids included (null = all)
 let _groceryUnsub = null;
 
 function subscribeGrocery(){
   if (_groceryUnsub) try { _groceryUnsub(); } catch {}
   _groceryUnsub = onSnapshot(groceryDoc, (snap) => {
-    if (!snap.exists()) { _groceryChecked = new Set(); return; }
+    if (!snap.exists()) { _groceryChecked = new Set(); _grocerySources = null; return; }
     const d = snap.data() || {};
     _groceryChecked = new Set(Array.isArray(d.checked) ? d.checked : []);
+    _grocerySources = Array.isArray(d.sources) ? new Set(d.sources) : null;
     if (document.getElementById('grocBd')?.classList.contains('open')) drawGroceryModal();
   });
 }
 async function persistGrocery(){
-  try { await setDoc(groceryDoc, { checked: [..._groceryChecked], updatedAt: nowISO() }); }
-  catch (e) { console.warn('[grocery] save failed', e); }
+  try {
+    await setDoc(groceryDoc, {
+      checked: [..._groceryChecked],
+      sources: _grocerySources ? [..._grocerySources] : null,
+      updatedAt: nowISO()
+    });
+  } catch (e) { console.warn('[grocery] save failed', e); }
 }
 
 // Collect "recipes" (top-level sections) on the active board, with each
@@ -2148,12 +2289,30 @@ function openGroceryModal(){
 function closeGroceryModal(){ document.getElementById('grocBd').classList.remove('open'); }
 
 function drawGroceryModal(){
-  const recipes = collectRecipesOnBoard();
+  const allRecipes = collectRecipesOnBoard();
+  // Default: all sections selected. _grocerySources null = "all".
+  const sourceSet = _grocerySources;
+  const recipes = sourceSet ? allRecipes.filter(r => sourceSet.has(r.section.id)) : allRecipes;
   const recBox = document.getElementById('grocRecipes');
+  // Render the "Sources" picker row above the recipes list. Lets the user
+  // narrow which recipes contribute ingredients to the picker.
+  const sourceRow = allRecipes.length > 1 ? `
+    <div class="gx-source-row">
+      <span class="gx-source-lbl">Use ingredients from:</span>
+      ${allRecipes.map(r => {
+        const on = !sourceSet || sourceSet.has(r.section.id);
+        return `<button type="button" class="gx-source-chip${on?' active':''}" data-grcsrc="${r.section.id}">${escapeHtml(r.section.title || 'Untitled')}</button>`;
+      }).join('')}
+      <button type="button" class="gx-source-chip gx-source-all" id="grcSrcAll">All</button>
+    </div>` : '';
   if (!recipes.length) {
-    recBox.innerHTML = '<div class="gx-empty">No recipes on this board yet — import one from EZ or hit + Recipe.</div>';
-  } else {
-    recBox.innerHTML = recipes.map(({ section, stickies }) => {
+    recBox.innerHTML = sourceRow + '<div class="gx-empty">No recipes selected (or none on this board).</div>';
+    // wire source chips even with empty list
+    wireGrocerySourceChips(recBox);
+    drawGroceryOutput(recipes);
+    return;
+  }
+  recBox.innerHTML = sourceRow + recipes.map(({ section, stickies }) => {
       const items = stickies.flatMap(stk =>
         (stk.items || []).filter(it => (it.text || '').trim()).map(it => ({ stk, it }))
       );
@@ -2190,8 +2349,29 @@ function drawGroceryModal(){
         drawGroceryModal();
       });
     });
-  }
+  wireGrocerySourceChips(recBox);
   drawGroceryOutput(recipes);
+}
+function wireGrocerySourceChips(scope){
+  scope.querySelectorAll('[data-grcsrc]').forEach(b => {
+    b.addEventListener('click', () => {
+      const id = b.getAttribute('data-grcsrc');
+      // Init from "all"
+      if (!_grocerySources) {
+        const all = collectRecipesOnBoard().map(r => r.section.id);
+        _grocerySources = new Set(all);
+      }
+      if (_grocerySources.has(id)) _grocerySources.delete(id);
+      else _grocerySources.add(id);
+      persistGrocery();
+      drawGroceryModal();
+    });
+  });
+  scope.querySelector('#grcSrcAll')?.addEventListener('click', () => {
+    _grocerySources = null;  // back to "all"
+    persistGrocery();
+    drawGroceryModal();
+  });
 }
 function drawGroceryOutput(recipes){
   const out = document.getElementById('grocList');
@@ -2256,6 +2436,167 @@ document.getElementById('grocCopy').addEventListener('click', () => {
     .catch(() => setStatus('Copy blocked by browser', 'error'));
 });
 document.getElementById('grocPrint').addEventListener('click', () => window.print());
+
+// ============= Recipe editor (on-board) ===================================
+// Opens a structured editor for a recipe section already placed on the board.
+// Pulls the title, banner image, ingredients (from the Ingredients subsection's
+// first sticky), and steps (from the Steps subsection's first sticky) — lets
+// the user edit them — writes back to those same nodes on save.
+let _redSectionId = null;
+let _redIngStickyId = null;
+let _redStepStickyId = null;
+
+function findRecipeParts(sectionId){
+  const section = nodes.get(sectionId);
+  if (!section || section.type !== 'section') return null;
+  const subs = activeNodes().filter(n => n.type === 'subsection' && findContainer(n) === sectionId);
+  const ingSub  = subs.find(s => /ingredient/i.test(s.title || '')) || subs[0];
+  const stepSub = subs.find(s => /step/i.test(s.title || ''))       || subs[subs.length-1];
+  const ingStickies  = ingSub  ? activeNodes().filter(n => n.type === 'sticky' && findContainer(n) === ingSub.id) : [];
+  const stepStickies = stepSub ? activeNodes().filter(n => n.type === 'sticky' && findContainer(n) === stepSub.id) : [];
+  return { section, ingSub, stepSub, ingSticky: ingStickies[0] || null, stepSticky: stepStickies[0] || null };
+}
+
+function openRecipeEditor(sectionId){
+  const parts = findRecipeParts(sectionId);
+  if (!parts) { setStatus('Recipe sections not found', 'error'); return; }
+  _redSectionId    = sectionId;
+  _redIngStickyId  = parts.ingSticky?.id  || null;
+  _redStepStickyId = parts.stepSticky?.id || null;
+  drawRecipeEditor();
+  document.getElementById('redBd').classList.add('open');
+}
+function closeRecipeEditor(){
+  document.getElementById('redBd').classList.remove('open');
+  _redSectionId = null; _redIngStickyId = null; _redStepStickyId = null;
+}
+function drawRecipeEditor(){
+  const parts = findRecipeParts(_redSectionId);
+  if (!parts) { closeRecipeEditor(); return; }
+  const { section, ingSticky, stepSticky } = parts;
+  document.getElementById('redSubtitle').textContent = '— ' + (section.title || 'Untitled');
+  const ingText = (ingSticky?.items || []).map(i => i.text).filter(Boolean).join('\n');
+  const stepText = (stepSticky?.items || []).map(i => i.text).filter(Boolean).join('\n');
+  const banner = section.imageUrl
+    ? `<div class="red-banner" style="background-image:url('${escapeAttr(section.imageUrl)}')" data-action="red-open-image"></div>`
+    : `<div class="red-banner no-img">No banner image — add one</div>`;
+  document.getElementById('redBody').innerHTML = `
+    <div class="red-section">
+      <label>Title</label>
+      <input type="text" id="redTitle" value="${escapeAttr(section.title || '')}">
+    </div>
+    <div class="red-section">
+      <label>Banner image</label>
+      ${banner}
+      <div class="red-img-tools">
+        <button type="button" id="redImgUrl">Set URL</button>
+        <button type="button" id="redImgUpload">Upload file</button>
+        ${section.imageUrl ? '<button type="button" id="redImgRemove">Remove</button>' : ''}
+      </div>
+    </div>
+    <div class="red-section">
+      <label>Ingredients (one per line)</label>
+      <textarea id="redIngredients" placeholder="One ingredient per line">${escapeHtml(ingText)}</textarea>
+      ${ingSticky ? '' : '<div style="color:var(--muted);font-size:11px;margin-top:6px">No Ingredients subsection found — saving will create one.</div>'}
+    </div>
+    <div class="red-section">
+      <label>Steps (one per line)</label>
+      <textarea id="redSteps" placeholder="One step per line">${escapeHtml(stepText)}</textarea>
+      ${stepSticky ? '' : '<div style="color:var(--muted);font-size:11px;margin-top:6px">No Steps subsection found — saving will create one.</div>'}
+    </div>
+  `;
+  document.getElementById('redImgUrl').onclick = async () => {
+    const next = prompt('Banner image URL:', section.imageUrl || '');
+    if (next === null) return;
+    section.imageUrl = next.trim() || null;
+    await saveNode(section); renderNode(section); drawRecipeEditor();
+  };
+  document.getElementById('redImgUpload').onclick = async () => {
+    const file = await pickFile('image/*');
+    if (!file) return;
+    setStatus('Uploading…', 'sticky');
+    try {
+      const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
+      const path = `recipe-banners/${section.id}-${Date.now()}${ext}`;
+      const ref = storageRef(storage, path);
+      await uploadBytes(ref, file, { contentType: file.type || 'image/jpeg' });
+      const url = await getDownloadURL(ref);
+      section.imageUrl = url;
+      await saveNode(section); renderNode(section); drawRecipeEditor();
+      setStatus('Uploaded ✓');
+    } catch (e) {
+      console.error('[red] banner upload failed', e);
+      setStatus('Upload failed', 'error');
+    }
+  };
+  const rmBtn = document.getElementById('redImgRemove');
+  if (rmBtn) rmBtn.onclick = async () => {
+    section.imageUrl = null;
+    await saveNode(section); renderNode(section); drawRecipeEditor();
+  };
+}
+async function saveRecipeEditor(){
+  const parts = findRecipeParts(_redSectionId);
+  if (!parts) return;
+  const { section } = parts;
+  let { ingSub, stepSub, ingSticky, stepSticky } = parts;
+  // Title
+  const newTitle = document.getElementById('redTitle').value.trim();
+  if (newTitle && section.title !== newTitle) {
+    section.title = newTitle;
+    await saveNode(section); renderNode(section);
+  }
+  // Make missing subsections + stickies on the fly so editing works for
+  // sparse recipes (the user just drops a section + types into the textareas).
+  if (!ingSub) {
+    ingSub = await createNode('subsection', {
+      x: section.x + 16, y: section.y + 56, title: 'Ingredients', color: 'sec-green'
+    });
+  }
+  if (!stepSub) {
+    stepSub = await createNode('subsection', {
+      x: section.x + 16 + (ingSub?.w || 280) + 16, y: section.y + 56, title: 'Steps', color: 'sec-blue'
+    });
+  }
+  // Update or create the ingredient sticky's items
+  const ingLines  = document.getElementById('redIngredients').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const stepLines = document.getElementById('redSteps')      .value.split('\n').map(s => s.trim()).filter(Boolean);
+  ingSticky  = await syncListSticky(ingSticky,  ingSub,  ingLines,  /*keepImage=*/true);
+  stepSticky = await syncListSticky(stepSticky, stepSub, stepLines, /*keepImage=*/false);
+  setStatus('Recipe updated ✓');
+  closeRecipeEditor();
+}
+async function syncListSticky(sticky, parentSub, lines, keepImage){
+  if (!sticky) {
+    if (!lines.length) return null;
+    sticky = await createNode('sticky', {
+      x: parentSub.x + 14, y: parentSub.y + 48, text: lines[0]
+    });
+    sticky.w = parentSub.w - 28;
+  }
+  // Preserve done state + imageUrl by text-match.
+  const prior = new Map((sticky.items || []).map(it => [it.text.toLowerCase(), it]));
+  sticky.items = lines.map((text, i) => {
+    const p = prior.get(text.toLowerCase());
+    return {
+      id: p?.id || itemUid(),
+      text,
+      done: !!p?.done,
+      linkedTaskId: p?.linkedTaskId || null,
+      ...(keepImage && p?.imageUrl ? { imageUrl: p.imageUrl } : {})
+    };
+  });
+  // Make sure it doesn't shrink so small the text disappears.
+  sticky.h = Math.max(140, 50 + lines.length * 32);
+  await saveNode(sticky);
+  renderNode(sticky);
+  return sticky;
+}
+document.getElementById('redClose').addEventListener('click', closeRecipeEditor);
+document.getElementById('redSave').addEventListener('click', saveRecipeEditor);
+document.getElementById('redBd').addEventListener('click', (e) => {
+  if (e.target.id === 'redBd') closeRecipeEditor();
+});
 
 // ============= Let's Cook =================================================
 let _cookSection = null;
@@ -2523,6 +2864,72 @@ let _ezDetailLabels = new Set();
 // Per-item image expansion state — set of `${stickyId}/${itemId}` keys.
 // Survives renders within a session; not persisted (collapse on reload).
 const _expandedItemImages = new Set();
+
+// ============= Master Ingredient Library ==================================
+// One Firestore doc per canonical ingredient name (normalized). Holds the
+// "official" image for that ingredient — when you change it on one item,
+// every recipe with that ingredient on every board updates.
+const _ingLibrary = new Map();   // normalized name -> { name, imageUrl }
+function normalizeIngredientName(text){
+  if (!text) return '';
+  // Strip leading quantity / unit so "1.5 cups blueberries" → "blueberries".
+  // The regex eats numbers, fractions, common units, and surrounding punct.
+  const UNITS = '(cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|kg|ml|l|liter|liters|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bunch|sprig|sprigs)';
+  let t = text.toLowerCase().trim();
+  t = t.replace(/^[\d\s\/\.,()]+/, '');                 // leading numbers + fractions
+  t = t.replace(new RegExp('^' + UNITS + '\\.?\\s+'), ''); // unit word
+  t = t.replace(/^(of|the|a|an)\s+/, '');               // articles
+  // Drop trailing modifiers (", minced" / "to taste" / etc.)
+  t = t.replace(/,.*$/, '').replace(/\bto taste\b.*$/, '').trim();
+  return t;
+}
+function libImageFor(text){
+  const k = normalizeIngredientName(text);
+  if (!k) return null;
+  return _ingLibrary.get(k)?.imageUrl || null;
+}
+// Set / update an ingredient image in the library — propagates everywhere.
+async function setLibraryImage(text, imageUrl){
+  const k = normalizeIngredientName(text);
+  if (!k) return;
+  _ingLibrary.set(k, { name: k, imageUrl: imageUrl || null });
+  try {
+    await setDoc(doc(ingredientLibCol, encodeIngredientKey(k)), {
+      name: k, imageUrl: imageUrl || null, updatedAt: nowISO()
+    }, { merge: true });
+  } catch (e) { console.warn('[ingLib] save failed', e); }
+}
+// Firestore doc IDs can't contain "/" or "."; encode the key safely.
+function encodeIngredientKey(k){
+  return encodeURIComponent(k).replace(/\./g, '%2E').replace(/%/g, '_');
+}
+function subscribeIngredientLibrary(){
+  onSnapshot(ingredientLibCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      const d = ch.doc.data() || {};
+      const k = (d.name || '').toLowerCase().trim();
+      if (!k) return;
+      if (ch.type === 'removed') _ingLibrary.delete(k);
+      else _ingLibrary.set(k, { name: d.name, imageUrl: d.imageUrl || null });
+    });
+    // Re-render any open sticky items so newly-arrived library images show.
+    for (const n of nodes.values()) {
+      if (n.type === 'sticky') {
+        try { renderNode(n); } catch {}
+      }
+    }
+  });
+}
+// One-shot seeding helper: pumps a name+image into the library. Used when
+// importing from EZ so future edits propagate.
+async function seedLibrary(text, imageUrl){
+  if (!text || !imageUrl) return;
+  const k = normalizeIngredientName(text);
+  if (!k) return;
+  // Don't overwrite an existing image silently.
+  if (_ingLibrary.has(k)) return;
+  await setLibraryImage(text, imageUrl);
+}
 const DEFAULT_RECIPE_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
 let _recipeLabels = DEFAULT_RECIPE_LABELS.slice();
 const _recipeMeta = new Map();   // rid -> { labels:[], overrideIngredients?:[], overrideSteps?:[] }
@@ -2724,6 +3131,17 @@ async function loadEzRecipes(){
         };
       });
     console.log(`[ez] Attached library images to ${totalHits} ingredient lines across ${totalRecipes} recipes`);
+    // Seed the master ingredient library from the EZ ingredient rows so
+    // cross-recipe image edits propagate everywhere going forward.
+    let seeded = 0;
+    for (const [name, url] of ingredientImageMap) {
+      // Skip if already in library (don't clobber user edits).
+      const k = name.toLowerCase().trim();
+      if (_ingLibrary.has(k)) continue;
+      seedLibrary(name, url).catch(()=>{});
+      seeded++;
+    }
+    if (seeded) console.log(`[ez] Seeded ${seeded} new entries into ingredient_library`);
     drawEzRecipeList();
   } catch (e) {
     console.error('[ez] load failed', e);
@@ -3622,6 +4040,7 @@ async function bootstrap(){
     subscribeRecipeLabels();
     subscribeRecipeMeta();
     subscribeGrocery();
+    subscribeIngredientLibrary();
 
     setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
     setTimeout(()=> statusEl.classList.add('hidden'), 1200);
