@@ -173,12 +173,20 @@
   .node.sec-gray   .sec-head{background:rgba(156,163,175,.16);border-bottom-color:rgba(156,163,175,.32)}
   .node.sec-gray                                              {border-color:rgba(156,163,175,.32)}
   .node .sec-title{
-    flex:1;font-weight:600;font-size:15px;color:var(--ink);
-    outline:none;-webkit-user-select:text;user-select:text;
-    padding:2px 4px;border-radius:4px
+    flex:0 1 auto;font-weight:600;font-size:15px;color:var(--ink);
+    outline:none;-webkit-user-select:none;user-select:none;
+    padding:2px 4px;border-radius:4px;cursor:grab;max-width:80%;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  }
+  .node .sec-title[contenteditable="true"]{
+    cursor:text;-webkit-user-select:text;user-select:text;
+    background:rgba(255,255,255,.08);white-space:normal;overflow:visible;text-overflow:initial;max-width:none
   }
   .node.subsection .sec-title{font-size:13px;font-weight:500}
   .node .sec-title:focus{background:rgba(255,255,255,.06)}
+  /* Hint that the header is draggable except for the title */
+  .node .sec-head{cursor:grab}
+  .node .sec-head:active{cursor:grabbing}
   .node .sec-body{flex:1;position:relative;padding:8px}
   /* Allow drop-into hover state */
   .node.section.drop-target, .node.subsection.drop-target{
@@ -1110,7 +1118,7 @@ function renderNode(n){
     el.innerHTML = `
       <div class="sec-head" data-action="drag-handle">
         <span class="sec-tag"></span>
-        <div class="sec-title" contenteditable="plaintext-only" data-field="title">${escapeHtml(n.title || (n.type === 'section' ? 'New section' : 'New subsection'))}</div>
+        <div class="sec-title" contenteditable="false" data-field="title" title="Double-click to rename">${escapeHtml(n.title || (n.type === 'section' ? 'New section' : 'New subsection'))}</div>
         ${sourceLink}
       </div>
       ${banner}
@@ -1721,11 +1729,22 @@ function attachNodeListeners(el){
       // their parentId is unchanged, which means a later drag of THIS node
       // will still carry them via the parentId chain.
       const wasType = n.type;
+      // Drag-end reparenting rules:
+      //   - If we were dragging a single uncomposed node (sticky with no
+      //     existing parent, or a fresh subsection), accept the new container.
+      //   - If we were dragging a node that's already part of a recipe
+      //     (parentId already set), DON'T reparent on overlap. The user just
+      //     wanted to move it within the canvas. They'd have to use a
+      //     dedicated detach action to actually swap parents.
       const newParent = findContainer(n);
-      n.parentId = newParent;
-      if (n.type === 'section' && newParent) {
+      const wasOrphan = n.parentId == null;
+      const movedExplicitly = !!moveSnapshot.length;
+      if (wasOrphan && movedExplicitly) {
+        n.parentId = newParent;
+      } // else: keep existing parentId
+      if (n.type === 'section' && wasOrphan && newParent) {
         n.type = 'subsection';
-      } else if (n.type === 'subsection' && !newParent) {
+      } else if (n.type === 'subsection' && !n.parentId) {
         n.type = 'section';
       }
       clearDropTargetHighlight();
@@ -1858,8 +1877,12 @@ function attachNodeListeners(el){
       ensureItems(n);
       const newItem = { id: itemUid(), text: '', done: false, linkedTaskId: null };
       n.items.push(newItem);
+      // Each row is ~32px; grow the sticky if it can't fit the new line.
+      const needed = 60 + n.items.length * 32;
+      if (needed > n.h) n.h = needed;
       renderNode(n);
       saveNode(n);
+      expandParents(n.id);
       setTimeout(() => {
         const newRow = el.querySelector(`.sticky-row[data-item-id="${newItem.id}"] .sticky-text`);
         newRow?.focus();
@@ -1936,9 +1959,13 @@ function attachNodeListeners(el){
       const newItem = { id: itemUid(), text: after, done: false, linkedTaskId: null };
       const idx = n.items.findIndex(it => it.id === itemId);
       n.items.splice(idx + 1, 0, newItem);
+      // Grow the sticky if rows now exceed its height.
+      const needed = 60 + n.items.length * 32;
+      if (needed > n.h) n.h = needed;
       // Re-render so the new row is in the DOM, then focus it.
       renderNode(n);
       saveNode(n);
+      expandParents(n.id);
       setTimeout(() => {
         const newRow = el.querySelector(`.sticky-row[data-item-id="${newItem.id}"] .sticky-text`);
         if (newRow) {
@@ -1976,6 +2003,23 @@ function attachNodeListeners(el){
     }
   });
 
+  // Double-click on a section/subsection title flips it into edit mode.
+  // Single click is reserved for drag, so the whole header stays grabbable.
+  el.addEventListener('dblclick', (e) => {
+    const t = e.target;
+    if (!t.classList?.contains('sec-title')) return;
+    e.stopPropagation();
+    t.setAttribute('contenteditable', 'plaintext-only');
+    t.focus();
+    // Select all so the user can replace the title in one keystroke.
+    try {
+      const r = document.createRange();
+      r.selectNodeContents(t);
+      const s = document.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+    } catch {}
+  });
   // Contenteditable persistence
   el.addEventListener('blur', (e) => {
     const t = e.target;
@@ -1985,6 +2029,8 @@ function attachNodeListeners(el){
     if (!n) return;
     // Section/subsection title
     if (t.dataset.field === 'title') {
+      // Lock the title back so single-clicks return to drag-only mode.
+      t.setAttribute('contenteditable', 'false');
       const val = (t.textContent || '').trim();
       if (n.title === val) return;
       n.title = val;
@@ -2076,27 +2122,60 @@ function startResize(e, id){
   window.addEventListener('mouseup', up);
 }
 
-// "Carry set" for moving / restacking a container. Returns ONLY the sticky
-// notes directly inside this container (findContainer === rootId). Does NOT
-// include subsections or anything nested inside them — those have their own
-// independent identity and stay where they are when you move the section
-// they happen to sit on top of. Stickies belonging to a sibling section
-// (different findContainer) are also excluded.
+// "Carry set" for moving a container. Walks the parentId tree from rootId
+// downward and returns every descendant — subsections, their stickies,
+// everything. Recipes drag as a unit: title + Ingredients subsection + step
+// stickies + everything inside, regardless of visual overlap with anything
+// else on the canvas.
+//
+// Z-order operations (bringToFront / sendToBack / bumpZ) use a separate
+// helper that returns just direct stickies — those scope the stacking change
+// without dragging entire subtrees around in z.
 function collectDescendants(rootId){
   const root = nodes.get(rootId);
   if (!root) return [];
   if (root.type !== 'section' && root.type !== 'subsection') return [];
   const out = [];
-  for (const c of nodes.values()) {
-    if (c.id === rootId) continue;
-    if ((c.boardId || null) !== (root.boardId || null)) continue;
-    if (c.type !== 'sticky') continue;
-    if (findContainer(c) === rootId) out.push(c);
+  const seen = new Set([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    const pid = queue.shift();
+    for (const c of nodes.values()) {
+      if (seen.has(c.id)) continue;
+      if ((c.boardId || null) !== (root.boardId || null)) continue;
+      if (c.parentId === pid) {
+        out.push(c);
+        seen.add(c.id);
+        queue.push(c.id);
+      }
+    }
   }
   return out;
 }
 // Full subtree (every descendant transitively). Used by the cascade-delete
 // path, where we DO want to wipe everything inside.
+// Make sure a node fits inside its parent chain. If its bottom/right edge
+// pokes past the parent's box, grow the parent. Recurses up so a long
+// ingredient list nudges its sticky → its Ingredients subsection → the
+// outer recipe section. Saves any parents that grew.
+function expandParents(nodeId, marginPx){
+  const margin = marginPx == null ? 16 : marginPx;
+  const n = nodes.get(nodeId);
+  if (!n || !n.parentId) return;
+  const parent = nodes.get(n.parentId);
+  if (!parent) return;
+  const needBottom = (n.y + n.h + margin) - parent.y;
+  const needRight  = (n.x + n.w + margin) - parent.x;
+  let grew = false;
+  if (needBottom > parent.h) { parent.h = needBottom; grew = true; }
+  if (needRight  > parent.w) { parent.w = needRight;  grew = true; }
+  if (grew) {
+    saveNode(parent);
+    renderNode(parent);
+    expandParents(parent.id, margin);
+  }
+}
+
 function collectFullSubtree(rootId){
   const root = nodes.get(rootId);
   if (!root) return [];
@@ -2148,10 +2227,16 @@ function findContainer(n){
   return best ? best.id : null;
 }
 
-// Run after any geometry change. Recomputes parentId for every node on the
-// active board; flips section ↔ subsection based on whether it has a
-// parent. Only saves/redraws nodes whose stored state actually changed, so
-// this is cheap to run liberally.
+// Run after any geometry change. parentId is the source of truth — once a
+// node is explicitly placed inside a container, it stays there until the
+// user drops it somewhere else. We ONLY assign parentId to orphans (nodes
+// where parentId is currently null AND geometry shows them inside a
+// container), and we leave existing parent-child links alone.
+//
+// That means a recipe overlapping another recipe doesn't absorb its
+// children: the boiled-egg recipe's Ingredients subsection still has
+// parentId pointing at the boiled-egg section, even if the California Roll
+// section is now visually on top.
 let _reconcileTimer = null;
 function reconcileBoard(){
   if (_reconcileTimer) return;
@@ -2161,10 +2246,16 @@ function reconcileBoard(){
     const board = [...nodes.values()].filter(n => (n.boardId || null) === activeBoardId);
     const changed = [];
     for (const n of board) {
-      const newParent = findContainer(n);
+      // Type flip: subsection without any parent floats back to being a
+      // top-level section; this is purely cosmetic and doesn't reparent.
       let newType = n.type;
-      if (n.type === 'section' && newParent) newType = 'subsection';
-      else if (n.type === 'subsection' && !newParent) newType = 'section';
+      if (n.type === 'subsection' && !n.parentId) newType = 'section';
+      // Only assign parentId to genuine orphans. Pre-existing links stay.
+      let newParent = n.parentId;
+      if (n.parentId == null && n.type !== 'section') {
+        const container = findContainer(n);
+        if (container) newParent = container;
+      }
       if (n.parentId !== newParent || n.type !== newType) {
         n.parentId = newParent;
         n.type = newType;
@@ -2590,6 +2681,9 @@ async function syncListSticky(sticky, parentSub, lines, keepImage){
   sticky.h = Math.max(140, 50 + lines.length * 32);
   await saveNode(sticky);
   renderNode(sticky);
+  // Grow the parent subsection + grandparent section if needed so the
+  // bullet list always fits on screen.
+  expandParents(sticky.id);
   return sticky;
 }
 document.getElementById('redClose').addEventListener('click', closeRecipeEditor);
