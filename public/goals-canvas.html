@@ -394,6 +394,28 @@
   }
   #rpDetail .rpd-hint{ font-size:11px; color:var(--muted); margin-top:4px }
   .rpd-foot-info{ font-size:12px; color:var(--muted); margin-right:auto; align-self:center }
+  /* Saved ingredient pictures preview — pulled from EZ. */
+  .rpd-thumbs{ margin-top:10px; padding-top:10px; border-top:1px solid var(--line) }
+  .rpd-thumbs .rpd-thumbs-head{
+    font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--muted); font-weight:600; margin-bottom:8px
+  }
+  .rpd-thumbs .rpd-thumbs-grid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr));
+    gap:8px
+  }
+  .rpd-thumbs .rpd-thumb-card{
+    background:var(--w03); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; display:flex; flex-direction:column
+  }
+  .rpd-thumbs .rpd-thumb-card img{
+    width:100%; height:80px; object-fit:cover; background:rgba(255,255,255,.04);
+    display:block
+  }
+  .rpd-thumbs .rpd-thumb-card .lbl{
+    font-size:11px; color:var(--ink); padding:6px 8px; line-height:1.3;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap
+  }
 
   /* Sticky color palette */
   .stk-yellow{background:#fef3c7}
@@ -1852,14 +1874,32 @@ function ezTags(v){
   if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
   return String(v).split(/[,#]/).map(x => x.trim()).filter(Boolean);
 }
+// Returns array of { text, imageUrl } objects. ingredientsRows in EZ can have
+// an image attached under any of several field names — pull the first one we
+// find. Plain string ingredients (or rows without an image) yield imageUrl=null.
 function ezIngredients(r){
-  const fromRow = x => (typeof x === 'string')
-    ? x.trim()
-    : [x.qty, x.unit, x.name].map(y => (y || '').toString().trim()).filter(Boolean).join(' ').trim();
-  if (Array.isArray(r.ingredientsRows)) return r.ingredientsRows.map(fromRow).filter(Boolean);
-  if (Array.isArray(r.ingredients))     return r.ingredients.map(fromRow).filter(Boolean);
-  if (typeof r.ingredients === 'string') return r.ingredients.split('\n').map(s => s.trim()).filter(Boolean);
-  return [];
+  const pickImage = obj => {
+    if (!obj || typeof obj !== 'object') return null;
+    return (obj.image_url || obj.imageUrl || obj.image || obj.photo || obj.photoUrl ||
+            obj.pic || obj.picture || obj.img || obj.thumbnail || null) || null;
+  };
+  const fromRow = x => {
+    if (typeof x === 'string') return { text: x.trim(), imageUrl: null };
+    const text = [x.qty, x.unit, x.name].map(y => (y || '').toString().trim()).filter(Boolean).join(' ').trim();
+    return { text, imageUrl: pickImage(x) };
+  };
+  let rows = [];
+  if (Array.isArray(r.ingredientsRows)) rows = r.ingredientsRows.map(fromRow);
+  else if (Array.isArray(r.ingredients))   rows = r.ingredients.map(fromRow);
+  else if (typeof r.ingredients === 'string')
+    rows = r.ingredients.split('\n').map(s => ({ text: s.trim(), imageUrl: null }));
+  return rows.filter(it => it.text);
+}
+// Backward-compat helpers: treat saved-overrides as plain strings and convert
+// on the fly so the rest of the code can stay object-shaped.
+function normalizeIngredientList(arr){
+  if (!Array.isArray(arr)) return [];
+  return arr.map(it => typeof it === 'string' ? { text: it.trim(), imageUrl: null } : { text: (it.text || '').trim(), imageUrl: it.imageUrl || null });
 }
 function ezSteps(r){
   const out = [];
@@ -1935,6 +1975,7 @@ let _ezViewMode = 'grid';        // 'grid' | 'detail'
 let _ezDetailRid = null;
 // Editable working copies for the detail view — flushed on Save/Add.
 let _ezDetailIngredients = '';
+let _ezDetailIngredientRows = [];  // full {text,imageUrl} objects from EZ
 let _ezDetailSteps = '';
 let _ezDetailLabels = new Set();
 const DEFAULT_RECIPE_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
@@ -1980,10 +2021,42 @@ function recipeWithMeta(r){
   return {
     ...r,
     labels: Array.isArray(meta.labels) ? meta.labels : [],
-    ingredients: Array.isArray(meta.overrideIngredients) ? meta.overrideIngredients : r.ingredients,
+    // Ingredients are objects { text, imageUrl } now. Override may be saved as
+    // strings (legacy) OR objects — normalize both. If user supplied only
+    // text via the textarea, we keep imageUrl from the original EZ row when
+    // the text matches.
+    ingredients: mergeIngredientOverride(r.ingredients, meta.overrideIngredients),
     steps:       Array.isArray(meta.overrideSteps)       ? meta.overrideSteps       : r.steps,
     _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps)
   };
+}
+function mergeIngredientOverride(original, override){
+  if (!Array.isArray(override)) return Array.isArray(original) ? original : [];
+  const orig = normalizeIngredientList(original);
+  const origByText = new Map(orig.map(o => [o.text.toLowerCase(), o.imageUrl]));
+  return normalizeIngredientList(override).map(it => ({
+    text: it.text,
+    imageUrl: it.imageUrl || origByText.get(it.text.toLowerCase()) || null
+  }));
+}
+// Convenience: pull just the text strings out of an ingredient list.
+function ingredientTexts(arr){ return (arr || []).map(i => typeof i === 'string' ? i : i.text).filter(Boolean); }
+// Render a saved-pictures preview block for the detail view. Returns '' when
+// no ingredient in the list has an image attached.
+function ingredientThumbsHtml(rows){
+  const withImgs = (rows || []).filter(it => it.imageUrl);
+  if (!withImgs.length) return '';
+  return `
+    <div class="rpd-thumbs">
+      <div class="rpd-thumbs-head">${withImgs.length} saved picture${withImgs.length===1?'':'s'} from EZ — included on the board.</div>
+      <div class="rpd-thumbs-grid">
+        ${withImgs.map(it => `
+          <div class="rpd-thumb-card">
+            <img src="${escapeAttr(it.imageUrl)}" alt="${escapeAttr(it.text)}" loading="lazy">
+            <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(it.text)}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
 }
 async function loadEzRecipes(){
   const card = document.getElementById('rpCard');
@@ -2057,7 +2130,7 @@ function drawEzLabelFilters(){
   const q = _ezQuery.trim().toLowerCase();
   const pool = _ezRecipes.filter(r => {
     if (!q) return true;
-    const hay = ((r.title || '') + ' ' + (r.tags || []).join(' ') + ' ' + r.ingredients.join(' ')).toLowerCase();
+    const hay = ((r.title || '') + ' ' + (r.tags || []).join(' ') + ' ' + ingredientTexts(r.ingredients).join(' ')).toLowerCase();
     return hay.includes(q);
   });
   const counts = new Map();
@@ -2099,7 +2172,7 @@ function drawEzTagBar(){
     if (!q) return true;
     return (r.title || '').toLowerCase().includes(q)
         || (r.tags || []).join(' ').toLowerCase().includes(q)
-        || r.ingredients.some(i => i.toLowerCase().includes(q));
+        || ingredientTexts(r.ingredients).some(t => t.toLowerCase().includes(q));
   });
   const counts = new Map();
   for (const r of searchPool) for (const t of (r.tags || [])) {
@@ -2135,7 +2208,7 @@ function drawEzRecipeList(){
   const q = _ezQuery.trim().toLowerCase();
   const matches = _ezRecipes.filter(r => {
     if (q) {
-      const hay = ((r.title || '') + ' ' + (r.tags || []).join(' ') + ' ' + r.ingredients.join(' ')).toLowerCase();
+      const hay = ((r.title || '') + ' ' + (r.tags || []).join(' ') + ' ' + ingredientTexts(r.ingredients).join(' ')).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     if (_ezSelectedTags.size) {
@@ -2202,7 +2275,10 @@ function openEzDetail(rid){
   const merged = recipeWithMeta(r);
   _ezViewMode = 'detail';
   _ezDetailRid = rid;
-  _ezDetailIngredients = merged.ingredients.join('\n');
+  // Preserve the full ingredient objects (text + imageUrl) while the user
+  // is editing. The textarea only shows text; we re-attach images on save.
+  _ezDetailIngredientRows = normalizeIngredientList(merged.ingredients);
+  _ezDetailIngredients = ingredientTexts(_ezDetailIngredientRows).join('\n');
   _ezDetailSteps       = merged.steps.join('\n');
   _ezDetailLabels = new Set(merged.labels || []);
   drawEzDetail();
@@ -2247,6 +2323,7 @@ function drawEzDetail(){
         <h4>Ingredients</h4>
         <textarea id="rpdIngredients" placeholder="One ingredient per line">${escapeHtml(_ezDetailIngredients)}</textarea>
         <div class="rpd-hint">One per line. These replace the EZ defaults when you Save defaults.</div>
+        ${ingredientThumbsHtml(_ezDetailIngredientRows)}
       </div>
       <div class="rpd-section">
         <h4>Steps</h4>
@@ -2282,9 +2359,14 @@ function drawEzDetail(){
 
 async function saveEzDefaults(){
   if (!_ezDetailRid) return;
+  // Re-attach ingredient images by matching the typed text to the original
+  // EZ rows. If the user added a new ingredient (no match), imageUrl=null.
+  const byText = new Map(_ezDetailIngredientRows.map(it => [it.text.toLowerCase(), it.imageUrl]));
+  const lines = _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean);
+  const overrideIngredients = lines.map(text => ({ text, imageUrl: byText.get(text.toLowerCase()) || null }));
   const payload = {
     labels: [..._ezDetailLabels],
-    overrideIngredients: _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean),
+    overrideIngredients,
     overrideSteps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean),
     updatedAt: nowISO()
   };
@@ -2308,7 +2390,8 @@ async function resetEzDefaults(){
       { merge: true });
     _recipeMeta.delete(_ezDetailRid);
     const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
-    _ezDetailIngredients = (r?.ingredients || []).join('\n');
+    _ezDetailIngredientRows = normalizeIngredientList(r?.ingredients || []);
+    _ezDetailIngredients = ingredientTexts(_ezDetailIngredientRows).join('\n');
     _ezDetailSteps       = (r?.steps       || []).join('\n');
     drawEzDetail();
     setStatus('Reset to EZ originals');
@@ -2321,11 +2404,12 @@ async function addEzDetailToBoard(){
   const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
   if (!r) return;
   // Build a synthetic recipe payload using the (possibly edited) current
-  // textarea contents. Bypass the saved override so the user gets exactly
-  // what they see on screen.
+  // textarea contents. Reattach images by text match to the original EZ rows.
+  const byText = new Map(_ezDetailIngredientRows.map(it => [it.text.toLowerCase(), it.imageUrl]));
   const synth = {
     ...r,
-    ingredients: _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean),
+    ingredients: _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean)
+      .map(text => ({ text, imageUrl: byText.get(text.toLowerCase()) || null })),
     steps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean)
   };
   // Persist the labels selection silently (most users expect labels to
@@ -2372,17 +2456,40 @@ async function createRecipeFromEz(r){
     ing.w = colW; ing.h = colH;
     await saveNode(ing);
     renderNode(ing);
-    if (r.ingredients.length) {
+    // Normalize: ingredients may be string[] (legacy synth) OR {text,imageUrl}[].
+    const ingRows = normalizeIngredientList(r.ingredients);
+    if (ingRows.length) {
       const ingSticky = await createNode('sticky', {
-        x: ing.x + 12, y: ing.y + 48, text: r.ingredients[0]
+        x: ing.x + 12, y: ing.y + 48, text: ingRows[0].text
       });
       ingSticky.w = colW - 28;
-      // Add the rest as items[] on the same sticky
-      const rest = r.ingredients.slice(1).map(t => ({ id: itemUid(), text: t, done: false, linkedTaskId: null }));
+      const rest = ingRows.slice(1).map(it => ({
+        id: itemUid(), text: it.text, done: false, linkedTaskId: null
+      }));
       ingSticky.items = [...ingSticky.items, ...rest];
-      ingSticky.h = Math.max(140, 50 + r.ingredients.length * 28);
+      ingSticky.h = Math.max(140, 50 + ingRows.length * 28);
       await saveNode(ingSticky);
       renderNode(ingSticky);
+      // For every ingredient that has a saved picture in EZ, drop a small
+      // image sticky in a row below the section. The user gets a visual
+      // shopping list — and can drag/delete individual ones.
+      const withImgs = ingRows.filter(it => it.imageUrl);
+      if (withImgs.length) {
+        const stickW = 130, stickH = 130, gap = 12;
+        const stripY = section.y + section.h + 18;
+        const cols = Math.max(1, Math.floor(section.w / (stickW + gap)));
+        for (let i = 0; i < withImgs.length; i++) {
+          const row = Math.floor(i / cols);
+          const col = i % cols;
+          const x = section.x + col * (stickW + gap);
+          const y = stripY + row * (stickH + gap);
+          const imgStk = await createNode('sticky', { x, y, text: withImgs[i].text });
+          imgStk.w = stickW; imgStk.h = stickH;
+          imgStk.imageUrl = withImgs[i].imageUrl;
+          await saveNode(imgStk);
+          renderNode(imgStk);
+        }
+      }
     }
     // Steps column
     const steps = await createNode('subsection', {
