@@ -1304,6 +1304,7 @@ function renderNode(n){
         ${swatchesFor('section')}
         <button class="nt-btn" data-action="set-image" title="Set banner image URL">📷</button>
         ${n.type === 'section' ? '<button class="nt-btn" data-action="edit-recipe" title="Edit recipe details">📋</button>' : ''}
+        ${n.type === 'section' ? '<button class="nt-btn" data-action="realign-recipe" title="Realign Ingredients + Steps under this recipe">🔧</button>' : ''}
         <button class="nt-btn" data-action="add-sticky-here" title="Add sticky inside">+</button>
         ${n.type === 'section' ? '<button class="nt-btn" data-action="add-subsection-here" title="Add subsection">▸</button>' : ''}
         <button class="nt-btn" data-action="delete" title="Delete">✕</button>
@@ -2098,6 +2099,11 @@ function attachNodeListeners(el){
     }
     if (a === 'edit-recipe') {
       openRecipeEditor(n.id);
+      e.stopPropagation();
+      return;
+    }
+    if (a === 'realign-recipe') {
+      realignRecipeParts(n.id);
       e.stopPropagation();
       return;
     }
@@ -3190,6 +3196,72 @@ function drawRecipeEditor(){
     await saveNode(section); renderNode(section); drawRecipeEditor();
   };
 }
+// Snap the Ingredients + Steps subsections (and the stickies inside them)
+// back into their canonical positions under the recipe section. Use this
+// when a stack got messy — overlapping recipes, accidental drags, or
+// pre-fix imports with off-by-a-bit parentId. Also grows the section to
+// fit any oversized child sticky.
+async function realignRecipeParts(sectionId){
+  const parts = findRecipeParts(sectionId);
+  if (!parts) return;
+  const { section } = parts;
+  let { ingSub, stepSub } = parts;
+  // Bring the section to the front so it's not hidden under a sibling.
+  bringToFront(section);
+  // Figure out how tall the row of subsections needs to be: the tallest
+  // direct sticky inside either column drives it.
+  function tallestStickyHeight(subId){
+    if (!subId) return 0;
+    let h = 0;
+    for (const n of nodes.values()) {
+      if (n.type !== 'sticky' || n.parentId !== subId) continue;
+      if ((n.h || 0) > h) h = n.h;
+    }
+    return h;
+  }
+  const padX = 16, padTop = section.imageUrl ? 200 : 60, gap = 16;
+  // Provisionally compute target width (we'll let it stretch if a child is wide).
+  const colW = Math.max(280, (section.w - padX*2 - gap) / 2);
+  // Section width might need to grow to fit two columns of colW + gaps.
+  const neededSectionW = padX*2 + colW*2 + gap;
+  if (neededSectionW > section.w) section.w = neededSectionW;
+  // Snap each subsection into place + reparent + resize.
+  async function placeSub(sub, leftCol){
+    if (!sub) return;
+    sub.x = section.x + padX + (leftCol ? 0 : colW + gap);
+    sub.y = section.y + padTop;
+    sub.w = colW;
+    const tallest = tallestStickyHeight(sub.id);
+    sub.h = Math.max(220, tallest + 80);
+    sub.parentId = section.id;
+    sub.boardId  = section.boardId || null;
+    sub.type     = 'subsection';
+    await saveNode(sub);
+    renderNode(sub);
+    // Move every direct sticky to sit inside the subsection.
+    const stickies = [...nodes.values()].filter(n => n.type === 'sticky' && n.parentId === sub.id);
+    let yCursor = sub.y + 48;
+    for (const c of stickies) {
+      c.x = sub.x + 14;
+      c.y = yCursor;
+      yCursor += (c.h || 140) + 12;
+      await saveNode(c);
+      renderNode(c);
+    }
+  }
+  await placeSub(ingSub,  /*leftCol=*/true);
+  await placeSub(stepSub, /*leftCol=*/false);
+  // Grow the section so the tallest column fits comfortably + margin.
+  const ingBottom  = ingSub  ? (ingSub.y  + ingSub.h)  : section.y;
+  const stepBottom = stepSub ? (stepSub.y + stepSub.h) : section.y;
+  const neededH = Math.max(ingBottom, stepBottom) + 18 - section.y;
+  if (neededH > section.h) section.h = neededH;
+  await saveNode(section);
+  renderNode(section);
+  expandParents(section.id);
+  setStatus('Recipe layout realigned ✓');
+}
+
 async function saveRecipeEditor(){
   const parts = findRecipeParts(_redSectionId);
   if (!parts) return;
@@ -3218,6 +3290,9 @@ async function saveRecipeEditor(){
   const stepLines = document.getElementById('redSteps')      .value.split('\n').map(s => s.trim()).filter(Boolean);
   ingSticky  = await syncListSticky(ingSticky,  ingSub,  ingLines,  /*keepImage=*/true);
   stepSticky = await syncListSticky(stepSticky, stepSub, stepLines, /*keepImage=*/false);
+  // Snap the whole recipe back into formation in case stickies grew past
+  // their column or subsections drifted out of the section's bounds.
+  await realignRecipeParts(section.id);
   setStatus('Recipe updated ✓');
   closeRecipeEditor();
 }
@@ -4361,6 +4436,9 @@ async function createRecipeFromEz(r){
       renderNode(stepSticky);
     }
     reconcileBoard();
+    // Snap layout right away so a 30-line ingredient list doesn't overflow
+    // the initial fixed-size scaffold.
+    await realignRecipeParts(section.id);
     setStatus(`Added “${r.title}” — ${r.ingredients.length} ingredients, ${r.steps.length} steps`);
   } catch (e) {
     console.error('[ez] build failed', e);
