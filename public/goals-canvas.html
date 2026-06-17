@@ -2091,93 +2091,94 @@ async function loadEzRecipes(){
     if (!sess) { drawEzLogin(); return; }
     const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
     if (error) { drawEzPickerError('Couldn\'t load recipes: ' + (error.message || 'error')); return; }
-    // ====== HEAVY DEBUG: hunt for ingredient images wherever they live ======
-    // The user reports ingredient pictures definitely exist in EZ — somewhere.
-    // 1. Catalog every row-id prefix in meal_planner_data so we see if ingredient
-    //    images live under their own prefix (not recipe_*).
-    // 2. Deep-walk the JSON of every row looking for ANY url-shaped string.
-    // 3. Probe a handful of likely sibling table names so we know if the data
-    //    is in another table entirely.
-    console.group('[ez] ingredient-image hunt');
     const rawAll = data || [];
-    const prefixCounts = {};
-    rawAll.forEach(r => {
-      const p = String(r.id || '').split('_')[0];
-      prefixCounts[p] = (prefixCounts[p] || 0) + 1;
-    });
-    console.log('Row-id prefixes in meal_planner_data:', prefixCounts);
-    // Deep walk
-    const URL_RE = /^(https?:|data:image|\/\/)/i;
-    const PATH_LIKE = /\.(jpe?g|png|webp|gif|heic|avif)(\?|$)/i;
-    function walk(obj, path, hits){
-      if (obj == null) return;
-      if (typeof obj === 'string') {
-        if (URL_RE.test(obj) || PATH_LIKE.test(obj)) hits.push({ path, val: obj.slice(0,140) });
-        return;
-      }
-      if (Array.isArray(obj)) { obj.forEach((v, i) => walk(v, `${path}[${i}]`, hits)); return; }
-      if (typeof obj === 'object') {
-        for (const [k, v] of Object.entries(obj)) walk(v, path ? `${path}.${k}` : k, hits);
-      }
+    // EZ has a separate "Ingredient Library" with photos per ingredient.
+    // Those rows live in the SAME meal_planner_data table as recipes but
+    // under different id prefixes. Build a name → imageUrl map from every
+    // non-recipe row that looks like an ingredient entry.
+    const ingredientImageMap = new Map();  // normalized name -> imageUrl
+    for (const r of rawAll) {
+      if (String(r.id || '').startsWith('recipe_')) continue;
+      const d = r.data || {};
+      const name = (d.name || d.title || d.label || '').toString().trim();
+      const img  = (d.image_url || d.imageUrl || d.image || d.photo ||
+                    d.photoUrl || d.pic || d.picture || d.img || d.thumbnail || '').toString().trim();
+      if (name && img) ingredientImageMap.set(name.toLowerCase(), img);
     }
-    // Pick a recipe that likely has images attached (most ingredients).
-    const recipesRaw = rawAll.filter(r => String(r.id || '').startsWith('recipe_'));
-    let pickRecipe = recipesRaw[0];
-    recipesRaw.forEach(r => {
-      const ing = (r.data && (r.data.ingredientsRows || r.data.ingredients)) || [];
-      const inPick = (pickRecipe?.data?.ingredientsRows?.length || pickRecipe?.data?.ingredients?.length || 0);
-      if (ing.length > inPick) pickRecipe = r;
-    });
-    if (pickRecipe) {
-      console.log('Sample recipe title:', pickRecipe.data?.title);
-      const hits = [];
-      walk(pickRecipe, '', hits);
-      console.log(`URL-shaped strings found in this recipe (${hits.length}):`);
-      hits.forEach(h => console.log('  ·', h.path, '→', h.val));
+    console.log(`[ez] Loaded ${rawAll.length} rows; built ingredient image map of size ${ingredientImageMap.size}`);
+    if (ingredientImageMap.size) {
+      console.log('[ez] sample ingredient → image entries:',
+        [...ingredientImageMap.entries()].slice(0, 6));
+    } else {
+      // Couldn't find any. Dump prefix counts so the user can tell me what
+      // prefix to look under.
+      const prefixCounts = {};
+      rawAll.forEach(r => {
+        const p = String(r.id || '').split('_')[0];
+        prefixCounts[p] = (prefixCounts[p] || 0) + 1;
+      });
+      console.warn('[ez] no ingredient images matched. Row prefixes in this table:', prefixCounts);
+      const nonRecipe = rawAll.filter(r => !String(r.id || '').startsWith('recipe_')).slice(0, 4);
+      console.warn('[ez] sample non-recipe rows so we can see their shape:', nonRecipe);
     }
-    // Probe related rows: anything whose id references a recipe we have
-    const recipeIds = new Set(recipesRaw.map(r => r.id));
-    const related = rawAll.filter(r => {
-      if (String(r.id || '').startsWith('recipe_')) return false;
-      const d = JSON.stringify(r.data || {});
-      return [...recipeIds].some(rid => d.includes(rid));
-    });
-    if (related.length) {
-      console.log(`Non-recipe rows that reference a recipe id (${related.length}):`,
-        related.slice(0, 6).map(r => ({ id: r.id, dataKeys: Object.keys(r.data || {}) })));
-    }
-    // Probe sibling tables that PotLuck might use.
-    const probeTables = ['ingredient_images','recipe_images','media','recipe_media','ingredients','ingredient_media'];
-    for (const tbl of probeTables) {
-      try {
-        const probe = await c.from(tbl).select('*').limit(2);
-        if (probe.error) console.log(`Table "${tbl}": error — ${probe.error.message}`);
-        else console.log(`Table "${tbl}": ${probe.data?.length || 0} rows — sample:`, probe.data?.[0] || null);
-      } catch (e) { console.log(`Table "${tbl}": threw —`, e?.message || e); }
-    }
-    // Also probe Supabase Storage buckets — images might be in a bucket.
-    try {
-      const { data: buckets, error: be } = await c.storage.listBuckets();
-      if (be) console.log('Storage listBuckets error:', be.message);
-      else console.log('Storage buckets:', buckets?.map(b => b.name) || []);
-    } catch (e) { console.log('Storage probe failed:', e?.message); }
-    console.groupEnd();
-    // ====== /HEAVY DEBUG =====================================================
 
+    // Match a recipe ingredient line ("1 cup blueberries") against the
+    // library by substring. Use the LONGEST library name that fits — so
+    // "ground beef" beats "beef", "bell pepper" beats "pepper".
+    function matchIngredientImage(text){
+      if (!text) return null;
+      const t = text.toLowerCase();
+      let best = null, bestLen = 0;
+      for (const [name, url] of ingredientImageMap) {
+        if (name.length < 3) continue;
+        // Require word boundaries so "salt" doesn't match "kosher salt" weirdly
+        // (regex was tempting but the simple includes works for substring;
+        // "salt" inside "kosher salt" still ranks below "kosher salt").
+        if (t.includes(name) && name.length > bestLen) {
+          best = url;
+          bestLen = name.length;
+        }
+      }
+      return best;
+    }
+
+    const recipesRaw = rawAll.filter(r => String(r.id || '').startsWith('recipe_'));
     const raw = recipesRaw
       .map(r => ({ rid: r.id, ...(r.data || {}) }))
       .filter(r => r.title && !r.isDraft);
+
+    // Decorate every recipe's ingredient list with the library image URL when
+    // we can find a match. Done once at load time so we don't re-scan on
+    // every render.
+    function attachLibraryImages(rows){
+      let hits = 0;
+      const decorated = rows.map(it => {
+        if (it.imageUrl) return it;
+        const url = matchIngredientImage(it.text);
+        if (url) hits++;
+        return url ? { ...it, imageUrl: url } : it;
+      });
+      return { decorated, hits };
+    }
+    let totalRecipes = 0, totalHits = 0;
     _ezRecipes = raw
-      .map(r => ({
-        rid:   r.rid,
-        title: r.title,
-        url:   (r.recipe_url || r.sourceUrl || '').trim(),
-        img:   (r.image_url || '').trim(),
-        tags:  ezTags(r.tags),
-        notes: (r.notes || '').trim(),
-        ingredients: ezIngredients(r),
-        steps:       ezSteps(r)
-      }));
+      .map(r => {
+        const baseIngs = ezIngredients(r);
+        const { decorated, hits } = attachLibraryImages(baseIngs);
+        totalRecipes++;
+        totalHits += hits;
+        return {
+          rid:   r.rid,
+          title: r.title,
+          url:   (r.recipe_url || r.sourceUrl || '').trim(),
+          img:   (r.image_url || '').trim(),
+          tags:  ezTags(r.tags),
+          notes: (r.notes || '').trim(),
+          ingredients: decorated,
+          steps:       ezSteps(r)
+        };
+      });
+    console.log(`[ez] Attached library images to ${totalHits} ingredient lines across ${totalRecipes} recipes`);
     drawEzRecipeList();
   } catch (e) {
     console.error('[ez] load failed', e);
