@@ -2489,17 +2489,63 @@ function clearDropTargetHighlight(){
   document.querySelectorAll('.node.drop-target').forEach(x => x.classList.remove('drop-target'));
 }
 
+// Find a position on the active board that doesn't overlap any existing
+// section. Tries the viewport center first; if that's already covered by a
+// recipe, tries offsets to the right / below / left / above in a small grid
+// until something fits. Falls back to viewport center if nothing's free.
+function findEmptySpot(w, h, margin){
+  const m = margin == null ? 30 : margin;
+  const wrapR = document.getElementById('canvasWrap').getBoundingClientRect();
+  const center = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+  const dx = w + m, dy = h + m;
+  // Spiral-ish offsets: center, right, below, right-below, left, left-below,
+  // above, right-above, left-above, and a second ring farther out.
+  const offsets = [
+    [0,0],
+    [dx,0],[0,dy],[dx,dy],
+    [-dx,0],[-dx,dy],
+    [0,-dy],[dx,-dy],[-dx,-dy],
+    [2*dx,0],[0,2*dy],[2*dx,2*dy],
+    [-2*dx,0],[0,-2*dy],[-2*dx,-2*dy]
+  ];
+  for (const [ox, oy] of offsets) {
+    const x = center.x - w/2 + ox;
+    const y = center.y - h/2 + oy;
+    let collides = false;
+    for (const n of nodes.values()) {
+      if (n.type !== 'section') continue;
+      if ((n.boardId || null) !== activeBoardId) continue;
+      // Rect overlap test
+      const horiz = !(x + w < n.x || n.x + n.w < x);
+      const vert  = !(y + h < n.y || n.y + n.h < y);
+      if (horiz && vert) { collides = true; break; }
+    }
+    if (!collides) return { x, y };
+  }
+  // All offsets collide — fall back to center; user can drag where they want.
+  return { x: center.x - w/2, y: center.y - h/2 };
+}
+
 // ============= Create =============
 async function createNode(type, opts){
   opts = opts || {};
   const def = NODE_TYPES[type];
-  // Default position: visible center of viewport
+  // Default position: if caller didn't pass an explicit x/y, find an
+  // empty spot for sections (so + Section doesn't drop on top of an
+  // existing recipe). Stickies and subsections still land at viewport
+  // center because they're usually placed deliberately inside something.
   let { x, y } = opts;
   if (x == null || y == null) {
-    const wrapR = wrap.getBoundingClientRect();
-    const center = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
-    x = (x == null) ? center.x - def.w/2 : x;
-    y = (y == null) ? center.y - def.h/2 : y;
+    if (type === 'section') {
+      const spot = findEmptySpot(def.w, def.h);
+      x = (x == null) ? spot.x : x;
+      y = (y == null) ? spot.y : y;
+    } else {
+      const wrapR = wrap.getBoundingClientRect();
+      const center = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
+      x = (x == null) ? center.x - def.w/2 : x;
+      y = (y == null) ? center.y - def.h/2 : y;
+    }
   }
   const n = {
     id: uid(),
@@ -4492,11 +4538,12 @@ async function createRecipeFromEz(r){
   closeEzPicker();
   setStatus('Building “' + r.title + '”…', 'sticky');
   try {
-    const wrapR = wrap.getBoundingClientRect();
-    const c = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
     const SW = 700, SH = 540;
+    // Place the new recipe in an empty area instead of slamming it on top
+    // of an existing recipe — the user can drag it elsewhere if they want.
+    const spot = findEmptySpot(SW, SH);
     const section = await createNode('section', {
-      x: c.x - SW/2, y: c.y - SH/2, title: r.title, color: 'sec-amber'
+      x: spot.x, y: spot.y, title: r.title, color: 'sec-amber'
     });
     section.w = SW; section.h = SH;
     if (r.img)  section.imageUrl = r.img;
@@ -4585,12 +4632,11 @@ document.getElementById('firstAddBtn').onclick   = () => createNode('section');
 // (right) — each seeded with a starter sticky bullet. The user retitles the
 // section to the dish name and types ingredients/steps as checkbox bullets.
 async function createRecipeTemplate(){
-  const wrapR = document.getElementById('canvasWrap').getBoundingClientRect();
-  const c = viewportToCanvas(wrapR.left + wrapR.width/2, wrapR.top + wrapR.height/2);
   const SW = 660, SH = 480;
-  // 1. Outer section
+  // 1. Outer section — go to an empty spot, not on top of a sibling.
+  const spot = findEmptySpot(SW, SH);
   const section = await createNode('section', {
-    x: c.x - SW/2, y: c.y - SH/2, title: 'New recipe', color: 'sec-amber'
+    x: spot.x, y: spot.y, title: 'New recipe', color: 'sec-amber'
   });
   section.w = SW; section.h = SH;
   await saveNode(section);
@@ -4666,6 +4712,10 @@ function showNodeContextMenu(px, py, n){
       <div class="cm-sep"></div>
     `;
   }
+  const ownerName = n.parentId ? (nodes.get(n.parentId)?.title || '') : '';
+  const detachHtml = (n.parentId && n.type !== 'section')
+    ? `<div class="cm-item" data-cm="detach" title="Unparent this — useful if it got stuck under the wrong recipe">📍 Detach${ownerName ? ' from "' + escapeHtml(ownerName).slice(0,30) + '"' : ''}</div>
+       <div class="cm-sep"></div>` : '';
   cm.innerHTML = `
     ${extra}
     <div class="cm-row">${swatchesFor(n.type === 'sticky' ? 'sticky' : 'section')
@@ -4676,6 +4726,7 @@ function showNodeContextMenu(px, py, n){
     <div class="cm-item" data-cm="z-backward">↧ Move backward</div>
     <div class="cm-item" data-cm="z-back">↓ Send to back</div>
     <div class="cm-sep"></div>
+    ${detachHtml}
     <div class="cm-item danger" data-cm="delete">✕ Delete</div>
   `;
   cm.style.left = px + 'px';
@@ -4692,6 +4743,13 @@ function showNodeContextMenu(px, py, n){
     if (c === 'z-forward')   bumpZ(n, +1);
     if (c === 'z-backward')  bumpZ(n, -1);
     if (c === 'z-back')      sendToBack(n);
+    if (c === 'detach') {
+      n.parentId = null;
+      saveNode(n);
+      renderNode(n);
+      rebuildToc();
+      setStatus('Detached — click 🔧 on the right recipe to adopt');
+    }
     if (c === 'delete') {
       const desc = (n.type === 'section' || n.type === 'subsection') ? collectDescendants(n.id).length : 0;
       const msg = desc
