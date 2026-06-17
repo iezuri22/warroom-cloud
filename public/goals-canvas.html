@@ -1450,11 +1450,27 @@ function pickFile(accept){
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept || '*/*';
-    input.style.display = 'none';
-    input.addEventListener('change', () => {
-      resolve(input.files && input.files[0] || null);
+    // Position off-screen instead of display:none — Safari/Firefox don't
+    // always honor a programmatic .click() on display:none inputs, which
+    // silently skips the file dialog.
+    input.style.position = 'absolute';
+    input.style.left = '-9999px';
+    input.style.top = '-9999px';
+    input.style.opacity = '0';
+    input.style.pointerEvents = 'none';
+    let resolved = false;
+    const done = (val) => {
+      if (resolved) return;
+      resolved = true;
       try { document.body.removeChild(input); } catch {}
-    }, { once: true });
+      resolve(val);
+    };
+    input.addEventListener('change', () => done(input.files && input.files[0] || null), { once: true });
+    // If the user cancels the OS file dialog, no change event fires. We
+    // can't detect that reliably, so add a focus-based "probably cancelled"
+    // backstop after the picker closes.
+    const onFocus = () => setTimeout(() => done(null), 400);
+    window.addEventListener('focus', onFocus, { once: true });
     document.body.appendChild(input);
     input.click();
   });
@@ -3468,6 +3484,7 @@ function ingredientsInStep(stepText){
   const t = (stepText || '').toLowerCase();
   const hits = [];
   const seen = new Set();
+  // 1. Recipe ingredients (the items the user actually listed for THIS recipe).
   for (const ing of _cookIngredients) {
     for (const c of (ing.candidates || [])) {
       if (t.includes(c) && !seen.has(ing.normalized)) {
@@ -3475,6 +3492,32 @@ function ingredientsInStep(stepText){
         hits.push(ing);
         break;
       }
+    }
+  }
+  // 2. Library ingredients — anything in the user's master library whose
+  //    name (or alias) is mentioned in the step text. Lets "toast the bread"
+  //    surface the `bread` card even when the recipe ingredient is
+  //    "Whole grain toast". Limited to entries that actually have an
+  //    imageUrl so we don't clutter with text-only matches.
+  for (const [name, e] of _ingLibrary) {
+    if (seen.has(name)) continue;
+    if (!e.imageUrl) continue;
+    if (name.length < 3) continue;
+    const candidates = [name, ...(e.aliases || [])]
+      .filter(s => s && s.length >= 3)
+      .map(s => s.toLowerCase());
+    for (const c of candidates) {
+      // Word-boundary-ish check: require the match to be at a word boundary
+      // so "salt" doesn't trip on "kosher saltwater" or weirder substrings.
+      const idx = t.indexOf(c);
+      if (idx < 0) continue;
+      const before = idx === 0 ? '' : t[idx - 1];
+      const after = t[idx + c.length] || '';
+      const boundary = (s) => !s || /\W/.test(s);
+      if (!boundary(before) || !boundary(after)) continue;
+      seen.add(name);
+      hits.push({ text: name, imageUrl: e.imageUrl, normalized: name });
+      break;
     }
   }
   return hits;
@@ -3571,7 +3614,11 @@ async function uploadStepMedia(){
     drawCookStep();
   } catch (e) {
     console.error('[cook] step media upload failed', e);
-    setStatus('Upload failed — see console', 'error');
+    // Surface the actual Firebase error so we can debug Storage rules.
+    const msg = (e?.code === 'storage/unauthorized')
+      ? 'Storage rejected the upload (rules need to allow writes)'
+      : (e?.message || 'unknown error');
+    setStatus('Upload failed: ' + msg, 'error');
   }
 }
 async function removeStepMedia(){
