@@ -2756,15 +2756,26 @@
   </div>
   <!-- View toggle: All rows / Acks / Notifications. -->
   <div class="view-toggle">
-    <button type="button" class="view-tab active" data-view="all">Non-Dev/Non-Report</button>
-    <button type="button" class="view-tab" data-view="dev">
-      Dev / Reports
-      <span class="view-tab-ct" id="devReportsCount"></span>
+    <!-- Unified "Tasks" tab. The three former tabs (Non-Dev/Non-Report,
+         Dev/Reports, All) now collapse behind this single button + a scope
+         dropdown immediately after. Clicking the tab applies the saved scope
+         (currentView is one of 'all' | 'dev' | 'allrows' underneath) so all
+         downstream applyFilters logic keeps working unchanged. -->
+    <button type="button" class="view-tab active" id="tasksViewTab" data-view="tasks-umbrella">
+      <span id="tasksViewTabLabel">Tasks · Non-Dev</span>
+      <span class="view-tab-ct" id="tasksViewCount"></span>
     </button>
-    <button type="button" class="view-tab" data-view="allrows">
-      All
-      <span class="view-tab-ct" id="allRowsCount"></span>
-    </button>
+    <select id="taskScopeSelect" class="owner-pick" title="Pick which slice of Tasks to show"
+      style="height:28px;margin-right:6px;font-size:12px;font-weight:600">
+      <option value="all">Non-Dev / Non-Report</option>
+      <option value="dev">Dev / Reports</option>
+      <option value="allrows">All</option>
+    </select>
+    <!-- Hidden counters preserved so existing code that writes to these IDs
+         still works without touching every callsite. Their numbers feed the
+         unified tab's badge label via updateTasksTabBadge(). -->
+    <span id="devReportsCount" style="display:none"></span>
+    <span id="allRowsCount" style="display:none"></span>
     <button type="button" class="view-tab" data-view="weekly">
       This Week
       <span class="view-tab-ct" id="weeklyCount"></span>
@@ -7894,13 +7905,62 @@ if (sortDirBtn) sortDirBtn.addEventListener('click', () => {
 // Default to "Open" filter on first land — matches the daily mental model
 filterStatus = '__open__';
 
-// View toggle wiring (All rows / Acks)
+// ===== Unified Tasks tab + scope dropdown ==================================
+// The three former tabs (Non-Dev/Non-Report, Dev/Reports, All) now live behind
+// a single "Tasks" tab with a dropdown that toggles between them. Internally
+// they remain three distinct currentView values ('all' | 'dev' | 'allrows')
+// so applyFilters and every downstream code path keeps behaving exactly as it
+// did before — the dropdown just steers currentView under the hood.
+const TASKS_SCOPE_KEY = 'ecm-tasks-scope-v1';
+const TASKS_SCOPES = new Set(['all', 'dev', 'allrows']);
+function loadTaskScope(){
+  try {
+    const v = localStorage.getItem(TASKS_SCOPE_KEY);
+    return TASKS_SCOPES.has(v) ? v : 'all';
+  } catch { return 'all'; }
+}
+function saveTaskScope(v){
+  try { localStorage.setItem(TASKS_SCOPE_KEY, v); } catch {}
+}
+function updateTasksTabBadge(){
+  // Tab label reflects the current scope so the user can tell at a glance
+  // which slice the Tasks tab will show.
+  const lbl = document.getElementById('tasksViewTabLabel');
+  const ct  = document.getElementById('tasksViewCount');
+  if (!lbl) return;
+  const scope = TASKS_SCOPES.has(currentView) ? currentView : loadTaskScope();
+  const labelText = scope === 'dev' ? 'Tasks · Dev / Reports'
+                  : scope === 'allrows' ? 'Tasks · All'
+                  : 'Tasks · Non-Dev';
+  lbl.textContent = labelText;
+  // Pull the count from the existing hidden counter for that scope.
+  if (ct) {
+    const src = scope === 'dev' ? document.getElementById('devReportsCount')
+              : scope === 'allrows' ? document.getElementById('allRowsCount')
+              : null;
+    ct.textContent = src && src.textContent ? src.textContent : '';
+  }
+}
+// Set initial scope and sync the dropdown widget.
+(() => {
+  const sel = document.getElementById('taskScopeSelect');
+  const initial = loadTaskScope();
+  if (sel) sel.value = initial;
+  // If the prior session left us on a Tasks scope, restore it.
+  if (TASKS_SCOPES.has(currentView) || currentView === 'tasks-umbrella') {
+    currentView = initial;
+  }
+})();
+
+// View toggle wiring (Tasks + the rest)
 document.querySelectorAll('.view-tab').forEach(b => {
   b.addEventListener('click', () => {
-    const v = b.dataset.view;
+    let v = b.dataset.view;
+    // The unified Tasks tab routes through the saved scope.
+    if (v === 'tasks-umbrella') v = loadTaskScope();
     if (v === currentView) return;
     currentView = v;
-    document.querySelectorAll('.view-tab').forEach(x => x.classList.toggle('active', x === b));
+    syncViewTabActive();
     document.body.classList.toggle('view-ack', currentView === 'ack');
     // 'dev' and 'allrows' now share the standard look — no body class.
     document.body.classList.toggle('view-notif', currentView === 'notif');
@@ -7908,6 +7968,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
     document.body.classList.toggle('view-starred', currentView === 'starred');
     document.body.classList.toggle('view-visits',  currentView === 'visits');
     document.body.classList.toggle('view-transcripts', currentView === 'transcripts');
+    updateTasksTabBadge();
     if (currentView !== 'ack') {
       selectedAckIds.clear();
       renderBulkBar();
@@ -7915,6 +7976,42 @@ document.querySelectorAll('.view-tab').forEach(b => {
     render();
   });
 });
+// Tasks tab gets .active when ANY of its underlying scopes is current. All
+// other tabs get .active by exact data-view match (the legacy behavior).
+function syncViewTabActive(){
+  document.querySelectorAll('.view-tab').forEach(x => {
+    const isUmbrella = x.dataset.view === 'tasks-umbrella';
+    const match = isUmbrella ? TASKS_SCOPES.has(currentView) : x.dataset.view === currentView;
+    x.classList.toggle('active', match);
+  });
+}
+// Scope dropdown — re-renders without leaving the Tasks umbrella.
+const taskScopeSelect = document.getElementById('taskScopeSelect');
+if (taskScopeSelect) {
+  taskScopeSelect.addEventListener('change', () => {
+    const v = taskScopeSelect.value;
+    if (!TASKS_SCOPES.has(v)) return;
+    saveTaskScope(v);
+    currentView = v;
+    syncViewTabActive();
+    updateTasksTabBadge();
+    render();
+  });
+}
+// Re-evaluate the badge whenever the hidden counters get rewritten elsewhere
+// (devReportsCount + allRowsCount get patched on every status-bar update).
+// MutationObserver keeps the unified-tab badge fresh without having to touch
+// every callsite that writes those counters.
+(() => {
+  const targets = ['devReportsCount', 'allRowsCount']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  if (!targets.length) return;
+  const obs = new MutationObserver(() => { try { updateTasksTabBadge(); } catch {} });
+  targets.forEach(el => obs.observe(el, { childList: true, characterData: true, subtree: true }));
+})();
+updateTasksTabBadge();
+syncViewTabActive();
 
 // Bulk action bar wiring
 const bulkAckBtn = document.getElementById('bulkAckBtn');
