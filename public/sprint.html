@@ -2139,11 +2139,38 @@ body { display:flex; flex-direction:column; position:relative }
   function readPriorityCache(){
     try {
       const raw = localStorage.getItem('personal-todos-cache');
-      if (!raw) return [];
-      const d = JSON.parse(raw);
+      const d = raw ? JSON.parse(raw) : null;
       const items = (d && Array.isArray(d.items)) ? d.items : [];
-      // Priorities only — that's the Focus 5 / Priority bucket.
-      return items.filter(t => t && t.priority);
+      const byId = new Map();
+      items.forEach(t => { if (t && t.id) byId.set(t.id, t); });
+
+      // First pull from the Focus 5 priority lists (the "Priorities page"
+      // source of truth). Lists named with "priority" (First, Second, Third)
+      // are the priority bucket; routines and free-form lists are skipped.
+      // This works even when personal-todos.html has not re-rendered since
+      // a deploy that updated the cache shape.
+      const orderedIds = [];
+      const seen = new Set();
+      try {
+        const f5raw = localStorage.getItem('personal-focus-5-v1');
+        const f5 = f5raw ? JSON.parse(f5raw) : null;
+        const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
+        for (const l of lists) {
+          if (!l || l.routine) continue; // skip routine (Morning/Night) lists
+          const name = String((l.name || '')).toLowerCase();
+          if (!/\bpriority\b/.test(name)) continue;
+          for (const id of (l.taskIds || [])) {
+            if (id && !seen.has(id)) { seen.add(id); orderedIds.push(id); }
+          }
+        }
+      } catch {}
+      const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
+      if (fromFocus5.length) return fromFocus5;
+
+      // Fallback: the explicit per-todo priority flag (the ⭐ button). Lets
+      // users who organize via stars (not Focus 5) still get a populated list.
+      const starred = items.filter(t => t && t.priority);
+      return starred;
     } catch { return []; }
   }
   // Identify "what kind of thing is the current sprint task?" by checking the
@@ -2249,9 +2276,16 @@ body { display:flex; flex-direction:column; position:relative }
     } else {
       nextHero.innerHTML = '';
     }
-    // Today's queue
+    // Today's queue. Every item here is by definition "Today" — if learning
+    // cache hadn't picked up the dueText/dueCls fields yet (older write), fall
+    // back so the colored pill still shows.
     const list = $('nextTaskLectureList');
-    list.innerHTML = todayItems.map(it => lectureItemHtml(it, '')).join('');
+    list.innerHTML = todayItems.map(it => {
+      const enriched = { ...it,
+        dueText: it.dueText || 'Today',
+        dueCls: it.dueCls || 'today' };
+      return lectureItemHtml(enriched, '');
+    }).join('');
     $('nextTaskLectureCount').textContent = todayItems.length ? (todayItems.length + ' today') : '';
     $('nextTaskLectureEmpty').style.display = (todayItems.length || nextHero.innerHTML) ? 'none' : '';
     // Priorities
@@ -3573,6 +3607,42 @@ body { display:flex; flex-direction:column; position:relative }
   renderStats();
   renderResumeBanner();
   renderSuggestions();
+
+  // Auto-restore an in-progress sprint. The active sprint state is mirrored
+  // to localStorage so OTHER pages (Learning banner, daily-planner) can see
+  // it, but a fresh sprint.html load used to drop the running timer on the
+  // floor — clicking the Learning banner would land the user on an empty Play
+  // screen. Now we replay the state and resume the timer in place.
+  (function autoRestoreActiveSprint(){
+    try {
+      const raw = localStorage.getItem(ACTIVE_KEY);
+      if (!raw) return;
+      const a = JSON.parse(raw);
+      if (!a || !Number.isFinite(a.startedAt) || !Number.isFinite(a.targetSeconds) || a.targetSeconds <= 0) return;
+      const now = Date.now();
+      const ageSec = (now - a.startedAt) / 1000;
+      // Way past target — stale leftover from a closed tab. Drop it.
+      if (ageSec > a.targetSeconds + 3600) { clearActive(); return; }
+      // Don't override an already-paused state — that's a more explicit user signal.
+      if (loadPaused()) return;
+      currentTask = a.taskName || '';
+      lastTaskName = currentTask;
+      targetSeconds = a.targetSeconds;
+      startedAt = a.startedAt;
+      endsAt = startedAt + targetSeconds * 1000;
+      beepedAt = new Set();
+      if (gameTask) gameTask.textContent = currentTask;
+      try { updateGameDetails(); } catch {}
+      timerSub.textContent = `target — ${fmtMMSS(targetSeconds)}`;
+      timerRing.classList.remove('warn','danger');
+      timerTime.classList.remove('danger');
+      runner.classList.remove('warn');
+      showView('game');
+      tickGame();
+      if (timerHandle) clearInterval(timerHandle);
+      timerHandle = setInterval(tickGame, 200);
+    } catch (e) { console.warn('[sprint] auto-restore failed', e); }
+  })();
 
   // Re-render when sync-client finishes pulling cloud state. Without this,
   // Sprint's first render uses STALE localStorage (sync hasn't completed yet)

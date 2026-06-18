@@ -559,6 +559,35 @@ const expandedSections = new Set(); // courseId + '/' + sectionId
 const _courseState = new Map();
 let _archiveExpanded = false;       // archive section toggle (session only)
 let _completedExpanded = false;     // completed-courses group toggle (session only)
+// Per-course expand state for the in-course "Archived sections" group.
+// Sections auto-archive when they go 100% complete so they don't crowd the
+// course view; users can expand the archive group or unarchive any section
+// individually to bring it back.
+const _archivedSectionsExpanded = new Set(); // courseIds whose archive is open
+
+// ---- Section archive helpers ----
+// Persisted as a single localStorage array of sectionIds. Independent of the
+// section data model in Firestore so this stays a UI-only "hide" flag and we
+// don't have to migrate course docs.
+const SECTION_ARCHIVE_KEY = 'learning-archived-sections-v1';
+function getArchivedSectionIds(){
+  try {
+    const raw = localStorage.getItem(SECTION_ARCHIVE_KEY);
+    if (!raw) return new Set();
+    const a = JSON.parse(raw);
+    return new Set(Array.isArray(a) ? a : []);
+  } catch { return new Set(); }
+}
+function isSectionArchived(s){
+  if (!s || !s.id) return false;
+  return getArchivedSectionIds().has(s.id);
+}
+function setSectionArchived(sectionId, archived){
+  if (!sectionId) return;
+  const set = getArchivedSectionIds();
+  if (archived) set.add(sectionId); else set.delete(sectionId);
+  try { localStorage.setItem(SECTION_ARCHIVE_KEY, JSON.stringify([...set])); } catch {}
+}
 
 function isCourseCollapsed(c){
   const explicit = _courseState.get(c.id);
@@ -1287,13 +1316,37 @@ function renderCourseCard(c){
   }
   const metaStr = meta.join(' · ');
   // Running offset for course subsection numbering (Lecture 14 across
-  // sections, not "Lecture 1" restart).
+  // sections, not "Lecture 1" restart). Walks ALL sections (active + archived)
+  // so numbering stays consistent regardless of archive state.
   let runningOffset = 0;
-  const sectionHtml = (c.sections || []).map((s, idx) => {
+  const activeHtml = [];
+  const archivedHtml = [];
+  const archivedSet = getArchivedSectionIds();
+  (c.sections || []).forEach((s, idx) => {
     const startNum = runningOffset + 1;
     runningOffset += isBook ? (s.totalPages || 0) : (s.subsections || []).length;
-    return renderSectionRow(c, s, idx + 1, startNum, isBook);
-  }).join('');
+    const html = renderSectionRow(c, s, idx + 1, startNum, isBook);
+    // Books don't auto-archive (pages aren't checked off the same way).
+    if (!isBook && archivedSet.has(s.id)) archivedHtml.push(html);
+    else activeHtml.push(html);
+  });
+  const archCount = archivedHtml.length;
+  const archOpen = _archivedSectionsExpanded.has(c.id);
+  const archGroupHtml = archCount
+    ? `
+      <div class="section-archive-group ${archOpen ? 'expanded' : ''}" data-archive-course="${c.id}">
+        <div class="section-archive-head" data-action="toggle-section-archive"
+          style="display:flex;align-items:center;gap:8px;padding:8px 14px;margin:6px 0 4px;background:rgba(74,222,128,.06);border:1px dashed rgba(74,222,128,.24);border-radius:8px;cursor:pointer;color:rgba(255,255,255,.7);font-size:12px;font-weight:600;letter-spacing:.02em">
+          <span class="chev" style="display:inline-block;transition:transform .15s;${archOpen ? 'transform:rotate(90deg)' : ''}">▶</span>
+          <span>✓ Archived sections</span>
+          <span style="margin-left:auto;font-size:11px;opacity:.7">${archCount} hidden</span>
+        </div>
+        <div class="section-archive-list" style="display:${archOpen ? 'block' : 'none'}">
+          ${archivedHtml.join('')}
+        </div>
+      </div>`
+    : '';
+  const sectionHtml = activeHtml.join('') + archGroupHtml;
   const collapsed = isCourseCollapsed(c);
   const isCompleteAll = p.total > 0 && p.done >= p.total;
   return `
@@ -1414,8 +1467,9 @@ function renderSectionRow(c, s, n, startNum, isBook){
       <button class="add-sub-row" data-action="add-sub">+ Add lecture</button>`;
   }
 
+  const archived = isSectionArchived(s);
   return `
-    <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''}" data-section="${s.id}">
+    <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''} ${archived ? 'is-archived' : ''}" data-section="${s.id}">
       <div class="section-head" data-action="toggle-section">
         <span class="chev">▶</span>
         <span class="st-num">${unitLabel} ${n}</span>
@@ -1426,6 +1480,13 @@ function renderSectionRow(c, s, n, startNum, isBook){
           ${pill}
           ${pacePill}
           ${isDone ? '' : `<button type="button" class="st-focus" data-action="focus-section" title="Open focus timer with this section's title">▶ Focus</button>`}
+          ${archived
+            ? `<button type="button" class="st-focus" data-action="unarchive-section" title="Pull this section back into the main list"
+                style="background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.34);color:#fbbf24">↩ Unarchive</button>`
+            : (isDone
+              ? `<button type="button" class="st-focus" data-action="archive-section" title="Hide this section in the Archived group"
+                  style="background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12);color:rgba(255,255,255,.6)">📦 Archive</button>`
+              : '')}
         </span>
       </div>
       ${overdueBanner}
@@ -1442,6 +1503,13 @@ function wireEvents(){
     const c = courses.get(courseId);
     if (!c) return;
 
+    // Per-course archived-sections group toggle.
+    courseEl.querySelector('[data-action="toggle-section-archive"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_archivedSectionsExpanded.has(c.id)) _archivedSectionsExpanded.delete(c.id);
+      else _archivedSectionsExpanded.add(c.id);
+      render();
+    });
     // Course-level
     courseEl.querySelectorAll('[data-action="edit-course"]').forEach(b =>
       b.addEventListener('click', (e) => {
@@ -1564,12 +1632,17 @@ function wireEvents(){
           if (!wasDone && u.done) {
             const subIdx = (s.subsections || []).indexOf(u);
             maybePromptKeepGoing(c, s, subIdx);
-            // If this completion closes out the section, auto-collapse it so
-            // finished sections tidy themselves away. User can still click
-            // the section head to peek inside whenever they want.
+            // Section just completed → auto-archive it so the course view
+            // tightens up. Stays accessible behind the "Archived sections"
+            // toggle and can be unarchived per-section.
             if (isSectionComplete(s)) {
               expandedSections.delete(c.id + '/' + s.id);
+              setSectionArchived(s.id, true);
             }
+          } else if (wasDone && !u.done) {
+            // Un-completing a lecture re-opens the section — pull it back out
+            // of the archive so the user can interact with it normally.
+            if (!isSectionComplete(s)) setSectionArchived(s.id, false);
           }
           render();
         }));
@@ -1579,6 +1652,18 @@ function wireEvents(){
         // If a sprint is already running in another tab, just rename its task;
         // otherwise open a fresh sprint tab pre-filled with this section.
         startFocusOnTask(s.title);
+      });
+      // Archive / unarchive — toolbox buttons in the section head row.
+      sectionEl.querySelector('[data-action="archive-section"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSectionArchived(s.id, true);
+        expandedSections.delete(c.id + '/' + s.id);
+        render();
+      });
+      sectionEl.querySelector('[data-action="unarchive-section"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSectionArchived(s.id, false);
+        render();
       });
       sectionEl.querySelectorAll('[data-action="del-sub"]').forEach(b =>
         b.addEventListener('click', () => {
