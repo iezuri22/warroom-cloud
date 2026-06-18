@@ -12097,12 +12097,28 @@ const VOICE = {
         <span>${escHtml(currentJob ? currentJob.label : 'No project')}</span>
       </button>
     ` : '';
+    // Is this task already in the sprint queue (separate from race-launch)?
+    // The queue list — sprint reads it (in addition to Focus 5 priority lists)
+    // — lets users pre-load tasks for the next sprint they start.
+    const _inSprintQueue = (function(){
+      try {
+        const raw = localStorage.getItem('sprint-queue-task-ids');
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) && arr.includes(todo.id);
+      } catch { return false; }
+    })();
     const standardActions = (!isDone && !editing) ? `
       <div class="focus5-card-actions">
         <button class="focus5-btn primary" data-act="done" type="button">Mark done</button>
         <button class="focus5-btn race" data-act="race" type="button">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
           Race timer
+        </button>
+        <button class="focus5-btn ${_inSprintQueue ? 'has' : ''}" data-act="add-to-sprint" type="button"
+          title="${_inSprintQueue ? 'In Sprint queue — tap to remove' : 'Add to Sprint queue (does not launch a sprint)'}"
+          style="${_inSprintQueue ? 'background:rgba(255,138,61,.18);border-color:rgba(255,138,61,.4);color:#FF8A3D' : ''}">
+          <span style="font-size:13px;line-height:1">🏃</span>
+          ${_inSprintQueue ? 'In Sprint' : 'Add to Sprint'}
         </button>
         <button class="focus5-btn skip" data-act="skip" type="button" title="Skip — remove from this priority list (task stays in Personal)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="17" y="4" width="2" height="16"/></svg>
@@ -12175,6 +12191,32 @@ const VOICE = {
       const projectBtn = card.querySelector('[data-act="project"]');
       const upBtn = card.querySelector('[data-act="up"]');
       const downBtn = card.querySelector('[data-act="down"]');
+      // "🏃 Add to Sprint" — appends/removes this task to the sprint queue
+      // localStorage list. Doesn't launch a sprint (Race timer does that).
+      const sprintBtn = card.querySelector('[data-act="add-to-sprint"]');
+      if (sprintBtn) sprintBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try {
+          const KEY = 'sprint-queue-task-ids';
+          let arr = [];
+          try { arr = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch {}
+          if (!Array.isArray(arr)) arr = [];
+          const i = arr.indexOf(todo.id);
+          if (i >= 0) arr.splice(i, 1); else arr.push(todo.id);
+          localStorage.setItem(KEY, JSON.stringify(arr));
+          // Inline visual update so the user gets immediate feedback without
+          // a full focus5 re-render (which would eat focus on quick-add).
+          const on = arr.includes(todo.id);
+          sprintBtn.classList.toggle('has', on);
+          sprintBtn.style.background = on ? 'rgba(255,138,61,.18)' : '';
+          sprintBtn.style.borderColor = on ? 'rgba(255,138,61,.4)' : '';
+          sprintBtn.style.color = on ? '#FF8A3D' : '';
+          sprintBtn.title = on ? 'In Sprint queue — tap to remove' : 'Add to Sprint queue (does not launch a sprint)';
+          // Update label after the emoji
+          const labelNode = [...sprintBtn.childNodes].find(n => n.nodeType === 3 && n.textContent && n.textContent.trim());
+          if (labelNode) labelNode.textContent = ' ' + (on ? 'In Sprint' : 'Add to Sprint');
+        } catch (err) { console.warn('sprint queue toggle failed', err); }
+      });
       // Tap project chip → toggle inline picker. Tap a project (or No project)
       // → update task, close picker.
       if (projectBtn) projectBtn.addEventListener('click', (e) => {
