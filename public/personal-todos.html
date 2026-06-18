@@ -6834,6 +6834,21 @@ const VOICE = {
     // a genuine change. Sprint doesn't consume `updatedAt`, so this is safe.
     try {
       if (Array.isArray(todos)) {
+        // Collect IDs that are in a Focus 5 *priority* list (First/Second/Third).
+        // These are what shows up on the Priorities page UI — sprint.html reads
+        // the cache to populate its "Priorities" section. Without this, sprint
+        // saw only the star-flag `t.priority` and the Priorities list was empty
+        // for users who organize via Focus 5 instead of stars.
+        const focus5PriorityIds = new Set();
+        try {
+          if (focus5State && Array.isArray(focus5State.lists)) {
+            for (const l of focus5State.lists) {
+              if (_isPriorityList && _isPriorityList(l)) {
+                for (const tid of (l.taskIds || [])) if (tid) focus5PriorityIds.add(tid);
+              }
+            }
+          }
+        } catch {}
         const open = todos
           .filter(t => !t.done)
           .slice(0, 40)
@@ -6841,7 +6856,7 @@ const VOICE = {
             id: t.id,
             text: t.text || '',
             job: t.job || '',
-            priority: !!t.priority,
+            priority: !!t.priority || focus5PriorityIds.has(t.id),
             details: t.details || '',
             // Date the task is scheduled for. For range tasks we use endDate
             // (or startDate if no end) as the effective due date.

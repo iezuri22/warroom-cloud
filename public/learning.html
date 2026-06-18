@@ -655,26 +655,87 @@ function isPrevSectionComplete(course, idx){
   if ((course.type || 'course') === 'book') return true;
   return isSectionComplete(course.sections[idx - 1]);
 }
-// "Due day" label for a single lecture inside a section that has a
-// deadline. Distributes the remaining-not-done lectures across the days
-// remaining, in order. Returns null when no deadline / lecture is done /
-// no pacing applies.
+// Today's planned lecture indices for a section, LOCKED per (sectionId, date)
+// in localStorage. Without this lock, the next-not-done lecture would always
+// be labeled "today" — so finishing today's quota would silently promote
+// tomorrow's lectures into today. The cache makes "today" a fixed bucket
+// that empties as you check things off.
+//
+// First call of the day computes the slice (perDay first not-done lectures)
+// and persists those lecture IDs. Subsequent calls today return the same set
+// (even after some are checked off — they just become done items in the set).
+// Tomorrow the cache key changes and a fresh slice gets locked in.
+function todaysPlannedFor(section){
+  if (!section || !section.deadline) return [];
+  const subs = section.subsections || [];
+  if (!subs.length) return [];
+  const today = todayISO();
+  const cacheKey = 'learning-plan-' + section.id + '-' + today;
+  // Try to read locked plan
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const plannedIds = JSON.parse(raw);
+      if (Array.isArray(plannedIds)) {
+        const indices = plannedIds
+          .map(id => subs.findIndex(u => u.id === id))
+          .filter(i => i >= 0);
+        return indices;
+      }
+    }
+  } catch {}
+  // First call today — compute the slice and persist.
+  const pace = pacingFor(section);
+  if (!pace) return [];
+  const notDoneIndices = [];
+  for (let i = 0; i < subs.length; i++) if (!subs[i].done) notDoneIndices.push(i);
+  const todaysIndices = notDoneIndices.slice(0, pace.perDay);
+  const ids = todaysIndices.map(i => subs[i].id).filter(Boolean);
+  try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+  return todaysIndices;
+}
+// Sweep out yesterday-and-older locked plans on script load so localStorage
+// doesn't accumulate stale keys forever.
+(function cleanupOldLearningPlans(){
+  try {
+    const today = todayISO();
+    const prefix = 'learning-plan-';
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix) && !k.endsWith('-' + today)) stale.push(k);
+    }
+    stale.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+  } catch {}
+})();
+
+// "Due day" label for a single lecture inside a section that has a deadline.
+// Today's planned set is locked (see todaysPlannedFor) so lectures NOT in
+// today's plan are at minimum "tomorrow" — finishing today's quota does not
+// promote tomorrow's bucket.
 function lectureDueLabel(section, lectureIndex){
   const pace = pacingFor(section);
   if (!pace || !section.deadline) return null;
   const subs = section.subsections || [];
   const u = subs[lectureIndex];
   if (!u || u.done) return null;
-  // Position among NOT-DONE lectures, preserving order.
-  const notDoneIndices = [];
-  for (let i = 0; i < subs.length; i++) if (!subs[i].done) notDoneIndices.push(i);
-  const pos = notDoneIndices.indexOf(lectureIndex);
+  // In today's locked plan → "Today".
+  const todayPlanned = todaysPlannedFor(section);
+  if (todayPlanned.includes(lectureIndex)) {
+    return { text: 'Today', cls: 'today' };
+  }
+  // Past today's plan → "Tomorrow" or further out. Position the lecture
+  // among the not-done-and-not-planned set, then bucket by perDay starting
+  // at day +1 (since today is the locked bucket).
+  const futureIndices = [];
+  for (let i = 0; i < subs.length; i++) {
+    if (!subs[i].done && !todayPlanned.includes(i)) futureIndices.push(i);
+  }
+  const pos = futureIndices.indexOf(lectureIndex);
   if (pos < 0) return null;
-  const dayOffset = Math.floor(pos / pace.perDay);
-  // Cap at the actual days-remaining so we don't say "in 30 days" when the
-  // deadline is 5 days out (it just means user is behind pace).
-  const capped = Math.min(dayOffset, pace.days - 1);
-  if (capped === 0) return { text: 'Today', cls: 'today' };
+  const dayOffset = Math.floor(pos / pace.perDay) + 1;
+  // Cap so we don't say "in 30 days" when deadline is only 5 days out.
+  const capped = Math.min(dayOffset, Math.max(1, pace.days - 1));
   if (capped === 1) return { text: 'Tomorrow', cls: 'tomorrow' };
   if (capped <= 3)  return { text: 'In ' + capped + ' days', cls: 'soon' };
   return { text: 'In ' + capped + ' days', cls: '' };
@@ -860,15 +921,13 @@ function todaysQueue(){
         }
         continue;
       }
+      // Use the locked-per-day plan so finishing today's quota leaves an
+      // empty queue rather than promoting tomorrow's lectures into today.
       const subs = s.subsections || [];
-      const pace = pacingFor(s);
-      if (!pace) continue;
-      const notDone = subs.map((u, i) => (u.done ? null : i)).filter(i => i != null);
-      const todayCount = Math.min(pace.perDay, notDone.length);
-      for (let k = 0; k < todayCount; k++) {
-        const i = notDone[k];
+      const plannedIndices = todaysPlannedFor(s);
+      for (const i of plannedIndices) {
         const u = subs[i];
-        if (!u) continue;
+        if (!u || u.done) continue;
         out.push({
           kind: 'lecture', course: c, section: s, sub: u, subIndex: i,
           runningNum: lectureRunningNum(c, s, i),
@@ -1041,27 +1100,40 @@ async function toggleSubFromQueue(it){
 // render(); no Firestore re-read.
 function publishLearningCache(){
   try {
-    const todayItems = todaysQueue().map(it => ({
-      kind: it.kind,
-      courseId: it.course.id,
-      courseTitle: it.course.title || '',
-      sectionId: it.section.id,
-      sectionTitle: it.section.title || '',
-      sectionDeadline: it.section.deadline || '',
-      subId: it.sub ? it.sub.id : '',
-      subIndex: it.subIndex == null ? -1 : it.subIndex,
-      subTitle: it.sub ? (it.sub.title || '') : '',
-      runningNum: it.runningNum || 0,
-      done: it.sub ? !!it.sub.done : false,
-    }));
+    const todayItems = todaysQueue().map(it => {
+      const due = (it.kind === 'lecture' && it.section && it.subIndex >= 0)
+        ? lectureDueLabel(it.section, it.subIndex) : null;
+      return {
+        kind: it.kind,
+        courseId: it.course.id,
+        courseTitle: it.course.title || '',
+        sectionId: it.section.id,
+        sectionTitle: it.section.title || '',
+        sectionDeadline: it.section.deadline || '',
+        subId: it.sub ? it.sub.id : '',
+        subIndex: it.subIndex == null ? -1 : it.subIndex,
+        subTitle: it.sub ? (it.sub.title || '') : '',
+        runningNum: it.runningNum || 0,
+        done: it.sub ? !!it.sub.done : false,
+        dueText: due ? due.text : '',
+        dueCls: due ? due.cls : '',
+      };
+    });
     const sections = [];
     for (const c of courses.values()) {
       if (c.archived) continue;
       for (const s of (c.sections || [])) {
-        const subs = (s.subsections || []).map((u, i) => ({
-          subId: u.id, subIndex: i, subTitle: u.title || '',
-          runningNum: lectureRunningNum(c, s, i), done: !!u.done,
-        }));
+        const subs = (s.subsections || []).map((u, i) => {
+          const due = lectureDueLabel(s, i);
+          return {
+            subId: u.id, subIndex: i, subTitle: u.title || '',
+            runningNum: lectureRunningNum(c, s, i), done: !!u.done,
+            // Sprint reads this to render the same Today/Tomorrow/In-N-days
+            // pill the Learning page shows next to each lecture.
+            dueText: due ? due.text : '',
+            dueCls: due ? due.cls : '',
+          };
+        });
         sections.push({
           courseId: c.id, courseTitle: c.title || '',
           sectionId: s.id, sectionTitle: s.title || '',
