@@ -958,12 +958,12 @@ body { display:flex; flex-direction:column; position:relative }
   <div class="game" id="gameView">
     <div class="game-eyebrow">
       <span class="dot"></span><span id="gameEyebrowText">Sprint in progress</span>
-      <button type="button" id="changeTaskBtn" title="Switch to a new task without restarting the timer"
+      <button type="button" id="changeTaskBtn" title="Pick another lecture or priority (timer keeps running)"
         style="margin-left:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;font-size:11px;padding:3px 10px;border-radius:999px;cursor:pointer;letter-spacing:.02em">
         ✎ change task
       </button>
     </div>
-    <div class="game-task" id="gameTask" title="Double-click to change the task" style="cursor:text">—</div>
+    <div class="game-task" id="gameTask" title="Click ‘change task’ to switch — timer keeps running">—</div>
     <button class="game-details-toggle" id="gameDetailsToggle" type="button" hidden>
       <span class="chev">▸</span> details
     </button>
@@ -985,6 +985,11 @@ body { display:flex; flex-direction:column; position:relative }
         <span style="font-size:20px">✓</span>
         <span>I'm Done!</span>
       </button>
+      <button class="btn-next-task" id="doneNextBtn" title="Mark this done and slide into the next lecture / priority — timer keeps running"
+        style="background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;border:none;font-family:inherit;font-weight:800;font-size:13px;letter-spacing:.02em;padding:11px 16px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;box-shadow:0 4px 14px rgba(30,64,175,.35)">
+        <span style="font-size:16px">⇢</span>
+        <span>Done &amp; next</span>
+      </button>
       <button class="btn-pause" id="pauseBtn" title="Pause and come back">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
         <span>Pause</span>
@@ -1000,6 +1005,54 @@ body { display:flex; flex-direction:column; position:relative }
   <!-- HISTORY -->
   <div class="history" id="historyView" style="display:none">
     <!-- populated by JS -->
+  </div>
+</div>
+
+<!-- Next-task picker (drawer): swap the running sprint to a different lecture
+     or priority without restarting the timer. Two sections: Lectures (today's
+     queue + next-in-section) and Priorities (Focus 5). Pure overlay; sprint
+     timer keeps ticking underneath. -->
+<div id="nextTaskBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);z-index:60"></div>
+<div id="nextTaskDrawer" style="display:none;position:fixed;top:0;right:0;bottom:0;width:min(520px,100%);background:#0E0E13;border-left:1px solid rgba(255,255,255,.1);box-shadow:-12px 0 40px rgba(0,0,0,.6);z-index:61;color:#fff;font-family:inherit;flex-direction:column">
+  <div style="padding:18px 22px 14px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:flex-start;gap:12px">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:10px;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;color:#FF8A3D;margin-bottom:6px">Switch task · timer keeps running</div>
+      <div id="nextTaskCurrentLabel" style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.45);margin-bottom:3px">CURRENT</div>
+      <div id="nextTaskCurrent" style="font-size:15px;font-weight:700;line-height:1.3;color:#fff;word-break:break-word"></div>
+      <div id="nextTaskClock" style="font-size:12px;color:rgba(255,255,255,.55);margin-top:4px"></div>
+    </div>
+    <button id="nextTaskClose" type="button" title="Close" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;cursor:pointer;line-height:1;flex:0 0 auto">✕</button>
+  </div>
+  <div style="flex:1;overflow-y:auto;padding:14px 22px 18px">
+    <!-- LECTURES SECTION -->
+    <div style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:16px">📘</span>
+        <span style="font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:rgba(255,255,255,.65)">Lectures</span>
+        <span id="nextTaskLectureCount" style="font-size:10px;font-weight:700;background:rgba(59,130,246,.15);color:#93c5fd;padding:2px 7px;border-radius:99px;letter-spacing:.04em"></span>
+      </div>
+      <div id="nextTaskLectureNext" style="margin-bottom:10px"></div>
+      <div id="nextTaskLectureList"></div>
+      <div id="nextTaskLectureEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">No lectures on today's queue. Set a section deadline in Learning to start the pacing.</div>
+    </div>
+    <!-- PRIORITIES SECTION -->
+    <div style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:16px">⭐</span>
+        <span style="font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:rgba(255,255,255,.65)">Priorities</span>
+        <span id="nextTaskPriorityCount" style="font-size:10px;font-weight:700;background:rgba(255,138,61,.18);color:#FF8A3D;padding:2px 7px;border-radius:99px;letter-spacing:.04em"></span>
+      </div>
+      <div id="nextTaskPriorityList"></div>
+      <div id="nextTaskPriorityEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">No open priorities. Open Personal to add some.</div>
+    </div>
+    <!-- CUSTOM FOOTER -->
+    <div style="padding-top:14px;border-top:1px solid rgba(255,255,255,.06)">
+      <div style="font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:rgba(255,255,255,.45);margin-bottom:8px">Or type something</div>
+      <div style="display:flex;gap:8px">
+        <input id="nextTaskCustom" type="text" placeholder="Free-text task name…" style="flex:1;background:#15151B;border:1px solid rgba(255,255,255,.1);color:#fff;border-radius:8px;padding:9px 12px;font-family:inherit;font-size:13px;outline:none">
+        <button id="nextTaskCustomGo" type="button" style="background:#FF8A3D;color:#0E0E13;border:none;font-family:inherit;font-weight:800;font-size:12px;letter-spacing:.04em;padding:0 14px;border-radius:8px;cursor:pointer">Use it →</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2051,28 +2104,330 @@ body { display:flex; flex-direction:column; position:relative }
 
   if (pauseBtn) pauseBtn.addEventListener('click', pauseSprint);
 
-  // Mid-sprint task switcher: lets you rename the running sprint without
-  // restarting the timer. Triggered from the "✎ change task" pill in the
-  // eyebrow OR by double-clicking the big task title. Useful when finishing
-  // one lecture and moving to the next while the timer keeps ticking.
-  function promptChangeTask(){
-    if (!timerHandle) return; // nothing running — nothing to rename
-    const cur = currentTask || '';
-    const next = prompt('Switch the sprint to a new task (timer keeps running):', cur);
-    if (next == null) return;
-    const t = String(next).trim();
-    if (!t || t === cur) return;
+  // ============ NEXT-TASK DRAWER ============
+  // Slide-in panel that lets you swap the running sprint to a different
+  // lecture or priority WITHOUT restarting the timer. Reads:
+  //   • learning-cache-v1   — courses tree + today's lecture queue (published
+  //                            by learning.html on every render)
+  //   • personal-todos-cache — open priorities (published by personal-todos.html)
+  // Click an item to switch the sprint task. The "Done" pill on the current
+  // task completes its source (lecture done / priority done) AND auto-picks
+  // the next one. Timer keeps ticking the whole time.
+  function readLearningCache(){
+    try {
+      const raw = localStorage.getItem('learning-cache-v1');
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || !Array.isArray(d.today) || !Array.isArray(d.sections)) return null;
+      return d;
+    } catch { return null; }
+  }
+  function readPriorityCache(){
+    try {
+      const raw = localStorage.getItem('personal-todos-cache');
+      if (!raw) return [];
+      const d = JSON.parse(raw);
+      const items = (d && Array.isArray(d.items)) ? d.items : [];
+      // Priorities only — that's the Focus 5 / Priority bucket.
+      return items.filter(t => t && t.priority);
+    } catch { return []; }
+  }
+  // Identify "what kind of thing is the current sprint task?" by checking the
+  // mirror of the source we set via setSelectedTask at start time. Returns
+  // { kind: 'lecture'|'priority'|'free', courseId, sectionId, subIndex, todoId }.
+  function classifyCurrentTask(){
+    const sel = selectedTask;
+    if (sel && (sel.source === 'personal' || sel.source === 'priority') && sel.ids && sel.ids.todoId) {
+      return { kind: 'priority', todoId: sel.ids.todoId };
+    }
+    if (sel && sel.source === 'learning' && sel.ids) {
+      return { kind: 'lecture', courseId: sel.ids.courseId, sectionId: sel.ids.sectionId, subIndex: sel.ids.subIndex };
+    }
+    return { kind: 'free' };
+  }
+  // Given a section in the learning cache, find the next not-done lecture
+  // strictly AFTER subIndex (or any not-done if subIndex is null).
+  function nextLectureInSection(cache, courseId, sectionId, fromSubIndex){
+    if (!cache) return null;
+    const sec = cache.sections.find(s => s.courseId === courseId && s.sectionId === sectionId);
+    if (!sec) return null;
+    const after = fromSubIndex == null ? -1 : fromSubIndex;
+    return sec.subs.find(u => !u.done && u.subIndex > after) || null;
+  }
+  // Build a small render helper for a lecture card — shared between the
+  // "Next in current section" tile and the today's-queue list.
+  function lectureItemHtml(it, label){
+    const title = it.subTitle && !/^Lecture \d+/.test(it.subTitle)
+      ? it.subTitle
+      : ('Lecture ' + (it.runningNum || (it.subIndex + 1)));
+    const due = it.sectionDeadline
+      ? '<span style="font-size:10px;color:rgba(255,255,255,.45);margin-left:8px">due ' + esc(it.sectionDeadline) + '</span>'
+      : '';
+    return `
+      <div class="nt-item" data-kind="lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" data-sub-id="${esc(it.subId || '')}"
+        style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
+        <span style="font-size:14px">📘</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.55);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.sectionTitle || it.courseTitle)} ${due}</div>
+        </div>
+        ${label ? `<span style="font-size:9px;font-weight:800;background:rgba(59,130,246,.2);color:#93c5fd;letter-spacing:.06em;padding:3px 8px;border-radius:99px">${esc(label)}</span>` : ''}
+        <span style="color:rgba(255,255,255,.4);font-size:14px">→</span>
+      </div>`;
+  }
+  function priorityItemHtml(t){
+    const jobChip = t.job ? `<span style="font-size:10px;font-weight:700;background:rgba(255,138,61,.16);color:#FF8A3D;padding:2px 7px;border-radius:99px;letter-spacing:.04em;margin-left:8px">${esc(t.job)}</span>` : '';
+    return `
+      <div class="nt-item" data-kind="priority" data-todo-id="${esc(t.id)}"
+        style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
+        <span style="font-size:14px">⭐</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.text || '(untitled)')}</div>
+          ${t.date ? `<div style="font-size:11px;color:rgba(255,255,255,.55);margin-top:2px">due ${esc(t.date)}</div>` : ''}
+        </div>
+        ${jobChip}
+        <span style="color:rgba(255,255,255,.4);font-size:14px">→</span>
+      </div>`;
+  }
+  function renderNextTaskDrawer(){
+    const drawer = $('nextTaskDrawer');
+    if (!drawer) return;
+    const cur = classifyCurrentTask();
+    $('nextTaskCurrent').textContent = currentTask || '(none)';
+    // Clock readout — pulled fresh each open
+    const now = Date.now();
+    const remSec = Math.max(0, targetSeconds - Math.round((now - startedAt) / 1000));
+    const mm = String(Math.floor(remSec / 60)).padStart(2,'0');
+    const ss = String(remSec % 60).padStart(2,'0');
+    $('nextTaskClock').textContent = timerHandle
+      ? `⏱ ${mm}:${ss} left · timer will keep running`
+      : 'No sprint running — picking will start a new one';
+    const cache = readLearningCache();
+    const todayItems = (cache && cache.today) ? cache.today.filter(it => !it.done) : [];
+    // "Next in current section" hero card — only when current task is itself a lecture.
+    const nextHero = $('nextTaskLectureNext');
+    if (cur.kind === 'lecture' && cache) {
+      const n = nextLectureInSection(cache, cur.courseId, cur.sectionId, cur.subIndex);
+      if (n) {
+        const sec = cache.sections.find(s => s.courseId === cur.courseId && s.sectionId === cur.sectionId);
+        const enriched = { ...n,
+          courseId: cur.courseId, courseTitle: (sec && sec.courseTitle) || '',
+          sectionId: cur.sectionId, sectionTitle: (sec && sec.sectionTitle) || '',
+          sectionDeadline: (sec && sec.sectionDeadline) || '' };
+        nextHero.innerHTML = lectureItemHtml(enriched, 'next');
+      } else {
+        nextHero.innerHTML = '';
+      }
+    } else {
+      nextHero.innerHTML = '';
+    }
+    // Today's queue
+    const list = $('nextTaskLectureList');
+    list.innerHTML = todayItems.map(it => lectureItemHtml(it, '')).join('');
+    $('nextTaskLectureCount').textContent = todayItems.length ? (todayItems.length + ' today') : '';
+    $('nextTaskLectureEmpty').style.display = (todayItems.length || nextHero.innerHTML) ? 'none' : '';
+    // Priorities
+    const pris = readPriorityCache();
+    $('nextTaskPriorityList').innerHTML = pris.map(priorityItemHtml).join('');
+    $('nextTaskPriorityCount').textContent = pris.length ? (pris.length + ' open') : '';
+    $('nextTaskPriorityEmpty').style.display = pris.length ? 'none' : '';
+    // Wire up clicks
+    drawer.querySelectorAll('.nt-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const kind = el.dataset.kind;
+        if (kind === 'lecture') {
+          const courseId = el.dataset.course;
+          const sectionId = el.dataset.section;
+          const subIndex = parseInt(el.dataset.subIndex, 10);
+          const subId = el.dataset.subId;
+          // Reconstruct full title from cache
+          const c = readLearningCache();
+          const sec = c && c.sections.find(s => s.courseId === courseId && s.sectionId === sectionId);
+          const sub = sec && sec.subs.find(u => u.subIndex === subIndex);
+          if (!sub) return;
+          const title = sub.subTitle && !/^Lecture \d+/.test(sub.subTitle)
+            ? sub.subTitle
+            : ('Lecture ' + (sub.runningNum || (subIndex + 1)));
+          const taskName = (sec.sectionTitle ? sec.sectionTitle + ' — ' : '') + title;
+          switchToTask(taskName, {
+            source: 'learning',
+            ids: { courseId, sectionId, subId, subIndex },
+            jobLabel: sec.courseTitle || 'LEARNING',
+          });
+        } else if (kind === 'priority') {
+          const todoId = el.dataset.todoId;
+          const pri = readPriorityCache().find(t => t.id === todoId);
+          if (!pri) return;
+          switchToTask(pri.text || '(untitled)', {
+            source: 'personal',
+            ids: { todoId: pri.id },
+            jobLabel: pri.job || 'PERSONAL',
+            details: pri.details || '',
+          });
+        }
+        hideNextTaskDrawer();
+      });
+      el.addEventListener('mouseenter', () => {
+        el.style.borderColor = 'rgba(255,138,61,.4)';
+        el.style.background = '#1a1a22';
+      });
+      el.addEventListener('mouseleave', () => {
+        el.style.borderColor = 'rgba(255,255,255,.08)';
+        el.style.background = '#15151B';
+      });
+    });
+  }
+  // Apply a task switch: rename the running sprint, mirror to localStorage,
+  // and link the source so a future Done call completes the right thing.
+  // If no sprint is running, start one with this task at the last target.
+  function switchToTask(taskName, sourceInfo){
+    const t = String(taskName || '').trim();
+    if (!t) return;
+    if (!timerHandle) {
+      // No sprint running — kick one off using the current targetSeconds and
+      // route through setSelectedTask + click Start so the existing path runs.
+      try {
+        setSelectedTask({
+          text: t,
+          source: sourceInfo.source,
+          jobId: '',
+          jobLabel: sourceInfo.jobLabel || '',
+          date: '',
+          ids: sourceInfo.ids || {},
+          details: sourceInfo.details || '',
+        });
+        startBtn.click();
+      } catch {}
+      return;
+    }
     currentTask = t;
     lastTaskName = t;
     if (gameTask) gameTask.textContent = t;
-    // Drop linked-source bookkeeping — the new task is free-text from here.
-    try { setSelectedTask(null); } catch {}
-    // Mirror to localStorage so other tabs (Learning banner) see the new name.
+    // Build a fresh selectedTask shim so completion paths know what to mark.
+    try {
+      setSelectedTask({
+        text: t,
+        source: sourceInfo.source,
+        jobId: '',
+        jobLabel: sourceInfo.jobLabel || '',
+        date: '',
+        ids: sourceInfo.ids || {},
+        details: sourceInfo.details || '',
+      });
+    } catch {}
+    // We're still in the game view — setSelectedTask hides taskInput but that's
+    // a play-view concern. Force the game UI back in case showView shifted.
+    showView('game');
     saveActive();
   }
+  // Complete the current task's source WITHOUT ending the sprint. Used by
+  // "✓ Done & next" so the user can flow through several lectures inside one
+  // long sprint.
+  function completeCurrentSourceLive(){
+    const sel = selectedTask;
+    if (!sel || !sel.source) return;
+    try {
+      if (sel.source === 'personal' || sel.source === 'priority') {
+        // Same queue path that finishSprint uses — personal-todos.html drains it.
+        completePersonalTodo(sel, 0);
+      } else if (sel.source === 'goal') {
+        completeGoalActionItem(sel);
+      } else if (sel.source === 'board') {
+        completeBoardActionItem(sel);
+      } else if (sel.source === 'plan') {
+        completePlanItem(sel);
+      } else if (sel.source === 'learning' && sel.ids) {
+        completeLearningSubsection(sel.ids);
+      }
+    } catch (e) { console.warn('live source completion failed', e); }
+  }
+  // Queue a learning-lecture completion. learning.html doesn't expose a
+  // localStorage write queue (yet) — we tack one on here and have learning.html
+  // drain it. Pattern mirrors `sprint-pending-completions` for personal-todos.
+  function completeLearningSubsection(ids){
+    if (!ids || !ids.courseId || !ids.sectionId) return;
+    const QKEY = 'sprint-pending-learning-completions';
+    let queue = [];
+    try { queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || []; } catch {}
+    queue.push({ courseId: ids.courseId, sectionId: ids.sectionId, subId: ids.subId || '', subIndex: ids.subIndex, completedAt: Date.now() });
+    try { localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50))); } catch {}
+    // Optimistic local-cache update so the picker won't re-show this lecture.
+    try {
+      const raw = localStorage.getItem('learning-cache-v1');
+      if (raw) {
+        const c = JSON.parse(raw);
+        const sec = (c.sections || []).find(s => s.courseId === ids.courseId && s.sectionId === ids.sectionId);
+        if (sec) {
+          const sub = (sec.subs || []).find(u => u.subIndex === ids.subIndex);
+          if (sub) sub.done = true;
+        }
+        c.today = (c.today || []).filter(it => !(it.courseId === ids.courseId && it.sectionId === ids.sectionId && it.subIndex === ids.subIndex));
+        localStorage.setItem('learning-cache-v1', JSON.stringify(c));
+      }
+    } catch {}
+  }
+  function showNextTaskDrawer(){
+    renderNextTaskDrawer();
+    $('nextTaskBackdrop').style.display = 'block';
+    const d = $('nextTaskDrawer');
+    d.style.display = 'flex';
+    // Slide in
+    d.style.transform = 'translateX(100%)';
+    d.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
+    requestAnimationFrame(() => { d.style.transform = 'translateX(0)'; });
+  }
+  function hideNextTaskDrawer(){
+    const d = $('nextTaskDrawer');
+    d.style.transform = 'translateX(100%)';
+    setTimeout(() => {
+      d.style.display = 'none';
+      $('nextTaskBackdrop').style.display = 'none';
+    }, 220);
+  }
+  $('nextTaskClose').addEventListener('click', hideNextTaskDrawer);
+  $('nextTaskBackdrop').addEventListener('click', hideNextTaskDrawer);
+  $('nextTaskCustomGo').addEventListener('click', () => {
+    const v = $('nextTaskCustom').value.trim();
+    if (!v) return;
+    switchToTask(v, { source: '', ids: {}, jobLabel: '' });
+    $('nextTaskCustom').value = '';
+    hideNextTaskDrawer();
+  });
+  $('nextTaskCustom').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); $('nextTaskCustomGo').click(); }
+    if (e.key === 'Escape') hideNextTaskDrawer();
+  });
+  // Trigger from the eyebrow pill OR the title (double-click) OR the "Done &
+  // next" button (auto-advances lectures, opens drawer for priorities).
   const changeTaskBtn = $('changeTaskBtn');
-  if (changeTaskBtn) changeTaskBtn.addEventListener('click', promptChangeTask);
-  if (gameTask) gameTask.addEventListener('dblclick', promptChangeTask);
+  if (changeTaskBtn) changeTaskBtn.addEventListener('click', showNextTaskDrawer);
+  if (gameTask) gameTask.addEventListener('dblclick', showNextTaskDrawer);
+  const doneNextBtn = $('doneNextBtn');
+  if (doneNextBtn) doneNextBtn.addEventListener('click', () => {
+    if (!timerHandle) return;
+    const cur = classifyCurrentTask();
+    completeCurrentSourceLive();
+    // Lecture → try to auto-advance to next in section silently
+    if (cur.kind === 'lecture') {
+      const cache = readLearningCache();
+      const n = nextLectureInSection(cache, cur.courseId, cur.sectionId, cur.subIndex);
+      if (n) {
+        const sec = cache.sections.find(s => s.courseId === cur.courseId && s.sectionId === cur.sectionId);
+        const title = n.subTitle && !/^Lecture \d+/.test(n.subTitle)
+          ? n.subTitle
+          : ('Lecture ' + (n.runningNum || (n.subIndex + 1)));
+        const taskName = (sec && sec.sectionTitle ? sec.sectionTitle + ' — ' : '') + title;
+        switchToTask(taskName, {
+          source: 'learning',
+          ids: { courseId: cur.courseId, sectionId: cur.sectionId, subId: n.subId, subIndex: n.subIndex },
+          jobLabel: (sec && sec.courseTitle) || 'LEARNING',
+        });
+        return;
+      }
+    }
+    // Priority OR no next-lecture available → open the picker so user chooses.
+    showNextTaskDrawer();
+  });
   if (resumeBtn) resumeBtn.addEventListener('click', resumeSprint);
   if (discardPauseBtn) discardPauseBtn.addEventListener('click', discardPaused);
 

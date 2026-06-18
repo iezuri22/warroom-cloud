@@ -1028,9 +1028,54 @@ async function toggleSubFromQueue(it){
   render();
 }
 
+// Mirror the live learning state to localStorage so the Sprint page can offer
+// a "Next lecture" picker. Cached payload includes today's queue plus the
+// per-section flat lecture list — Sprint uses the latter to find "next in
+// current section" once a sprint is rolling. Cheap enough to refresh on every
+// render(); no Firestore re-read.
+function publishLearningCache(){
+  try {
+    const todayItems = todaysQueue().map(it => ({
+      kind: it.kind,
+      courseId: it.course.id,
+      courseTitle: it.course.title || '',
+      sectionId: it.section.id,
+      sectionTitle: it.section.title || '',
+      sectionDeadline: it.section.deadline || '',
+      subId: it.sub ? it.sub.id : '',
+      subIndex: it.subIndex == null ? -1 : it.subIndex,
+      subTitle: it.sub ? (it.sub.title || '') : '',
+      runningNum: it.runningNum || 0,
+      done: it.sub ? !!it.sub.done : false,
+    }));
+    const sections = [];
+    for (const c of courses.values()) {
+      if (c.archived) continue;
+      for (const s of (c.sections || [])) {
+        const subs = (s.subsections || []).map((u, i) => ({
+          subId: u.id, subIndex: i, subTitle: u.title || '',
+          runningNum: lectureRunningNum(c, s, i), done: !!u.done,
+        }));
+        sections.push({
+          courseId: c.id, courseTitle: c.title || '',
+          sectionId: s.id, sectionTitle: s.title || '',
+          sectionDeadline: s.deadline || '',
+          subs,
+        });
+      }
+    }
+    const payload = JSON.stringify({ updatedAt: Date.now(), today: todayItems, sections });
+    // Only write if changed — avoids storage-event spam for other tabs.
+    if (localStorage.getItem('learning-cache-v1') !== payload) {
+      localStorage.setItem('learning-cache-v1', payload);
+    }
+  } catch {}
+}
+
 function render(){
   // Refresh Today's queue alongside the courses list.
   renderTodayQueue();
+  publishLearningCache();
   const root = document.getElementById('courses');
   if (!courses.size) {
     root.innerHTML = `
@@ -1641,12 +1686,58 @@ window._seedUdemy = async () => {
   render();
 };
 
+// Drain lecture completions queued by sprint.html. The Sprint page can't
+// write to Firestore on its own (different module scope), so it pushes a
+// queue to localStorage and we mark the lectures done from here. Idempotent
+// — re-completes are no-ops because the queue is cleared after each pass.
+async function drainSprintLearningCompletions(){
+  const QKEY = 'sprint-pending-learning-completions';
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || []; } catch {}
+  if (!Array.isArray(queue) || !queue.length) return;
+  // Group by courseId so we save each course once.
+  const byCourse = new Map();
+  for (const it of queue) {
+    if (!it || !it.courseId) continue;
+    if (!byCourse.has(it.courseId)) byCourse.set(it.courseId, []);
+    byCourse.get(it.courseId).push(it);
+  }
+  let changed = false;
+  for (const [courseId, items] of byCourse) {
+    const c = courses.get(courseId);
+    if (!c) continue;
+    let touched = false;
+    for (const it of items) {
+      const sec = (c.sections || []).find(s => s.id === it.sectionId);
+      if (!sec) continue;
+      const subs = sec.subsections || [];
+      // Match by subId first, then fall back to subIndex (resilient to renames)
+      let u = it.subId ? subs.find(x => x.id === it.subId) : null;
+      if (!u && Number.isInteger(it.subIndex)) u = subs[it.subIndex] || null;
+      if (!u || u.done) continue;
+      u.done = true;
+      u.doneAt = nowISO();
+      touched = true;
+    }
+    if (touched) { await saveCourse(c); changed = true; }
+  }
+  try { localStorage.removeItem(QKEY); } catch {}
+  if (changed) render();
+}
+// Drain on load, on storage event (sprint queued something while we were open),
+// and on every render via publishLearningCache → quick re-check.
+window.addEventListener('storage', (e) => {
+  if (e.key === 'sprint-pending-learning-completions') drainSprintLearningCompletions();
+});
+
 // ============= Initial load + live sync ===============
 async function bootstrap(){
   try {
     const snap = await getDocs(coursesCol);
     snap.forEach(d => courses.set(d.id, { id: d.id, ...d.data() }));
     render();
+    // Drain anything Sprint queued while Learning was closed.
+    drainSprintLearningCompletions();
   } catch (e) {
     console.error('[learning] bootstrap failed', e);
     document.getElementById('courses').innerHTML = `<div class="empty-state"><h2>Couldn't load</h2><p>${esc(e.message || 'error')}</p></div>`;
@@ -1658,6 +1749,9 @@ async function bootstrap(){
       else courses.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
     });
     render();
+    // Drain again — a remote snapshot may have caught up before we processed
+    // a local sprint queue (idempotent so this is cheap).
+    drainSprintLearningCompletions();
   });
 }
 bootstrap();
