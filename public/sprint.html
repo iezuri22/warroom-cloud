@@ -2144,46 +2144,39 @@ body { display:flex; flex-direction:column; position:relative }
       const byId = new Map();
       items.forEach(t => { if (t && t.id) byId.set(t.id, t); });
 
-      // Collect routine task IDs (Morning Routine, Night Routine etc.) so we
-      // can EXCLUDE them from priorities even when they also live on a list
-      // whose name happens to contain "priority". This is what kept tasks
-      // like "physical therapy" from staying out of the sprint priorities.
-      const routineIds = new Set();
-      // Priority lists by id (First/Second/Third Priority).
+      // Walk Focus 5 lists once. Skip routine lists wholesale (Morning Routine,
+      // Night Routine) so their tasks never enter the priorities — that's how
+      // we keep things like physical therapy out by default. BUT we don't
+      // cross-exclude IDs across lists: an item the user explicitly put on
+      // First Priority is treated as a priority even if the same ID happens
+      // to also live on a routine list.
       const priorityListIds = [];
       try {
         const f5raw = localStorage.getItem('personal-focus-5-v1');
         const f5 = f5raw ? JSON.parse(f5raw) : null;
         const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
         for (const l of lists) {
-          if (!l) continue;
-          if (l.routine) {
-            for (const id of (l.taskIds || [])) if (id) routineIds.add(id);
-            continue;
-          }
+          if (!l || l.routine) continue;
           const name = String((l.name || '')).toLowerCase();
           if (/\bpriority\b/.test(name)) priorityListIds.push(l);
         }
       } catch {}
 
-      // Source 1 — items in First/Second/Third Priority lists, in list order
-      // then taskIds order. Exclude any IDs that ALSO appear on a routine
-      // list so morning tasks (physical therapy, etc.) don't bleed in.
+      // Items in First/Second/Third Priority lists, in list order.
       const orderedIds = [];
       const seen = new Set();
       for (const l of priorityListIds) {
         for (const id of (l.taskIds || [])) {
-          if (!id || seen.has(id) || routineIds.has(id)) continue;
+          if (!id || seen.has(id)) continue;
           seen.add(id); orderedIds.push(id);
         }
       }
       const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
-      if (fromFocus5.length) return fromFocus5;
 
-      // Source 2 — explicit per-todo priority flag (the ⭐ button), still
-      // excluding routine items. Only kicks in when priority lists are empty.
-      const starred = items.filter(t => t && t.priority && t.id && !routineIds.has(t.id));
-      return starred;
+      // Add starred items the priority lists didn't cover — so users who
+      // organize via the ⭐ button (not the lists) still get a populated drawer.
+      const starred = items.filter(t => t && t.priority && t.id && !seen.has(t.id));
+      return [...fromFocus5, ...starred];
     } catch { return []; }
   }
   // Identify "what kind of thing is the current sprint task?" by checking the
