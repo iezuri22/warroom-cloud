@@ -564,6 +564,11 @@ let _completedExpanded = false;     // completed-courses group toggle (session o
 // course view; users can expand the archive group or unarchive any section
 // individually to bring it back.
 const _archivedSectionsExpanded = new Set(); // courseIds whose archive is open
+// Per-course "show archived inline" toggle. When set, archived sections
+// render in their natural position alongside active ones instead of being
+// tucked into the bottom archive group — lets the user scroll the full
+// course top-to-bottom without unarchiving individually.
+const _showArchivedInline = new Set();
 
 // ---- Section archive helpers ----
 // Persisted as a single localStorage array of sectionIds. Independent of the
@@ -875,8 +880,9 @@ function startFocusOnTask(task){
     renderSprintBanner();
     return;
   }
-  // No active sprint — open one in a new tab as before.
-  const qs = new URLSearchParams({ task: t });
+  // No active sprint — open one in a new tab as before. Pass from=learning so
+  // sprint's back link returns the user straight to Learning instead of War Room.
+  const qs = new URLSearchParams({ task: t, from: 'learning' });
   window.open('/sprint.html?' + qs.toString(), '_blank');
 }
 
@@ -898,7 +904,7 @@ function renderSprintBanner(){
     el.addEventListener('click', () => {
       // No reliable way to focus another tab; opening the same URL re-uses the
       // existing sprint window in most browsers when target name matches.
-      window.open('/sprint.html', 'warroom-sprint');
+      window.open('/sprint.html?from=learning', 'warroom-sprint');
     });
     const main = document.querySelector('main') || document.body;
     main.insertBefore(el, main.firstChild);
@@ -1316,23 +1322,46 @@ function renderCourseCard(c){
   }
   const metaStr = meta.join(' · ');
   // Running offset for course subsection numbering (Lecture 14 across
-  // sections, not "Lecture 1" restart). Walks ALL sections (active + archived)
-  // so numbering stays consistent regardless of archive state.
+  // Per-course rendering of sections. Two modes:
+  //   compact (default) → archived sections collapse into a single group at
+  //                       the bottom with a chevron to peek inside.
+  //   inline            → archived sections render in their NATURAL position
+  //                       alongside active ones, so the user can scroll the
+  //                       full course top-to-bottom without touching the
+  //                       archive at all. A small "archived" badge marks them.
+  // Walks every section once and tracks running lecture numbers so the running
+  // count stays correct regardless of mode.
+  const showArchivedInline = _showArchivedInline.has(c.id);
   let runningOffset = 0;
-  const activeHtml = [];
+  const allHtml = [];
   const archivedHtml = [];
   const archivedSet = getArchivedSectionIds();
   (c.sections || []).forEach((s, idx) => {
     const startNum = runningOffset + 1;
     runningOffset += isBook ? (s.totalPages || 0) : (s.subsections || []).length;
-    const html = renderSectionRow(c, s, idx + 1, startNum, isBook);
     // Books don't auto-archive (pages aren't checked off the same way).
-    if (!isBook && archivedSet.has(s.id)) archivedHtml.push(html);
-    else activeHtml.push(html);
+    const archivedHere = !isBook && archivedSet.has(s.id);
+    const html = renderSectionRow(c, s, idx + 1, startNum, isBook);
+    if (archivedHere && !showArchivedInline) {
+      archivedHtml.push(html);
+    } else {
+      allHtml.push(html);
+    }
   });
   const archCount = archivedHtml.length;
   const archOpen = _archivedSectionsExpanded.has(c.id);
-  const archGroupHtml = archCount
+  // When in compact mode AND there are archived sections, show a sticky
+  // chevron group at the bottom. The toggle pill above the section list
+  // lets the user switch into inline view to see everything in natural order.
+  const archCountTotal = (c.sections || []).reduce(
+    (n, s) => n + ((!isBook && archivedSet.has(s.id)) ? 1 : 0), 0);
+  const inlineTogglePill = archCountTotal
+    ? `<button type="button" class="archive-mode-pill" data-action="toggle-archive-mode"
+        style="display:inline-flex;align-items:center;gap:6px;background:${showArchivedInline?'rgba(74,222,128,.16)':'rgba(255,255,255,.05)'};border:1px solid ${showArchivedInline?'rgba(74,222,128,.32)':'rgba(255,255,255,.1)'};color:${showArchivedInline?'#86efac':'rgba(255,255,255,.7)'};font-size:11px;font-weight:700;letter-spacing:.04em;padding:5px 10px;border-radius:99px;cursor:pointer;margin:8px 0 4px 14px">
+        ${showArchivedInline ? '👁 Showing all sections' : `📦 ${archCountTotal} archived — show all`}
+       </button>`
+    : '';
+  const archGroupHtml = (archCount && !showArchivedInline)
     ? `
       <div class="section-archive-group ${archOpen ? 'expanded' : ''}" data-archive-course="${c.id}">
         <div class="section-archive-head" data-action="toggle-section-archive"
@@ -1346,7 +1375,7 @@ function renderCourseCard(c){
         </div>
       </div>`
     : '';
-  const sectionHtml = activeHtml.join('') + archGroupHtml;
+  const sectionHtml = inlineTogglePill + allHtml.join('') + archGroupHtml;
   const collapsed = isCourseCollapsed(c);
   const isCompleteAll = p.total > 0 && p.done >= p.total;
   return `
@@ -1508,6 +1537,15 @@ function wireEvents(){
       e.stopPropagation();
       if (_archivedSectionsExpanded.has(c.id)) _archivedSectionsExpanded.delete(c.id);
       else _archivedSectionsExpanded.add(c.id);
+      render();
+    });
+    // Per-course "show archived inline" mode pill — flips between compact and
+    // inline layouts so the user can see the full course at once when they
+    // want, without unarchiving each section.
+    courseEl.querySelector('[data-action="toggle-archive-mode"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_showArchivedInline.has(c.id)) _showArchivedInline.delete(c.id);
+      else _showArchivedInline.add(c.id);
       render();
     });
     // Course-level

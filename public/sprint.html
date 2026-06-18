@@ -3696,13 +3696,38 @@ body { display:flex; flex-direction:column; position:relative }
     // so the overlay can close itself.
     const isRaceMode = sp.get('race') === '1';
     const noMusic = sp.get('nomusic') === '1';
-    // Hide the "← War Room" back link when embedded (race mode or iframe)
-    // — the parent shell handles its own nav and another back link would be noise.
+    // Hide the back link when embedded (race mode or iframe) — the parent
+    // shell handles its own nav. Otherwise pick the back target based on
+    // where the user came from so they land back in the right context:
+    // - ?from=learning   → "← Learning"
+    // - referrer is Learning (covers normal navigation) → "← Learning"
+    // - otherwise        → "← War Room"
     try {
+      const bl = document.getElementById('sprintBackLink');
       const embedded = isRaceMode || (window.self !== window.top);
-      if (embedded) {
-        const bl = document.getElementById('sprintBackLink');
-        if (bl) bl.style.display = 'none';
+      if (bl) {
+        if (embedded) {
+          bl.style.display = 'none';
+        } else {
+          const fromParam = (sp.get('from') || '').toLowerCase();
+          let cameFromLearning = fromParam === 'learning';
+          try {
+            if (!cameFromLearning && document.referrer) {
+              const r = new URL(document.referrer);
+              if (r.origin === location.origin && /\/learning\.html\b/.test(r.pathname)) {
+                cameFromLearning = true;
+              }
+            }
+          } catch {}
+          if (cameFromLearning) {
+            bl.setAttribute('href', '/learning.html');
+            bl.setAttribute('title', 'Back to Learning');
+            // Replace the text node "War Room" while keeping the chevron SVG.
+            const textNode = [...bl.childNodes].find(n => n.nodeType === 3 && n.textContent && n.textContent.trim());
+            if (textNode) textNode.textContent = ' Learning';
+            else { bl.appendChild(document.createTextNode(' Learning')); }
+          }
+        }
       }
     } catch {}
     const todoIdParam = sp.get('todoId') || '';
