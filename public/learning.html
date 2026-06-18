@@ -396,6 +396,11 @@
 <body>
 
 <div id="topbar">
+  <a href="/daily-planner.html" class="tb-back" title="Back to War Room"
+    style="display:inline-flex;align-items:center;gap:6px;background:transparent;color:var(--muted);text-decoration:none;font-weight:600;font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);margin-right:10px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    War Room
+  </a>
   <h1>Learning</h1>
   <span class="sp"></span>
   <button class="tb-btn" id="addBookBtn">+ Add book</button>
@@ -553,6 +558,7 @@ const expandedSections = new Set(); // courseId + '/' + sectionId
 // completed/archived courses collapse, in-progress expand.
 const _courseState = new Map();
 let _archiveExpanded = false;       // archive section toggle (session only)
+let _completedExpanded = false;     // completed-courses group toggle (session only)
 
 function isCourseCollapsed(c){
   const explicit = _courseState.get(c.id);
@@ -1113,8 +1119,19 @@ function render(){
     inProgress.forEach(c => html.push(renderCourseCard(c)));
   }
   if (completed.length) {
-    html.push('<div class="group-label">Completed</div>');
-    completed.forEach(c => html.push(renderCourseCard(c)));
+    // Mirror the Archived group: a collapsable "Completed" group so finished
+    // courses don't crowd the active in-progress list.
+    html.push(`
+      <div class="archive-group ${_completedExpanded ? 'expanded' : ''}" id="completedGroup">
+        <div class="archive-head" data-action="toggle-completed">
+          <span class="chev">▶</span>
+          <span>Completed</span>
+          <span style="margin-left:auto;font-size:11px;font-weight:500;opacity:.7">${completed.length} item${completed.length===1?'':'s'}</span>
+        </div>
+        <div class="archive-list">
+          ${completed.map(c => renderCourseCard(c)).join('')}
+        </div>
+      </div>`);
   }
   if (archived.length) {
     html.push(`
@@ -1131,6 +1148,11 @@ function render(){
   }
   root.innerHTML = html.join('');
   wireEvents();
+  document.getElementById('completedGroup')?.querySelector('[data-action="toggle-completed"]')
+    ?.addEventListener('click', () => {
+      _completedExpanded = !_completedExpanded;
+      render();
+    });
   document.getElementById('archiveGroup')?.querySelector('[data-action="toggle-archive"]')
     ?.addEventListener('click', () => {
       _archiveExpanded = !_archiveExpanded;
@@ -1432,6 +1454,12 @@ function wireEvents(){
           if (!wasDone && u.done) {
             const subIdx = (s.subsections || []).indexOf(u);
             maybePromptKeepGoing(c, s, subIdx);
+            // If this completion closes out the section, auto-collapse it so
+            // finished sections tidy themselves away. User can still click
+            // the section head to peek inside whenever they want.
+            if (isSectionComplete(s)) {
+              expandedSections.delete(c.id + '/' + s.id);
+            }
           }
           render();
         }));
@@ -1759,6 +1787,16 @@ bootstrap();
 if (new URLSearchParams(location.search).get('embed') === '1') {
   document.body.classList.add('embed');
 }
+// Hide the "← War Room" back link when running embedded (in an iframe inside
+// daily-planner) — the parent shell has its own nav.
+try {
+  const embedded = (new URLSearchParams(location.search).get('embed') === '1')
+    || (window.self !== window.top);
+  if (embedded) {
+    const bl = document.querySelector('.tb-back');
+    if (bl) bl.style.display = 'none';
+  }
+} catch {}
 </script>
 
 </body>
