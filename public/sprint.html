@@ -2144,52 +2144,46 @@ body { display:flex; flex-direction:column; position:relative }
       const byId = new Map();
       items.forEach(t => { if (t && t.id) byId.set(t.id, t); });
 
-      // Source 1 — Focus 5 priority lists (the "Priorities page" source of
-      // truth). Lists named with "priority" (First/Second/Third) are picked;
-      // routines and free-form lists are skipped. Survives across pages
-      // because focus5State is persisted to localStorage on every change.
-      const orderedIds = [];
-      const seen = new Set();
+      // Collect routine task IDs (Morning Routine, Night Routine etc.) so we
+      // can EXCLUDE them from priorities even when they also live on a list
+      // whose name happens to contain "priority". This is what kept tasks
+      // like "physical therapy" from staying out of the sprint priorities.
+      const routineIds = new Set();
+      // Priority lists by id (First/Second/Third Priority).
+      const priorityListIds = [];
       try {
         const f5raw = localStorage.getItem('personal-focus-5-v1');
         const f5 = f5raw ? JSON.parse(f5raw) : null;
         const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
         for (const l of lists) {
-          if (!l || l.routine) continue; // skip routine (Morning/Night) lists
-          const name = String((l.name || '')).toLowerCase();
-          if (!/\bpriority\b/.test(name)) continue;
-          for (const id of (l.taskIds || [])) {
-            if (id && !seen.has(id)) { seen.add(id); orderedIds.push(id); }
+          if (!l) continue;
+          if (l.routine) {
+            for (const id of (l.taskIds || [])) if (id) routineIds.add(id);
+            continue;
           }
+          const name = String((l.name || '')).toLowerCase();
+          if (/\bpriority\b/.test(name)) priorityListIds.push(l);
         }
       } catch {}
+
+      // Source 1 — items in First/Second/Third Priority lists, in list order
+      // then taskIds order. Exclude any IDs that ALSO appear on a routine
+      // list so morning tasks (physical therapy, etc.) don't bleed in.
+      const orderedIds = [];
+      const seen = new Set();
+      for (const l of priorityListIds) {
+        for (const id of (l.taskIds || [])) {
+          if (!id || seen.has(id) || routineIds.has(id)) continue;
+          seen.add(id); orderedIds.push(id);
+        }
+      }
       const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
       if (fromFocus5.length) return fromFocus5;
 
-      // Source 2 — explicit per-todo priority flag (the ⭐ button). Lets
-      // users who organize via stars (not Focus 5) still get a populated list.
-      const starred = items.filter(t => t && t.priority);
-      if (starred.length) return starred;
-
-      // Source 3 — Focus 5 ANY list (including custom-named priority lists
-      // that don't literally contain "priority" in the name). Catches users
-      // who renamed their lists ("Today's Big 3" etc).
-      const anyF5Ids = [];
-      try {
-        const f5raw = localStorage.getItem('personal-focus-5-v1');
-        const f5 = f5raw ? JSON.parse(f5raw) : null;
-        const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
-        for (const l of lists) {
-          if (!l || l.routine) continue;
-          for (const id of (l.taskIds || [])) if (id) anyF5Ids.push(id);
-        }
-      } catch {}
-      const fromAnyF5 = [...new Set(anyF5Ids)].map(id => byId.get(id)).filter(Boolean);
-      if (fromAnyF5.length) return fromAnyF5;
-
-      // Source 4 — final fallback: the top open todos. Better to surface
-      // SOMETHING actionable than the dead-end "Open Personal to add some".
-      return items.slice(0, 10);
+      // Source 2 — explicit per-todo priority flag (the ⭐ button), still
+      // excluding routine items. Only kicks in when priority lists are empty.
+      const starred = items.filter(t => t && t.priority && t.id && !routineIds.has(t.id));
+      return starred;
     } catch { return []; }
   }
   // Identify "what kind of thing is the current sprint task?" by checking the
@@ -2236,6 +2230,11 @@ body { display:flex; flex-direction:column; position:relative }
     const subline = it.sectionDeadline
       ? `${esc(it.sectionTitle || it.courseTitle)} · due ${esc(it.sectionDeadline)}`
       : esc(it.sectionTitle || it.courseTitle);
+    // "Not today" pill only on lectures currently labeled Today. Click consumes
+    // today's bucket for that lecture's section so it (and any remaining
+    // unfinished today-lectures from the same section) re-label as Tomorrow,
+    // without needing to bounce to Learning to click the section button.
+    const showNotToday = it.dueCls === 'today';
     return `
       <div class="nt-item" data-kind="lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" data-sub-id="${esc(it.subId || '')}"
         style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
@@ -2246,6 +2245,8 @@ body { display:flex; flex-direction:column; position:relative }
         </div>
         ${duePillHtml(it.dueText, it.dueCls)}
         ${label ? `<span style="font-size:9px;font-weight:800;background:rgba(59,130,246,.2);color:#93c5fd;letter-spacing:.06em;padding:3px 8px;border-radius:99px">${esc(label)}</span>` : ''}
+        ${showNotToday ? `<button type="button" data-act="not-today" data-section="${esc(it.sectionId)}" title="Move this and remaining today's lectures from this section to Tomorrow"
+          style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.55);font-size:11px;font-weight:700;padding:4px 9px;border-radius:99px;cursor:pointer;flex:0 0 auto" onclick="event.stopPropagation()">✕ not today</button>` : ''}
         <span style="color:rgba(255,255,255,.4);font-size:14px">→</span>
       </div>`;
   }
@@ -2312,6 +2313,41 @@ body { display:flex; flex-direction:column; position:relative }
     $('nextTaskPriorityList').innerHTML = pris.map(priorityItemHtml).join('');
     $('nextTaskPriorityCount').textContent = pris.length ? (pris.length + ' open') : '';
     $('nextTaskPriorityEmpty').style.display = pris.length ? 'none' : '';
+    // Per-row "✕ not today" button. Marks that lecture's section as today-
+    // consumed in localStorage (key matches learning.html's todaysPlannedFor)
+    // and optimistically rewrites the cache so the drawer re-renders without
+    // the affected lecture(s). User can also do this from Learning, but the
+    // sprint drawer is where they hit the wrong label first.
+    drawer.querySelectorAll('[data-act="not-today"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sectionId = btn.dataset.section;
+        if (!sectionId) return;
+        const today = (() => {
+          const d = new Date();
+          return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        })();
+        try {
+          localStorage.setItem('learning-consumed-' + sectionId + '-' + today, '1');
+          localStorage.removeItem('learning-plan-' + sectionId + '-' + today);
+          // Optimistic cache update so the drawer re-renders immediately.
+          const cacheRaw = localStorage.getItem('learning-cache-v1');
+          if (cacheRaw) {
+            const c = JSON.parse(cacheRaw);
+            c.today = (c.today || []).filter(it => it.sectionId !== sectionId);
+            const sec = (c.sections || []).find(s => s.sectionId === sectionId);
+            if (sec) {
+              sec.subs = (sec.subs || []).map(u => {
+                if (u.done) return u;
+                return { ...u, dueText: 'Tomorrow', dueCls: 'tomorrow' };
+              });
+            }
+            localStorage.setItem('learning-cache-v1', JSON.stringify(c));
+          }
+        } catch {}
+        renderNextTaskDrawer();
+      });
+    });
     // Wire up clicks
     drawer.querySelectorAll('.nt-item').forEach(el => {
       el.addEventListener('click', () => {
