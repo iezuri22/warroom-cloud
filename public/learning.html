@@ -741,6 +741,19 @@ function sectionProgress(section){
   return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
 }
 
+// Running cumulative lecture number for (course, section, subIndex). Mirrors
+// the offset logic used inside renderCourseCard so Today's queue / Keep-going
+// modal both show the same number the section list shows (e.g. Lecture 70,
+// not Lecture 1 of Section 7).
+function lectureRunningNum(course, section, subIdx){
+  let offset = 0;
+  for (const s of (course.sections || [])) {
+    if (s.id === section.id) return offset + subIdx + 1;
+    offset += (s.subsections || []).length;
+  }
+  return subIdx + 1;
+}
+
 // Collect every lecture (or chapter for books) flagged "Today" by the
 // per-lecture pacing logic, across every non-archived course. Sorted by
 // soonest deadline first.
@@ -752,8 +765,6 @@ function todaysQueue(){
     for (const s of (c.sections || [])) {
       if (!s.deadline) continue;
       if (isBook) {
-        // Books surface the chapter itself as one "today" row if any pages
-        // are still due today by the chapter's pacing.
         const pace = pacingFor(s);
         if (pace) {
           out.push({ kind: 'book-chapter', course: c, section: s, deadline: s.deadline, pace });
@@ -761,7 +772,6 @@ function todaysQueue(){
         continue;
       }
       const subs = s.subsections || [];
-      // Same logic as lectureDueLabel — find lectures whose dayOffset is 0.
       const pace = pacingFor(s);
       if (!pace) continue;
       const notDone = subs.map((u, i) => (u.done ? null : i)).filter(i => i != null);
@@ -771,7 +781,9 @@ function todaysQueue(){
         const u = subs[i];
         if (!u) continue;
         out.push({
-          kind: 'lecture', course: c, section: s, sub: u, subIndex: i, deadline: s.deadline
+          kind: 'lecture', course: c, section: s, sub: u, subIndex: i,
+          runningNum: lectureRunningNum(c, s, i),
+          deadline: s.deadline
         });
       }
     }
@@ -796,7 +808,10 @@ function renderTodayQueue(){
     <div class="tq-list">
       ${items.map((it, idx) => {
         if (it.kind === 'lecture') {
-          const lectureTitle = /^Lecture \d+/.test(it.sub.title || '') ? it.sub.title : (it.sub.title || ('Lecture ' + (it.subIndex + 1)));
+          // Use the running cumulative number — matches what the section
+          // list displays (Lecture 70, not Lecture 1 of Section 7).
+          const customTitle = it.sub.title && !/^Lecture \d+/.test(it.sub.title);
+          const lectureTitle = customTitle ? it.sub.title : ('Lecture ' + it.runningNum);
           return `
             <div class="tq-row ${it.sub.done ? 'done' : ''}" data-tq="${idx}">
               <div class="tq-check" data-action="tq-toggle"></div>
@@ -877,9 +892,15 @@ function maybePromptKeepGoing(course, section, justCompletedIndex){
       }
     }
   }
+  // Helper that mirrors the rendered title (running running number for
+  // auto-generated lectures, custom title verbatim otherwise).
+  const titleFor = (c, sec, sub, subIdx) => {
+    if (sub?.title && !/^Lecture \d+/.test(sub.title)) return sub.title;
+    return 'Lecture ' + lectureRunningNum(c, sec, subIdx);
+  };
   if (!next) {
     // Whole course is done.
-    const justTitle = subs[justCompletedIndex]?.title || 'That';
+    const justTitle = titleFor(course, section, subs[justCompletedIndex], justCompletedIndex);
     showKeepGoingModal({
       title: '🎉 Course complete!',
       body: `<strong>${esc(justTitle)}</strong> was the last one. Take a moment.`,
@@ -888,8 +909,8 @@ function maybePromptKeepGoing(course, section, justCompletedIndex){
     });
     return;
   }
-  const justTitle = subs[justCompletedIndex]?.title || 'Lecture';
-  const nextTitle = /^Lecture \d+/.test(next.sub.title || '') ? next.sub.title : (next.sub.title || 'next lecture');
+  const justTitle = titleFor(course, section, subs[justCompletedIndex], justCompletedIndex);
+  const nextTitle = titleFor(course, next.section, next.sub, next.idx);
   showKeepGoingModal({
     title: '✓ ' + esc(justTitle) + ' done!',
     body: `Next up: <strong>${esc(nextTitle)}</strong><br><span style="color:var(--muted);font-size:12px">in ${esc(next.section.title)}</span>`,
