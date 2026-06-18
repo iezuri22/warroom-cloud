@@ -99,6 +99,75 @@
     color:var(--muted); font-weight:600
   }
   .group-label:first-child{ margin-top:4px }
+
+  /* ===== Today's queue — top of page ===== */
+  #todayQueue{
+    background:linear-gradient(135deg, rgba(248,113,113,.08), rgba(251,191,36,.05));
+    border:1px solid rgba(248,113,113,.28); border-radius:14px;
+    padding:0; margin-bottom:24px; overflow:hidden
+  }
+  #todayQueue.empty{ display:none }
+  #todayQueue .tq-head{
+    display:flex;align-items:center;gap:10px;padding:14px 18px;
+    border-bottom:1px solid rgba(248,113,113,.18); background:rgba(248,113,113,.06);
+    font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;color:#fca5a5
+  }
+  #todayQueue .tq-head .tq-count{
+    color:#fff;background:rgba(248,113,113,.35);padding:2px 8px;border-radius:9px;
+    font-size:11px;font-weight:700;letter-spacing:.3px
+  }
+  #todayQueue .tq-head .tq-sp{flex:1}
+  #todayQueue .tq-list{padding:6px 8px 10px;display:flex;flex-direction:column}
+  .tq-row{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;
+    transition:background .12s;cursor:pointer
+  }
+  .tq-row:hover{background:var(--w05)}
+  .tq-row.done{opacity:.4}
+  .tq-row.done .tq-title{text-decoration:line-through}
+  .tq-row .tq-check{
+    width:18px;height:18px;border-radius:5px;border:1.5px solid var(--line2);
+    background:var(--w03);flex:0 0 18px;display:flex;align-items:center;justify-content:center
+  }
+  .tq-row.done .tq-check{background:var(--green);border-color:var(--green)}
+  .tq-row.done .tq-check::after{
+    content:'';width:10px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;
+    transform:translate(0,-1px) rotate(-45deg)
+  }
+  .tq-row .tq-text{flex:1;min-width:0}
+  .tq-row .tq-title{font-size:14px;color:var(--ink);font-weight:600;line-height:1.2}
+  .tq-row .tq-meta{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .tq-row .tq-focus{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:5px 11px;border-radius:6px;
+    background:rgba(255,138,61,.15);color:#fb923c;border:1px solid rgba(255,138,61,.32);
+    font-size:10.5px;font-weight:700;cursor:pointer;letter-spacing:.3px;
+    text-transform:uppercase;font-family:inherit;transition:.12s
+  }
+  .tq-row .tq-focus:hover{background:rgba(255,138,61,.28);color:#fed7aa}
+
+  /* "Keep going?" modal */
+  #kgModalBd{
+    position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);
+    z-index:300;display:none;align-items:center;justify-content:center;padding:24px
+  }
+  #kgModalBd.open{display:flex}
+  #kgModalCard{
+    background:var(--bg);border:1px solid var(--line2);border-radius:14px;
+    width:100%;max-width:420px;padding:24px 26px;text-align:center;
+    box-shadow:0 12px 40px rgba(0,0,0,.6)
+  }
+  #kgModalCard .kg-ic{font-size:42px;margin-bottom:8px;color:var(--green)}
+  #kgModalCard h3{margin:0 0 8px;font-size:18px;color:var(--ink)}
+  #kgModalCard p{margin:0 0 20px;font-size:14px;color:var(--muted);line-height:1.5}
+  #kgModalCard p strong{color:var(--ink);font-weight:600}
+  #kgModalCard .kg-actions{display:flex;gap:10px;justify-content:center}
+  #kgModalCard .kg-actions button{
+    padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;
+    cursor:pointer;font-family:inherit;border:1px solid var(--line)
+  }
+  #kgModalCard .kg-later{background:var(--bg2);color:var(--muted)}
+  #kgModalCard .kg-go{background:var(--accent);color:#fff;border-color:transparent}
   .course-head{
     display:flex;align-items:center;gap:16px;padding:18px 22px;
     border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)
@@ -334,8 +403,22 @@
 </div>
 
 <main id="main">
+  <div id="todayQueue" class="empty"></div>
   <div id="courses"></div>
 </main>
+
+<!-- "Keep going?" prompt shown after checking off a lecture -->
+<div id="kgModalBd">
+  <div id="kgModalCard">
+    <div class="kg-ic">✓</div>
+    <h3 id="kgTitle">Lecture done!</h3>
+    <p id="kgBody">Want to start the next one?</p>
+    <div class="kg-actions">
+      <button class="kg-later" id="kgLater">I'm done for now</button>
+      <button class="kg-go" id="kgGo">▶ Start focus</button>
+    </div>
+  </div>
+</div>
 
 <!-- Add / edit BOOK modal -->
 <div class="modal-bd" id="bookModalBd">
@@ -658,7 +741,194 @@ function sectionProgress(section){
   return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
 }
 
+// Collect every lecture (or chapter for books) flagged "Today" by the
+// per-lecture pacing logic, across every non-archived course. Sorted by
+// soonest deadline first.
+function todaysQueue(){
+  const out = [];
+  for (const c of courses.values()) {
+    if (c.archived) continue;
+    const isBook = (c.type || 'course') === 'book';
+    for (const s of (c.sections || [])) {
+      if (!s.deadline) continue;
+      if (isBook) {
+        // Books surface the chapter itself as one "today" row if any pages
+        // are still due today by the chapter's pacing.
+        const pace = pacingFor(s);
+        if (pace) {
+          out.push({ kind: 'book-chapter', course: c, section: s, deadline: s.deadline, pace });
+        }
+        continue;
+      }
+      const subs = s.subsections || [];
+      // Same logic as lectureDueLabel — find lectures whose dayOffset is 0.
+      const pace = pacingFor(s);
+      if (!pace) continue;
+      const notDone = subs.map((u, i) => (u.done ? null : i)).filter(i => i != null);
+      const todayCount = Math.min(pace.perDay, notDone.length);
+      for (let k = 0; k < todayCount; k++) {
+        const i = notDone[k];
+        const u = subs[i];
+        if (!u) continue;
+        out.push({
+          kind: 'lecture', course: c, section: s, sub: u, subIndex: i, deadline: s.deadline
+        });
+      }
+    }
+  }
+  out.sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+  return out;
+}
+
+function renderTodayQueue(){
+  const el = document.getElementById('todayQueue');
+  if (!el) return;
+  const items = todaysQueue();
+  if (!items.length) { el.classList.add('empty'); el.innerHTML = ''; return; }
+  el.classList.remove('empty');
+  el.innerHTML = `
+    <div class="tq-head">
+      <span>📅 Due Today</span>
+      <span class="tq-count">${items.length}</span>
+      <span class="tq-sp"></span>
+      <span style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--muted)">Across ${new Set(items.map(i => i.course.id)).size} ${items.length === 1 ? 'course' : 'courses'}</span>
+    </div>
+    <div class="tq-list">
+      ${items.map((it, idx) => {
+        if (it.kind === 'lecture') {
+          const lectureTitle = /^Lecture \d+/.test(it.sub.title || '') ? it.sub.title : (it.sub.title || ('Lecture ' + (it.subIndex + 1)));
+          return `
+            <div class="tq-row ${it.sub.done ? 'done' : ''}" data-tq="${idx}">
+              <div class="tq-check" data-action="tq-toggle"></div>
+              <div class="tq-text">
+                <div class="tq-title">${esc(lectureTitle)}</div>
+                <div class="tq-meta">${esc(it.course.title)} · ${esc(it.section.title)}</div>
+              </div>
+              <button type="button" class="tq-focus" data-action="tq-focus">▶ Focus</button>
+            </div>`;
+        } else {
+          return `
+            <div class="tq-row" data-tq="${idx}">
+              <div class="tq-check" style="visibility:hidden"></div>
+              <div class="tq-text">
+                <div class="tq-title">${it.pace.perDay} ${it.pace.unit} of ${esc(it.section.title)}</div>
+                <div class="tq-meta">${esc(it.course.title)} · book chapter</div>
+              </div>
+              <button type="button" class="tq-focus" data-action="tq-focus">▶ Focus</button>
+            </div>`;
+        }
+      }).join('')}
+    </div>`;
+  el.querySelectorAll('[data-tq]').forEach(row => {
+    const idx = +row.getAttribute('data-tq');
+    const it = items[idx];
+    row.addEventListener('click', (e) => {
+      // Click anywhere on the row (not on a button or checkbox) jumps to
+      // that section in the courses list and expands it.
+      if (e.target.closest('[data-action]')) return;
+      jumpToSection(it.course.id, it.section.id);
+    });
+    row.querySelector('[data-action="tq-toggle"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (it.kind !== 'lecture') return;
+      toggleSubFromQueue(it);
+    });
+    row.querySelector('[data-action="tq-focus"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const qs = new URLSearchParams({ task: it.section.title });
+      window.open('/sprint.html?' + qs.toString(), '_blank');
+    });
+  });
+}
+
+function jumpToSection(courseId, sectionId){
+  // Make sure the course is expanded.
+  _courseState.set(courseId, 'expanded');
+  expandedSections.add(courseId + '/' + sectionId);
+  render();
+  setTimeout(() => {
+    const el = document.querySelector(`.course[data-course="${courseId}"] .section[data-section="${sectionId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+      el.style.outline = '2px solid var(--accent)';
+      setTimeout(() => { el.style.outline = ''; }, 1400);
+    }
+  }, 80);
+}
+
+// "Keep going?" prompt shown after a lecture is marked done. Surfaces the
+// next not-done lecture in the same section as the natural next step.
+function maybePromptKeepGoing(course, section, justCompletedIndex){
+  const subs = section.subsections || [];
+  // Find the next not-done lecture AFTER the one just completed; if none in
+  // this section, look in the next section that's open.
+  let next = null;
+  for (let i = justCompletedIndex + 1; i < subs.length; i++) {
+    if (!subs[i].done) { next = { course, section, sub: subs[i], idx: i }; break; }
+  }
+  if (!next) {
+    const sIdx = (course.sections || []).indexOf(section);
+    for (let j = sIdx + 1; j < (course.sections || []).length; j++) {
+      const ns = course.sections[j];
+      const nextSub = (ns.subsections || []).find(u => !u.done);
+      if (nextSub) {
+        next = { course, section: ns, sub: nextSub, idx: ns.subsections.indexOf(nextSub) };
+        break;
+      }
+    }
+  }
+  if (!next) {
+    // Whole course is done.
+    const justTitle = subs[justCompletedIndex]?.title || 'That';
+    showKeepGoingModal({
+      title: '🎉 Course complete!',
+      body: `<strong>${esc(justTitle)}</strong> was the last one. Take a moment.`,
+      goLabel: 'Done',
+      onGo: hideKeepGoingModal
+    });
+    return;
+  }
+  const justTitle = subs[justCompletedIndex]?.title || 'Lecture';
+  const nextTitle = /^Lecture \d+/.test(next.sub.title || '') ? next.sub.title : (next.sub.title || 'next lecture');
+  showKeepGoingModal({
+    title: '✓ ' + esc(justTitle) + ' done!',
+    body: `Next up: <strong>${esc(nextTitle)}</strong><br><span style="color:var(--muted);font-size:12px">in ${esc(next.section.title)}</span>`,
+    goLabel: '▶ Start focus',
+    onGo: () => {
+      hideKeepGoingModal();
+      const qs = new URLSearchParams({ task: next.section.title + ' — ' + nextTitle });
+      window.open('/sprint.html?' + qs.toString(), '_blank');
+    }
+  });
+}
+function showKeepGoingModal({ title, body, goLabel, onGo }){
+  document.getElementById('kgTitle').textContent = title;
+  document.getElementById('kgBody').innerHTML = body;
+  const goBtn = document.getElementById('kgGo');
+  goBtn.textContent = goLabel || '▶ Start focus';
+  goBtn.onclick = onGo;
+  document.getElementById('kgModalBd').classList.add('open');
+}
+function hideKeepGoingModal(){
+  document.getElementById('kgModalBd').classList.remove('open');
+}
+document.getElementById('kgLater').addEventListener('click', hideKeepGoingModal);
+document.getElementById('kgModalBd').addEventListener('click', (e) => {
+  if (e.target.id === 'kgModalBd') hideKeepGoingModal();
+});
+
+async function toggleSubFromQueue(it){
+  it.sub.done = !it.sub.done;
+  it.sub.doneAt = it.sub.done ? nowISO() : null;
+  await saveCourse(it.course);
+  // Trigger the same keep-going prompt as the inline checkbox.
+  if (it.sub.done) maybePromptKeepGoing(it.course, it.section, it.subIndex);
+  render();
+}
+
 function render(){
+  // Refresh Today's queue alongside the courses list.
+  renderTodayQueue();
   const root = document.getElementById('courses');
   if (!courses.size) {
     root.innerHTML = `
@@ -1007,9 +1277,15 @@ function wireEvents(){
           const subId = b.closest('.sub-row')?.dataset.sub;
           const u = (s.subsections || []).find(x => x.id === subId);
           if (!u) return;
+          const wasDone = u.done;
           u.done = !u.done;
           u.doneAt = u.done ? nowISO() : null;
           saveCourse(c);
+          // Only prompt when we went from NOT-DONE → DONE.
+          if (!wasDone && u.done) {
+            const subIdx = (s.subsections || []).indexOf(u);
+            maybePromptKeepGoing(c, s, subIdx);
+          }
           render();
         }));
       sectionEl.querySelector('[data-action="focus-section"]')?.addEventListener('click', (e) => {
