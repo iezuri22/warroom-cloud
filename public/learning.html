@@ -715,12 +715,24 @@ function todaysPlannedFor(section){
   if (!subs.length) return [];
   const today = todayISO();
   const cacheKey = 'learning-plan-' + section.id + '-' + today;
+  const consumedKey = 'learning-consumed-' + section.id + '-' + today;
   // Anchor today's plan around what's ALREADY done today. This matters for
   // recovery: a user who finished more than perDay lectures today (e.g. the
   // pacing-promotion bug let them through) should NOT see additional lectures
   // labeled "today" — today's bucket is already full.
   const doneTodayIndices = [];
   for (let i = 0; i < subs.length; i++) if (lectureDoneToday(subs[i])) doneTodayIndices.push(i);
+  // User explicitly closed out today for this section (via "Done for today"
+  // button). Treat today's plan as only the lectures already finished today;
+  // everything else falls into Tomorrow+. This is the manual override for
+  // when the auto-pacing has the wrong perDay or wrong "today's first" set.
+  try {
+    if (localStorage.getItem(consumedKey) === '1') {
+      const ids = doneTodayIndices.map(i => subs[i].id).filter(Boolean);
+      try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+      return doneTodayIndices;
+    }
+  } catch {}
   const pace = pacingFor(section);
   // Try to read previously locked plan for today.
   let cached = null;
@@ -766,16 +778,17 @@ function todaysPlannedFor(section){
   try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
   return todaysIndices;
 }
-// Sweep out yesterday-and-older locked plans on script load so localStorage
-// doesn't accumulate stale keys forever.
+// Sweep out yesterday-and-older locked plans + consumed flags on script load
+// so localStorage doesn't accumulate stale keys forever.
 (function cleanupOldLearningPlans(){
   try {
     const today = todayISO();
-    const prefix = 'learning-plan-';
+    const prefixes = ['learning-plan-', 'learning-consumed-'];
     const stale = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(prefix) && !k.endsWith('-' + today)) stale.push(k);
+      if (!k) continue;
+      if (prefixes.some(p => k.startsWith(p)) && !k.endsWith('-' + today)) stale.push(k);
     }
     stale.forEach(k => { try { localStorage.removeItem(k); } catch {} });
   } catch {}
@@ -1508,6 +1521,20 @@ function renderSectionRow(c, s, n, startNum, isBook){
   }
 
   const archived = isSectionArchived(s);
+  // Show "Done for today" when there's still unfinished lectures in today's
+  // locked plan. Clicking marks today's bucket as consumed for this section
+  // so the leftover lectures roll to Tomorrow instead of staying labeled Today.
+  const showDoneToday = !isBook && !isDone && !archived && (() => {
+    if (!s.deadline) return false;
+    const planned = todaysPlannedFor(s) || [];
+    if (!planned.length) return false;
+    const today = todayISO();
+    try {
+      if (localStorage.getItem('learning-consumed-' + s.id + '-' + today) === '1') return false;
+    } catch {}
+    const subsArr = s.subsections || [];
+    return planned.some(i => subsArr[i] && !subsArr[i].done);
+  })();
   return `
     <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''} ${archived ? 'is-archived' : ''}" data-section="${s.id}">
       <div class="section-head" data-action="toggle-section">
@@ -1520,6 +1547,10 @@ function renderSectionRow(c, s, n, startNum, isBook){
           ${pill}
           ${pacePill}
           ${isDone ? '' : `<button type="button" class="st-focus" data-action="focus-section" title="Open focus timer with this section's title">▶ Focus</button>`}
+          ${showDoneToday
+            ? `<button type="button" class="st-focus" data-action="done-today-section" title="Mark today's lectures as done — leftover lectures roll to Tomorrow"
+                style="background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.32);color:#86efac">✓ Done for today</button>`
+            : ''}
           ${archived
             ? `<button type="button" class="st-focus" data-action="unarchive-section" title="Pull this section back into the main list"
                 style="background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.34);color:#fbbf24">↩ Unarchive</button>`
@@ -1701,6 +1732,21 @@ function wireEvents(){
         // If a sprint is already running in another tab, just rename its task;
         // otherwise open a fresh sprint tab pre-filled with this section.
         startFocusOnTask(s.title);
+      });
+      // "Done for today" — closes out today's bucket so the unfinished lectures
+      // in the locked plan move to Tomorrow on next render. Useful when the
+      // auto-pacing miscounts (e.g. user wants a smaller daily quota than the
+      // ceil(remaining/days) target) or to recover from the historic promotion
+      // bug. Persists per (section, date) so reopening the page next refresh
+      // keeps the same Tomorrow labeling.
+      sectionEl.querySelector('[data-action="done-today-section"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const key = 'learning-consumed-' + s.id + '-' + todayISO();
+        try { localStorage.setItem(key, '1'); } catch {}
+        // Also clear the locked plan so the next compute returns just done-today.
+        try { localStorage.removeItem('learning-plan-' + s.id + '-' + todayISO()); } catch {}
+        setToast('Today\'s lectures marked done — rolled the rest to tomorrow');
+        render();
       });
       // Archive / unarchive — toolbox buttons in the section head row.
       sectionEl.querySelector('[data-action="archive-section"]')?.addEventListener('click', (e) => {

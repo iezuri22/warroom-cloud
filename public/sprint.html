@@ -2144,11 +2144,10 @@ body { display:flex; flex-direction:column; position:relative }
       const byId = new Map();
       items.forEach(t => { if (t && t.id) byId.set(t.id, t); });
 
-      // First pull from the Focus 5 priority lists (the "Priorities page"
-      // source of truth). Lists named with "priority" (First, Second, Third)
-      // are the priority bucket; routines and free-form lists are skipped.
-      // This works even when personal-todos.html has not re-rendered since
-      // a deploy that updated the cache shape.
+      // Source 1 — Focus 5 priority lists (the "Priorities page" source of
+      // truth). Lists named with "priority" (First/Second/Third) are picked;
+      // routines and free-form lists are skipped. Survives across pages
+      // because focus5State is persisted to localStorage on every change.
       const orderedIds = [];
       const seen = new Set();
       try {
@@ -2167,10 +2166,30 @@ body { display:flex; flex-direction:column; position:relative }
       const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
       if (fromFocus5.length) return fromFocus5;
 
-      // Fallback: the explicit per-todo priority flag (the ⭐ button). Lets
+      // Source 2 — explicit per-todo priority flag (the ⭐ button). Lets
       // users who organize via stars (not Focus 5) still get a populated list.
       const starred = items.filter(t => t && t.priority);
-      return starred;
+      if (starred.length) return starred;
+
+      // Source 3 — Focus 5 ANY list (including custom-named priority lists
+      // that don't literally contain "priority" in the name). Catches users
+      // who renamed their lists ("Today's Big 3" etc).
+      const anyF5Ids = [];
+      try {
+        const f5raw = localStorage.getItem('personal-focus-5-v1');
+        const f5 = f5raw ? JSON.parse(f5raw) : null;
+        const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
+        for (const l of lists) {
+          if (!l || l.routine) continue;
+          for (const id of (l.taskIds || [])) if (id) anyF5Ids.push(id);
+        }
+      } catch {}
+      const fromAnyF5 = [...new Set(anyF5Ids)].map(id => byId.get(id)).filter(Boolean);
+      if (fromAnyF5.length) return fromAnyF5;
+
+      // Source 4 — final fallback: the top open todos. Better to surface
+      // SOMETHING actionable than the dead-end "Open Personal to add some".
+      return items.slice(0, 10);
     } catch { return []; }
   }
   // Identify "what kind of thing is the current sprint task?" by checking the
