@@ -12098,13 +12098,16 @@ const VOICE = {
       </button>
     ` : '';
     // Is this task already in the sprint queue (separate from race-launch)?
-    // The queue list — sprint reads it (in addition to Focus 5 priority lists)
-    // — lets users pre-load tasks for the next sprint they start.
     const _inSprintQueue = (function(){
       try {
-        const raw = localStorage.getItem('sprint-queue-task-ids');
-        const arr = raw ? JSON.parse(raw) : [];
-        return Array.isArray(arr) && arr.includes(todo.id);
+        const raw = localStorage.getItem('sprint-queue-v1');
+        if (raw) {
+          const q = JSON.parse(raw);
+          if (q && Array.isArray(q.items)) return q.items.some(x => x && x.id === todo.id);
+        }
+        // Legacy id-only key
+        const legacy = JSON.parse(localStorage.getItem('sprint-queue-task-ids') || '[]');
+        return Array.isArray(legacy) && legacy.includes(todo.id);
       } catch { return false; }
     })();
     const standardActions = (!isDone && !editing) ? `
@@ -12191,28 +12194,50 @@ const VOICE = {
       const projectBtn = card.querySelector('[data-act="project"]');
       const upBtn = card.querySelector('[data-act="up"]');
       const downBtn = card.querySelector('[data-act="down"]');
-      // "🏃 Add to Sprint" — appends/removes this task to the sprint queue
-      // localStorage list. Doesn't launch a sprint (Race timer does that).
+      // "🏃 Add to Sprint" — toggles this task in the sprint queue. Stores the
+      // FULL task snapshot (id + text + job + details) rather than just the id
+      // so sprint.html can render it without needing personal-todos-cache to
+      // be loaded. That cross-cache dependency was the bug — if sprint loaded
+      // before personal-todos-cache populated, the lookup failed silently.
       const sprintBtn = card.querySelector('[data-act="add-to-sprint"]');
       if (sprintBtn) sprintBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         try {
-          const KEY = 'sprint-queue-task-ids';
-          let arr = [];
-          try { arr = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch {}
-          if (!Array.isArray(arr)) arr = [];
-          const i = arr.indexOf(todo.id);
-          if (i >= 0) arr.splice(i, 1); else arr.push(todo.id);
-          localStorage.setItem(KEY, JSON.stringify(arr));
-          // Inline visual update so the user gets immediate feedback without
-          // a full focus5 re-render (which would eat focus on quick-add).
-          const on = arr.includes(todo.id);
+          const KEY = 'sprint-queue-v1';
+          let queue = { items: [] };
+          try {
+            const raw = localStorage.getItem(KEY);
+            if (raw) queue = JSON.parse(raw) || { items: [] };
+            if (!Array.isArray(queue.items)) queue.items = [];
+          } catch {}
+          const idx = queue.items.findIndex(x => x && x.id === todo.id);
+          let on;
+          if (idx >= 0) {
+            queue.items.splice(idx, 1);
+            on = false;
+          } else {
+            queue.items.push({
+              id: todo.id,
+              text: todo.text || '',
+              job: todo.job || '',
+              details: todo.details || '',
+              addedAt: new Date().toISOString(),
+            });
+            on = true;
+          }
+          queue.updatedAt = Date.now();
+          localStorage.setItem(KEY, JSON.stringify(queue));
+          // Legacy compat: keep the old id-only key in sync so anything
+          // pointing at it still works during the transition.
+          try {
+            localStorage.setItem('sprint-queue-task-ids', JSON.stringify(queue.items.map(x => x.id)));
+          } catch {}
+          // Inline visual update — no full re-render (eats quick-add focus).
           sprintBtn.classList.toggle('has', on);
           sprintBtn.style.background = on ? 'rgba(255,138,61,.18)' : '';
           sprintBtn.style.borderColor = on ? 'rgba(255,138,61,.4)' : '';
           sprintBtn.style.color = on ? '#FF8A3D' : '';
           sprintBtn.title = on ? 'In Sprint queue — tap to remove' : 'Add to Sprint queue (does not launch a sprint)';
-          // Update label after the emoji
           const labelNode = [...sprintBtn.childNodes].find(n => n.nodeType === 3 && n.textContent && n.textContent.trim());
           if (labelNode) labelNode.textContent = ' ' + (on ? 'In Sprint' : 'Add to Sprint');
         } catch (err) { console.warn('sprint queue toggle failed', err); }

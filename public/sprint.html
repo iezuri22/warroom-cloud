@@ -2072,18 +2072,42 @@ body { display:flex; flex-direction:column; position:relative }
       const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
 
       // Dedicated Sprint queue — items the user explicitly added via the
-      // "🏃 Add to Sprint" button on Personal. Doesn't overlap with Focus 5
-      // lists; user chose these specifically for sprints.
+      // "🏃 Add to Sprint" button on Personal. Each entry stores its own
+      // text/job/details snapshot, so we render straight from the queue
+      // without needing personal-todos-cache to be populated yet (that
+      // cross-cache dependency was the bug that made queued tasks vanish).
       const sprintQueue = [];
       try {
-        const raw = localStorage.getItem('sprint-queue-task-ids');
-        const arr = raw ? JSON.parse(raw) : [];
-        if (Array.isArray(arr)) {
-          for (const id of arr) {
-            if (!id || seen.has(id)) continue;
-            seen.add(id);
-            const t = byId.get(id);
-            if (t) sprintQueue.push(t);
+        const raw = localStorage.getItem('sprint-queue-v1');
+        if (raw) {
+          const q = JSON.parse(raw);
+          if (q && Array.isArray(q.items)) {
+            for (const it of q.items) {
+              if (!it || !it.id || seen.has(it.id)) continue;
+              seen.add(it.id);
+              // Prefer the latest cache snapshot (richer data) when available;
+              // fall back to the queue's stored snapshot when it isn't.
+              const cached = byId.get(it.id);
+              sprintQueue.push(cached || {
+                id: it.id, text: it.text || '', job: it.job || '',
+                priority: true, details: it.details || '', date: '',
+              });
+            }
+          }
+        }
+        // Legacy id-only fallback for any items added before the queue moved
+        // to the rich format.
+        const legacyRaw = localStorage.getItem('sprint-queue-task-ids');
+        if (legacyRaw) {
+          const legacy = JSON.parse(legacyRaw);
+          if (Array.isArray(legacy)) {
+            for (const id of legacy) {
+              if (!id || seen.has(id)) continue;
+              seen.add(id);
+              const t = byId.get(id);
+              if (t) sprintQueue.push(t);
+              else sprintQueue.push({ id, text:'(unknown — open Personal to refresh)', job:'', priority:true, details:'', date:'' });
+            }
           }
         }
       } catch {}
