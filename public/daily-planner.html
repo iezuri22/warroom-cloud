@@ -2926,7 +2926,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="tab" data-tab="calendar" onclick="switchTab('calendar')">Calendar</div>
   <div class="tab" data-tab="plan" onclick="switchTab('plan')" style="display:none">Today's Plan</div>
   <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
-  <div class="tab" onclick="window.location.href='/learning.html'">Learning</div>
+  <div class="tab" data-tab="learning" onclick="switchTab('learning')">Learning</div>
   <div class="tab" data-tab="ecm" onclick="switchTab('ecm')">ECM<span class="ecm-sync-dot" id="ecmSyncDot" title="" hidden></span></div>
   <!-- Food tab retired 2026 — recipe content lives as a board inside the Goals canvas now. -->
 
@@ -2979,7 +2979,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <button class="nav-drawer-item active" data-tab="todos" onclick="navDrawerSwitch('todos')"><span class="dot"></span>Personal</button>
     <button class="nav-drawer-item" data-tab="calendar" onclick="navDrawerSwitch('calendar')"><span class="dot"></span>Calendar</button>
     <button class="nav-drawer-item" data-tab="goals" onclick="navDrawerSwitch('goals')"><span class="dot"></span>Goals</button>
-    <button class="nav-drawer-item" onclick="window.location.href='/learning.html'"><span class="dot"></span>Learning</button>
+    <button class="nav-drawer-item" data-tab="learning" onclick="navDrawerSwitch('learning')"><span class="dot"></span>Learning</button>
     <button class="nav-drawer-item" data-tab="ecm" onclick="navDrawerSwitch('ecm')"><span class="dot"></span>ECM<span class="ecm-sync-dot" id="ecmDrawerSyncDot" style="display:none;margin-left:auto;width:6px;height:6px;border-radius:50%;background:#4ADE80"></span></button>
     <!-- Food drawer entry retired — use the Food board inside Goals. -->
 
@@ -3043,6 +3043,13 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <!-- ECM VIEW -->
   <div class="ecm-view" id="ecmView" style="display:none">
     <iframe id="ecmFrame" src="about:blank" style="width:100%;border:none;background:#050507;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+  </div>
+
+  <!-- LEARNING VIEW (same iframe pattern as ECM so the shell's music engine
+       stays alive when the user opens Learning — was a full window.location
+       nav before, which killed the player). -->
+  <div class="learning-view" id="learningView" style="display:none">
+    <iframe id="learningFrame" src="about:blank" style="width:100%;border:none;background:#050507;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
   </div>
 
   <!-- CALENDAR VIEW -->
@@ -4805,7 +4812,7 @@ window.addEventListener('message', (ev) => {
 
 // --- Fullscreen (cast-friendly: hide top nav) ---
 function broadcastFullscreenToFrames(on){
-  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame'];
+  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame','ecmFrame','learningFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     if (!f || !f.contentWindow) return;
@@ -4851,7 +4858,7 @@ function lofiState(){
 function lofiBroadcast(msg){
   // Belt-and-suspenders: send to all loaded iframes; only the personal-todos
   // engine acts on these messages (others ignore unknown types).
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame'];
+  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage(msg, '*'); } catch {}
@@ -5817,9 +5824,11 @@ function switchTab(tab){
   if(todosViewEl) todosViewEl.style.display=tab==='todos'?'':'none';
   const ecmViewEl=document.getElementById('ecmView');
   if(ecmViewEl) ecmViewEl.style.display=tab==='ecm'?'':'none';
+  const learningViewEl=document.getElementById('learningView');
+  if(learningViewEl) learningViewEl.style.display=tab==='learning'?'':'none';
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
   // Mark body so we can target full-iframe tabs in CSS (hide FAB, allow full width)
-  document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board'||tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm');
+  document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board'||tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm'||tab==='learning');
   if(tab==='plan'){ try{ render(); }catch(e){} }
   if(tab==='goals'){
     const frame=document.getElementById('goalsFrame');
@@ -5855,6 +5864,12 @@ function switchTab(tab){
     const frame=document.getElementById('ecmFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('ecm.html'))){
       frame.src='/ecm.html?embed=1';
+    }
+  }
+  if(tab==='learning'){
+    const frame=document.getElementById('learningFrame');
+    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('learning.html'))){
+      frame.src='/learning.html?embed=1';
     }
   }
   if(typeof mobileNavUpdateActive==='function')mobileNavUpdateActive(tab);
@@ -6567,7 +6582,7 @@ function saveSmartsheetsSettings(){
   const status = document.getElementById('ssStatus');
   if (status) status.textContent = 'Saved. Open Personal and tap the Smartsheets sync button to pull.';
   // Tell personal-todos iframe to refresh its config
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame'];
+  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:smartsheets-config-changed' }, '*'); } catch {}

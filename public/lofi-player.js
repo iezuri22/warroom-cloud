@@ -12,6 +12,10 @@
 (function(){
   if (window.__skipLofiPlayer) return;
   if (document.getElementById('musicFrame')) return; // Sprint already has one.
+  // Running inside the daily-planner shell? Defer to the shell's persistent
+  // engine — the shell keeps a music iframe alive across tab switches so the
+  // song doesn't skip a beat. Mounting our own player here would double up.
+  try { if (window.self !== window.top) return; } catch { return; }
 
   // Vibes mirror sprint.html's VIBES (id, label, videoId).
   const VIBES = [
