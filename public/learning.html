@@ -665,31 +665,69 @@ function isPrevSectionComplete(course, idx){
 // and persists those lecture IDs. Subsequent calls today return the same set
 // (even after some are checked off — they just become done items in the set).
 // Tomorrow the cache key changes and a fresh slice gets locked in.
+// True if this lecture was marked done at any point during the current LOCAL
+// calendar day. doneAt is stored as UTC ISO; convert before comparing.
+function lectureDoneToday(u){
+  if (!u || !u.done || !u.doneAt) return false;
+  try {
+    const d = new Date(u.doneAt);
+    const local = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    return local === todayISO();
+  } catch { return false; }
+}
 function todaysPlannedFor(section){
   if (!section || !section.deadline) return [];
   const subs = section.subsections || [];
   if (!subs.length) return [];
   const today = todayISO();
   const cacheKey = 'learning-plan-' + section.id + '-' + today;
-  // Try to read locked plan
+  // Anchor today's plan around what's ALREADY done today. This matters for
+  // recovery: a user who finished more than perDay lectures today (e.g. the
+  // pacing-promotion bug let them through) should NOT see additional lectures
+  // labeled "today" — today's bucket is already full.
+  const doneTodayIndices = [];
+  for (let i = 0; i < subs.length; i++) if (lectureDoneToday(subs[i])) doneTodayIndices.push(i);
+  const pace = pacingFor(section);
+  // Try to read previously locked plan for today.
+  let cached = null;
   try {
     const raw = localStorage.getItem(cacheKey);
-    if (raw) {
-      const plannedIds = JSON.parse(raw);
-      if (Array.isArray(plannedIds)) {
-        const indices = plannedIds
-          .map(id => subs.findIndex(u => u.id === id))
-          .filter(i => i >= 0);
-        return indices;
-      }
-    }
+    if (raw) cached = JSON.parse(raw);
   } catch {}
-  // First call today — compute the slice and persist.
-  const pace = pacingFor(section);
-  if (!pace) return [];
+  // If today's done count already meets/exceeds the pace target, today's
+  // bucket = exactly what's done today (no new lectures get promoted in).
+  if (pace && doneTodayIndices.length >= pace.perDay) {
+    const ids = doneTodayIndices.map(i => subs[i].id).filter(Boolean);
+    try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+    return doneTodayIndices;
+  }
+  // Honor a previously cached plan — but reconcile it with reality so we
+  // don't keep a stale "today" set when subsection IDs have shifted.
+  if (Array.isArray(cached)) {
+    const cachedIndices = cached
+      .map(id => subs.findIndex(u => u.id === id))
+      .filter(i => i >= 0);
+    // Union the cached plan with anything done today — covers the case where
+    // a user finished a lecture that wasn't in the original locked plan.
+    const union = new Set(cachedIndices);
+    doneTodayIndices.forEach(i => union.add(i));
+    return [...union].sort((a, b) => a - b);
+  }
+  // No cache yet today — compute the slice. Reserve slots for what's already
+  // done today, fill the rest with the next not-done lectures (in order).
+  if (!pace) {
+    // No deadline pacing → just today's already-done set (likely empty).
+    if (doneTodayIndices.length) {
+      const ids = doneTodayIndices.map(i => subs[i].id).filter(Boolean);
+      try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+    }
+    return doneTodayIndices;
+  }
+  const remaining = Math.max(0, pace.perDay - doneTodayIndices.length);
   const notDoneIndices = [];
   for (let i = 0; i < subs.length; i++) if (!subs[i].done) notDoneIndices.push(i);
-  const todaysIndices = notDoneIndices.slice(0, pace.perDay);
+  const fillers = notDoneIndices.slice(0, remaining);
+  const todaysIndices = [...new Set([...doneTodayIndices, ...fillers])].sort((a, b) => a - b);
   const ids = todaysIndices.map(i => subs[i].id).filter(Boolean);
   try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
   return todaysIndices;
