@@ -3789,6 +3789,33 @@ body { display:flex; flex-direction:column; position:relative }
   renderResumeBanner();
   renderSuggestions();
 
+  // Prime the next-task drawer caches by background-loading the source pages
+  // in hidden iframes. learning.html → writes `learning-cache-v1`,
+  // personal-todos.html → writes `personal-todos-cache` + `personal-focus-5-v1`.
+  // The drawer's existing `storage` event listener will pick them up the
+  // moment the iframes finish their first render, so users who open sprint
+  // in a new tab (NOT inside the daily-planner shell) still see their real
+  // lectures + priorities instead of the "No lectures / No priorities"
+  // placeholder. Skipped when sprint itself is embedded — the shell already
+  // has both pages mounted so adding more iframes here would be wasteful.
+  (function primeDrawerCaches(){
+    try {
+      if (window.self !== window.top) return; // embedded — shell has them
+      const mount = (id, src) => {
+        if (document.getElementById(id)) return;
+        const f = document.createElement('iframe');
+        f.id = id;
+        f.src = src;
+        f.setAttribute('aria-hidden', 'true');
+        f.style.cssText = 'position:fixed;left:-9999px;top:0;width:360px;height:240px;border:0;pointer-events:none;opacity:0';
+        f.loading = 'eager';
+        document.body.appendChild(f);
+      };
+      mount('primeLearningFrame', '/learning.html?embed=1');
+      mount('primePersonalFrame', '/personal-todos.html?embed=1');
+    } catch (e) { console.warn('[sprint] cache prime failed', e); }
+  })();
+
   // Auto-restore an in-progress sprint. The active sprint state is mirrored
   // to localStorage so OTHER pages (Learning banner, daily-planner) can see
   // it, but a fresh sprint.html load used to drop the running timer on the
