@@ -3801,20 +3801,43 @@ body { display:flex; flex-direction:column; position:relative }
   (function primeDrawerCaches(){
     try {
       if (window.self !== window.top) return; // embedded — shell has them
-      const mount = (id, src) => {
+      const reRender = () => {
+        if (_nextTaskDrawerOpen) try { renderNextTaskDrawer(); } catch {}
+      };
+      const mount = (id, src, onLoadDelayMs) => {
         if (document.getElementById(id)) return;
         const f = document.createElement('iframe');
         f.id = id;
         f.src = src;
         f.setAttribute('aria-hidden', 'true');
-        f.style.cssText = 'position:fixed;left:-9999px;top:0;width:360px;height:240px;border:0;pointer-events:none;opacity:0';
+        // Render at real size offscreen — some browsers throttle 0px iframes
+        // hard enough that they never get to running first-render scripts.
+        f.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:480px;height:360px;border:0;pointer-events:none;opacity:0';
         f.loading = 'eager';
+        // Once the iframe finishes loading, its scripts run and write the
+        // localStorage cache. Re-render the drawer a bit later to pick that up.
+        f.addEventListener('load', () => {
+          setTimeout(reRender, onLoadDelayMs || 1500);
+        });
         document.body.appendChild(f);
       };
-      mount('primeLearningFrame', '/learning.html?embed=1');
-      mount('primePersonalFrame', '/personal-todos.html?embed=1');
+      mount('primeLearningFrame', '/learning.html?embed=1', 2500);
+      mount('primePersonalFrame', '/personal-todos.html?embed=1', 2500);
     } catch (e) { console.warn('[sprint] cache prime failed', e); }
   })();
+  // Belt-and-suspenders: while the drawer is open, poll the caches every
+  // 1.5s and re-render if either changed. Storage events SHOULD trigger
+  // re-render, but they're cross-document only — same-document writes from
+  // the prime iframes don't always fire on the host. Polling fixes that.
+  setInterval(() => {
+    if (!_nextTaskDrawerOpen) return;
+    const sig = (localStorage.getItem('learning-cache-v1') || '').length +
+                ':' + (localStorage.getItem('personal-todos-cache') || '').length +
+                ':' + (localStorage.getItem('personal-focus-5-v1') || '').length;
+    if (sig === window.__sprintLastCacheSig) return;
+    window.__sprintLastCacheSig = sig;
+    try { renderNextTaskDrawer(); } catch {}
+  }, 1500);
 
   // Auto-restore an in-progress sprint. The active sprint state is mirrored
   // to localStorage so OTHER pages (Learning banner, daily-planner) can see
