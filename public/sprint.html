@@ -3515,10 +3515,18 @@ body { display:flex; flex-direction:column; position:relative }
   const musicState = (function(){
     try {
       const raw = localStorage.getItem(MUSIC_KEY);
-      if (!raw) return { vibe:null, customId:'' };
+      if (!raw) return { vibe:null, customId:'', playbackSec:0, updatedAt:0 };
       const d = JSON.parse(raw) || {};
-      return { vibe: d.vibe || null, customId: d.customId || '' };
-    } catch { return { vibe:null, customId:'' }; }
+      return {
+        vibe: d.vibe || null,
+        customId: d.customId || '',
+        // Last-known playback offset (seconds). Lets the same vibe pick up
+        // where it left off across page navigation / refresh / iframe reload
+        // instead of jumping to a random offset every time.
+        playbackSec: Number.isFinite(d.playbackSec) ? d.playbackSec : 0,
+        updatedAt: Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
+      };
+    } catch { return { vibe:null, customId:'', playbackSec:0, updatedAt:0 }; }
   })();
   function saveMusicState(){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(musicState)); } catch {} }
 
@@ -3570,42 +3578,106 @@ body { display:flex; flex-direction:column; position:relative }
     return VIBES[(i + 1) % VIBES.length].id;
   }
 
+  // True when we're resuming an existing vibe (refresh/navigation). We pull
+  // the saved playbackSec instead of generating a fresh random offset so the
+  // user gets the same song at the same spot, not a re-rolled "different
+  // song" feel.
+  let _musicResumingSameVideo = false;
   function playVideoId(videoId, vibeId){
     if (!videoId) return;
+    // Detect "resume": the video we're about to load matches what we already
+    // had cached. In that case prefer the saved position over a random one.
+    const wasSameVideo = (vibeId && musicState.vibe === vibeId) || (!vibeId && musicState.customId === videoId);
     musicState.vibe = vibeId || null;
     musicState.customId = vibeId ? '' : videoId;
     saveMusicState();
-    // Random start offset (60s..1500s = 1..25 min in)
-    const startAt = 60 + Math.floor(Math.random() * 1440);
-    // enablejsapi=1 lets us listen for state changes (ENDED → rotate).
+    // Pick a start offset. If the user is resuming the same vibe/video,
+    // honor whatever position we last persisted (+ a tiny extrapolation for
+    // wall-clock drift since the timer last fired, so the song doesn't loop
+    // back during navigation). Otherwise: random 1..25 min in, like before.
+    let startAt;
+    if (wasSameVideo && musicState.playbackSec > 0) {
+      const driftSec = Math.max(0, Math.floor((Date.now() - (musicState.updatedAt || Date.now())) / 1000));
+      startAt = Math.max(0, Math.floor(musicState.playbackSec + driftSec));
+      _musicResumingSameVideo = true;
+    } else {
+      startAt = 60 + Math.floor(Math.random() * 1440);
+      _musicResumingSameVideo = false;
+      musicState.playbackSec = startAt;
+      musicState.updatedAt = Date.now();
+      saveMusicState();
+    }
+    // enablejsapi=1 lets us listen for state changes (ENDED → rotate) AND
+    // request the current time via postMessage so we can persist position.
     // Origin must match for postMessage handshake.
     const origin = encodeURIComponent(window.location.origin);
     const src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0&mute=0&start=${startAt}&enablejsapi=1&origin=${origin}`;
     musicFrame.src = src;
     applyMusicUI();
   }
+  // Poll currentTime every 5s while music plays and persist it. The YT
+  // IFrame API replies asynchronously to `getCurrentTime` via a JSON-stringy
+  // postMessage; the `message` listener below catches `infoDelivery` events
+  // carrying `currentTime`. On every save we also tag updatedAt so the next
+  // resume can extrapolate for the seconds spent between unload and reload.
+  let _musicPollTimer = null;
+  function startMusicPositionPolling(){
+    if (_musicPollTimer) clearInterval(_musicPollTimer);
+    _musicPollTimer = setInterval(() => {
+      try {
+        if (!musicFrame.src || musicFrame.src === 'about:blank') return;
+        if (!musicFrame.contentWindow) return;
+        musicFrame.contentWindow.postMessage(
+          JSON.stringify({ event:'command', func:'getCurrentTime', args:[] }),
+          '*'
+        );
+      } catch {}
+    }, 5000);
+  }
+  function stopMusicPositionPolling(){
+    if (_musicPollTimer) { clearInterval(_musicPollTimer); _musicPollTimer = null; }
+  }
 
-  // Listen for the YT IFrame Player API "ended" event. The API posts JSON
-  // strings to window.postMessage; we filter on the iframe source + event name.
+  // Listen for the YT IFrame Player API events. The API posts JSON-stringified
+  // payloads to window.postMessage; two events matter here:
+  //   • onStateChange with info === 0 (ENDED) → rotate to the next vibe.
+  //   • infoDelivery with info.currentTime → persist the play position so the
+  //     next page load resumes the SAME song at the SAME spot instead of
+  //     re-rolling a random offset.
   window.addEventListener('message', (ev) => {
     if (!ev || !ev.data) return;
-    // YT API messages come as JSON strings from youtube-nocookie.com
     let payload = ev.data;
     if (typeof payload === 'string') {
       try { payload = JSON.parse(payload); } catch { return; }
     }
-    if (!payload || payload.event !== 'onStateChange') return;
+    if (!payload) return;
+    // Position update — comes back from our getCurrentTime poll.
+    if (payload.event === 'infoDelivery' && payload.info && typeof payload.info.currentTime === 'number') {
+      const t = payload.info.currentTime;
+      if (Number.isFinite(t) && t >= 0) {
+        musicState.playbackSec = t;
+        musicState.updatedAt = Date.now();
+        saveMusicState();
+      }
+      return;
+    }
+    if (payload.event !== 'onStateChange') return;
     // YT.PlayerState.ENDED === 0
     if (payload.info !== 0) return;
-    // Only react if we're actually playing music (vibe or custom)
     if (!musicState.vibe && !musicState.customId) return;
-    // Rotate to next vibe (also covers the custom-id case — we fall to vibe 0)
+    // Track rolled over — reset playback to 0 so the next vibe doesn't try
+    // to start at the OLD video's position.
+    musicState.playbackSec = 0;
+    musicState.updatedAt = Date.now();
+    saveMusicState();
     const next = nextVibeId(musicState.vibe);
     playVibe(next);
   });
 
-  // Once the iframe loads, kick the YT API into "listening" mode so it sends us
-  // state-change messages. Without this handshake, no events arrive.
+  // Once the iframe loads, kick the YT API into "listening" mode so it sends
+  // us state-change AND infoDelivery messages. Without this handshake, no
+  // events arrive. Also kick off the position-polling interval here so it
+  // restarts cleanly every time the iframe (re)loads with a new video.
   function bindYtListening(){
     try {
       if (musicFrame.src && musicFrame.src !== 'about:blank' && musicFrame.contentWindow) {
@@ -3613,6 +3685,9 @@ body { display:flex; flex-direction:column; position:relative }
           JSON.stringify({ event:'listening', id:'sprint-music' }),
           '*'
         );
+        startMusicPositionPolling();
+      } else {
+        stopMusicPositionPolling();
       }
     } catch {}
   }
@@ -3638,8 +3713,11 @@ body { display:flex; flex-direction:column; position:relative }
   function stopMusic(){
     musicState.vibe = null;
     musicState.customId = '';
+    musicState.playbackSec = 0;
+    musicState.updatedAt = Date.now();
     saveMusicState();
     musicFrame.src = 'about:blank'; // unload to actually stop audio
+    stopMusicPositionPolling();
     applyMusicUI();
   }
 
@@ -3652,6 +3730,26 @@ body { display:flex; flex-direction:column; position:relative }
   }
 
   if (musicStopBtn) musicStopBtn.addEventListener('click', stopMusic);
+
+  // Save state on unload + visibility-hidden so a refresh / tab switch / page
+  // navigation captures the latest playback position even if the 5s poll
+  // hasn't fired yet. The infoDelivery handler will still keep updating
+  // while we're visible; this is the belt-and-suspenders.
+  function flushMusicPosition(){
+    try {
+      if (musicFrame && musicFrame.src && musicFrame.src !== 'about:blank' && musicFrame.contentWindow) {
+        musicFrame.contentWindow.postMessage(
+          JSON.stringify({ event:'command', func:'getCurrentTime', args:[] }),
+          '*'
+        );
+      }
+    } catch {}
+  }
+  window.addEventListener('pagehide', flushMusicPosition);
+  window.addEventListener('beforeunload', flushMusicPosition);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushMusicPosition();
+  });
   if (musicCustomBtn) musicCustomBtn.addEventListener('click', toggleCustomRow);
   if (musicCustomPlayBtn) musicCustomPlayBtn.addEventListener('click', playCustom);
   if (musicCustomClearBtn) musicCustomClearBtn.addEventListener('click', () => {
