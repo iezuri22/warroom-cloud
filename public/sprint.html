@@ -1040,7 +1040,11 @@ body { display:flex; flex-direction:column; position:relative }
       </div>
       <div id="nextTaskLectureNext" style="margin-bottom:10px"></div>
       <div id="nextTaskLectureList"></div>
-      <div id="nextTaskLectureEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">No lectures on today's queue. Set a section deadline in Learning to start the pacing.</div>
+      <div id="nextTaskLectureEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">
+        No lectures on today's queue.
+        <a href="/learning.html" target="_blank" style="color:#7eb6ff;text-decoration:none;font-weight:600">Open Learning</a> to set a section deadline,
+        or <button id="nextTaskRefreshLec" type="button" style="background:transparent;border:none;color:#7eb6ff;font-family:inherit;font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;padding:0">refresh</button> if you just made changes.
+      </div>
     </div>
     <!-- PRIORITIES SECTION -->
     <div style="margin-bottom:18px">
@@ -1050,7 +1054,11 @@ body { display:flex; flex-direction:column; position:relative }
         <span id="nextTaskPriorityCount" style="font-size:10px;font-weight:700;background:rgba(255,138,61,.18);color:#FF8A3D;padding:2px 7px;border-radius:99px;letter-spacing:.04em"></span>
       </div>
       <div id="nextTaskPriorityList"></div>
-      <div id="nextTaskPriorityEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">No open priorities. Open Personal to add some.</div>
+      <div id="nextTaskPriorityEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">
+        No open priorities yet.
+        <a href="/personal-todos.html" target="_blank" style="color:#FF8A3D;text-decoration:none;font-weight:600">Open Personal</a> to add some,
+        or <button id="nextTaskRefreshPri" type="button" style="background:transparent;border:none;color:#FF8A3D;font-family:inherit;font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;padding:0">refresh</button> if they're elsewhere.
+      </div>
     </div>
     <!-- CUSTOM FOOTER -->
     <div style="padding-top:14px;border-top:1px solid rgba(255,255,255,.06)">
@@ -2306,6 +2314,13 @@ body { display:flex; flex-direction:column; position:relative }
     $('nextTaskPriorityList').innerHTML = pris.map(priorityItemHtml).join('');
     $('nextTaskPriorityCount').textContent = pris.length ? (pris.length + ' open') : '';
     $('nextTaskPriorityEmpty').style.display = pris.length ? 'none' : '';
+    // Refresh links in the empty states — click to re-read the caches without
+    // closing/reopening the drawer. Useful when the user just edited Learning
+    // or Personal in another tab and wants to pull in the new state.
+    const refLec = document.getElementById('nextTaskRefreshLec');
+    if (refLec) refLec.onclick = (e) => { e.stopPropagation(); renderNextTaskDrawer(); };
+    const refPri = document.getElementById('nextTaskRefreshPri');
+    if (refPri) refPri.onclick = (e) => { e.stopPropagation(); renderNextTaskDrawer(); };
     // Per-row "✕ not today" button. Marks that lecture's section as today-
     // consumed in localStorage (key matches learning.html's todaysPlannedFor)
     // and optimistically rewrites the cache so the drawer re-renders without
@@ -2476,6 +2491,9 @@ body { display:flex; flex-direction:column; position:relative }
       }
     } catch {}
   }
+  // True while the drawer is showing on screen — used by the auto-refresh
+  // hooks below so we only re-render when the user is actually looking.
+  let _nextTaskDrawerOpen = false;
   function showNextTaskDrawer(){
     renderNextTaskDrawer();
     $('nextTaskBackdrop').style.display = 'block';
@@ -2485,6 +2503,7 @@ body { display:flex; flex-direction:column; position:relative }
     d.style.transform = 'translateX(100%)';
     d.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
     requestAnimationFrame(() => { d.style.transform = 'translateX(0)'; });
+    _nextTaskDrawerOpen = true;
   }
   function hideNextTaskDrawer(){
     const d = $('nextTaskDrawer');
@@ -2493,7 +2512,23 @@ body { display:flex; flex-direction:column; position:relative }
       d.style.display = 'none';
       $('nextTaskBackdrop').style.display = 'none';
     }, 220);
+    _nextTaskDrawerOpen = false;
   }
+  // Cloud-sync hydrates localStorage AFTER sprint.html boots — when it
+  // finishes, refresh the drawer if it's open so empty "no lectures /
+  // priorities" placeholders get replaced by the real data the moment it
+  // arrives. Storage events catch cross-tab changes (Learning publishing
+  // a new cache, Personal updating Focus 5).
+  document.addEventListener('warroom:cloud-ready', () => {
+    if (_nextTaskDrawerOpen) try { renderNextTaskDrawer(); } catch {}
+  });
+  window.addEventListener('storage', (e) => {
+    if (!_nextTaskDrawerOpen) return;
+    const k = e.key;
+    if (k === 'learning-cache-v1' || k === 'personal-todos-cache' || k === 'personal-focus-5-v1') {
+      try { renderNextTaskDrawer(); } catch {}
+    }
+  });
   $('nextTaskClose').addEventListener('click', hideNextTaskDrawer);
   $('nextTaskBackdrop').addEventListener('click', hideNextTaskDrawer);
   $('nextTaskCustomGo').addEventListener('click', () => {
