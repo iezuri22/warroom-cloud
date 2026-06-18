@@ -932,6 +932,59 @@
     background: rgba(74,158,255,.18);
     color: var(--ink);
   }
+
+  /* Tasks scope pill — acts as the umbrella "Tasks" tab + a native select for
+     scope picking. Looks like a tab so it slots into the .view-toggle strip
+     without breaking the visual rhythm. */
+  .tasks-scope-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 10px 4px 14px;
+  }
+  .tasks-scope-pill .tasks-scope-prefix {
+    color: inherit;
+    font-weight: 800; letter-spacing: .3px;
+  }
+  .tasks-scope-pill select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-color: var(--w08);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a0' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 10px 10px;
+    border: 1px solid var(--w14);
+    color: var(--ink);
+    font-family: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .2px;
+    padding: 6px 26px 6px 12px;
+    border-radius: 99px;
+    cursor: pointer;
+    transition: border-color .12s, background-color .12s;
+  }
+  .tasks-scope-pill select:hover { border-color: var(--w25) }
+  .tasks-scope-pill select:focus {
+    outline: none;
+    border-color: rgba(74,158,255,.55);
+    box-shadow: 0 0 0 2px rgba(74,158,255,.15);
+  }
+  /* Option-list — browsers render <option> using the underlying OS, so we
+     can only paint background/color. Force a high-contrast pair so they're
+     legible against any theme. */
+  .tasks-scope-pill select option {
+    background-color: #1b1b22;
+    color: #f4f4f6;
+    font-weight: 600;
+  }
+  html.light .tasks-scope-pill select option {
+    background-color: #ffffff;
+    color: #1b1b22;
+  }
+  .tasks-scope-pill.active {
+    background: rgba(74,158,255,.18);
+  }
+  .tasks-scope-pill.active select {
+    background-color: rgba(74,158,255,.10);
+    border-color: rgba(74,158,255,.45);
+  }
   .needs-ack-dot {
     display: none;
     width: 7px; height: 7px;
@@ -2756,24 +2809,25 @@
   </div>
   <!-- View toggle: All rows / Acks / Notifications. -->
   <div class="view-toggle">
-    <!-- Unified "Tasks" tab. The three former tabs (Non-Dev/Non-Report,
-         Dev/Reports, All) now collapse behind this single button + a scope
-         dropdown immediately after. Clicking the tab applies the saved scope
-         (currentView is one of 'all' | 'dev' | 'allrows' underneath) so all
-         downstream applyFilters logic keeps working unchanged. -->
-    <button type="button" class="view-tab active" id="tasksViewTab" data-view="tasks-umbrella">
-      <span id="tasksViewTabLabel">Tasks · Non-Dev</span>
+    <!-- The three former Tasks tabs (Non-Dev/Non-Report, Dev/Reports, All)
+         collapse into this single dropdown styled as a tab. The dropdown's
+         value IS the active tab — currentView is one of 'all' | 'dev' |
+         'allrows' underneath so all downstream applyFilters logic keeps
+         working unchanged. Wrapped in a label so the count badge sits beside
+         the select. .tasks-scope-pill carries tab-style background/borders
+         + an explicit color on options so they read against any theme. -->
+    <label class="tasks-scope-pill view-tab" id="tasksViewTab" data-view="tasks-umbrella">
+      <span class="tasks-scope-prefix">Tasks ·</span>
+      <select id="taskScopeSelect" title="Pick which slice of Tasks to show">
+        <option value="all">Non-Dev / Non-Report</option>
+        <option value="dev">Dev / Reports</option>
+        <option value="allrows">All</option>
+      </select>
       <span class="view-tab-ct" id="tasksViewCount"></span>
-    </button>
-    <select id="taskScopeSelect" class="owner-pick" title="Pick which slice of Tasks to show"
-      style="height:28px;margin-right:6px;font-size:12px;font-weight:600">
-      <option value="all">Non-Dev / Non-Report</option>
-      <option value="dev">Dev / Reports</option>
-      <option value="allrows">All</option>
-    </select>
+    </label>
     <!-- Hidden counters preserved so existing code that writes to these IDs
          still works without touching every callsite. Their numbers feed the
-         unified tab's badge label via updateTasksTabBadge(). -->
+         pill's badge via updateTasksTabBadge(). -->
     <span id="devReportsCount" style="display:none"></span>
     <span id="allRowsCount" style="display:none"></span>
     <button type="button" class="view-tab" data-view="weekly">
@@ -7923,17 +7977,12 @@ function saveTaskScope(v){
   try { localStorage.setItem(TASKS_SCOPE_KEY, v); } catch {}
 }
 function updateTasksTabBadge(){
-  // Tab label reflects the current scope so the user can tell at a glance
-  // which slice the Tasks tab will show.
-  const lbl = document.getElementById('tasksViewTabLabel');
+  // Sync the dropdown's selected option to the active scope, and pipe the
+  // matching count into the badge beside it.
+  const sel = document.getElementById('taskScopeSelect');
   const ct  = document.getElementById('tasksViewCount');
-  if (!lbl) return;
   const scope = TASKS_SCOPES.has(currentView) ? currentView : loadTaskScope();
-  const labelText = scope === 'dev' ? 'Tasks · Dev / Reports'
-                  : scope === 'allrows' ? 'Tasks · All'
-                  : 'Tasks · Non-Dev';
-  lbl.textContent = labelText;
-  // Pull the count from the existing hidden counter for that scope.
+  if (sel && sel.value !== scope) sel.value = scope;
   if (ct) {
     const src = scope === 'dev' ? document.getElementById('devReportsCount')
               : scope === 'allrows' ? document.getElementById('allRowsCount')
@@ -7985,7 +8034,9 @@ function syncViewTabActive(){
     x.classList.toggle('active', match);
   });
 }
-// Scope dropdown — re-renders without leaving the Tasks umbrella.
+// Scope dropdown — IS the Tasks tab now. Changing it switches into the Tasks
+// view if the user was on a different tab (Activity, Visits, etc.), so the
+// dropdown is a one-tap re-entry into Tasks AND the scope picker.
 const taskScopeSelect = document.getElementById('taskScopeSelect');
 if (taskScopeSelect) {
   taskScopeSelect.addEventListener('change', () => {
@@ -7994,6 +8045,8 @@ if (taskScopeSelect) {
     saveTaskScope(v);
     currentView = v;
     syncViewTabActive();
+    // Clear non-Tasks body classes — we're jumping back into Tasks view.
+    document.body.classList.remove('view-ack', 'view-notif', 'view-weekly', 'view-starred', 'view-visits', 'view-transcripts');
     updateTasksTabBadge();
     render();
   });
