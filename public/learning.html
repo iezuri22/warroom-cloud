@@ -139,6 +139,11 @@
   }
   .section-head .st-deadline:hover{color:var(--ink);background:var(--w05)}
   .section-head .st-deadline.soon{background:rgba(251,191,36,.16);color:#fcd34d}
+  .section-head .st-pace{
+    padding:3px 9px;border-radius:6px;font-weight:600;letter-spacing:.2px;
+    background:rgba(167,139,250,.16);color:#c4b5fd;
+    font-size:11px;display:inline-flex;align-items:center;gap:4px
+  }
   .section-head .st-deadline.set{
     background:rgba(74,158,255,.14);color:#93c5fd;cursor:default
   }
@@ -275,12 +280,66 @@
 <div id="topbar">
   <h1>Learning</h1>
   <span class="sp"></span>
+  <button class="tb-btn" id="addBookBtn">+ Add book</button>
   <button class="tb-btn primary" id="addCourseBtn">+ Add course</button>
 </div>
 
 <main id="main">
   <div id="courses"></div>
 </main>
+
+<!-- Add / edit BOOK modal -->
+<div class="modal-bd" id="bookModalBd">
+  <div class="modal">
+    <h2 id="bmTitle">Add a book</h2>
+    <input type="hidden" id="bmId">
+    <div class="field">
+      <label>Book title</label>
+      <input type="text" id="bmName" placeholder="e.g. Atomic Habits">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Author (optional)</label>
+        <input type="text" id="bmAuthor" placeholder="James Clear">
+      </div>
+      <div class="field">
+        <label>Format</label>
+        <select id="bmSource">
+          <option value="kindle">Kindle</option>
+          <option value="physical">Physical</option>
+          <option value="audiobook">Audiobook</option>
+          <option value="pdf">PDF</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Total pages (optional)</label>
+        <input type="number" id="bmPages" min="0" placeholder="320">
+      </div>
+      <div class="field">
+        <label>URL (optional)</label>
+        <input type="url" id="bmUrl" placeholder="https://…">
+      </div>
+    </div>
+    <div class="field">
+      <label>Chapters (paste one per line)</label>
+      <textarea id="bmChapters" placeholder="Chapter title | pages
+Chapter 1: The Surprising Power of Tiny Habits | 22
+Chapter 2: How Your Habits Shape Your Identity | 18
+Chapter 3: How to Build Better Habits | 28"></textarea>
+      <div class="hint">
+        Format: <code>Chapter title | pages</code>. Skip the count if you're not sure — you can edit later.<br>
+        Books: you can <strong>skip chapters</strong> and set a deadline on any one without finishing the prior.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="tb-btn" id="bmCancel">Cancel</button>
+      <button class="tb-btn primary" id="bmSave">Save book</button>
+    </div>
+  </div>
+</div>
 
 <!-- Add / edit course modal -->
 <div class="modal-bd" id="courseModalBd">
@@ -431,12 +490,39 @@ function overdueMessage(daysOverdue, sectionTitle, deadlineISO){
   return `<strong>${daysOverdue} days. Past. Due.</strong> Your deadline was ${esc(dateStr)}. You're letting this rot. Either finish it tonight or sit with the fact that you stopped showing up.`;
 }
 function isSectionComplete(section){
+  // For book chapters: complete when pagesRead >= totalPages.
+  // For course sections: complete when every subsection is done.
+  if (typeof section.totalPages === 'number') {
+    return (section.pagesRead || 0) >= section.totalPages;
+  }
   const p = sectionProgress(section);
   return p.total > 0 && p.done === p.total;
 }
 function isPrevSectionComplete(course, idx){
   if (idx <= 0) return true;
+  // Books let you set deadlines on any chapter — no cascade lock.
+  if ((course.type || 'course') === 'book') return true;
   return isSectionComplete(course.sections[idx - 1]);
+}
+// Per-day pacing helper. Given a section/chapter with a deadline, compute
+// how many lectures (or pages) the user needs to finish per day to make it.
+function pacingFor(section){
+  if (!section.deadline) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const due = new Date(section.deadline + 'T12:00:00');
+  const days = Math.ceil((due - today) / 86400000);
+  if (days <= 0) return null;
+  if (typeof section.totalPages === 'number') {
+    const remaining = section.totalPages - (section.pagesRead || 0);
+    if (remaining <= 0) return null;
+    return { perDay: Math.ceil(remaining / days), unit: 'pages', remaining, days };
+  }
+  const total = (section.subsections || []).length;
+  const done = (section.subsections || []).filter(u => u.done).length;
+  const remaining = total - done;
+  if (remaining <= 0) return null;
+  return { perDay: Math.ceil(remaining / days), unit: remaining === 1 ? 'lecture' : 'lectures', remaining, days };
 }
 function setToast(msg, kind){
   const t = document.getElementById('toast');
@@ -461,6 +547,15 @@ async function delCourse(id){
 
 // ============= Render ==============================
 function progressFor(course){
+  // Books: total = sum of chapter totalPages; done = sum of pagesRead.
+  if ((course.type || 'course') === 'book') {
+    let total = 0, done = 0;
+    for (const s of (course.sections || [])) {
+      total += (s.totalPages || 0);
+      done  += Math.min(s.pagesRead || 0, s.totalPages || 0);
+    }
+    return { total, done, pct: total ? Math.round(done / total * 100) : 0, unit: 'pages' };
+  }
   let total = 0, done = 0;
   for (const s of (course.sections || [])) {
     for (const u of (s.subsections || [])) {
@@ -468,7 +563,7 @@ function progressFor(course){
       if (u.done) done++;
     }
   }
-  return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
+  return { total, done, pct: total ? Math.round(done / total * 100) : 0, unit: 'lectures' };
 }
 function sectionProgress(section){
   const total = (section.subsections || []).length;
@@ -498,13 +593,29 @@ function render(){
 }
 
 function renderCourseCard(c){
+  const isBook = (c.type || 'course') === 'book';
   const p = progressFor(c);
-  const srcLabel = { udemy:'Udemy', coursera:'Coursera', youtube:'YouTube', other:'Course' }[c.source] || 'Course';
+  const srcLabel = isBook
+    ? ({ kindle:'Kindle', physical:'Book', audiobook:'Audiobook', pdf:'PDF', other:'Book' }[c.source] || 'Book')
+    : ({ udemy:'Udemy', coursera:'Coursera', youtube:'YouTube', other:'Course' }[c.source] || 'Course');
   const meta = [];
-  if (c.totalHours) meta.push(`${c.totalHours} hours`);
-  if (c.rating)     meta.push(`★ ${c.rating}`);
-  if (c.students)   meta.push(`${c.students.toLocaleString()} students`);
+  if (isBook) {
+    if (c.author)     meta.push(`by ${c.author}`);
+    if (c.totalPages) meta.push(`${c.totalPages} pages`);
+  } else {
+    if (c.totalHours) meta.push(`${c.totalHours} hours`);
+    if (c.rating)     meta.push(`★ ${c.rating}`);
+    if (c.students)   meta.push(`${c.students.toLocaleString()} students`);
+  }
   const metaStr = meta.join(' · ');
+  // Running offset for course subsection numbering (Lecture 14 across
+  // sections, not "Lecture 1" restart).
+  let runningOffset = 0;
+  const sectionHtml = (c.sections || []).map((s, idx) => {
+    const startNum = runningOffset + 1;
+    runningOffset += isBook ? (s.totalPages || 0) : (s.subsections || []).length;
+    return renderSectionRow(c, s, idx + 1, startNum, isBook);
+  }).join('');
   return `
     <div class="course" data-course="${c.id}">
       <div class="course-head">
@@ -515,42 +626,39 @@ function renderCourseCard(c){
           </div>
           <div class="ch-meta">
             ${metaStr ? `<span>${esc(metaStr)}</span>` : ''}
-            ${c.url ? `<a href="${attr(c.url)}" target="_blank" rel="noopener">↗ Open course</a>` : ''}
+            ${c.url ? `<a href="${attr(c.url)}" target="_blank" rel="noopener">↗ Open ${isBook ? 'book' : 'course'}</a>` : ''}
           </div>
         </div>
         <div class="ch-tools">
-          <button class="ch-icon-btn" data-action="edit-course" title="Edit course details">✎</button>
-          <button class="ch-icon-btn danger" data-action="delete-course" title="Delete course">✕</button>
+          <button class="ch-icon-btn" data-action="edit-course" title="Edit details">✎</button>
+          <button class="ch-icon-btn danger" data-action="delete-course" title="Delete">✕</button>
         </div>
       </div>
       <div class="course-progress">
         <div class="row">
-          <span><strong>${p.done}</strong> / ${p.total} lectures</span>
+          <span><strong>${p.done}</strong> / ${p.total} ${p.unit}</span>
           <span><strong>${p.pct}%</strong> complete</span>
         </div>
         <div class="bar"><div style="width:${p.pct}%"></div></div>
       </div>
       <div class="sections">
-        ${(c.sections || []).map((s, idx) => renderSectionRow(c, s, idx + 1)).join('')}
-        <button class="add-sub-row" data-action="add-section" style="margin-top:12px;width:100%">+ Add section</button>
+        ${sectionHtml}
+        <button class="add-sub-row" data-action="add-section" style="margin-top:12px;width:100%">+ Add ${isBook ? 'chapter' : 'section'}</button>
       </div>
     </div>`;
 }
 
-function renderSectionRow(c, s, n){
-  const p = sectionProgress(s);
-  const isDone = p.total > 0 && p.done === p.total;
+function renderSectionRow(c, s, n, startNum, isBook){
+  const isDone = isSectionComplete(s);
   const isExpanded = expandedSections.has(c.id + '/' + s.id);
   const sectionIdx = (c.sections || []).indexOf(s);
   const prevDone = isPrevSectionComplete(c, sectionIdx);
   const status = deadlineStatus(s.deadline, isDone);
+  const pace = pacingFor(s);
+  const unitLabel = isBook ? 'Chapter' : 'Section';
 
-  // Pill rendering: 4 states.
-  //  1. Has deadline + overdue + not done → loud red pulsing pill
-  //  2. Has deadline + done → green ✓ pill (locked)
-  //  3. Has deadline + not done + not overdue → blue "Due X" pill (locked)
-  //  4. No deadline + prev done → blue "+ Set deadline" pill (clickable)
-  //  5. No deadline + prev NOT done → gray locked pill
+  // Pill rendering: same 5 states. For books, the "locked until prev"
+  // state never fires (cascade lock is off — books let you skip).
   let pill;
   if (status.hasDeadline && status.overdue) {
     pill = `<span class="st-deadline overdue">⚠ ${Math.abs(status.days)} days overdue</span>`;
@@ -559,11 +667,16 @@ function renderSectionRow(c, s, n){
   } else if (status.hasDeadline) {
     pill = `<span class="st-deadline set" title="Once set, this can't be changed.">Due ${esc(status.label)}</span>`;
   } else if (!prevDone) {
-    pill = `<span class="st-deadline locked" title="Finish Section ${sectionIdx} first">🔒 Locked</span>`;
+    pill = `<span class="st-deadline locked" title="Finish ${unitLabel} ${sectionIdx} first">🔒 Locked</span>`;
   } else {
     pill = `<span class="st-deadline" data-action="set-deadline" title="Pick a date. You can't change it after.">+ Set deadline</span>
             <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${todayISO()}">`;
   }
+
+  // Per-day pacing indicator — shown right after the deadline pill.
+  const pacePill = (pace && !status.overdue)
+    ? `<span class="st-pace" title="To finish by your deadline">${pace.perDay} ${pace.unit}/day</span>`
+    : '';
 
   const overdueBanner = (status.hasDeadline && status.overdue)
     ? `<div class="overdue-banner">
@@ -572,36 +685,64 @@ function renderSectionRow(c, s, n){
        </div>`
     : '';
 
+  // Progress + body differ between courses (subsections) and books (pages).
+  let progressBlock, bodyBlock;
+  if (isBook) {
+    const totalPages = s.totalPages || 0;
+    const pagesRead  = Math.min(s.pagesRead || 0, totalPages);
+    const pct = totalPages ? Math.round(pagesRead / totalPages * 100) : 0;
+    progressBlock = `
+      <span class="st-progress">
+        <span>${pagesRead}/${totalPages}p</span>
+        <span class="mini-bar"><div style="width:${pct}%"></div></span>
+      </span>`;
+    bodyBlock = `
+      <div class="book-progress-row" style="padding:10px 6px 4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600">Pages read</label>
+        <input type="number" data-action="edit-pages-read" value="${pagesRead}" min="0" max="${totalPages || 9999}"
+               style="width:80px;padding:6px 8px;background:var(--w03);border:1px solid var(--line);border-radius:6px;color:var(--ink);font-size:13px;outline:none">
+        <span style="font-size:12px;color:var(--muted)">of ${totalPages}</span>
+        <button class="add-sub-row" data-action="edit-total-pages" style="padding:5px 10px;width:auto">Set total pages</button>
+      </div>`;
+  } else {
+    const p = sectionProgress(s);
+    progressBlock = `
+      <span class="st-progress">
+        <span>${p.done}/${p.total}</span>
+        <span class="mini-bar"><div style="width:${p.pct}%"></div></span>
+      </span>`;
+    bodyBlock = `
+      <div class="subsections">
+        ${(s.subsections || []).map((u, i) => `
+          <div class="sub-row ${u.done ? 'done' : ''}" data-sub="${u.id}">
+            <div class="sub-check" data-action="toggle-sub" title="Mark complete"></div>
+            <div class="sub-title" contenteditable="plaintext-only" data-action="edit-sub-title">${esc(/^Lecture \d+/.test(u.title || '') ? 'Lecture ' + (startNum + i) : (u.title || 'Lecture ' + (startNum + i)))}</div>
+            <div class="sub-tools">
+              <button class="del-btn" data-action="del-sub" title="Remove lecture">✕</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <button class="add-sub-row" data-action="add-sub">+ Add lecture</button>`;
+  }
+
   return `
     <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''}" data-section="${s.id}">
       <div class="section-head" data-action="toggle-section">
         <span class="chev">▶</span>
-        <span class="st-num">Section ${n}</span>
+        <span class="st-num">${unitLabel} ${n}</span>
         <span class="st-title">${esc(s.title)}</span>
         <span class="st-meta">
-          <span class="st-progress">
-            <span>${p.done}/${p.total}</span>
-            <span class="mini-bar"><div style="width:${p.pct}%"></div></span>
-          </span>
-          <span class="st-duration">${fmtDuration(s.durationMins)}</span>
+          ${progressBlock}
+          ${s.durationMins ? `<span class="st-duration">${fmtDuration(s.durationMins)}</span>` : ''}
           ${pill}
+          ${pacePill}
           ${isDone ? '' : `<button type="button" class="st-focus" data-action="focus-section" title="Open focus timer with this section's title">▶ Focus</button>`}
         </span>
       </div>
       ${overdueBanner}
       <div class="section-body">
-        <div class="subsections">
-          ${(s.subsections || []).map(u => `
-            <div class="sub-row ${u.done ? 'done' : ''}" data-sub="${u.id}">
-              <div class="sub-check" data-action="toggle-sub" title="Mark complete"></div>
-              <div class="sub-title" contenteditable="plaintext-only" data-action="edit-sub-title">${esc(u.title)}</div>
-              <div class="sub-tools">
-                <button class="del-btn" data-action="del-sub" title="Remove lecture">✕</button>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-        <button class="add-sub-row" data-action="add-sub">+ Add lecture</button>
+        ${bodyBlock}
       </div>
     </div>`;
 }
@@ -615,7 +756,11 @@ function wireEvents(){
 
     // Course-level
     courseEl.querySelectorAll('[data-action="edit-course"]').forEach(b =>
-      b.addEventListener('click', () => openCourseModal(courseId)));
+      b.addEventListener('click', () => {
+        // Books open the book modal; courses open the course modal.
+        if ((c.type || 'course') === 'book') openBookModal(courseId);
+        else openCourseModal(courseId);
+      }));
     courseEl.querySelectorAll('[data-action="delete-course"]').forEach(b =>
       b.addEventListener('click', () => {
         if (!confirm('Delete "' + c.title + '"? This wipes its sections and progress.')) return;
@@ -745,6 +890,20 @@ function wireEvents(){
           saveCourse(c);
           render();
         }));
+      // Book chapter page tracking
+      sectionEl.querySelector('[data-action="edit-pages-read"]')?.addEventListener('change', (e) => {
+        s.pagesRead = Math.max(0, parseInt(e.target.value, 10) || 0);
+        saveCourse(c);
+        render();
+      });
+      sectionEl.querySelector('[data-action="edit-total-pages"]')?.addEventListener('click', () => {
+        const v = parseInt(prompt('Total pages in this chapter:', s.totalPages || ''), 10);
+        if (Number.isFinite(v) && v > 0) {
+          s.totalPages = v;
+          saveCourse(c);
+          render();
+        }
+      });
     });
   });
 }
@@ -831,6 +990,67 @@ document.getElementById('courseModalBd').addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.getElementById('courseModalBd').classList.contains('open')) closeCourseModal();
+  if (e.key === 'Escape' && document.getElementById('bookModalBd').classList.contains('open')) closeBookModal();
+});
+
+// ============= Book modal =================================================
+function openBookModal(editId){
+  const c = editId ? courses.get(editId) : null;
+  const isBookEdit = c && (c.type || 'course') === 'book';
+  document.getElementById('bmTitle').textContent = c ? 'Edit book' : 'Add a book';
+  document.getElementById('bmId').value     = editId || '';
+  document.getElementById('bmName').value   = (c && c.title) || '';
+  document.getElementById('bmAuthor').value = (c && c.author) || '';
+  document.getElementById('bmSource').value = (c && isBookEdit && c.source) || 'kindle';
+  document.getElementById('bmPages').value  = (c && c.totalPages) || '';
+  document.getElementById('bmUrl').value    = (c && c.url) || '';
+  document.getElementById('bmChapters').value = (c && isBookEdit) ? (c.sections || []).map(s =>
+    `${s.title} | ${s.totalPages || 0}`).join('\n') : '';
+  document.getElementById('bookModalBd').classList.add('open');
+  setTimeout(() => document.getElementById('bmName').focus(), 50);
+}
+function closeBookModal(){ document.getElementById('bookModalBd').classList.remove('open'); }
+async function saveBookFromModal(){
+  const id    = document.getElementById('bmId').value || uid();
+  const title = document.getElementById('bmName').value.trim();
+  if (!title) { alert('Give the book a title.'); return; }
+  const existing = courses.get(id);
+  const c = existing ? { ...existing } : { id, type: 'book', addedAt: nowISO(), sections: [] };
+  c.type       = 'book';
+  c.title      = title;
+  c.author     = document.getElementById('bmAuthor').value.trim() || null;
+  c.source     = document.getElementById('bmSource').value;
+  c.url        = document.getElementById('bmUrl').value.trim() || null;
+  c.totalPages = parseInt(document.getElementById('bmPages').value, 10) || null;
+
+  const chaptersText = document.getElementById('bmChapters').value.trim();
+  if (chaptersText) {
+    const lines = chaptersText.split('\n').map(l => l.trim()).filter(Boolean);
+    c.sections = lines.map((line, i) => {
+      const parts = line.split('|').map(s => s.trim());
+      const ctitle = parts[0] || `Chapter ${i + 1}`;
+      const pages  = parseInt(parts[1], 10) || 0;
+      // Reuse prior chapter (deadline + pagesRead) by title match.
+      const prior = (existing?.sections || []).find(p => p.title === ctitle);
+      return {
+        id: prior?.id || ('s_' + Date.now().toString(36) + '_' + i),
+        title: ctitle,
+        totalPages: pages || prior?.totalPages || 0,
+        pagesRead:  prior?.pagesRead || 0,
+        deadline:   prior?.deadline || null
+      };
+    });
+  }
+  courses.set(c.id, c);
+  await saveCourse(c);
+  closeBookModal();
+  render();
+}
+document.getElementById('addBookBtn').addEventListener('click', () => openBookModal());
+document.getElementById('bmCancel').addEventListener('click', closeBookModal);
+document.getElementById('bmSave').addEventListener('click', saveBookFromModal);
+document.getElementById('bookModalBd').addEventListener('click', (e) => {
+  if (e.target.id === 'bookModalBd') closeBookModal();
 });
 
 // ============= Udemy seed ==============================
