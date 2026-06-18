@@ -956,8 +956,14 @@ body { display:flex; flex-direction:column; position:relative }
 
   <!-- ACTIVE GAME -->
   <div class="game" id="gameView">
-    <div class="game-eyebrow"><span class="dot"></span><span id="gameEyebrowText">Sprint in progress</span></div>
-    <div class="game-task" id="gameTask">—</div>
+    <div class="game-eyebrow">
+      <span class="dot"></span><span id="gameEyebrowText">Sprint in progress</span>
+      <button type="button" id="changeTaskBtn" title="Switch to a new task without restarting the timer"
+        style="margin-left:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;font-size:11px;padding:3px 10px;border-radius:999px;cursor:pointer;letter-spacing:.02em">
+        ✎ change task
+      </button>
+    </div>
+    <div class="game-task" id="gameTask" title="Double-click to change the task" style="cursor:text">—</div>
     <button class="game-details-toggle" id="gameDetailsToggle" type="button" hidden>
       <span class="chev">▸</span> details
     </button>
@@ -2044,6 +2050,29 @@ body { display:flex; flex-direction:column; position:relative }
   }
 
   if (pauseBtn) pauseBtn.addEventListener('click', pauseSprint);
+
+  // Mid-sprint task switcher: lets you rename the running sprint without
+  // restarting the timer. Triggered from the "✎ change task" pill in the
+  // eyebrow OR by double-clicking the big task title. Useful when finishing
+  // one lecture and moving to the next while the timer keeps ticking.
+  function promptChangeTask(){
+    if (!timerHandle) return; // nothing running — nothing to rename
+    const cur = currentTask || '';
+    const next = prompt('Switch the sprint to a new task (timer keeps running):', cur);
+    if (next == null) return;
+    const t = String(next).trim();
+    if (!t || t === cur) return;
+    currentTask = t;
+    lastTaskName = t;
+    if (gameTask) gameTask.textContent = t;
+    // Drop linked-source bookkeeping — the new task is free-text from here.
+    try { setSelectedTask(null); } catch {}
+    // Mirror to localStorage so other tabs (Learning banner) see the new name.
+    saveActive();
+  }
+  const changeTaskBtn = $('changeTaskBtn');
+  if (changeTaskBtn) changeTaskBtn.addEventListener('click', promptChangeTask);
+  if (gameTask) gameTask.addEventListener('dblclick', promptChangeTask);
   if (resumeBtn) resumeBtn.addEventListener('click', resumeSprint);
   if (discardPauseBtn) discardPauseBtn.addEventListener('click', discardPaused);
 
