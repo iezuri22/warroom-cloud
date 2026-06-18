@@ -271,6 +271,16 @@
     color:var(--muted);cursor:pointer;font-size:13px
   }
   .sub-tools .del-btn:hover{color:var(--red);background:rgba(248,113,113,.1)}
+  /* Per-lecture due-in pill — distributes the section pace across days */
+  .sub-row .sub-due{
+    flex:0 0 auto;font-size:10.5px;font-weight:600;letter-spacing:.3px;
+    padding:2px 8px;border-radius:5px;text-transform:uppercase;
+    background:var(--w05);color:var(--muted);margin-right:6px
+  }
+  .sub-row .sub-due.today    { background:rgba(248,113,113,.18); color:#fca5a5 }
+  .sub-row .sub-due.tomorrow { background:rgba(251,191,36,.18);  color:#fcd34d }
+  .sub-row .sub-due.soon     { background:rgba(74,158,255,.15);  color:#93c5fd }
+  .sub-row.done .sub-due{ display:none }
   .add-sub-row{
     margin-top:6px;padding:8px 10px;border-radius:6px;background:transparent;
     border:1px dashed var(--line2);color:var(--muted);font-size:12px;
@@ -556,6 +566,31 @@ function isPrevSectionComplete(course, idx){
   if ((course.type || 'course') === 'book') return true;
   return isSectionComplete(course.sections[idx - 1]);
 }
+// "Due day" label for a single lecture inside a section that has a
+// deadline. Distributes the remaining-not-done lectures across the days
+// remaining, in order. Returns null when no deadline / lecture is done /
+// no pacing applies.
+function lectureDueLabel(section, lectureIndex){
+  const pace = pacingFor(section);
+  if (!pace || !section.deadline) return null;
+  const subs = section.subsections || [];
+  const u = subs[lectureIndex];
+  if (!u || u.done) return null;
+  // Position among NOT-DONE lectures, preserving order.
+  const notDoneIndices = [];
+  for (let i = 0; i < subs.length; i++) if (!subs[i].done) notDoneIndices.push(i);
+  const pos = notDoneIndices.indexOf(lectureIndex);
+  if (pos < 0) return null;
+  const dayOffset = Math.floor(pos / pace.perDay);
+  // Cap at the actual days-remaining so we don't say "in 30 days" when the
+  // deadline is 5 days out (it just means user is behind pace).
+  const capped = Math.min(dayOffset, pace.days - 1);
+  if (capped === 0) return { text: 'Today', cls: 'today' };
+  if (capped === 1) return { text: 'Tomorrow', cls: 'tomorrow' };
+  if (capped <= 3)  return { text: 'In ' + capped + ' days', cls: 'soon' };
+  return { text: 'In ' + capped + ' days', cls: '' };
+}
+
 // Per-day pacing helper. Given a section/chapter with a deadline, compute
 // how many lectures (or pages) the user needs to finish per day to make it.
 function pacingFor(section){
@@ -813,15 +848,19 @@ function renderSectionRow(c, s, n, startNum, isBook){
       </span>`;
     bodyBlock = `
       <div class="subsections">
-        ${(s.subsections || []).map((u, i) => `
+        ${(s.subsections || []).map((u, i) => {
+          const due = lectureDueLabel(s, i);
+          const duePill = due ? `<span class="sub-due ${due.cls}">${due.text}</span>` : '';
+          return `
           <div class="sub-row ${u.done ? 'done' : ''}" data-sub="${u.id}">
             <div class="sub-check" data-action="toggle-sub" title="Mark complete"></div>
             <div class="sub-title" contenteditable="plaintext-only" data-action="edit-sub-title">${esc(/^Lecture \d+/.test(u.title || '') ? 'Lecture ' + (startNum + i) : (u.title || 'Lecture ' + (startNum + i)))}</div>
+            ${duePill}
             <div class="sub-tools">
               <button class="del-btn" data-action="del-sub" title="Remove lecture">✕</button>
             </div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <button class="add-sub-row" data-action="add-sub">+ Add lecture</button>`;
   }
