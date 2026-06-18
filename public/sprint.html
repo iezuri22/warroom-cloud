@@ -1063,6 +1063,45 @@ body { display:flex; flex-direction:column; position:relative }
   let sprintTookFullscreen = false;    // true if THIS sprint forced fullscreen
   const RING_CIRC = 565.48; // 2 * π * 90
   const PAUSE_KEY = 'sprint-paused-v1';
+  // Active-sprint state mirrored to localStorage so OTHER tabs/pages can:
+  //   - see that a sprint is running (Learning page shows a banner)
+  //   - update the running task name without restarting the timer
+  //     (Learning's Keep-Going modal: "watch this next lecture" → no new tab)
+  // Sprint tab listens for storage events on this key and reacts to task changes.
+  const ACTIVE_KEY = 'sprint-active-v1';
+  function saveActive(){
+    try {
+      if (!Number.isFinite(startedAt) || !Number.isFinite(targetSeconds) || targetSeconds <= 0) return;
+      localStorage.setItem(ACTIVE_KEY, JSON.stringify({
+        taskName: currentTask || '',
+        startedAt,
+        targetSeconds,
+        updatedAt: Date.now(),
+      }));
+    } catch {}
+  }
+  function clearActive(){
+    try { localStorage.removeItem(ACTIVE_KEY); } catch {}
+  }
+  // Cross-tab: when Learning's Keep-Going modal swaps the running task name,
+  // it writes ACTIVE_KEY. We pick that up here without restarting the timer.
+  // (storage events only fire on OTHER tabs, so our own saveActive calls are safe.)
+  window.addEventListener('storage', (e) => {
+    if (e.key !== ACTIVE_KEY) return;
+    if (!timerHandle) return; // not currently running — ignore
+    if (!e.newValue) return;  // cleared elsewhere — leave our own state alone
+    try {
+      const next = JSON.parse(e.newValue);
+      if (next && typeof next.taskName === 'string' && next.taskName.trim() && next.taskName !== currentTask) {
+        currentTask = next.taskName;
+        lastTaskName = next.taskName;
+        if (gameTask) gameTask.textContent = currentTask;
+        // Clear linked-source bookkeeping — the new task arrived externally
+        // and we have no source IDs for it; treat it as a free-text rename.
+        try { setSelectedTask && setSelectedTask(null); } catch {}
+      }
+    } catch {}
+  });
 
   // ============ PARENT FULLSCREEN BRIDGE ============
   // Sprint runs in an iframe inside daily-planner. We:
@@ -1942,6 +1981,9 @@ body { display:flex; flex-direction:column; position:relative }
       pauseCount,
       pausedAt: now,
     });
+    // Pausing means we're no longer "actively" sprinting — drop the mirror so
+    // Learning's banner clears. (loadPaused → resume restores active state.)
+    clearActive();
     renderResumeBanner();
     // Drop fullscreen on pause so user can reach other War Room tabs.
     // Re-enter on resume below.
@@ -1981,6 +2023,7 @@ body { display:flex; flex-direction:column; position:relative }
     tickGame();
     if (timerHandle) clearInterval(timerHandle);
     timerHandle = setInterval(tickGame, 200);
+    saveActive();
   }
 
   function discardPaused(){
@@ -2067,6 +2110,9 @@ body { display:flex; flex-direction:column; position:relative }
     tickGame();
     if (timerHandle) clearInterval(timerHandle);
     timerHandle = setInterval(tickGame, 200);
+    // Mirror the live sprint to localStorage so other pages (Learning) can see
+    // it and update the task name without forcing a restart.
+    saveActive();
   });
 
   // ============ TICK ============
@@ -2320,6 +2366,7 @@ body { display:flex; flex-direction:column; position:relative }
     saveStore(store);
     // Sprint is done — clear any paused state and reset counter.
     clearPaused();
+    clearActive();
     pauseCount = 0;
     renderResumeBanner();
     // Release fullscreen if WE took it for this sprint.
@@ -2348,6 +2395,7 @@ body { display:flex; flex-direction:column; position:relative }
     document.title = 'Sprint — War Room';
     // Drop pause state — the sprint is over, not paused
     clearPaused();
+    clearActive();
     pauseCount = 0;
     renderResumeBanner();
     if (sprintTookFullscreen) {
@@ -2390,6 +2438,7 @@ body { display:flex; flex-direction:column; position:relative }
     document.title = 'Sprint — War Room';
     // Quit also drops any pause state for this run
     clearPaused();
+    clearActive();
     pauseCount = 0;
     renderResumeBanner();
     if (sprintTookFullscreen) {

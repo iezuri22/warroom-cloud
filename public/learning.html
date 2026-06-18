@@ -704,6 +704,89 @@ function setToast(msg, kind){
   setToast._t = setTimeout(() => t.classList.add('hidden'), 2400);
 }
 
+// ============= Sprint handoff ==========================================
+// "Start focus on X" used to always open a new sprint tab. That meant if a
+// sprint was already running, the user had to finish (or quit) it before the
+// new lecture could be timed. Now: if a sprint is live in another tab, we
+// just update its task name in localStorage — the sprint tab picks it up via
+// a `storage` event and keeps its timer running. Falls back to opening a new
+// tab if nothing is active.
+const SPRINT_ACTIVE_KEY = 'sprint-active-v1';
+function readActiveSprint(){
+  try {
+    const raw = localStorage.getItem(SPRINT_ACTIVE_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !Number.isFinite(d.startedAt) || !Number.isFinite(d.targetSeconds)) return null;
+    // Treat sprints older than (target + 1h slack) as stale leftovers.
+    const ageSec = (Date.now() - d.startedAt) / 1000;
+    if (ageSec > d.targetSeconds + 3600) return null;
+    return d;
+  } catch { return null; }
+}
+function startFocusOnTask(task){
+  const t = String(task || '').trim();
+  if (!t) return;
+  const active = readActiveSprint();
+  if (active) {
+    // Update task name in place; the sprint tab's storage listener picks it up.
+    try {
+      localStorage.setItem(SPRINT_ACTIVE_KEY, JSON.stringify({
+        ...active,
+        taskName: t,
+        updatedAt: Date.now(),
+      }));
+    } catch {}
+    setToast('Sprint task switched — timer kept going');
+    renderSprintBanner();
+    return;
+  }
+  // No active sprint — open one in a new tab as before.
+  const qs = new URLSearchParams({ task: t });
+  window.open('/sprint.html?' + qs.toString(), '_blank');
+}
+
+// Live indicator at the top of Learning showing the running sprint. Updates
+// every second so the countdown reflects reality, and reacts to storage events
+// when sprint.html ends/changes the timer in another tab.
+function renderSprintBanner(){
+  let el = document.getElementById('sprintBanner');
+  const active = readActiveSprint();
+  if (!active) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sprintBanner';
+    el.style.cssText = 'position:sticky;top:0;z-index:30;background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;padding:10px 16px;border-radius:10px;margin:0 0 12px 0;display:flex;align-items:center;gap:12px;font-size:14px;box-shadow:0 4px 14px rgba(30,64,175,.35);cursor:pointer';
+    el.title = 'Click to bring the sprint tab forward';
+    el.addEventListener('click', () => {
+      // No reliable way to focus another tab; opening the same URL re-uses the
+      // existing sprint window in most browsers when target name matches.
+      window.open('/sprint.html', 'warroom-sprint');
+    });
+    const main = document.querySelector('main') || document.body;
+    main.insertBefore(el, main.firstChild);
+  }
+  const remainingSec = Math.max(0, active.targetSeconds - Math.round((Date.now() - active.startedAt) / 1000));
+  const mm = String(Math.floor(remainingSec / 60)).padStart(2,'0');
+  const ss = String(remainingSec % 60).padStart(2,'0');
+  const over = remainingSec === 0 && (Date.now() - active.startedAt) / 1000 > active.targetSeconds;
+  el.innerHTML = `
+    <span style="font-size:18px">${over ? '⚠️' : '🏃'}</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;line-height:1.2">${over ? 'OVERTIME' : mm + ':' + ss + ' left'} · sprint running</div>
+      <div style="font-size:12px;opacity:.92;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(active.taskName || '(unnamed)')}</div>
+    </div>
+    <span style="font-size:11px;opacity:.85">checking off a lecture switches the task — timer keeps going</span>
+  `;
+}
+setInterval(renderSprintBanner, 1000);
+window.addEventListener('storage', (e) => {
+  if (e.key === SPRINT_ACTIVE_KEY) renderSprintBanner();
+});
+
 // ============= Course persistence ============
 async function saveCourse(c){
   c.updatedAt = nowISO();
@@ -850,8 +933,7 @@ function renderTodayQueue(){
     });
     row.querySelector('[data-action="tq-focus"]')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      const qs = new URLSearchParams({ task: it.section.title });
-      window.open('/sprint.html?' + qs.toString(), '_blank');
+      startFocusOnTask(it.section.title);
     });
   });
 }
@@ -917,8 +999,7 @@ function maybePromptKeepGoing(course, section, justCompletedIndex){
     goLabel: '▶ Start focus',
     onGo: () => {
       hideKeepGoingModal();
-      const qs = new URLSearchParams({ task: next.section.title + ' — ' + nextTitle });
-      window.open('/sprint.html?' + qs.toString(), '_blank');
+      startFocusOnTask(next.section.title + ' — ' + nextTitle);
     }
   });
 }
@@ -1312,10 +1393,9 @@ function wireEvents(){
       sectionEl.querySelector('[data-action="focus-section"]')?.addEventListener('click', (e) => {
         // Don't trigger the section-head toggle when starting a focus.
         e.stopPropagation();
-        // Hand off to the Sprint racing page with the section title
-        // pre-filled. Opens in a new tab so Learning stays open behind it.
-        const qs = new URLSearchParams({ task: s.title });
-        window.open('/sprint.html?' + qs.toString(), '_blank');
+        // If a sprint is already running in another tab, just rename its task;
+        // otherwise open a fresh sprint tab pre-filled with this section.
+        startFocusOnTask(s.title);
       });
       sectionEl.querySelectorAll('[data-action="del-sub"]').forEach(b =>
         b.addEventListener('click', () => {
