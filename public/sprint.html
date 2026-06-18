@@ -2529,6 +2529,12 @@ body { display:flex; flex-direction:column; position:relative }
       try { renderNextTaskDrawer(); } catch {}
     }
   });
+  // Module script at the bottom of the page subscribes to Firestore directly
+  // and dispatches this event whenever it publishes a fresh cache. Re-render
+  // the drawer immediately instead of waiting for the 1.5s poll.
+  window.addEventListener('sprint:caches-updated', () => {
+    if (_nextTaskDrawerOpen) try { renderNextTaskDrawer(); } catch {}
+  });
   $('nextTaskClose').addEventListener('click', hideNextTaskDrawer);
   $('nextTaskBackdrop').addEventListener('click', hideNextTaskDrawer);
   $('nextTaskCustomGo').addEventListener('click', () => {
@@ -4016,5 +4022,230 @@ body { display:flex; flex-direction:column; position:relative }
   } catch {}
 })();
 </script>
+
+<!-- =====================================================================
+     Direct Firestore reader for the next-task drawer. Subscribes to
+     learning_courses + tv_todos using the SAME firebaseConfig the other
+     pages use, builds the same cache shapes the drawer expects, and writes
+     them to localStorage. No more relying on learning.html/personal-todos.html
+     to render in a hidden iframe — we read the data ourselves and dispatch a
+     `sprint:caches-updated` event so the drawer re-renders immediately.
+====================================================================== -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+  import { getFirestore, collection, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+    authDomain: "tv-todos.firebaseapp.com",
+    projectId: "tv-todos",
+    storageBucket: "tv-todos.firebasestorage.app",
+    messagingSenderId: "566644863130",
+    appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  const courses = new Map();   // learning_courses id → doc
+  const todos = [];            // tv_todos docs
+
+  // ---- helpers (mirror learning.html so the cache shape matches) ----
+  function todayISO(){
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  function pacingFor(section){
+    if (!section.deadline) return null;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const due = new Date(section.deadline + 'T12:00:00');
+    const days = Math.ceil((due - today) / 86400000);
+    if (days <= 0) return null;
+    if (typeof section.totalPages === 'number') {
+      const remaining = section.totalPages - (section.pagesRead || 0);
+      if (remaining <= 0) return null;
+      return { perDay: Math.ceil(remaining / days), unit: 'pages', remaining, days };
+    }
+    const total = (section.subsections || []).length;
+    const done = (section.subsections || []).filter(u => u.done).length;
+    const remaining = total - done;
+    if (remaining <= 0) return null;
+    return { perDay: Math.ceil(remaining / days), unit: 'lectures', remaining, days };
+  }
+  function lectureDoneToday(u){
+    if (!u || !u.done || !u.doneAt) return false;
+    try {
+      const d = new Date(u.doneAt);
+      const local = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      return local === todayISO();
+    } catch { return false; }
+  }
+  function todaysPlannedFor(section){
+    if (!section || !section.deadline) return [];
+    const subs = section.subsections || [];
+    if (!subs.length) return [];
+    const today = todayISO();
+    const cacheKey = 'learning-plan-' + section.id + '-' + today;
+    const consumedKey = 'learning-consumed-' + section.id + '-' + today;
+    const doneTodayIndices = [];
+    for (let i = 0; i < subs.length; i++) if (lectureDoneToday(subs[i])) doneTodayIndices.push(i);
+    try { if (localStorage.getItem(consumedKey) === '1') return doneTodayIndices; } catch {}
+    const pace = pacingFor(section);
+    let cached = null;
+    try { const r = localStorage.getItem(cacheKey); if (r) cached = JSON.parse(r); } catch {}
+    if (pace && doneTodayIndices.length >= pace.perDay) {
+      try { localStorage.setItem(cacheKey, JSON.stringify(doneTodayIndices.map(i => subs[i].id).filter(Boolean))); } catch {}
+      return doneTodayIndices;
+    }
+    if (Array.isArray(cached)) {
+      const cachedIdx = cached.map(id => subs.findIndex(u => u.id === id)).filter(i => i >= 0);
+      const union = new Set(cachedIdx);
+      doneTodayIndices.forEach(i => union.add(i));
+      return [...union].sort((a,b) => a - b);
+    }
+    if (!pace) return doneTodayIndices;
+    const remaining = Math.max(0, pace.perDay - doneTodayIndices.length);
+    const notDone = []; for (let i = 0; i < subs.length; i++) if (!subs[i].done) notDone.push(i);
+    const fillers = notDone.slice(0, remaining);
+    const idx = [...new Set([...doneTodayIndices, ...fillers])].sort((a,b) => a - b);
+    try { localStorage.setItem(cacheKey, JSON.stringify(idx.map(i => subs[i].id).filter(Boolean))); } catch {}
+    return idx;
+  }
+  function lectureDueLabel(section, lectureIndex){
+    const pace = pacingFor(section);
+    if (!pace || !section.deadline) return null;
+    const subs = section.subsections || [];
+    const u = subs[lectureIndex];
+    if (!u || u.done) return null;
+    const todayPlanned = todaysPlannedFor(section);
+    if (todayPlanned.includes(lectureIndex)) return { text:'Today', cls:'today' };
+    const future = []; for (let i = 0; i < subs.length; i++) if (!subs[i].done && !todayPlanned.includes(i)) future.push(i);
+    const pos = future.indexOf(lectureIndex);
+    if (pos < 0) return null;
+    const dayOffset = Math.floor(pos / pace.perDay) + 1;
+    const capped = Math.min(dayOffset, Math.max(1, pace.days - 1));
+    if (capped === 1) return { text:'Tomorrow', cls:'tomorrow' };
+    if (capped <= 3)  return { text:'In ' + capped + ' days', cls:'soon' };
+    return { text:'In ' + capped + ' days', cls:'' };
+  }
+  function lectureRunningNum(course, section, subIdx){
+    let offset = 0;
+    for (const s of (course.sections || [])) {
+      if (s.id === section.id) return offset + subIdx + 1;
+      offset += (s.subsections || []).length;
+    }
+    return subIdx + 1;
+  }
+
+  // ---- writers — same shape as publishLearningCache + personal-todos cache ----
+  function publishLearningCache(){
+    const todayItems = [];
+    const sections = [];
+    for (const c of courses.values()) {
+      if (c.archived) continue;
+      const isBook = (c.type || 'course') === 'book';
+      for (const s of (c.sections || [])) {
+        const subs = (s.subsections || []).map((u, i) => {
+          const due = lectureDueLabel(s, i);
+          return {
+            subId: u.id, subIndex: i, subTitle: u.title || '',
+            runningNum: lectureRunningNum(c, s, i), done: !!u.done,
+            dueText: due ? due.text : '', dueCls: due ? due.cls : '',
+          };
+        });
+        sections.push({
+          courseId: c.id, courseTitle: c.title || '',
+          sectionId: s.id, sectionTitle: s.title || '',
+          sectionDeadline: s.deadline || '',
+          subs,
+        });
+        if (isBook || !s.deadline) continue;
+        const planned = todaysPlannedFor(s);
+        for (const i of planned) {
+          const u = (s.subsections || [])[i];
+          if (!u || u.done) continue;
+          const due = lectureDueLabel(s, i);
+          todayItems.push({
+            kind:'lecture',
+            courseId: c.id, courseTitle: c.title || '',
+            sectionId: s.id, sectionTitle: s.title || '',
+            sectionDeadline: s.deadline || '',
+            subId: u.id, subIndex: i, subTitle: u.title || '',
+            runningNum: lectureRunningNum(c, s, i),
+            done: !!u.done,
+            dueText: due ? due.text : '', dueCls: due ? due.cls : '',
+          });
+        }
+      }
+    }
+    todayItems.sort((a, b) => String(a.sectionDeadline).localeCompare(String(b.sectionDeadline)));
+    try {
+      localStorage.setItem('learning-cache-v1', JSON.stringify({
+        updatedAt: Date.now(), today: todayItems, sections,
+      }));
+      window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'learning' } }));
+    } catch {}
+  }
+  function publishTodosCache(){
+    // Collect Focus 5 priority taskIds so we can flag them in the cache.
+    const focus5PriorityIds = new Set();
+    try {
+      const f5raw = localStorage.getItem('personal-focus-5-v1');
+      const f5 = f5raw ? JSON.parse(f5raw) : null;
+      const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
+      for (const l of lists) {
+        if (!l || l.routine) continue;
+        const name = String((l.name || '')).toLowerCase();
+        if (!/\bpriority\b/.test(name)) continue;
+        for (const id of (l.taskIds || [])) if (id) focus5PriorityIds.add(id);
+      }
+    } catch {}
+    const open = todos
+      .filter(t => !t.done)
+      .slice(0, 100)
+      .map(t => ({
+        id: t.id,
+        text: t.text || '',
+        job: t.job || '',
+        priority: !!t.priority || focus5PriorityIds.has(t.id),
+        details: t.details || '',
+        date: t.date || t.endDate || t.startDate || '',
+      }));
+    try {
+      localStorage.setItem('personal-todos-cache', JSON.stringify({
+        updatedAt: Date.now(),
+        dateKey: todayISO(),
+        items: open,
+      }));
+      window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'todos' } }));
+    } catch {}
+  }
+
+  // ---- subscriptions ----
+  // Note: Firestore client retains anonymous auth state from any prior page
+  // visit on this origin (IndexedDB persistence) so the read works without
+  // an explicit sign-in here. If the user has never signed in on this device,
+  // the snapshot just stays empty — same as if the iframes had failed.
+  onSnapshot(collection(db, 'learning_courses'), (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') courses.delete(ch.doc.id);
+      else courses.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    publishLearningCache();
+  }, (err) => console.warn('[sprint] learning_courses subscribe error', err));
+
+  onSnapshot(collection(db, 'tv_todos'), (snap) => {
+    snap.docChanges().forEach(ch => {
+      const i = todos.findIndex(t => t.id === ch.doc.id);
+      if (ch.type === 'removed') { if (i >= 0) todos.splice(i, 1); }
+      else {
+        const d = { id: ch.doc.id, ...ch.doc.data() };
+        if (i >= 0) todos[i] = d; else todos.push(d);
+      }
+    });
+    publishTodosCache();
+  }, (err) => console.warn('[sprint] tv_todos subscribe error', err));
+</script>
+
 </body>
 </html>
