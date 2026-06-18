@@ -1,23 +1,22 @@
-/* Lofi mini-player — drop-in module any War Room page can include to keep
- * the same vibe playing across navigation. Reads + writes the same
- * `sprint-music-v1` localStorage key sprint.html uses, so the user's chosen
- * vibe + last-known playback position survive the page swap. The audio
- * still has to re-init on each page (browsers tear down iframes on
- * navigation), but the new player picks up the SAME song at the SAME spot.
+/* Lofi player — drop-in script that mounts the SAME music bar sprint.html
+ * uses on any other War Room page. Same vibes, same layout (EQ + chips +
+ * custom row + stop), same MUSIC_KEY for state, same YT IFrame API plumbing
+ * for position tracking + cross-page resume. Self-mounts at the top of
+ * <body>; no markup needed in the host page.
  *
- * Usage: just `<script defer src="/lofi-player.js"></script>`. The script
- * self-mounts a small floating control in the corner. To suppress on a
- * given page, set `window.__skipLofiPlayer = true` before the script loads.
+ * To suppress on a page that already has its own music bar (sprint.html):
+ *   - The host page declares an element with id="musicFrame" (sprint does),
+ *     OR
+ *   - Sets window.__skipLofiPlayer = true before this script loads.
  */
 (function(){
   if (window.__skipLofiPlayer) return;
-  // If the page already has its own #musicFrame (sprint.html), defer to it.
-  if (document.getElementById('musicFrame')) return;
+  if (document.getElementById('musicFrame')) return; // Sprint already has one.
 
-  // Keep the vibe list in sync with sprint.html's VIBES.
+  // Vibes mirror sprint.html's VIBES (id, label, videoId).
   const VIBES = [
     { id:'hiphop',    label:'Hip-Hop',        videoId:'jfKfPfyJRdk' },
-    { id:'anime',     label:'Anime OPs',      videoId:'leg3dJ4Xl_Q' },
+    { id:'anime',     label:'Anime Openings', videoId:'leg3dJ4Xl_Q' },
     { id:'ghibli',    label:'OPs Extended',   videoId:'GNWLILeztaI' },
     { id:'animehits', label:'Frieren Lofi',   videoId:'eGCLSr2OyaM' },
     { id:'chillhop',  label:'Chillhop',       videoId:'5yx6BWlEVcY' },
@@ -26,7 +25,7 @@
   ];
   const MUSIC_KEY = 'sprint-music-v1';
 
-  function load(){
+  const musicState = (function(){
     try {
       const d = JSON.parse(localStorage.getItem(MUSIC_KEY) || '{}') || {};
       return {
@@ -36,230 +35,282 @@
         updatedAt: Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
       };
     } catch { return { vibe:null, customId:'', playbackSec:0, updatedAt:0 }; }
-  }
-  function save(s){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(s)); } catch {} }
+  })();
+  function saveMusicState(){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(musicState)); } catch {} }
 
-  const state = load();
-
-  function vibeById(id){ return VIBES.find(v => v.id === id); }
-  function nextVibeId(cur){
-    const i = VIBES.findIndex(v => v.id === cur);
-    if (i < 0) return VIBES[0].id;
-    return VIBES[(i + 1) % VIBES.length].id;
-  }
+  // ---- CSS — explicit colors so it renders identically on any host page,
+  // independent of the host's CSS variables. Matches sprint.html's music-bar
+  // visual exactly. ----
+  const style = document.createElement('style');
+  style.textContent = `
+    .wr-music-wrap {
+      position: sticky; top: 0; z-index: 50;
+      padding: 8px 14px 0;
+      background: rgba(5,5,7,.85); backdrop-filter: blur(14px);
+    }
+    .wr-music-bar {
+      display:flex; align-items:center; gap:10px;
+      padding:8px 14px; flex-shrink:0;
+      background:#0E0E13; border:1px solid rgba(255,255,255,.10); border-radius:12px;
+    }
+    .wr-music-bar.playing {
+      border-color:rgba(255,138,61,.5);
+      background:linear-gradient(135deg, rgba(255,138,61,.10), #0E0E13);
+    }
+    .wr-music-eq {
+      display:inline-flex; align-items:flex-end; gap:2px; height:14px; flex-shrink:0;
+      opacity:.5;
+    }
+    .wr-music-bar.playing .wr-music-eq { opacity:1 }
+    .wr-music-eq span {
+      width:3px; background:#FF8A3D; border-radius:2px; height:30%;
+      animation:wrEqBounce .9s ease-in-out infinite;
+    }
+    .wr-music-eq span:nth-child(2) { animation-delay:.18s; height:60% }
+    .wr-music-eq span:nth-child(3) { animation-delay:.36s; height:90% }
+    .wr-music-eq span:nth-child(4) { animation-delay:.54s; height:50% }
+    @keyframes wrEqBounce { 0%,100% { transform:scaleY(.4) } 50% { transform:scaleY(1) } }
+    .wr-music-label {
+      font-size:10.5px; font-weight:900; letter-spacing:1.6px; text-transform:uppercase;
+      color:rgba(255,255,255,.36); flex-shrink:0;
+    }
+    .wr-music-vibes {
+      display:flex; gap:5px; flex-wrap:wrap; flex:1; min-width:0;
+    }
+    .wr-vibe-chip {
+      background:transparent; border:1px solid rgba(255,255,255,.10); border-radius:99px;
+      padding:5px 11px; cursor:pointer; font-family:inherit; font-size:11px; font-weight:800;
+      letter-spacing:.4px; color:rgba(255,255,255,.78); transition:all .12s; white-space:nowrap;
+    }
+    .wr-vibe-chip:hover { color:#fff; border-color:rgba(255,255,255,.20) }
+    .wr-vibe-chip.active {
+      background:rgba(255,138,61,.18); border-color:#FF8A3D; color:#FF8A3D;
+    }
+    .wr-music-actions { display:flex; gap:6px; flex-shrink:0 }
+    .wr-music-actions button {
+      background:#15151B; border:1px solid rgba(255,255,255,.10); border-radius:8px;
+      width:28px; height:28px; cursor:pointer; color:rgba(255,255,255,.78);
+      display:inline-flex; align-items:center; justify-content:center; transition:all .12s;
+    }
+    .wr-music-actions button:hover { color:#fff; border-color:rgba(255,255,255,.20) }
+    .wr-music-actions button.active {
+      color:#FF8A3D; border-color:#FF8A3D; background:rgba(255,138,61,.18);
+    }
+    .wr-music-custom {
+      display:none; gap:8px; align-items:center;
+      margin-top:6px; padding:8px 12px;
+      background:#0E0E13; border:1px solid rgba(255,255,255,.10); border-radius:10px;
+    }
+    .wr-music-custom.show { display:flex }
+    .wr-music-custom label {
+      font-size:10px; font-weight:900; letter-spacing:1.4px; text-transform:uppercase;
+      color:rgba(255,255,255,.36); flex-shrink:0;
+    }
+    .wr-music-custom input {
+      flex:1; min-width:0;
+      background:#15151B; border:1px solid rgba(255,255,255,.10);
+      border-radius:8px; padding:8px 12px; font-family:inherit; font-size:13px;
+      color:#fff; outline:none;
+    }
+    .wr-music-custom input:focus { border-color:#FF8A3D }
+    .wr-music-custom button {
+      background:#FF8A3D; color:#050507; border:none; border-radius:8px;
+      padding:8px 14px; font-family:inherit; font-size:11.5px; font-weight:900;
+      letter-spacing:.6px; text-transform:uppercase; cursor:pointer; transition:opacity .12s;
+    }
+    .wr-music-custom button:hover { opacity:.9 }
+    .wr-music-custom button.clear {
+      background:transparent; border:1px solid rgba(255,255,255,.20); color:rgba(255,255,255,.78);
+    }
+    .wr-music-custom button.clear:hover { color:#f87171; border-color:#f87171; opacity:1 }
+    @media (max-width:560px) {
+      .wr-music-custom label { display:none }
+    }
+    .wr-music-audio-frame {
+      position:fixed; left:-9999px; top:0; width:320px; height:180px;
+      border:0; pointer-events:none;
+    }
+  `;
+  document.head.appendChild(style);
 
   // ---- DOM ----
-  const root = document.createElement('div');
-  root.id = 'lofiMiniPlayer';
-  root.innerHTML = `
-    <style>
-      #lofiMiniPlayer {
-        position: fixed; right: 16px; bottom: 16px; z-index: 9999;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-        color: #fff; user-select: none;
-      }
-      #lofiMiniPlayer .lmp-pill {
-        display: inline-flex; align-items: center; gap: 8px;
-        background: rgba(20, 20, 26, .92);
-        border: 1px solid rgba(255,255,255,.12);
-        backdrop-filter: blur(14px);
-        border-radius: 999px;
-        padding: 6px 14px 6px 10px;
-        font-size: 12px; font-weight: 700; letter-spacing: .02em;
-        cursor: pointer;
-        box-shadow: 0 6px 20px rgba(0,0,0,.35);
-        transition: border-color .15s, background .15s;
-      }
-      #lofiMiniPlayer .lmp-pill:hover { border-color: rgba(255,255,255,.24) }
-      #lofiMiniPlayer .lmp-eq {
-        display: inline-flex; align-items: flex-end; gap: 2px; height: 14px;
-        opacity: 0; transition: opacity .15s;
-      }
-      #lofiMiniPlayer.playing .lmp-eq { opacity: 1 }
-      #lofiMiniPlayer .lmp-eq span {
-        display: block; width: 3px; background: #FF8A3D;
-        border-radius: 1.5px;
-        animation: lmpEq .9s ease-in-out infinite;
-      }
-      #lofiMiniPlayer .lmp-eq span:nth-child(1) { height: 80% }
-      #lofiMiniPlayer .lmp-eq span:nth-child(2) { height: 50%; animation-delay: .18s }
-      #lofiMiniPlayer .lmp-eq span:nth-child(3) { height: 90%; animation-delay: .36s }
-      @keyframes lmpEq { 0%, 100% { transform: scaleY(.4) } 50% { transform: scaleY(1) } }
-      #lofiMiniPlayer .lmp-label { color: rgba(255,255,255,.85) }
-      #lofiMiniPlayer .lmp-stop {
-        background: transparent; border: none; color: rgba(255,255,255,.5);
-        font-size: 14px; cursor: pointer; padding: 0; line-height: 1;
-      }
-      #lofiMiniPlayer .lmp-stop:hover { color: #fff }
-      #lofiMiniPlayer .lmp-menu {
-        position: absolute; right: 0; bottom: 100%;
-        margin-bottom: 8px;
-        background: rgba(20, 20, 26, .96);
-        border: 1px solid rgba(255,255,255,.12);
-        border-radius: 12px;
-        padding: 6px; min-width: 180px;
-        box-shadow: 0 10px 28px rgba(0,0,0,.5);
-        backdrop-filter: blur(14px);
-        display: none;
-      }
-      #lofiMiniPlayer.open .lmp-menu { display: block }
-      #lofiMiniPlayer .lmp-menu button {
-        display: block; width: 100%; text-align: left;
-        background: transparent; border: none; color: rgba(255,255,255,.78);
-        font: inherit; font-size: 12px; font-weight: 600;
-        padding: 7px 10px; border-radius: 8px; cursor: pointer;
-      }
-      #lofiMiniPlayer .lmp-menu button:hover {
-        background: rgba(255,255,255,.06); color: #fff;
-      }
-      #lofiMiniPlayer .lmp-menu button.active {
-        background: rgba(255,138,61,.16); color: #FF8A3D;
-      }
-      /* Hidden audio frame — positioned 1x1 offscreen so it actually plays. */
-      #lmpFrame {
-        position: fixed; left: -9999px; top: -9999px;
-        width: 1px; height: 1px; border: 0;
-      }
-    </style>
-    <div class="lmp-pill" id="lmpPill">
-      <span class="lmp-eq" aria-hidden="true"><span></span><span></span><span></span></span>
-      <span class="lmp-label" id="lmpLabel">🎵 Lofi</span>
-      <button class="lmp-stop" id="lmpStop" title="Stop">✕</button>
+  const wrap = document.createElement('div');
+  wrap.className = 'wr-music-wrap';
+  wrap.innerHTML = `
+    <div class="wr-music-bar" id="wrMusicBar">
+      <span class="wr-music-eq" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+      <span class="wr-music-label">Vibe</span>
+      <div class="wr-music-vibes" id="wrMusicVibes"></div>
+      <div class="wr-music-actions">
+        <button id="wrMusicCustomBtn" title="Custom YouTube ID" aria-label="Toggle custom video ID input">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button id="wrMusicStopBtn" title="Stop music" aria-label="Stop music">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
     </div>
-    <div class="lmp-menu" id="lmpMenu" role="menu"></div>
+    <div class="wr-music-custom" id="wrMusicCustom">
+      <label>Custom</label>
+      <input type="text" id="wrMusicCustomInput" placeholder="YouTube URL or video ID" autocomplete="off" spellcheck="false">
+      <button id="wrMusicCustomPlayBtn">Play</button>
+      <button id="wrMusicCustomClearBtn" class="clear" title="Clear">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <iframe id="wrMusicFrame" class="wr-music-audio-frame" src="about:blank" allow="autoplay; encrypted-media" title="Lofi music"></iframe>
   `;
-  document.body.appendChild(root);
+  document.body.insertBefore(wrap, document.body.firstChild);
 
-  const frame = document.createElement('iframe');
-  frame.id = 'lmpFrame';
-  frame.allow = 'autoplay; encrypted-media';
-  frame.src = 'about:blank';
-  document.body.appendChild(frame);
+  const musicBar          = document.getElementById('wrMusicBar');
+  const musicVibesEl      = document.getElementById('wrMusicVibes');
+  const musicFrame        = document.getElementById('wrMusicFrame');
+  const musicStopBtn      = document.getElementById('wrMusicStopBtn');
+  const musicCustomBtn    = document.getElementById('wrMusicCustomBtn');
+  const musicCustomEl     = document.getElementById('wrMusicCustom');
+  const musicCustomInput  = document.getElementById('wrMusicCustomInput');
+  const musicCustomPlayBtn= document.getElementById('wrMusicCustomPlayBtn');
+  const musicCustomClearBtn = document.getElementById('wrMusicCustomClearBtn');
 
-  const pill = root.querySelector('#lmpPill');
-  const menu = root.querySelector('#lmpMenu');
-  const lblEl = root.querySelector('#lmpLabel');
-  const stopBtn = root.querySelector('#lmpStop');
+  function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-  function renderMenu(){
-    menu.innerHTML = VIBES.map(v =>
-      `<button data-vibe="${v.id}" class="${state.vibe === v.id ? 'active' : ''}">${v.label}</button>`
-    ).join('');
-    menu.querySelectorAll('button[data-vibe]').forEach(b => {
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        playVibe(b.dataset.vibe);
-        root.classList.remove('open');
+  function renderVibeChips(){
+    musicVibesEl.innerHTML = VIBES.map(v => `
+      <button class="wr-vibe-chip ${musicState.vibe===v.id?'active':''}" data-vibe="${v.id}">${escapeHtml(v.label)}</button>
+    `).join('');
+    musicVibesEl.querySelectorAll('.wr-vibe-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        const vid = el.dataset.vibe;
+        if (musicState.vibe === vid) { stopMusic(); return; }
+        playVibe(vid);
       });
     });
   }
-  function setLabel(){
-    if (state.vibe) {
-      const v = vibeById(state.vibe);
-      lblEl.textContent = v ? v.label : '🎵 Lofi';
-      root.classList.add('playing');
-    } else if (state.customId) {
-      lblEl.textContent = '🎵 Custom';
-      root.classList.add('playing');
-    } else {
-      lblEl.textContent = '🎵 Lofi';
-      root.classList.remove('playing');
-    }
-    stopBtn.style.display = (state.vibe || state.customId) ? '' : 'none';
+  function applyMusicUI(){
+    musicBar.classList.toggle('playing', !!musicState.vibe);
+    renderVibeChips();
+  }
+
+  function parseYouTubeId(raw){
+    const s = (raw || '').trim();
+    if (!s) return '';
+    if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+    const m = s.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : '';
+  }
+  function nextVibeId(currentId){
+    const i = VIBES.findIndex(v => v.id === currentId);
+    if (i === -1) return VIBES[0].id;
+    return VIBES[(i + 1) % VIBES.length].id;
   }
 
   function playVideoId(videoId, vibeId){
     if (!videoId) return;
-    const wasSame = (vibeId && state.vibe === vibeId) || (!vibeId && state.customId === videoId);
-    state.vibe = vibeId || null;
-    state.customId = vibeId ? '' : videoId;
-    save(state);
+    const wasSame = (vibeId && musicState.vibe === vibeId) || (!vibeId && musicState.customId === videoId);
+    musicState.vibe = vibeId || null;
+    musicState.customId = vibeId ? '' : videoId;
+    saveMusicState();
     let startAt;
-    if (wasSame && state.playbackSec > 0) {
-      const drift = Math.max(0, Math.floor((Date.now() - (state.updatedAt || Date.now())) / 1000));
-      startAt = Math.max(0, Math.floor(state.playbackSec + drift));
+    if (wasSame && musicState.playbackSec > 0) {
+      const drift = Math.max(0, Math.floor((Date.now() - (musicState.updatedAt || Date.now())) / 1000));
+      startAt = Math.max(0, Math.floor(musicState.playbackSec + drift));
     } else {
       startAt = 60 + Math.floor(Math.random() * 1440);
-      state.playbackSec = startAt;
-      state.updatedAt = Date.now();
-      save(state);
+      musicState.playbackSec = startAt;
+      musicState.updatedAt = Date.now();
+      saveMusicState();
     }
     const origin = encodeURIComponent(window.location.origin);
-    frame.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0&mute=0&start=${startAt}&enablejsapi=1&origin=${origin}`;
-    setLabel();
-    renderMenu();
+    musicFrame.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&modestbranding=1&rel=0&mute=0&start=${startAt}&enablejsapi=1&origin=${origin}`;
+    applyMusicUI();
   }
   function playVibe(vibeId){
-    const v = vibeById(vibeId);
+    const v = VIBES.find(x => x.id === vibeId);
     if (!v) return;
     playVideoId(v.videoId, vibeId);
   }
+  function playCustom(){
+    const id = parseYouTubeId(musicCustomInput.value || '');
+    if (!id) {
+      musicCustomInput.style.borderColor = '#f87171';
+      setTimeout(() => { musicCustomInput.style.borderColor = ''; }, 1200);
+      return;
+    }
+    playVideoId(id, null);
+  }
   function stopMusic(){
-    state.vibe = null;
-    state.customId = '';
-    state.playbackSec = 0;
-    state.updatedAt = Date.now();
-    save(state);
-    frame.src = 'about:blank';
-    setLabel();
-    renderMenu();
+    musicState.vibe = null;
+    musicState.customId = '';
+    musicState.playbackSec = 0;
+    musicState.updatedAt = Date.now();
+    saveMusicState();
+    musicFrame.src = 'about:blank';
     stopPolling();
+    applyMusicUI();
+  }
+  function toggleCustomRow(){
+    musicCustomEl.classList.toggle('show');
+    musicCustomBtn.classList.toggle('active', musicCustomEl.classList.contains('show'));
+    if (musicCustomEl.classList.contains('show')) {
+      setTimeout(() => musicCustomInput.focus(), 30);
+    }
   }
 
-  // Position polling — same protocol sprint.html uses, same MUSIC_KEY.
-  let poll = null;
+  // YT API listener: rotate on ENDED, persist on infoDelivery.currentTime.
+  window.addEventListener('message', (ev) => {
+    if (!ev || !ev.data) return;
+    let payload = ev.data;
+    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { return; } }
+    if (!payload) return;
+    if (payload.event === 'infoDelivery' && payload.info && typeof payload.info.currentTime === 'number') {
+      const t = payload.info.currentTime;
+      if (Number.isFinite(t) && t >= 0) {
+        musicState.playbackSec = t;
+        musicState.updatedAt = Date.now();
+        saveMusicState();
+      }
+      return;
+    }
+    if (payload.event !== 'onStateChange') return;
+    if (payload.info !== 0) return;
+    if (!musicState.vibe && !musicState.customId) return;
+    musicState.playbackSec = 0;
+    musicState.updatedAt = Date.now();
+    saveMusicState();
+    playVibe(nextVibeId(musicState.vibe));
+  });
+
+  let pollTimer = null;
   function startPolling(){
-    if (poll) clearInterval(poll);
-    poll = setInterval(() => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
       try {
-        if (!frame.src || frame.src === 'about:blank') return;
-        frame.contentWindow && frame.contentWindow.postMessage(
+        if (!musicFrame.src || musicFrame.src === 'about:blank') return;
+        musicFrame.contentWindow && musicFrame.contentWindow.postMessage(
           JSON.stringify({ event:'command', func:'getCurrentTime', args:[] }), '*');
       } catch {}
     }, 5000);
   }
-  function stopPolling(){ if (poll) { clearInterval(poll); poll = null; } }
+  function stopPolling(){ if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
-  // Listen for YT API events: ENDED → rotate. infoDelivery.currentTime → persist.
-  window.addEventListener('message', (ev) => {
-    if (!ev || !ev.data) return;
-    let p = ev.data;
-    if (typeof p === 'string') { try { p = JSON.parse(p); } catch { return; } }
-    if (!p) return;
-    if (p.event === 'infoDelivery' && p.info && typeof p.info.currentTime === 'number') {
-      const t = p.info.currentTime;
-      if (Number.isFinite(t) && t >= 0) {
-        state.playbackSec = t;
-        state.updatedAt = Date.now();
-        save(state);
-      }
-      return;
-    }
-    if (p.event === 'onStateChange' && p.info === 0) {
-      if (!state.vibe && !state.customId) return;
-      state.playbackSec = 0;
-      state.updatedAt = Date.now();
-      save(state);
-      playVibe(nextVibeId(state.vibe));
-    }
-  });
-  frame.addEventListener('load', () => {
+  function bindYtListening(){
     try {
-      if (frame.src && frame.src !== 'about:blank' && frame.contentWindow) {
-        frame.contentWindow.postMessage(
-          JSON.stringify({ event:'listening', id:'lofi-mini' }), '*');
+      if (musicFrame.src && musicFrame.src !== 'about:blank' && musicFrame.contentWindow) {
+        musicFrame.contentWindow.postMessage(
+          JSON.stringify({ event:'listening', id:'lofi-player' }), '*');
         startPolling();
       } else {
         stopPolling();
       }
     } catch {}
-  });
+  }
+  musicFrame.addEventListener('load', bindYtListening);
 
-  // Flush position on unload/hide so a navigation captures the latest second.
+  // Flush position on unload / hide / visibility change.
   function flush(){
     try {
-      if (frame.src && frame.src !== 'about:blank' && frame.contentWindow) {
-        frame.contentWindow.postMessage(
+      if (musicFrame.src && musicFrame.src !== 'about:blank' && musicFrame.contentWindow) {
+        musicFrame.contentWindow.postMessage(
           JSON.stringify({ event:'command', func:'getCurrentTime', args:[] }), '*');
       }
     } catch {}
@@ -268,52 +319,48 @@
   window.addEventListener('beforeunload', flush);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 
-  // Cross-tab updates — another tab swapped vibes or stopped music.
+  // Cross-tab sync: another tab changed vibe? Reflect it.
   window.addEventListener('storage', (e) => {
     if (e.key !== MUSIC_KEY) return;
     try {
       const d = JSON.parse(e.newValue || '{}') || {};
-      state.vibe = d.vibe || null;
-      state.customId = d.customId || '';
-      state.playbackSec = Number.isFinite(d.playbackSec) ? d.playbackSec : 0;
-      state.updatedAt = Number.isFinite(d.updatedAt) ? d.updatedAt : 0;
-      setLabel();
-      renderMenu();
+      musicState.vibe = d.vibe || null;
+      musicState.customId = d.customId || '';
+      musicState.playbackSec = Number.isFinite(d.playbackSec) ? d.playbackSec : 0;
+      musicState.updatedAt = Number.isFinite(d.updatedAt) ? d.updatedAt : 0;
+      applyMusicUI();
     } catch {}
   });
 
-  // Pill click toggles the menu; click outside closes.
-  pill.addEventListener('click', (e) => {
-    if (e.target === stopBtn) return;
-    root.classList.toggle('open');
+  // Wiring
+  musicStopBtn.addEventListener('click', stopMusic);
+  musicCustomBtn.addEventListener('click', toggleCustomRow);
+  musicCustomPlayBtn.addEventListener('click', playCustom);
+  musicCustomClearBtn.addEventListener('click', () => {
+    musicCustomInput.value = '';
+    musicCustomInput.focus();
   });
-  stopBtn.addEventListener('click', (e) => { e.stopPropagation(); stopMusic(); });
-  document.addEventListener('click', (e) => {
-    if (!root.contains(e.target)) root.classList.remove('open');
+  musicCustomInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); playCustom(); }
   });
 
-  setLabel();
-  renderMenu();
+  if (musicState.customId && musicCustomInput) musicCustomInput.value = musicState.customId;
+  applyMusicUI();
 
-  // Resume on load: if there's a saved vibe, queue it and wait for the first
-  // user gesture (browsers block autoplay before interaction). Same pattern
-  // sprint.html uses.
-  if (state.vibe || state.customId) {
+  // Resume on page load: best-effort autoplay (works if browser already trusts
+  // the origin), then a one-shot interaction listener to handle the autoplay
+  // refusal case. Same pattern sprint.html uses.
+  if (musicState.vibe || musicState.customId) {
     const resume = () => {
       try {
-        if (state.customId) playVideoId(state.customId, null);
-        else if (state.vibe) playVibe(state.vibe);
+        if (musicState.customId) playVideoId(musicState.customId, null);
+        else if (musicState.vibe) playVibe(musicState.vibe);
       } catch {}
       document.removeEventListener('pointerdown', resume, true);
       document.removeEventListener('keydown', resume, true);
       document.removeEventListener('touchstart', resume, true);
     };
-    // Try a no-gesture autoplay first — works if the origin already has
-    // user-activation persistence; otherwise the gesture listeners catch it.
-    try {
-      if (state.customId) playVideoId(state.customId, null);
-      else if (state.vibe) playVibe(state.vibe);
-    } catch {}
+    try { resume(); } catch {} // best effort autoplay
     document.addEventListener('pointerdown', resume, true);
     document.addEventListener('keydown', resume, true);
     document.addEventListener('touchstart', resume, true);
