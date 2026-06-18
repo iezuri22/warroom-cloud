@@ -1693,6 +1693,25 @@
   }
   .input:focus, .textarea:focus, .select:focus { border-color: rgba(74,158,255,.5) }
   .input { font-weight: 700; font-variant-numeric: tabular-nums }
+
+  /* Ticket # blank state — placeholder removed (it read like a real value); a
+     red border + faint red wash + red MISSING label in the field title make
+     the gap unmistakable. Focusing the field calms the wash so the typing
+     experience isn't aggressive. */
+  .ticket-input.is-missing {
+    border-color: rgba(248,113,113,.6);
+    background: rgba(248,113,113,.08);
+    box-shadow: inset 0 0 0 1px rgba(248,113,113,.18);
+  }
+  .ticket-input.is-missing:focus {
+    border-color: rgba(248,113,113,.85);
+    background: rgba(248,113,113,.04);
+    box-shadow: 0 0 0 2px rgba(248,113,113,.18);
+    outline: none;
+  }
+  html.light .ticket-input.is-missing {
+    background: rgba(248,113,113,.06);
+  }
   .textarea { min-height: 70px; resize: vertical }
   .select {
     appearance: none; -webkit-appearance: none;
@@ -4444,8 +4463,8 @@ function _drawerHTML(r){
             </select>
           </div>
           <div class="field">
-            <span class="lbl">Ticket #</span>
-            <input class="input" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}" placeholder="e.g. 119123">
+            <span class="lbl">Ticket #${(!r.ticket && !isInternal) ? ' <span style="color:var(--red);font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
+            <input class="input ticket-input ${(!r.ticket) ? 'is-missing' : ''}" type="text" data-field="Ticket #" value="${escHtml(String(r.ticket || '').replace(/\.0$/, ''))}">
           </div>
           <div class="field">
             <span class="lbl">Completion${r.status === 'Completed' && !r.completionDate ? ' <span style="color:var(--red);font-weight:900;letter-spacing:.5px">— MISSING</span>' : ''}</span>
@@ -4538,6 +4557,17 @@ function _drawerHTML(r){
 // Wire every control inside an expanded row's drawer. onCollapse runs
 // when the user hits Close — each view decides what collapsing means.
 function _wireDrawer(row, r, onCollapse){
+    // Live toggle for the Ticket # red-missing state — refreshes on every
+    // keystroke so the field stops looking missing the moment you type a
+    // value, and goes back to red the moment you clear it.
+    const ticketInput = row.querySelector('[data-field="Ticket #"]');
+    if (ticketInput) {
+      const refreshMissing = () => {
+        ticketInput.classList.toggle('is-missing', !String(ticketInput.value || '').trim());
+      };
+      ticketInput.addEventListener('input', refreshMissing);
+      refreshMissing();
+    }
     // Wire field handlers
     row.querySelectorAll('[data-field]').forEach(el => {
       el.addEventListener('click', e => e.stopPropagation());
