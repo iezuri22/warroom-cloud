@@ -4189,27 +4189,38 @@ function isMissingCompletionDate(r){
 // (e.g. adding a ticket on the "Missing ticket" filter). It's released the
 // moment focus moves into a different row's editable element, or after a
 // short idle period.
-let _pinnedFilterRowId = null;
-let _pinnedFilterTimer = null;
-const PINNED_FILTER_IDLE_MS = 4000;
+// Sticky-edit pinning: any row you edited in this session stays visible on
+// the current view even if the edit pushed it out of the active filter (e.g.
+// adding a ticket on the "Missing ticket" chip, marking complete on the
+// All-open view). The pin is in-memory only — wiped automatically on:
+//   • page refresh (memory clears)
+//   • switching to a different view tab (handled in the .view-tab click
+//     handler — see _clearStickyEditedOnViewSwitch())
+// Previously a 4s idle timer cleared it, but users were typing slow and the
+// row vanished mid-edit.
+const _stickyEditedIds = new Set();
+let _pinnedFilterRowId = null; // legacy alias used by applyFilters — kept so
+                               // existing site-search callers still work.
 
 function _pinFilterRow(rowId){
   const id = String(rowId);
+  _stickyEditedIds.add(id);
   _pinnedFilterRowId = id;
-  if (_pinnedFilterTimer) clearTimeout(_pinnedFilterTimer);
-  _pinnedFilterTimer = setTimeout(() => {
-    _pinnedFilterRowId = null;
-    try { render(); } catch {}
-  }, PINNED_FILTER_IDLE_MS);
 }
 function _unpinFilterRow(){
-  if (!_pinnedFilterRowId) return;
+  // Manual clear (rare). Used by a few code paths that want to release the
+  // pin without waiting for view-switch.
+  _stickyEditedIds.clear();
   _pinnedFilterRowId = null;
-  if (_pinnedFilterTimer) { clearTimeout(_pinnedFilterTimer); _pinnedFilterTimer = null; }
   try { render(); } catch {}
 }
+function _clearStickyEditedOnViewSwitch(){
+  if (!_stickyEditedIds.size) return;
+  _stickyEditedIds.clear();
+  _pinnedFilterRowId = null;
+}
 
-// On focus entering any editable inside a row, pin that row.
+// On focus entering any editable inside a row, mark that row sticky.
 document.addEventListener('focusin', (e) => {
   const t = e.target;
   if (!t || !t.closest) return;
@@ -4219,13 +4230,6 @@ document.addEventListener('focusin', (e) => {
   const rowEl = t.closest('[data-id]');
   const newRowId = rowEl ? rowEl.getAttribute('data-id') : null;
   if (!newRowId) return;
-  // Switching to a different row — release the old pin (it'll trigger a
-  // re-render which then drops the previously-pinned row if it no longer
-  // matches the active filter).
-  if (_pinnedFilterRowId && _pinnedFilterRowId !== newRowId) {
-    _pinnedFilterRowId = null;
-    if (_pinnedFilterTimer) { clearTimeout(_pinnedFilterTimer); _pinnedFilterTimer = null; }
-  }
   _pinFilterRow(newRowId);
 }, true);
 
@@ -4315,16 +4319,19 @@ function applyFilters(){
     else if (sortBy === 'status')   r = (STATUS_ORDER[a.status] ?? 999) - (STATUS_ORDER[b.status] ?? 999);
     return r * dirMul || cmpStr(a.task, b.task); // tie-break by name
   });
-  // Force-include the currently-pinned row even if filters/sort dropped it.
-  // Editing a row shouldn't make it vanish mid-keystroke (e.g. adding a
-  // ticket while on the "Missing ticket" filter). The pin is released when
-  // the user moves to another row or after a brief idle.
-  if (_pinnedFilterRowId && !pool.some(r => String(r.id) === _pinnedFilterRowId)) {
-    const pinned = rows.find(r => String(r.id) === _pinnedFilterRowId && (r.task || '').trim());
-    if (pinned) {
-      // Insert at the top so the user doesn't have to hunt for it.
-      pool = [pinned, ...pool];
+  // Force-include every sticky-edited row even if filters/sort dropped it.
+  // Editing a row shouldn't make it vanish (e.g. setting Status=Completed on
+  // the "Open" filter, or adding a ticket on the "Missing ticket" chip). The
+  // sticky set persists until the user switches view tabs or refreshes.
+  if (_stickyEditedIds && _stickyEditedIds.size) {
+    const inPool = new Set(pool.map(r => String(r.id)));
+    const extras = [];
+    for (const id of _stickyEditedIds) {
+      if (inPool.has(id)) continue;
+      const r = rows.find(rr => String(rr.id) === id && (rr.task || '').trim());
+      if (r) extras.push(r);
     }
+    if (extras.length) pool = [...extras, ...pool];
   }
   return pool;
 }
@@ -8101,6 +8108,9 @@ document.querySelectorAll('.view-tab').forEach(b => {
     // The unified Tasks tab routes through the saved scope.
     if (v === 'tasks-umbrella') v = loadTaskScope();
     if (v === currentView) return;
+    // Switching views drops any sticky-edited row pins from the previous
+    // view so the new tab's filter applies cleanly.
+    try { _clearStickyEditedOnViewSwitch(); } catch {}
     currentView = v;
     syncViewTabActive();
     document.body.classList.toggle('view-ack', currentView === 'ack');
@@ -8136,6 +8146,8 @@ if (taskScopeSelect) {
     const v = taskScopeSelect.value;
     if (!TASKS_SCOPES.has(v)) return;
     saveTaskScope(v);
+    // Scope change = page switch in the user's mental model; drop sticky pins.
+    try { _clearStickyEditedOnViewSwitch(); } catch {}
     currentView = v;
     syncViewTabActive();
     // Clear non-Tasks body classes — we're jumping back into Tasks view.
