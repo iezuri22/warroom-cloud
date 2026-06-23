@@ -3275,6 +3275,23 @@ body { display:flex; flex-direction:column; position:relative }
   homeBtn.addEventListener('click', () => {
     resultOverlay.classList.remove('show');
     setSelectedTask(null);
+    // If we know where the user came from, route the Done button back to
+    // that page instead of dropping them on the sprint landing screen.
+    // Mirrors the back-link's from-param + referrer detection.
+    try {
+      const bl = document.getElementById('sprintBackLink');
+      if (bl && bl.style.display !== 'none') {
+        const href = bl.getAttribute('href');
+        if (href && href !== '/daily-planner.html') {
+          window.location.href = href;
+          return;
+        }
+        // Default — also navigate back to War Room rather than sitting on
+        // the post-sprint landing (the user just finished and wants out).
+        window.location.href = '/daily-planner.html';
+        return;
+      }
+    } catch {}
     showView('play');
   });
 
@@ -3583,9 +3600,10 @@ body { display:flex; flex-direction:column; position:relative }
     // Hide the back link when embedded (race mode or iframe) — the parent
     // shell handles its own nav. Otherwise pick the back target based on
     // where the user came from so they land back in the right context:
-    // - ?from=learning   → "← Learning"
-    // - referrer is Learning (covers normal navigation) → "← Learning"
-    // - otherwise        → "← War Room"
+    //   1. ?from=learning|personal|ecm|goals|board|calendar|focus → that page
+    //   2. document.referrer (same-origin) → use the actual previous page
+    //   3. fallback → War Room (/daily-planner.html)
+    // Same-tab navigation from any page now round-trips back via this link.
     try {
       const bl = document.getElementById('sprintBackLink');
       const embedded = isRaceMode || (window.self !== window.top);
@@ -3593,24 +3611,44 @@ body { display:flex; flex-direction:column; position:relative }
         if (embedded) {
           bl.style.display = 'none';
         } else {
+          const FROM_MAP = {
+            learning: { href: '/learning.html', label: 'Learning' },
+            personal: { href: '/personal-todos.html', label: 'Personal' },
+            ecm:      { href: '/ecm.html', label: 'ECM' },
+            goals:    { href: '/goals-canvas.html', label: 'Goals' },
+            board:    { href: '/goal-board.html', label: 'Board' },
+            calendar: { href: '/calendar.html', label: 'Calendar' },
+            focus:    { href: '/focus-session.html', label: 'Focus' },
+            warroom:  { href: '/daily-planner.html', label: 'War Room' },
+          };
           const fromParam = (sp.get('from') || '').toLowerCase();
-          let cameFromLearning = fromParam === 'learning';
-          try {
-            if (!cameFromLearning && document.referrer) {
-              const r = new URL(document.referrer);
-              if (r.origin === location.origin && /\/learning\.html\b/.test(r.pathname)) {
-                cameFromLearning = true;
+          let target = FROM_MAP[fromParam];
+          // Infer from referrer if no explicit param.
+          if (!target) {
+            try {
+              if (document.referrer) {
+                const r = new URL(document.referrer);
+                if (r.origin === location.origin) {
+                  const path = r.pathname;
+                  if (/\/learning\.html\b/.test(path))            target = FROM_MAP.learning;
+                  else if (/\/personal-todos\.html\b/.test(path)) target = FROM_MAP.personal;
+                  else if (/\/ecm\.html\b/.test(path))            target = FROM_MAP.ecm;
+                  else if (/\/goals-canvas\.html\b/.test(path))   target = FROM_MAP.goals;
+                  else if (/\/goal-board\.html\b/.test(path))     target = FROM_MAP.board;
+                  else if (/\/calendar\.html\b/.test(path))       target = FROM_MAP.calendar;
+                  else if (/\/focus-session\.html\b/.test(path))  target = FROM_MAP.focus;
+                }
               }
-            }
-          } catch {}
-          if (cameFromLearning) {
-            bl.setAttribute('href', '/learning.html');
-            bl.setAttribute('title', 'Back to Learning');
-            // Replace the text node "War Room" while keeping the chevron SVG.
-            const textNode = [...bl.childNodes].find(n => n.nodeType === 3 && n.textContent && n.textContent.trim());
-            if (textNode) textNode.textContent = ' Learning';
-            else { bl.appendChild(document.createTextNode(' Learning')); }
+            } catch {}
           }
+          if (target) {
+            bl.setAttribute('href', target.href);
+            bl.setAttribute('title', 'Back to ' + target.label);
+            const textNode = [...bl.childNodes].find(n => n.nodeType === 3 && n.textContent && n.textContent.trim());
+            if (textNode) textNode.textContent = ' ' + target.label;
+            else { bl.appendChild(document.createTextNode(' ' + target.label)); }
+          }
+          // Else: keep the default "← War Room" target.
         }
       }
     } catch {}
