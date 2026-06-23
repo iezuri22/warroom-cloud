@@ -334,8 +334,19 @@
   .overdue-banner strong{color:#f87171;font-weight:700}
   .overdue-banner em{color:var(--red);font-style:normal;font-weight:600}
   /* Hidden native date input — driven by the pill click via showPicker(). */
+  /* Invisible date input overlay — sits exactly on top of the visible
+     "+ Set deadline" pill inside its <label> wrapper. Tapping the pill
+     activates this input (label-for-input semantics), which on iOS
+     Safari and modern Chrome triggers the native date picker without
+     needing to call .showPicker() programmatically. pointer-events:auto
+     is the critical part the old style was missing. */
   .st-deadline-input{
-    position:absolute;left:0;top:0;width:0;height:0;opacity:0;pointer-events:none
+    position:absolute;inset:0;width:100%;height:100%;
+    opacity:0;cursor:pointer;border:0;padding:0;background:transparent;
+    pointer-events:auto;
+    /* Ensure even disabled font-size inheritance doesn't push iOS to
+       show the placeholder/zero-width state in a weird place. */
+    color:transparent;
   }
 
   .section-body{display:none;padding:6px 14px 14px;border-top:1px solid var(--line);background:rgba(255,255,255,.015)}
@@ -1496,8 +1507,15 @@ function renderSectionRow(c, s, n, startNum, isBook){
   } else if (!prevDone) {
     pill = `<span class="st-deadline locked" title="Finish ${unitLabel} ${sectionIdx} first">🔒 Locked</span>`;
   } else {
-    pill = `<span class="st-deadline" data-action="set-deadline" title="Pick a date. You can't change it after.">+ Set deadline</span>
-            <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${todayISO()}">`;
+    // Wrap pill + hidden date input in a <label> so clicking the pill
+    // natively focuses the input — iOS Safari then opens its date picker.
+    // Previously the input was pointer-events:none with width:0; tapping
+    // the span fired set-deadline, but the JS fallback (input.click() when
+    // showPicker isn't available) hit a non-interactive input on older iOS.
+    pill = `<label class="st-deadline-label" style="position:relative;display:inline-flex">
+              <span class="st-deadline" data-action="set-deadline" title="Pick a date. You can't change it after.">+ Set deadline</span>
+              <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${todayISO()}" aria-label="Pick a deadline">
+            </label>`;
   }
 
   // Per-day pacing indicator — shown right after the deadline pill.
@@ -1697,26 +1715,29 @@ function wireEvents(){
         render();
       });
       sectionEl.querySelector('[data-action="set-deadline"]')?.addEventListener('click', (e) => {
-        e.stopPropagation();
+        // Don't stopPropagation here — the click needs to bubble to the
+        // wrapping <label> so iOS Safari fires its native "focus input"
+        // behavior, which opens the date picker without us calling
+        // showPicker() (which throws on Safari < 16).
         // Guard: still locked? (cascade)
         if (!isPrevSectionComplete(c, (c.sections || []).indexOf(s))) {
+          e.preventDefault();
           setToast('Finish the previous section first');
           return;
         }
         // Guard: already set? Immutable by design.
         if (s.deadline) {
+          e.preventDefault();
           setToast('Deadlines lock once set');
           return;
         }
+        // Try showPicker on browsers that support it (Chrome / modern Edge /
+        // Safari 16+). On older Safari the call throws and the label-input
+        // bubble path opens the picker instead.
         const input = sectionEl.querySelector('.st-deadline-input');
-        if (!input) return;
-        // Native calendar popup. showPicker() is the cleanest UX; older
-        // browsers fall back to clicking the (zero-size) input to open the
-        // wheel/keypad picker.
-        try {
-          if (typeof input.showPicker === 'function') input.showPicker();
-          else input.click();
-        } catch { input.click(); }
+        if (input && typeof input.showPicker === 'function') {
+          try { input.showPicker(); e.preventDefault(); } catch {}
+        }
       });
       sectionEl.querySelector('[data-action="apply-deadline"]')?.addEventListener('change', (e) => {
         const v = (e.target.value || '').trim();
