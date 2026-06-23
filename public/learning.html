@@ -678,6 +678,14 @@ function todayISO(){
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
+// One-day-from-now in local YYYY-MM-DD. Used as the floor on deadline pickers
+// so users can't pick today — a "due today" pace is nonsense and overdue
+// shaming would trigger immediately.
+function tomorrowISO(){
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
 // Returns { hasDeadline, days, label, overdue, completedOnTime }
 // "days" is negative if past, positive if future, 0 if today.
 function deadlineStatus(iso, isComplete){
@@ -1416,8 +1424,10 @@ function renderCourseCard(c){
   (c.sections || []).forEach((s, idx) => {
     const startNum = runningOffset + 1;
     runningOffset += isBook ? (s.totalPages || 0) : (s.subsections || []).length;
-    // Books don't auto-archive (pages aren't checked off the same way).
-    const archivedHere = !isBook && archivedSet.has(s.id);
+    // Both course sections and book chapters can be manually archived.
+    // (Books don't AUTO-archive on completion, but the user can hit
+    //  📦 Archive on a finished chapter just like a course section.)
+    const archivedHere = archivedSet.has(s.id);
     const html = renderSectionRow(c, s, idx + 1, startNum, isBook);
     if (archivedHere && !showArchivedInline) {
       archivedHtml.push(html);
@@ -1431,7 +1441,7 @@ function renderCourseCard(c){
   // chevron group at the bottom. The toggle pill above the section list
   // lets the user switch into inline view to see everything in natural order.
   const archCountTotal = (c.sections || []).reduce(
-    (n, s) => n + ((!isBook && archivedSet.has(s.id)) ? 1 : 0), 0);
+    (n, s) => n + (archivedSet.has(s.id) ? 1 : 0), 0);
   const inlineTogglePill = archCountTotal
     ? `<button type="button" class="archive-mode-pill" data-action="toggle-archive-mode"
         style="display:inline-flex;align-items:center;gap:6px;background:${showArchivedInline?'rgba(74,222,128,.16)':'rgba(255,255,255,.05)'};border:1px solid ${showArchivedInline?'rgba(74,222,128,.32)':'rgba(255,255,255,.1)'};color:${showArchivedInline?'#86efac':'rgba(255,255,255,.7)'};font-size:11px;font-weight:700;letter-spacing:.04em;padding:5px 10px;border-radius:99px;cursor:pointer;margin:8px 0 4px 14px">
@@ -1520,7 +1530,7 @@ function renderSectionRow(c, s, n, startNum, isBook){
     // wrap, but the label put the input on top with pointer-events:auto
     // which intercepted clicks before the handler could run guards.
     pill = `<button type="button" class="st-deadline" data-action="set-deadline" title="Pick a date. You can't change it after.">+ Set deadline</button>
-            <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${todayISO()}" aria-label="Pick a deadline">`;
+            <input type="date" class="st-deadline-input" data-action="apply-deadline" min="${tomorrowISO()}" aria-label="Pick a deadline">`;
   }
 
   // Per-day pacing indicator — shown right after the deadline pill.
@@ -1752,6 +1762,14 @@ function wireEvents(){
       sectionEl.querySelector('[data-action="apply-deadline"]')?.addEventListener('change', (e) => {
         const v = (e.target.value || '').trim();
         if (!v) return;
+        // Block today (and earlier) — picker has min= but iPad's typed
+        // entry can bypass it. "Due today" pace doesn't make sense and
+        // would trip overdue immediately.
+        if (v <= todayISO()) {
+          alert('Pick a date in the future. Same-day deadlines aren\'t allowed — there\'s no runway.');
+          e.target.value = '';
+          return;
+        }
         // One more guard — and a firm confirmation since this is irreversible.
         const pretty = new Date(v + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
         if (!confirm(
