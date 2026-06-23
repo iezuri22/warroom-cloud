@@ -2943,7 +2943,6 @@ body { display:flex; flex-direction:column; position:relative }
     if (store.history.length > 500) store.history = store.history.slice(-500);
     saveStore(store);
     renderStats();
-    showView('play');
     // Tell parent to close the race overlay (if we're embedded)
     try {
       if (window.parent && window.parent !== window) {
@@ -2952,6 +2951,10 @@ body { display:flex; flex-direction:column; position:relative }
         window.parent.postMessage({ type: 'warroom:race-close', slot: slot || undefined }, '*');
       }
     } catch {}
+    // If we know where the user came from, send them back instead of dropping
+    // them on the post-sprint landing screen. Mirrors the homeBtn behavior.
+    if (_navigateBackIfFrom()) return;
+    showView('play');
   });
   quitBtn.addEventListener('click', () => {
     if (!confirm("Quit this sprint? It won't be recorded.")) return;
@@ -2967,8 +2970,23 @@ body { display:flex; flex-direction:column; position:relative }
       sprintTookFullscreen = false;
       releaseParentFullscreen();
     }
+    if (_navigateBackIfFrom()) return;
     showView('play');
   });
+
+  // Walk the resolved sprintBackLink href and navigate to it when set to a
+  // non-default page. Returns true if navigation kicked off — callers should
+  // bail out of any follow-up "stay on this page" code in that case.
+  function _navigateBackIfFrom(){
+    try {
+      const bl = document.getElementById('sprintBackLink');
+      if (!bl || bl.style.display === 'none') return false;
+      const href = bl.getAttribute('href');
+      if (!href) return false;
+      window.location.href = href;
+      return true;
+    } catch { return false; }
+  }
 
   // Compute "you've already done this much today" — sprints + total minutes
   // logged today including BOTH wins and tracked entries. Drives the
@@ -3331,23 +3349,7 @@ body { display:flex; flex-direction:column; position:relative }
   homeBtn.addEventListener('click', () => {
     resultOverlay.classList.remove('show');
     setSelectedTask(null);
-    // If we know where the user came from, route the Done button back to
-    // that page instead of dropping them on the sprint landing screen.
-    // Mirrors the back-link's from-param + referrer detection.
-    try {
-      const bl = document.getElementById('sprintBackLink');
-      if (bl && bl.style.display !== 'none') {
-        const href = bl.getAttribute('href');
-        if (href && href !== '/daily-planner.html') {
-          window.location.href = href;
-          return;
-        }
-        // Default — also navigate back to War Room rather than sitting on
-        // the post-sprint landing (the user just finished and wants out).
-        window.location.href = '/daily-planner.html';
-        return;
-      }
-    } catch {}
+    if (_navigateBackIfFrom()) return;
     showView('play');
   });
 
