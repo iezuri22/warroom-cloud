@@ -2025,8 +2025,15 @@ body { display:flex; flex-direction:column; position:relative }
   // Click an item to switch the sprint task. The "Done" pill on the current
   // task completes its source (lecture done / priority done) AND auto-picks
   // the next one. Timer keeps ticking the whole time.
+  // Read learning lectures. Primary source is `window.__sprintData.lectures`
+  // (built fresh by the Firestore module each time a snapshot lands).
+  // Falls back to the cached localStorage shape so the drawer renders SOMETHING
+  // immediately while the Firestore subscription warms up.
   function readLearningCache(){
     try {
+      if (window.__sprintData && window.__sprintData.lectures) {
+        return window.__sprintData.lectures;
+      }
       const raw = localStorage.getItem('learning-cache-v1');
       if (!raw) return null;
       const d = JSON.parse(raw);
@@ -2034,49 +2041,24 @@ body { display:flex; flex-direction:column; position:relative }
       return d;
     } catch { return null; }
   }
+  // Read priorities. Primary source is `window.__sprintData.priorities`
+  // (built fresh by the Firestore module, includes sprint-queue + Focus-5
+  // priority lists + starred items, all deduped). Falls back to a localStorage-
+  // only path so the drawer isn't blank during the very first render.
   function readPriorityCache(){
     try {
+      if (window.__sprintData && Array.isArray(window.__sprintData.priorities)) {
+        return window.__sprintData.priorities;
+      }
+      // ---- Fallback path: builds priorities from localStorage only. ----
       const raw = localStorage.getItem('personal-todos-cache');
       const d = raw ? JSON.parse(raw) : null;
       const items = (d && Array.isArray(d.items)) ? d.items : [];
       const byId = new Map();
       items.forEach(t => { if (t && t.id) byId.set(t.id, t); });
-
-      // Walk Focus 5 lists once. Skip routine lists wholesale (Morning Routine,
-      // Night Routine) so their tasks never enter the priorities — that's how
-      // we keep things like physical therapy out by default. BUT we don't
-      // cross-exclude IDs across lists: an item the user explicitly put on
-      // First Priority is treated as a priority even if the same ID happens
-      // to also live on a routine list.
-      const priorityListIds = [];
-      try {
-        const f5raw = localStorage.getItem('personal-focus-5-v1');
-        const f5 = f5raw ? JSON.parse(f5raw) : null;
-        const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
-        for (const l of lists) {
-          if (!l || l.routine) continue;
-          const name = String((l.name || '')).toLowerCase();
-          if (/\bpriority\b/.test(name)) priorityListIds.push(l);
-        }
-      } catch {}
-
-      // Items in First/Second/Third Priority lists, in list order.
-      const orderedIds = [];
       const seen = new Set();
-      for (const l of priorityListIds) {
-        for (const id of (l.taskIds || [])) {
-          if (!id || seen.has(id)) continue;
-          seen.add(id); orderedIds.push(id);
-        }
-      }
-      const fromFocus5 = orderedIds.map(id => byId.get(id)).filter(Boolean);
-
-      // Dedicated Sprint queue — items the user explicitly added via the
-      // "🏃 Add to Sprint" button on Personal. Each entry stores its own
-      // text/job/details snapshot, so we render straight from the queue
-      // without needing personal-todos-cache to be populated yet (that
-      // cross-cache dependency was the bug that made queued tasks vanish).
-      const sprintQueue = [];
+      const out = [];
+      // 1. Sprint queue (rich-snapshot form).
       try {
         const raw = localStorage.getItem('sprint-queue-v1');
         if (raw) {
@@ -2085,37 +2067,38 @@ body { display:flex; flex-direction:column; position:relative }
             for (const it of q.items) {
               if (!it || !it.id || seen.has(it.id)) continue;
               seen.add(it.id);
-              // Prefer the latest cache snapshot (richer data) when available;
-              // fall back to the queue's stored snapshot when it isn't.
               const cached = byId.get(it.id);
-              sprintQueue.push(cached || {
+              out.push(cached || {
                 id: it.id, text: it.text || '', job: it.job || '',
                 priority: true, details: it.details || '', date: '',
               });
             }
           }
         }
-        // Legacy id-only fallback for any items added before the queue moved
-        // to the rich format.
-        const legacyRaw = localStorage.getItem('sprint-queue-task-ids');
-        if (legacyRaw) {
-          const legacy = JSON.parse(legacyRaw);
-          if (Array.isArray(legacy)) {
-            for (const id of legacy) {
-              if (!id || seen.has(id)) continue;
-              seen.add(id);
-              const t = byId.get(id);
-              if (t) sprintQueue.push(t);
-              else sprintQueue.push({ id, text:'(unknown — open Personal to refresh)', job:'', priority:true, details:'', date:'' });
-            }
+      } catch {}
+      // 2. Focus 5 priority lists.
+      try {
+        const f5raw = localStorage.getItem('personal-focus-5-v1');
+        const f5 = f5raw ? JSON.parse(f5raw) : null;
+        const lists = (f5 && Array.isArray(f5.lists)) ? f5.lists : [];
+        for (const l of lists) {
+          if (!l || l.routine) continue;
+          const name = String((l.name || '')).toLowerCase();
+          if (!/\bpriority\b/.test(name)) continue;
+          for (const id of (l.taskIds || [])) {
+            if (!id || seen.has(id)) continue;
+            const t = byId.get(id);
+            if (t) { seen.add(id); out.push(t); }
           }
         }
       } catch {}
-
-      // Add starred items the priority lists / sprint queue didn't cover —
-      // so users who organize via the ⭐ button still get a populated drawer.
-      const starred = items.filter(t => t && t.priority && t.id && !seen.has(t.id));
-      return [...sprintQueue, ...fromFocus5, ...starred];
+      // 3. Starred items not yet covered.
+      for (const t of items) {
+        if (t && t.priority && t.id && !seen.has(t.id)) {
+          seen.add(t.id); out.push(t);
+        }
+      }
+      return out;
     } catch { return []; }
   }
   // Identify "what kind of thing is the current sprint task?" by checking the
@@ -3468,46 +3451,12 @@ body { display:flex; flex-direction:column; position:relative }
   // lectures + priorities instead of the "No lectures / No priorities"
   // placeholder. Skipped when sprint itself is embedded — the shell already
   // has both pages mounted so adding more iframes here would be wasteful.
-  (function primeDrawerCaches(){
-    try {
-      if (window.self !== window.top) return; // embedded — shell has them
-      const reRender = () => {
-        if (_nextTaskDrawerOpen) try { renderNextTaskDrawer(); } catch {}
-      };
-      const mount = (id, src, onLoadDelayMs) => {
-        if (document.getElementById(id)) return;
-        const f = document.createElement('iframe');
-        f.id = id;
-        f.src = src;
-        f.setAttribute('aria-hidden', 'true');
-        // Render at real size offscreen — some browsers throttle 0px iframes
-        // hard enough that they never get to running first-render scripts.
-        f.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:480px;height:360px;border:0;pointer-events:none;opacity:0';
-        f.loading = 'eager';
-        // Once the iframe finishes loading, its scripts run and write the
-        // localStorage cache. Re-render the drawer a bit later to pick that up.
-        f.addEventListener('load', () => {
-          setTimeout(reRender, onLoadDelayMs || 1500);
-        });
-        document.body.appendChild(f);
-      };
-      mount('primeLearningFrame', '/learning.html?embed=1', 2500);
-      mount('primePersonalFrame', '/personal-todos.html?embed=1', 2500);
-    } catch (e) { console.warn('[sprint] cache prime failed', e); }
-  })();
-  // Belt-and-suspenders: while the drawer is open, poll the caches every
-  // 1.5s and re-render if either changed. Storage events SHOULD trigger
-  // re-render, but they're cross-document only — same-document writes from
-  // the prime iframes don't always fire on the host. Polling fixes that.
-  setInterval(() => {
-    if (!_nextTaskDrawerOpen) return;
-    const sig = (localStorage.getItem('learning-cache-v1') || '').length +
-                ':' + (localStorage.getItem('personal-todos-cache') || '').length +
-                ':' + (localStorage.getItem('personal-focus-5-v1') || '').length;
-    if (sig === window.__sprintLastCacheSig) return;
-    window.__sprintLastCacheSig = sig;
-    try { renderNextTaskDrawer(); } catch {}
-  }, 1500);
+  // (Removed: hidden iframe primer + 1.5s cache poll. The Firestore module
+  // script at the bottom of sprint.html is now the sole source of truth —
+  // it subscribes to learning_courses + tv_todos directly and dispatches
+  // `sprint:caches-updated` whenever data lands. The drawer listens for that
+  // event AND reads `window.__sprintData` for immediate access without
+  // needing localStorage roundtrips.)
 
   // Auto-restore an in-progress sprint. The active sprint state is mirrored
   // to localStorage so OTHER pages (Learning banner, daily-planner) can see
@@ -3824,7 +3773,12 @@ body { display:flex; flex-direction:column; position:relative }
     return subIdx + 1;
   }
 
-  // ---- writers — same shape as publishLearningCache + personal-todos cache ----
+  // ---- writers ----
+  // Publishes both the legacy localStorage cache shape (so other tabs that
+  // expect it keep working) AND the live `window.__sprintData` global the
+  // drawer reads from directly. One pass builds both — no roundtrips.
+  window.__sprintData = window.__sprintData || { lectures: null, priorities: [] };
+
   function publishLearningCache(){
     const todayItems = [];
     const sections = [];
@@ -3866,15 +3820,14 @@ body { display:flex; flex-direction:column; position:relative }
       }
     }
     todayItems.sort((a, b) => String(a.sectionDeadline).localeCompare(String(b.sectionDeadline)));
-    try {
-      localStorage.setItem('learning-cache-v1', JSON.stringify({
-        updatedAt: Date.now(), today: todayItems, sections,
-      }));
-      window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'learning' } }));
-    } catch {}
+    const payload = { updatedAt: Date.now(), today: todayItems, sections };
+    window.__sprintData.lectures = payload;
+    try { localStorage.setItem('learning-cache-v1', JSON.stringify(payload)); } catch {}
+    window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'learning' } }));
   }
+
   function publishTodosCache(){
-    // Collect Focus 5 priority taskIds so we can flag them in the cache.
+    // ---- Collect Focus 5 priority taskIds ----
     const focus5PriorityIds = new Set();
     try {
       const f5raw = localStorage.getItem('personal-focus-5-v1');
@@ -3887,9 +3840,9 @@ body { display:flex; flex-direction:column; position:relative }
         for (const id of (l.taskIds || [])) if (id) focus5PriorityIds.add(id);
       }
     } catch {}
+    // ---- Open todos, indexed by id ----
     const open = todos
       .filter(t => !t.done)
-      .slice(0, 100)
       .map(t => ({
         id: t.id,
         text: t.text || '',
@@ -3898,15 +3851,58 @@ body { display:flex; flex-direction:column; position:relative }
         details: t.details || '',
         date: t.date || t.endDate || t.startDate || '',
       }));
+    const byId = new Map();
+    open.forEach(t => byId.set(t.id, t));
+    // ---- Build the unified priorities array: sprint-queue → focus-5 → starred ----
+    const seen = new Set();
+    const priorities = [];
+    // 1. Sprint queue (explicit user-added items).
     try {
+      const raw = localStorage.getItem('sprint-queue-v1');
+      if (raw) {
+        const q = JSON.parse(raw);
+        if (q && Array.isArray(q.items)) {
+          for (const it of q.items) {
+            if (!it || !it.id || seen.has(it.id)) continue;
+            seen.add(it.id);
+            const cached = byId.get(it.id);
+            priorities.push(cached || {
+              id: it.id, text: it.text || '', job: it.job || '',
+              priority: true, details: it.details || '', date: '',
+            });
+          }
+        }
+      }
+    } catch {}
+    // 2. Focus 5 priority lists.
+    for (const id of focus5PriorityIds) {
+      if (seen.has(id)) continue;
+      const t = byId.get(id);
+      if (t) { seen.add(id); priorities.push(t); }
+    }
+    // 3. Starred items not already covered.
+    for (const t of open) {
+      if (t.priority && !seen.has(t.id)) { seen.add(t.id); priorities.push(t); }
+    }
+    window.__sprintData.priorities = priorities;
+    try {
+      // Slice the localStorage cache to 100 to keep it small; the in-memory
+      // __sprintData.priorities holds the full computed list.
       localStorage.setItem('personal-todos-cache', JSON.stringify({
         updatedAt: Date.now(),
         dateKey: todayISO(),
-        items: open,
+        items: open.slice(0, 100),
       }));
-      window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'todos' } }));
     } catch {}
+    window.dispatchEvent(new CustomEvent('sprint:caches-updated', { detail: { source: 'todos' } }));
   }
+  // Recompute when Focus 5 or sprint queue changes in another tab.
+  window.addEventListener('storage', (e) => {
+    if (!e || !e.key) return;
+    if (e.key === 'personal-focus-5-v1' || e.key === 'sprint-queue-v1' || e.key === 'sprint-queue-task-ids') {
+      publishTodosCache();
+    }
+  });
 
   // ---- subscriptions ----
   // Note: Firestore client retains anonymous auth state from any prior page
