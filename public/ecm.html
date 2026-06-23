@@ -4587,8 +4587,15 @@ function _wireDrawer(row, r, onCollapse){
                     : fieldName === 'Completion Date' ? (r.completionDate || '').slice(0, 10)
                     : fieldName === 'Due Date' ? _isoDayString(r.dueDate)
                     : '';
-        if ((local || '') === (v || '')) return;
+        if ((local || '') === (v || '')) {
+          // No change — but still flush any deferred render that piled up
+          // while this input had focus, so other UI catches up.
+          if (_renderDeferred) { try { render(); } catch {} }
+          return;
+        }
         await pushField(r, fieldName, v, row);
+        // Catch up on any render snapshots that arrived while user typed.
+        if (_renderDeferred) { try { render(); } catch {} }
       });
     });
     row.querySelector('[data-collapse]').addEventListener('click', (e) => {
@@ -4700,7 +4707,26 @@ function _wireDrawer(row, r, onCollapse){
     }));
 }
 
+// True when render was called while user was editing a drawer field. The
+// blur handler in _wireDrawer triggers a deferred render after pushField
+// finishes so the UI catches up without losing the active edit.
+let _renderDeferred = false;
 function render(){
+  // If the user is mid-typing in any drawer input/textarea, a Firestore
+  // snapshot (ack/internal/notif/priorities/etc.) that fires render() in the
+  // background tears down the input and rebuilds it with the OLD value —
+  // making the Task Name and other fields "glitch back" to the original.
+  // Defer the render until they blur out of the field; their save fires on
+  // blur via pushField, and the post-blur render hook below re-applies it.
+  try {
+    const ae = document.activeElement;
+    if (ae && ae.closest && ae.closest('.drawer') &&
+        (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
+      _renderDeferred = true;
+      return;
+    }
+  } catch {}
+  _renderDeferred = false;
   renderStatusBar();
   updateNeedsAckDot();
   renderBulkBar();
