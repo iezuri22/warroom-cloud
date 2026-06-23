@@ -2974,16 +2974,55 @@ body { display:flex; flex-direction:column; position:relative }
     showView('play');
   });
 
-  // Walk the resolved sprintBackLink href and navigate to it when set to a
-  // non-default page. Returns true if navigation kicked off — callers should
-  // bail out of any follow-up "stay on this page" code in that case.
+  // Compute the back target from ?from=… (or document.referrer fallback) and
+  // navigate there. Critically: also works when the back-link is hidden,
+  // which it is whenever sprint is running embedded inside the daily-planner
+  // shell iframe — that's the case where learning.html → sprint.html replaces
+  // the learning iframe with sprint, so we still need a way to bounce back.
+  // Returns true if navigation kicked off.
   function _navigateBackIfFrom(){
     try {
-      const bl = document.getElementById('sprintBackLink');
-      if (!bl || bl.style.display === 'none') return false;
-      const href = bl.getAttribute('href');
-      if (!href) return false;
-      window.location.href = href;
+      const FROM_MAP = {
+        learning: '/learning.html',
+        personal: '/personal-todos.html',
+        ecm:      '/ecm.html',
+        goals:    '/goals-canvas.html',
+        board:    '/goal-board.html',
+        calendar: '/calendar.html',
+        focus:    '/focus-session.html',
+        warroom:  '/daily-planner.html',
+      };
+      let target = '';
+      try {
+        const sp = new URLSearchParams(location.search);
+        const fromParam = (sp.get('from') || '').toLowerCase();
+        if (FROM_MAP[fromParam]) target = FROM_MAP[fromParam];
+      } catch {}
+      if (!target) {
+        try {
+          if (document.referrer) {
+            const r = new URL(document.referrer);
+            if (r.origin === location.origin) {
+              const path = r.pathname;
+              if (/\/learning\.html\b/.test(path))            target = FROM_MAP.learning;
+              else if (/\/personal-todos\.html\b/.test(path)) target = FROM_MAP.personal;
+              else if (/\/ecm\.html\b/.test(path))            target = FROM_MAP.ecm;
+              else if (/\/goals-canvas\.html\b/.test(path))   target = FROM_MAP.goals;
+              else if (/\/goal-board\.html\b/.test(path))     target = FROM_MAP.board;
+              else if (/\/calendar\.html\b/.test(path))       target = FROM_MAP.calendar;
+              else if (/\/focus-session\.html\b/.test(path))  target = FROM_MAP.focus;
+            }
+          }
+        } catch {}
+      }
+      // Race mode is a special case: the parent shell closes the iframe via
+      // the warroom:race-close postMessage; navigating away would break that.
+      try {
+        const sp = new URLSearchParams(location.search);
+        if (sp.get('race') === '1') return false;
+      } catch {}
+      if (!target) target = '/daily-planner.html';
+      window.location.href = target;
       return true;
     } catch { return false; }
   }
