@@ -2150,9 +2150,14 @@ body { display:flex; flex-direction:column; position:relative }
     // unfinished today-lectures from the same section) re-label as Tomorrow,
     // without needing to bounce to Learning to click the section button.
     const showNotToday = it.dueCls === 'today';
+    // Done checkbox — writes directly to learning_courses Firestore. Marks
+    // the lecture as done in the source data, drains it from the drawer.
+    const doneBtn = `<button type="button" data-act="complete-lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" title="Mark this lecture complete (saves to Learning)"
+      style="width:24px;height:24px;border-radius:50%;border:2px solid rgba(255,255,255,.18);background:transparent;color:transparent;cursor:pointer;flex:0 0 auto;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .12s" onclick="event.stopPropagation()" onmouseover="this.style.borderColor='#86efac';this.style.color='#86efac'" onmouseout="this.style.borderColor='rgba(255,255,255,.18)';this.style.color='transparent'">✓</button>`;
     return `
       <div class="nt-item" data-kind="lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" data-sub-id="${esc(it.subId || '')}"
         style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
+        ${doneBtn}
         <span style="font-size:14px">📘</span>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</div>
@@ -2167,9 +2172,15 @@ body { display:flex; flex-direction:column; position:relative }
   }
   function priorityItemHtml(t){
     const jobChip = t.job ? `<span style="font-size:10px;font-weight:700;background:rgba(255,138,61,.16);color:#FF8A3D;padding:2px 7px;border-radius:99px;letter-spacing:.04em;margin-left:8px">${esc(t.job)}</span>` : '';
+    // Done checkbox — writes done:true to tv_todos Firestore directly so
+    // Personal (and any other consumer) sees it immediately. Also drops the
+    // item from the sprint queue if it was there.
+    const doneBtn = `<button type="button" data-act="complete-priority" data-todo-id="${esc(t.id)}" title="Mark complete (saves to Personal)"
+      style="width:24px;height:24px;border-radius:50%;border:2px solid rgba(255,255,255,.18);background:transparent;color:transparent;cursor:pointer;flex:0 0 auto;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .12s" onclick="event.stopPropagation()" onmouseover="this.style.borderColor='#86efac';this.style.color='#86efac'" onmouseout="this.style.borderColor='rgba(255,255,255,.18)';this.style.color='transparent'">✓</button>`;
     return `
       <div class="nt-item" data-kind="priority" data-todo-id="${esc(t.id)}"
         style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
+        ${doneBtn}
         <span style="font-size:14px">⭐</span>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.text || '(untitled)')}</div>
@@ -2270,6 +2281,41 @@ body { display:flex; flex-direction:column; position:relative }
         renderNextTaskDrawer();
       });
     });
+    // Per-row "✓" complete buttons — write straight to Firestore via the
+    // helpers exposed on window.__sprintData. After write, the snapshot
+    // listener re-publishes the data and the drawer re-renders without it.
+    drawer.querySelectorAll('[data-act="complete-priority"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.todoId;
+        if (!id) return;
+        btn.disabled = true;
+        btn.style.opacity = '.5';
+        try {
+          if (window.__sprintData && window.__sprintData.markTodoDone) {
+            await window.__sprintData.markTodoDone(id);
+          }
+        } catch {}
+        renderNextTaskDrawer();
+      });
+    });
+    drawer.querySelectorAll('[data-act="complete-lecture"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const courseId = btn.dataset.course;
+        const sectionId = btn.dataset.section;
+        const subIndex = parseInt(btn.dataset.subIndex, 10);
+        if (!courseId || !sectionId || isNaN(subIndex)) return;
+        btn.disabled = true;
+        btn.style.opacity = '.5';
+        try {
+          if (window.__sprintData && window.__sprintData.markLectureDone) {
+            await window.__sprintData.markLectureDone(courseId, sectionId, subIndex);
+          }
+        } catch {}
+        renderNextTaskDrawer();
+      });
+    });
     // Wire up clicks
     drawer.querySelectorAll('.nt-item').forEach(el => {
       el.addEventListener('click', () => {
@@ -2361,14 +2407,21 @@ body { display:flex; flex-direction:column; position:relative }
   }
   // Complete the current task's source WITHOUT ending the sprint. Used by
   // "✓ Done & next" so the user can flow through several lectures inside one
-  // long sprint.
+  // long sprint. Direct Firestore writes for personal + learning so the
+  // completion lands immediately on Personal / Learning without depending on
+  // those pages being open. Falls back to the legacy queue paths only for
+  // sources that don't yet have a direct path.
   function completeCurrentSourceLive(){
     const sel = selectedTask;
     if (!sel || !sel.source) return;
     try {
       if (sel.source === 'personal' || sel.source === 'priority') {
-        // Same queue path that finishSprint uses — personal-todos.html drains it.
-        completePersonalTodo(sel, 0);
+        const id = sel.ids && sel.ids.todoId;
+        if (id && window.__sprintData && window.__sprintData.markTodoDone) {
+          window.__sprintData.markTodoDone(id);
+        } else {
+          completePersonalTodo(sel, 0);
+        }
       } else if (sel.source === 'goal') {
         completeGoalActionItem(sel);
       } else if (sel.source === 'board') {
@@ -2376,7 +2429,11 @@ body { display:flex; flex-direction:column; position:relative }
       } else if (sel.source === 'plan') {
         completePlanItem(sel);
       } else if (sel.source === 'learning' && sel.ids) {
-        completeLearningSubsection(sel.ids);
+        if (window.__sprintData && window.__sprintData.markLectureDone && sel.ids.subIndex != null) {
+          window.__sprintData.markLectureDone(sel.ids.courseId, sel.ids.sectionId, sel.ids.subIndex);
+        } else {
+          completeLearningSubsection(sel.ids);
+        }
       }
     } catch (e) { console.warn('live source completion failed', e); }
   }
@@ -3669,7 +3726,7 @@ body { display:flex; flex-direction:column; position:relative }
 ====================================================================== -->
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, collection, doc, onSnapshot, updateDoc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
@@ -3928,6 +3985,56 @@ body { display:flex; flex-direction:column; position:relative }
     });
     publishTodosCache();
   }, (err) => console.warn('[sprint] tv_todos subscribe error', err));
+
+  // Expose direct-write helpers so the drawer can mark a todo or lecture done
+  // straight to Firestore — no more queue-based "personal-todos.html drains it
+  // later" path that failed when the user never opened personal-todos. These
+  // are the ONLY paths that should be used for completion from the drawer.
+  window.__sprintData.markTodoDone = async function(id){
+    if (!id) return false;
+    try {
+      await updateDoc(doc(db, 'tv_todos', id), { done: true, doneAt: new Date().toISOString() });
+      // Also pull it from the sprint queue so it stops showing.
+      try {
+        const raw = localStorage.getItem('sprint-queue-v1');
+        if (raw) {
+          const q = JSON.parse(raw);
+          if (q && Array.isArray(q.items)) {
+            q.items = q.items.filter(x => !x || x.id !== id);
+            q.updatedAt = Date.now();
+            localStorage.setItem('sprint-queue-v1', JSON.stringify(q));
+          }
+        }
+        const legacyRaw = localStorage.getItem('sprint-queue-task-ids');
+        if (legacyRaw) {
+          const legacy = JSON.parse(legacyRaw);
+          if (Array.isArray(legacy)) {
+            localStorage.setItem('sprint-queue-task-ids', JSON.stringify(legacy.filter(x => x !== id)));
+          }
+        }
+      } catch {}
+      publishTodosCache();
+      return true;
+    } catch (e) { console.error('[sprint] markTodoDone failed', e); return false; }
+  };
+  window.__sprintData.markLectureDone = async function(courseId, sectionId, subIndex){
+    if (!courseId || !sectionId || subIndex == null) return false;
+    try {
+      const ref = doc(db, 'learning_courses', courseId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) return false;
+      const c = snap.data();
+      const sec = (c.sections || []).find(s => s.id === sectionId);
+      if (!sec) return false;
+      const subs = sec.subsections || [];
+      if (!subs[subIndex]) return false;
+      subs[subIndex].done = true;
+      subs[subIndex].doneAt = new Date().toISOString();
+      await setDoc(ref, c);
+      // Local state updates via onSnapshot; publishLearningCache will fire.
+      return true;
+    } catch (e) { console.error('[sprint] markLectureDone failed', e); return false; }
+  };
 </script>
 
 <!-- Shared lofi player. Same script learning.html (and every other page)
