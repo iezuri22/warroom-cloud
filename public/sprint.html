@@ -2121,7 +2121,9 @@ body { display:flex; flex-direction:column; position:relative }
     const sec = cache.sections.find(s => s.courseId === courseId && s.sectionId === sectionId);
     if (!sec) return null;
     const after = fromSubIndex == null ? -1 : fromSubIndex;
-    return sec.subs.find(u => !u.done && u.subIndex > after) || null;
+    // Only auto-advance to Today's lectures — pulling in Tomorrow's bucket
+    // mid-sprint was the "next batch promoted to today" complaint.
+    return sec.subs.find(u => !u.done && u.subIndex > after && u.dueCls === 'today') || null;
   }
   // Build a small render helper for a lecture card — shared between the
   // "Next in current section" tile and the today's-queue list.
@@ -2529,7 +2531,9 @@ body { display:flex; flex-direction:column; position:relative }
     if (!timerHandle) return;
     const cur = classifyCurrentTask();
     completeCurrentSourceLive();
-    // Lecture → try to auto-advance to next in section silently
+    // Lecture → try to auto-advance to next Today lecture in the same section.
+    // If today's bucket for that section is empty (all done), congratulate
+    // instead of auto-promoting Tomorrow's batch in.
     if (cur.kind === 'lecture') {
       const cache = readLearningCache();
       const n = nextLectureInSection(cache, cur.courseId, cur.sectionId, cur.subIndex);
@@ -2546,6 +2550,12 @@ body { display:flex; flex-direction:column; position:relative }
         });
         return;
       }
+      // No next Today lecture in this section — celebrate.
+      const totalToday = (cache && Array.isArray(cache.today)) ? cache.today.filter(it => !it.done).length : 0;
+      const msg = totalToday > 0
+        ? `🎉 Done with this section for today! ${totalToday} more lecture${totalToday===1?'':'s'} on today's queue in other sections.`
+        : '🎉 All today\'s lectures done! Take the win — tomorrow\'s batch unlocks at midnight.';
+      try { alert(msg); } catch {}
     }
     // Priority just completed → auto-advance to the next priority in the queue
     // (sprint-queue → focus-5 priority lists → starred), skipping the one we

@@ -1153,17 +1153,28 @@ function jumpToSection(courseId, sectionId){
 // next not-done lecture in the same section as the natural next step.
 function maybePromptKeepGoing(course, section, justCompletedIndex){
   const subs = section.subsections || [];
-  // Find the next not-done lecture AFTER the one just completed; if none in
-  // this section, look in the next section that's open.
+  // Find the next not-done lecture that's also in TODAY'S locked plan —
+  // promoting Tomorrow's batch was what made finishing today's quota feel
+  // like an infinite treadmill. If today's bucket for this section is done,
+  // skip to the next section that ALSO has a today-planned lecture left.
+  // If nothing today anywhere, show the congrats modal and stop.
+  const isLectureToday = (sec, idx) => {
+    try { return todaysPlannedFor(sec).includes(idx); }
+    catch { return false; }
+  };
   let next = null;
   for (let i = justCompletedIndex + 1; i < subs.length; i++) {
-    if (!subs[i].done) { next = { course, section, sub: subs[i], idx: i }; break; }
+    if (!subs[i].done && isLectureToday(section, i)) {
+      next = { course, section, sub: subs[i], idx: i };
+      break;
+    }
   }
   if (!next) {
     const sIdx = (course.sections || []).indexOf(section);
     for (let j = sIdx + 1; j < (course.sections || []).length; j++) {
       const ns = course.sections[j];
-      const nextSub = (ns.subsections || []).find(u => !u.done);
+      const planned = (function(){ try { return todaysPlannedFor(ns); } catch { return []; } })();
+      const nextSub = (ns.subsections || []).find((u, idx) => !u.done && planned.includes(idx));
       if (nextSub) {
         next = { course, section: ns, sub: nextSub, idx: ns.subsections.indexOf(nextSub) };
         break;
@@ -1176,18 +1187,17 @@ function maybePromptKeepGoing(course, section, justCompletedIndex){
     if (sub?.title && !/^Lecture \d+/.test(sub.title)) return sub.title;
     return 'Lecture ' + lectureRunningNum(c, sec, subIdx);
   };
+  const justTitle = titleFor(course, section, subs[justCompletedIndex], justCompletedIndex);
   if (!next) {
-    // Whole course is done.
-    const justTitle = titleFor(course, section, subs[justCompletedIndex], justCompletedIndex);
+    // Today's queue exhausted — celebrate. Don't promote Tomorrow's lectures.
     showKeepGoingModal({
-      title: '🎉 Course complete!',
-      body: `<strong>${esc(justTitle)}</strong> was the last one. Take a moment.`,
-      goLabel: 'Done',
+      title: '🎉 Today\'s lectures — done!',
+      body: `<strong>${esc(justTitle)}</strong> was the last on today's plan. Tomorrow's batch unlocks at midnight.`,
+      goLabel: 'Nice',
       onGo: hideKeepGoingModal
     });
     return;
   }
-  const justTitle = titleFor(course, section, subs[justCompletedIndex], justCompletedIndex);
   const nextTitle = titleFor(course, next.section, next.sub, next.idx);
   showKeepGoingModal({
     title: '✓ ' + esc(justTitle) + ' done!',
