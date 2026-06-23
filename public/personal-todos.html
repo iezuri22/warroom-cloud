@@ -13245,11 +13245,15 @@ const VOICE = {
       saveFocus5();
       return true;
     }
-    // Insert into target, then cascade overflow.
+    // Insert into target, then cascade overflow. CRITICAL: skip routine lists
+    // (Morning Routine, etc.) entirely so overflow from a full priority chain
+    // doesn't leak into a routine. Routines are terminal — tasks only land
+    // there via an explicit add, never via cascade.
     let i = startIdx;
     let incoming = [taskId];
     while (incoming.length && i < lists.length) {
       const list = lists[i];
+      if (list.routine) { i++; continue; }
       const pos = (i === startIdx && position === 'top') ? 'top' : 'end';
       // Avoid dupes already in this list — pull them out so they end up at the
       // new insertion position rather than staying put.
@@ -13267,18 +13271,25 @@ const VOICE = {
       if (list.taskIds.length <= cap) {
         incoming = [];
       } else {
-        // Overflow: anything past the cap cascades to the next list.
+        // Overflow: anything past the cap cascades to the next priority list.
         incoming = list.taskIds.splice(cap);
       }
       i++;
     }
-    // If we still have overflow after the last list, DON'T drop it. Force-push
-    // it into the last list (which may temporarily exceed 5). Better to violate
-    // the 5-cap visually than to lose a task the user just intentionally added.
+    // If we still have overflow after the last priority list, DON'T drop it
+    // and DON'T spill it into a routine. Force-push into the last NON-routine
+    // priority list (it may temporarily exceed 5). Routines stay clean.
     if (incoming.length && lists.length > 0) {
-      const last = lists[lists.length - 1];
-      last.taskIds.push(...incoming);
-      console.warn('focus5 cascade overflow: pushed extras into last list (over 5 cap)', incoming);
+      // Find the last non-routine list (priority chain's tail).
+      let lastPriIdx = -1;
+      for (let k = lists.length - 1; k >= 0; k--) {
+        if (!lists[k].routine) { lastPriIdx = k; break; }
+      }
+      if (lastPriIdx >= 0) {
+        lists[lastPriIdx].taskIds.push(...incoming);
+        console.warn('focus5 cascade overflow: pushed extras into last priority list (over 5 cap)', incoming);
+      }
+      // else: no non-routine lists at all — silently drop (no priority chain exists).
     }
     saveFocus5();
     return true;
