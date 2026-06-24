@@ -2890,11 +2890,12 @@
          the select. .tasks-scope-pill carries tab-style background/borders
          + an explicit color on options so they read against any theme. -->
     <label class="tasks-scope-pill view-tab" id="tasksViewTab" data-view="tasks-umbrella">
-      <span class="tasks-scope-prefix">Tasks ·</span>
+      <span class="tasks-scope-prefix">Task ·</span>
       <select id="taskScopeSelect" title="Pick which slice of Tasks to show">
-        <option value="all">Non-Dev / Non-Report</option>
-        <option value="dev">Dev / Reports</option>
         <option value="allrows">All</option>
+        <option value="support">🛠 Tech Support</option>
+        <option value="dev">Dev</option>
+        <option value="all">Non-Dev</option>
       </select>
       <span class="view-tab-ct" id="tasksViewCount"></span>
     </label>
@@ -2923,14 +2924,14 @@
       In-Person
       <span class="view-tab-ct" id="visitsCount"></span>
     </button>
-    <button type="button" class="view-tab" data-view="support">
-      🛠 Tech Support
-      <span class="view-tab-ct" id="supportCount"></span>
-    </button>
     <button type="button" class="view-tab" data-view="transcripts">
       Transcripts
       <span class="view-tab-ct" id="transcriptsCount"></span>
     </button>
+    <!-- Tech Support badge counter — invisible, but kept in DOM so
+         updateSupportCount() can write to it. The visible count surfaces
+         beside the Task pill via updateTasksTabBadge(). -->
+    <span id="supportCount" style="display:none"></span>
   </div>
   <div class="search-row">
     <input type="text" class="search-input" id="searchInput" placeholder="Search…" autocomplete="off">
@@ -4414,10 +4415,11 @@ function applyFilters(){
   } else if (currentView === 'dev') {
     pool = pool.filter(r => isDevOrReportRow(r) || String(r.id) === String(expandedId));
   }
-  // Tech-Support rows live on their dedicated tab — exclude them from the
-  // task scopes so they don't double-count in Non-Dev/Dev/All queues.
-  // (Still visible if the user has the drawer open mid-edit.)
-  if (currentView === 'all' || currentView === 'dev' || currentView === 'allrows') {
+  // Tech-Support rows are pulled out of the Dev and Non-Dev slices so each
+  // queue stays focused on its own work. The "All" scope (allrows) still
+  // shows them — that's the everything-bucket. (Drawer-open exemption keeps
+  // a row visible across a scope change mid-edit.)
+  if (currentView === 'all' || currentView === 'dev') {
     pool = pool.filter(r => !isSupportRow(r) || String(r.id) === String(expandedId));
   }
   // Ack view: hide already-acked rows by default so the queue clears as you go.
@@ -8441,7 +8443,12 @@ filterStatus = '__open__';
 // so applyFilters and every downstream code path keeps behaving exactly as it
 // did before — the dropdown just steers currentView under the hood.
 const TASKS_SCOPE_KEY = 'ecm-tasks-scope-v1';
-const TASKS_SCOPES = new Set(['all', 'dev', 'allrows']);
+// Scope values the Task pill steers through:
+//   all     → Non-Dev / Non-Report rows
+//   dev     → Dev / Reports rows
+//   support → Sub-Type=Tech Support rows (its own state lifecycle)
+//   allrows → everything visible, no slicing
+const TASKS_SCOPES = new Set(['all', 'dev', 'allrows', 'support']);
 function loadTaskScope(){
   try {
     const v = localStorage.getItem(TASKS_SCOPE_KEY);
@@ -8461,6 +8468,7 @@ function updateTasksTabBadge(){
   if (ct) {
     const src = scope === 'dev' ? document.getElementById('devReportsCount')
               : scope === 'allrows' ? document.getElementById('allRowsCount')
+              : scope === 'support' ? document.getElementById('supportCount')
               : null;
     ct.textContent = src && src.textContent ? src.textContent : '';
   }
@@ -8495,10 +8503,6 @@ document.querySelectorAll('.view-tab').forEach(b => {
     document.body.classList.toggle('view-starred', currentView === 'starred');
     document.body.classList.toggle('view-visits',  currentView === 'visits');
     document.body.classList.toggle('view-transcripts', currentView === 'transcripts');
-    document.body.classList.toggle('view-support', currentView === 'support');
-    // Entering the Tech Support tab — reset the chip filter back to 'open'
-    // so we always land on the live queue, not whatever was last selected.
-    if (currentView === 'support') _supportChip = 'open';
     updateTasksTabBadge();
     if (currentView !== 'ack') {
       selectedAckIds.clear();
@@ -8531,6 +8535,9 @@ if (taskScopeSelect) {
     syncViewTabActive();
     // Clear non-Tasks body classes — we're jumping back into Tasks view.
     document.body.classList.remove('view-ack', 'view-notif', 'view-weekly', 'view-starred', 'view-visits', 'view-transcripts');
+    // Picking Tech Support from the dropdown should always land on the
+    // live queue (All-open chip) — never on whatever was last selected.
+    if (v === 'support') _supportChip = 'open';
     updateTasksTabBadge();
     render();
   });
