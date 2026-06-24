@@ -945,6 +945,101 @@
     color: var(--ink);
   }
 
+  /* Star detail modal — opens on click of the row star button. Lets the
+     user write a note and pick mentions. */
+  .star-modal-bg {
+    position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:1000;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .star-modal {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);
+    width:100%; max-width:520px; padding:18px 20px 16px; color:var(--ink);
+    font-family:inherit;
+  }
+  .sm-head { display:flex; align-items:center; gap:10px; margin-bottom:8px }
+  .sm-title { font-size:15px; font-weight:800; letter-spacing:.2px }
+  .sm-x {
+    margin-left:auto; background:transparent; border:none; color:var(--w55);
+    font-size:16px; cursor:pointer; padding:4px 8px; border-radius:6px;
+  }
+  .sm-x:hover { color:var(--ink); background:rgba(255,255,255,.05) }
+  .sm-row.sm-task {
+    padding:8px 10px; background:var(--w03); border:1px solid var(--line);
+    border-radius:8px; font-size:13px; line-height:1.35; margin-bottom:14px;
+    max-height:80px; overflow:auto;
+  }
+  .sm-label {
+    display:block; font-size:11px; font-weight:800; letter-spacing:.4px;
+    text-transform:uppercase; color:var(--w55); margin:10px 0 6px;
+  }
+  .sm-hint { text-transform:none; letter-spacing:0; font-weight:500; opacity:.7 }
+  .sm-note {
+    width:100%; padding:8px 10px; background:var(--w03); border:1px solid var(--line);
+    border-radius:8px; color:var(--ink); font:inherit; font-size:13px;
+    resize:vertical; min-height:60px; outline:none;
+  }
+  .sm-note:focus { border-color:rgba(74,158,255,.5) }
+  .sm-mentions {
+    display:flex; flex-wrap:wrap; gap:6px; min-height:28px;
+    padding:4px; margin-bottom:4px;
+  }
+  .sm-mentions:empty { padding:0; min-height:0 }
+  .sm-chip {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:4px 4px 4px 10px; border-radius:99px;
+    background:rgba(74,158,255,.18); border:1px solid rgba(74,158,255,.4);
+    color:var(--ink); font-size:12px; font-weight:700;
+  }
+  .sm-chip-x {
+    background:transparent; border:none; color:inherit; font-size:11px;
+    cursor:pointer; padding:2px 6px; border-radius:99px;
+  }
+  .sm-chip-x:hover { background:rgba(255,255,255,.1) }
+  .sm-mention-input {
+    width:100%; padding:7px 10px; background:var(--w03); border:1px solid var(--line);
+    border-radius:8px; color:var(--ink); font:inherit; font-size:13px; outline:none;
+  }
+  .sm-mention-input:focus { border-color:rgba(74,158,255,.5) }
+  .sm-suggest {
+    display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; min-height:0;
+  }
+  .sm-suggest:empty { display:none }
+  .sm-suggest-pill {
+    padding:5px 12px; border-radius:99px;
+    background:rgba(255,255,255,.04); border:1px solid var(--line);
+    color:var(--w55); font-size:12px; font-weight:700; cursor:pointer;
+  }
+  .sm-suggest-pill:hover { color:var(--ink); border-color:var(--line2) }
+  .sm-suggest-pill.custom { background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.3); color:#fcd34d }
+  .sm-actions {
+    display:flex; align-items:center; gap:8px; margin-top:18px;
+    padding-top:12px; border-top:1px solid var(--line);
+  }
+  .sm-sp { flex:1 }
+  .sm-btn {
+    padding:7px 14px; border-radius:8px; font:inherit; font-size:12px; font-weight:800;
+    letter-spacing:.3px; cursor:pointer; border:1px solid var(--line);
+    background:rgba(255,255,255,.04); color:var(--ink);
+  }
+  .sm-btn:hover { border-color:var(--line2) }
+  .sm-btn.ghost { background:transparent; color:var(--w55) }
+  .sm-btn.primary { background:rgba(74,158,255,.22); border-color:rgba(74,158,255,.5); color:var(--ink) }
+  .sm-btn.sm-unstar { background:rgba(248,113,113,.16); border-color:rgba(248,113,113,.4); color:#fca5a5 }
+
+  /* Star-meta row in the Starred tab — note + mention chips. */
+  .star-meta-row {
+    display:flex; gap:12px; flex-wrap:wrap; align-items:center;
+    padding:6px 14px 10px; font-size:12px;
+  }
+  .star-note { color:var(--w55); font-style:italic; max-width:560px }
+  .star-mentions { display:inline-flex; flex-wrap:wrap; gap:4px }
+  .star-mention {
+    display:inline-flex; align-items:center; padding:2px 8px; border-radius:99px;
+    background:rgba(74,158,255,.16); border:1px solid rgba(74,158,255,.3);
+    color:#93c5fd; font-size:11px; font-weight:700;
+  }
+
   /* Task scope strip — All / Tech Support / Dev / Non-Dev chips that sit
      above the status bar when the Task tab is active. Empty <div> when not. */
   .task-scope-strip {
@@ -3551,25 +3646,178 @@ function subscribeStars(){
     try { if (typeof render === 'function' && rows.length) render(); } catch {}
   }, err => console.error('stars snapshot error', err));
 }
-async function toggleStar(rowId){
+// Save the full star payload — note + mentions — to Firestore. Used by
+// the modal both for "first star" (creating the doc) and edits.
+async function saveStarMeta(rowId, patch){
   const rid = String(rowId);
-  const wasOn = !!stars[rid];
-  if (wasOn) delete stars[rid];
-  else stars[rid] = { rowId: rid, starredAt: new Date().toISOString() };
+  const prev = stars[rid] || {};
+  const next = {
+    rowId: rid,
+    starredAt: prev.starredAt || new Date().toISOString(),
+    starredBy: prev.starredBy || (typeof _currentActor === 'function' ? _currentActor() : ''),
+    note: '',
+    mentions: [],
+    ...prev,
+    ...patch,
+    updatedAt: new Date().toISOString()
+  };
+  stars[rid] = next; // optimistic
   try { render(); } catch {}
   try {
-    if (wasOn) await deleteDoc(doc(db, 'ecm_stars', rid));
-    else await setDoc(doc(db, 'ecm_stars', rid), { rowId: rid, starredAt: new Date().toISOString() });
+    await setDoc(doc(db, 'ecm_stars', rid), next);
   } catch (e) {
-    console.error('star toggle failed', e);
-    if (wasOn) stars[rid] = { rowId: rid }; else delete stars[rid];
+    console.error('star save failed', e);
+    toast("Couldn't save the star.", 'err');
+  }
+}
+async function unstarRow(rowId){
+  const rid = String(rowId);
+  const prev = stars[rid];
+  delete stars[rid];
+  try { render(); } catch {}
+  try {
+    await deleteDoc(doc(db, 'ecm_stars', rid));
+  } catch (e) {
+    console.error('unstar failed', e);
+    if (prev) stars[rid] = prev;
     try { render(); } catch {}
-    toast('Couldn\'t update the star.', 'err');
+    toast("Couldn't unstar.", 'err');
   }
 }
 function starBtnHTML(r){
   const on = !!stars[String(r.id)];
-  return `<button type="button" class="q-star ${on ? 'on' : ''}" data-star="${escHtml(String(r.id))}" title="${on ? 'Unstar' : 'Star — keep this handy to reference later'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+  const meta = stars[String(r.id)] || {};
+  const tip = on
+    ? (meta.note ? `Starred — "${(meta.note || '').slice(0, 60)}". Click to edit.` : 'Starred — click to edit / unstar')
+    : 'Star — keep this handy and tag a teammate';
+  return `<button type="button" class="q-star ${on ? 'on' : ''}" data-star="${escHtml(String(r.id))}" title="${escHtml(tip)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+}
+
+// ============= Star detail modal =============
+// Tagging UX: clicking the star opens a modal where the user can write a
+// short note explaining why they're starring + mention one or more
+// teammates from the known-owner roster. Both fields are optional — hitting
+// Save with empty fields just stars the row plain.
+function _starRosterCandidates(){
+  // Source of mentionable names = every owner currently or recently assigned
+  // on a row, plus the active actor (so a user can self-tag a reminder).
+  const set = new Set();
+  rows.forEach(r => { if ((r.owner || '').trim()) set.add(r.owner.trim()); });
+  if (typeof _currentActor === 'function') {
+    const me = _currentActor();
+    if (me && me !== 'You') set.add(me);
+  }
+  return [...set].sort();
+}
+function openStarModal(rowId){
+  const rid = String(rowId);
+  const r = rows.find(x => String(x.id) === rid);
+  if (!r) return;
+  const existing = stars[rid] || {};
+  const wasStarred = !!stars[rid];
+  // Drop a backing element so we can wire from outside the template string.
+  const wrap = document.createElement('div');
+  wrap.className = 'star-modal-bg';
+  wrap.innerHTML = `
+    <div class="star-modal" role="dialog" aria-modal="true">
+      <div class="sm-head">
+        <span class="sm-title">${wasStarred ? '★ Edit star' : 'Star this task'}</span>
+        <button class="sm-x" data-sm-close title="Close">✕</button>
+      </div>
+      <div class="sm-row sm-task">${escHtml(r.task || '')}</div>
+      <label class="sm-label">Why are you starring this? <span class="sm-hint">(optional)</span></label>
+      <textarea class="sm-note" rows="3" placeholder="e.g. needs follow-up after the Tuesday sync">${escHtml(existing.note || '')}</textarea>
+      <label class="sm-label">Mention teammates <span class="sm-hint">(optional)</span></label>
+      <div class="sm-mentions" data-sm-mentions></div>
+      <input class="sm-mention-input" placeholder="Type a name + Enter, or pick below" autocomplete="off">
+      <div class="sm-suggest" data-sm-suggest></div>
+      <div class="sm-actions">
+        ${wasStarred ? `<button class="sm-btn sm-unstar" data-sm-unstar>Unstar</button>` : '<span></span>'}
+        <span class="sm-sp"></span>
+        <button class="sm-btn ghost" data-sm-close>Cancel</button>
+        <button class="sm-btn primary" data-sm-save>${wasStarred ? 'Save' : 'Star + Save'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  let mentions = Array.isArray(existing.mentions) ? [...existing.mentions] : [];
+  const renderChips = () => {
+    const host = wrap.querySelector('[data-sm-mentions]');
+    host.innerHTML = mentions.map(m => `
+      <span class="sm-chip">@${escHtml(m)}<button class="sm-chip-x" data-sm-chip-remove="${escHtml(m)}" title="Remove">✕</button></span>
+    `).join('');
+    host.querySelectorAll('[data-sm-chip-remove]').forEach(b => {
+      b.addEventListener('click', () => {
+        const name = b.getAttribute('data-sm-chip-remove');
+        mentions = mentions.filter(m => m !== name);
+        renderChips();
+        renderSuggest();
+      });
+    });
+  };
+  const renderSuggest = (filter = '') => {
+    const host = wrap.querySelector('[data-sm-suggest]');
+    const q = filter.toLowerCase();
+    const candidates = _starRosterCandidates()
+      .filter(n => !mentions.includes(n))
+      .filter(n => !q || n.toLowerCase().includes(q));
+    host.innerHTML = candidates.length
+      ? candidates.map(n => `<button type="button" class="sm-suggest-pill" data-sm-add="${escHtml(n)}">+ ${escHtml(n)}</button>`).join('')
+      : (q ? `<button type="button" class="sm-suggest-pill custom" data-sm-add-custom="${escHtml(filter)}">+ Mention "${escHtml(filter)}"</button>` : '');
+    host.querySelectorAll('[data-sm-add]').forEach(b => {
+      b.addEventListener('click', () => {
+        const name = b.getAttribute('data-sm-add');
+        if (!mentions.includes(name)) mentions.push(name);
+        wrap.querySelector('.sm-mention-input').value = '';
+        renderChips();
+        renderSuggest();
+      });
+    });
+    host.querySelectorAll('[data-sm-add-custom]').forEach(b => {
+      b.addEventListener('click', () => {
+        const name = (b.getAttribute('data-sm-add-custom') || '').trim();
+        if (name && !mentions.includes(name)) mentions.push(name);
+        wrap.querySelector('.sm-mention-input').value = '';
+        renderChips();
+        renderSuggest();
+      });
+    });
+  };
+  renderChips();
+  renderSuggest();
+  // Input behavior: typing filters suggestions; Enter promotes the typed
+  // value into a chip (matching an existing name if there is one, otherwise
+  // saving the raw text — same as picking a custom suggestion).
+  const inp = wrap.querySelector('.sm-mention-input');
+  inp.addEventListener('input', () => renderSuggest(inp.value));
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = inp.value.trim();
+      if (!v) return;
+      const exact = _starRosterCandidates().find(n => n.toLowerCase() === v.toLowerCase());
+      const name = exact || v;
+      if (!mentions.includes(name)) mentions.push(name);
+      inp.value = '';
+      renderChips();
+      renderSuggest();
+    } else if (e.key === 'Escape') {
+      closeModal();
+    }
+  });
+  const closeModal = () => { try { wrap.remove(); } catch {} };
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeModal(); });
+  wrap.querySelectorAll('[data-sm-close]').forEach(b => b.addEventListener('click', closeModal));
+  wrap.querySelector('[data-sm-save]').addEventListener('click', async () => {
+    const note = wrap.querySelector('.sm-note').value.trim();
+    await saveStarMeta(rid, { note, mentions });
+    closeModal();
+  });
+  wrap.querySelector('[data-sm-unstar]')?.addEventListener('click', async () => {
+    if (!confirm('Unstar this task? Note + mentions will be cleared.')) return;
+    await unstarRow(rid);
+    closeModal();
+  });
+  setTimeout(() => wrap.querySelector('.sm-note')?.focus(), 50);
 }
 
 // ============= Tech Support state lifecycle =============
@@ -7693,6 +7941,13 @@ function renderStarred(){
     const ssLink = r.permalink
       ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
       : '';
+    const starMeta = stars[String(r.id)] || {};
+    const noteHtml = starMeta.note
+      ? `<div class="star-note" title="Star note">📝 ${escHtml(starMeta.note)}</div>`
+      : '';
+    const mentionsHtml = (Array.isArray(starMeta.mentions) && starMeta.mentions.length)
+      ? `<div class="star-mentions">${starMeta.mentions.map(m => `<span class="star-mention">@${escHtml(m)}</span>`).join('')}</div>`
+      : '';
     return `
       <div class="row ${expanded ? 'expanded' : ''} ${closed ? 'is-closed-star' : ''}" data-star-row="${escHtml(String(r.id))}">
         <div class="row-line">
@@ -7711,6 +7966,7 @@ function renderStarred(){
             </span>
           </span>
         </div>
+        ${(noteHtml || mentionsHtml) ? `<div class="star-meta-row">${noteHtml}${mentionsHtml}</div>` : ''}
         ${expanded ? _drawerHTML(r) : ''}
       </div>`;
   }).join('');
@@ -8445,7 +8701,7 @@ document.addEventListener('click', (e) => {
   if (!b) return;
   e.stopPropagation();
   e.preventDefault();
-  toggleStar(b.getAttribute('data-star'));
+  openStarModal(b.getAttribute('data-star'));
 }, true);
 
 // Close any open "⋯ Actions" menu on outside click.
