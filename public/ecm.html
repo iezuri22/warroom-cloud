@@ -945,6 +945,25 @@
     color: var(--ink);
   }
 
+  /* Task scope strip — All / Tech Support / Dev / Non-Dev chips that sit
+     above the status bar when the Task tab is active. Empty <div> when not. */
+  .task-scope-strip {
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    padding:0 4px;
+  }
+  .task-scope-strip:empty { display:none }
+  .task-scope-chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:7px 14px; border-radius:99px;
+    background:rgba(255,255,255,.04); border:1px solid var(--line);
+    color:var(--w55); font-size:12px; font-weight:800; letter-spacing:.3px;
+    cursor:pointer; transition:all .15s;
+  }
+  .task-scope-chip:hover { color:var(--ink); border-color:var(--line2) }
+  .task-scope-chip.active { background:rgba(74,158,255,.18); border-color:rgba(74,158,255,.4); color:var(--ink) }
+  .task-scope-chip .ct { font-size:11px; opacity:.7 }
+  .task-scope-chip.active .ct { opacity:1 }
+
   /* Tech Support chips — sits above the row list, one chip per state. */
   .sup-chip-strip {
     display:flex; gap:8px; flex-wrap:wrap; align-items:center;
@@ -2889,16 +2908,12 @@
          working unchanged. Wrapped in a label so the count badge sits beside
          the select. .tasks-scope-pill carries tab-style background/borders
          + an explicit color on options so they read against any theme. -->
-    <label class="tasks-scope-pill view-tab" id="tasksViewTab" data-view="tasks-umbrella">
-      <span class="tasks-scope-prefix">Task ·</span>
-      <select id="taskScopeSelect" title="Pick which slice of Tasks to show">
-        <option value="allrows">All</option>
-        <option value="support">🛠 Tech Support</option>
-        <option value="dev">Dev</option>
-        <option value="all">Non-Dev</option>
-      </select>
+    <!-- Task tab — plain button now. The scope picker (All / Tech Support /
+         Dev / Non-Dev) lives inside the page body as a chip strip, not up here. -->
+    <button type="button" class="view-tab" id="tasksViewTab" data-view="tasks-umbrella">
+      Task
       <span class="view-tab-ct" id="tasksViewCount"></span>
-    </label>
+    </button>
     <!-- Hidden counters preserved so existing code that writes to these IDs
          still works without touching every callsite. Their numbers feed the
          pill's badge via updateTasksTabBadge(). -->
@@ -2958,6 +2973,10 @@
       <svg id="sortDirIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M17 9l4-4 4 4M21 5v14"/></svg>
     </button>
   </div>
+  <!-- In-page Task scope picker — only renders when the Task tab is active.
+       Used to live on the Task pill as a <select>; user wanted it inside
+       the page body so it doesn't crowd the top nav. -->
+  <div class="task-scope-strip" id="taskScopeStrip"></div>
   <div class="status-bar" id="statusBar"></div>
 </div>
 
@@ -4499,10 +4518,51 @@ function applyFilters(){
   return pool;
 }
 
+// In-page Task scope picker. Renders the All / Tech Support / Dev / Non-Dev
+// chip strip when the user is on any Task scope, and stays empty on other
+// tabs (Activity, In-Person, etc.) so it doesn't take vertical space.
+function renderTaskScopeStrip(){
+  const strip = document.getElementById('taskScopeStrip');
+  if (!strip) return;
+  if (!TASKS_SCOPES.has(currentView)) {
+    strip.innerHTML = '';
+    return;
+  }
+  // Live counts per scope so the chips communicate the queue size.
+  const named = rows.filter(r => (r.task || '').trim() && !r.deletion);
+  const cAll      = named.length;
+  const cSupport  = named.filter(isSupportRow).length;
+  const cDev      = named.filter(r => !isSupportRow(r) && isDevOrReportRow(r)).length;
+  const cNonDev   = named.filter(r => !isSupportRow(r) && !isDevOrReportRow(r)).length;
+  const chips = [
+    { v: 'allrows', label: 'All',           ct: cAll },
+    { v: 'support', label: '🛠 Tech Support', ct: cSupport },
+    { v: 'dev',     label: 'Dev',           ct: cDev },
+    { v: 'all',     label: 'Non-Dev',       ct: cNonDev },
+  ];
+  strip.innerHTML = chips.map(c => `
+    <button type="button" class="task-scope-chip ${currentView === c.v ? 'active' : ''}" data-task-scope="${c.v}">
+      ${c.label}<span class="ct">${c.ct}</span>
+    </button>
+  `).join('');
+  strip.querySelectorAll('[data-task-scope]').forEach(b => {
+    b.addEventListener('click', () => {
+      const v = b.getAttribute('data-task-scope');
+      if (!TASKS_SCOPES.has(v) || v === currentView) return;
+      try { _clearStickyEditedOnViewSwitch(); } catch {}
+      saveTaskScope(v);
+      currentView = v;
+      if (v === 'support') _supportChip = 'open';
+      syncViewTabActive();
+      updateTasksTabBadge();
+      render();
+    });
+  });
+}
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
   // Tabs that don't use Smartsheet-status filtering get an empty bar so it
-  // doesn't take vertical space. The Tech Support tab has its own state
+  // doesn't take vertical space. The Tech Support scope has its own state
   // chips that live inside renderSupport().
   const skipTabs = new Set(['support', 'visits', 'transcripts', 'activity', 'starred']);
   if (skipTabs.has(currentView)) {
@@ -4960,6 +5020,7 @@ function render(){
     }
   } catch {}
   _renderDeferred = false;
+  renderTaskScopeStrip();
   renderStatusBar();
   updateNeedsAckDot();
   renderBulkBar();
@@ -8459,12 +8520,11 @@ function saveTaskScope(v){
   try { localStorage.setItem(TASKS_SCOPE_KEY, v); } catch {}
 }
 function updateTasksTabBadge(){
-  // Sync the dropdown's selected option to the active scope, and pipe the
-  // matching count into the badge beside it.
-  const sel = document.getElementById('taskScopeSelect');
+  // Pipe the active scope's count into the badge beside the Task pill.
+  // The select element is gone now — the in-page chip strip handles
+  // scope picking, so this function only feeds the tab badge.
   const ct  = document.getElementById('tasksViewCount');
   const scope = TASKS_SCOPES.has(currentView) ? currentView : loadTaskScope();
-  if (sel && sel.value !== scope) sel.value = scope;
   if (ct) {
     const src = scope === 'dev' ? document.getElementById('devReportsCount')
               : scope === 'allrows' ? document.getElementById('allRowsCount')
@@ -8473,12 +8533,10 @@ function updateTasksTabBadge(){
     ct.textContent = src && src.textContent ? src.textContent : '';
   }
 }
-// Set initial scope and sync the dropdown widget.
+// Restore the last-used scope on load — if the prior session left us on
+// the Task umbrella, drop into whichever slice was saved.
 (() => {
-  const sel = document.getElementById('taskScopeSelect');
   const initial = loadTaskScope();
-  if (sel) sel.value = initial;
-  // If the prior session left us on a Tasks scope, restore it.
   if (TASKS_SCOPES.has(currentView) || currentView === 'tasks-umbrella') {
     currentView = initial;
   }
@@ -8520,28 +8578,8 @@ function syncViewTabActive(){
     x.classList.toggle('active', match);
   });
 }
-// Scope dropdown — IS the Tasks tab now. Changing it switches into the Tasks
-// view if the user was on a different tab (Activity, Visits, etc.), so the
-// dropdown is a one-tap re-entry into Tasks AND the scope picker.
-const taskScopeSelect = document.getElementById('taskScopeSelect');
-if (taskScopeSelect) {
-  taskScopeSelect.addEventListener('change', () => {
-    const v = taskScopeSelect.value;
-    if (!TASKS_SCOPES.has(v)) return;
-    saveTaskScope(v);
-    // Scope change = page switch in the user's mental model; drop sticky pins.
-    try { _clearStickyEditedOnViewSwitch(); } catch {}
-    currentView = v;
-    syncViewTabActive();
-    // Clear non-Tasks body classes — we're jumping back into Tasks view.
-    document.body.classList.remove('view-ack', 'view-notif', 'view-weekly', 'view-starred', 'view-visits', 'view-transcripts');
-    // Picking Tech Support from the dropdown should always land on the
-    // live queue (All-open chip) — never on whatever was last selected.
-    if (v === 'support') _supportChip = 'open';
-    updateTasksTabBadge();
-    render();
-  });
-}
+// The dropdown is gone — the in-page chip strip is the scope picker now.
+// renderTaskScopeStrip() wires its own click handlers each render.
 // Re-evaluate the badge whenever the hidden counters get rewritten elsewhere
 // (devReportsCount + allRowsCount get patched on every status-bar update).
 // MutationObserver keeps the unified-tab badge fresh without having to touch
