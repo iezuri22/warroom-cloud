@@ -7199,7 +7199,19 @@ function renderVisits(){
              (v.notes || '').toLowerCase().includes(q) ||
              (v.clientContacts || []).join(' ').toLowerCase().includes(q);
     })
-    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    // Most recent visit first. Dates are YYYY-MM-DD strings so a plain
+    // string compare orders chronologically. Two safety nets:
+    //   1. Visits with no date sink to the bottom (otherwise empty string
+    //      sorts ahead of real dates).
+    //   2. Same-day visits use the createdAt timestamp as a tiebreaker so
+    //      the order is stable and the most-recently-logged sits on top.
+    .sort((a, b) => {
+      const da = String(a.date || ''), db = String(b.date || '');
+      if (!da && db) return 1;
+      if (da && !db) return -1;
+      if (da !== db) return db.localeCompare(da);
+      return String(b.createdAt || b.id || '').localeCompare(String(a.createdAt || a.id || ''));
+    });
 
   // Summary block — totals + breakdown by purpose for the filtered slice.
   // We don't track hours on site or unique client names — clients are
