@@ -4526,6 +4526,18 @@ function allPrograms(){
   }
   return programs.sort();
 }
+// Request Type picklist — pulled from Smartsheet column metadata when
+// available, falling back to whatever values already appear on rows.
+function allRequestTypes(){
+  const col = columns['Request Type'];
+  let types = [];
+  if (col && Array.isArray(col.options) && col.options.length) {
+    types = col.options.slice();
+  } else {
+    types = Array.from(new Set(rows.map(r => r.requestType).filter(Boolean)));
+  }
+  return types.sort();
+}
 function populateProgramSelect(){
   const sel = document.getElementById('programSelect');
   if (!sel) return;
@@ -4965,6 +4977,18 @@ function _drawerHTML(r){
             </select>
           </div>
           <div class="field">
+            <span class="lbl">Request Type</span>
+            <select class="select" data-field="Request Type">
+              ${(function(){
+                const known = allRequestTypes();
+                if (r.requestType && !known.includes(r.requestType)) known.unshift(r.requestType);
+                const opts = ['<option value="">— Unassigned —</option>']
+                  .concat(known.map(t => `<option value="${escHtml(t)}" ${t === (r.requestType || '') ? 'selected' : ''}>${escHtml(t)}</option>`));
+                return opts.join('');
+              })()}
+            </select>
+          </div>
+          <div class="field">
             <span class="lbl">Status</span>
             <select class="select" data-field="Status">
               ${SS_STATUSES.map(s => `<option value="${escHtml(s)}" ${r.status === s ? 'selected' : ''}>${escHtml(s)}</option>`).join('')}
@@ -5020,6 +5044,58 @@ function _drawerHTML(r){
               </div>
             `}
           </div>
+          <!-- Actions sits on the same row as the other dropdowns. The menu
+               is hidden by default and opens on click. (Plan-for-date, Mark
+               complete, Push to priorities, Delete, and Tech-Support state
+               picker all live inside.) -->
+          <div class="field field-compact">
+            <span class="lbl">Actions</span>
+            <div class="drawer-actions-menu-wrap" style="position:relative;display:inline-block">
+              <button type="button" class="drawer-action-btn" data-actions-menu="${escHtml(String(r.id))}" style="height:42px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                Actions
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-left:2px"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="drawer-actions-menu" data-actions-menu-list="${escHtml(String(r.id))}" hidden
+                style="display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:260px;z-index:120;background:var(--bg-elev);border:1px solid var(--w15);border-radius:10px;padding:6px;box-shadow:0 12px 40px rgba(0,0,0,.55);flex-direction:column;gap:4px">
+                ${isSupportRow(r) ? `
+                <div style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--w55);padding:4px 6px 2px">Support state</div>
+                ${SUPPORT_STATES.map(st => {
+                  const active = effectiveSupportState(r) === st;
+                  return `<button type="button" class="drawer-action-btn" data-sup-set="${escHtml(String(r.id))}" data-sup-state="${st}"
+                    style="justify-content:flex-start;width:100%;${active?'background:rgba(74,158,255,.18);color:var(--ink);font-weight:700':''}">
+                    ${active ? '✓ ' : ''}${escHtml(SUPPORT_STATE_LABEL[st])}
+                  </button>`;
+                }).join('')}
+                <div style="border-top:1px solid var(--w12);margin:4px 0 2px"></div>
+                ` : ''}
+                ${!isClosedStatus ? `
+                <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}" style="justify-content:flex-start;width:100%">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  Mark complete
+                </button>` : ''}
+                ${currentView !== 'all' && canPushToMyDay() && !isClosedStatus ? `
+                <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list" style="justify-content:flex-start;width:100%">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  Push to my priorities
+                </button>` : ''}
+                ${canPushToMyDay() && !isClosedStatus ? `
+                <div class="drawer-plan-wrap" title="Queue it as a planned priority — it knocks on the Personal page that morning"
+                  style="display:flex;gap:6px;align-items:center;padding:0">
+                  <input type="date" class="drawer-plan-date" data-plan-date="${escHtml(String(r.id))}" min="${(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())}" style="flex:1">
+                  <button type="button" class="drawer-action-btn plan" data-plan-myday="${escHtml(String(r.id))}" style="white-space:nowrap">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    Plan
+                  </button>
+                </div>` : ''}
+                ${!isClosedStatus ? `
+                <button type="button" class="drawer-action-btn delete" data-mark-delete="${escHtml(String(r.id))}" title="${r.deletion ? 'Remove deletion mark' : 'Mark this row for deletion in Smartsheets'}" style="justify-content:flex-start;width:100%">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  ${r.deletion ? 'Unmark delete' : 'Delete'}
+                </button>` : ''}
+              </div>
+            </div>
+          </div>
         </div>
         <details class="field-collapsible"${r.outcome ? ' open' : ''}>
           <summary>
@@ -5030,60 +5106,6 @@ function _drawerHTML(r){
             <textarea class="textarea" data-field="Outcome Details" placeholder="What was the outcome?">${escHtml(r.outcome || '')}</textarea>
           </div>
         </details>
-        <div class="drawer-actions-row">
-          <!-- All row actions live behind one "⋯ Actions" button so iPad
-               doesn't lose the row content behind a wall of pills. The menu
-               opens below the button, stacks actions vertically, includes
-               the plan-for-date picker inline, and closes on outside click. -->
-          <div class="drawer-actions-menu-wrap" style="position:relative;display:inline-block">
-            <button type="button" class="drawer-action-btn" data-actions-menu="${escHtml(String(r.id))}">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-              Actions
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-left:2px"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <div class="drawer-actions-menu" data-actions-menu-list="${escHtml(String(r.id))}" hidden
-              style="position:absolute;top:calc(100% + 6px);left:0;min-width:260px;z-index:120;background:var(--bg-elev);border:1px solid var(--w15);border-radius:10px;padding:6px;box-shadow:0 12px 40px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:4px">
-              ${isSupportRow(r) ? `
-              <!-- Tech-Support sub-state picker. Only shown for Sub-Type=Tech Support
-                   rows; the chosen state lives in Firestore (ecm_support_state) and
-                   "closing"/"resolved" also write back to the Smartsheet Status. -->
-              <div style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--w55);padding:4px 6px 2px">Support state</div>
-              ${SUPPORT_STATES.map(st => {
-                const active = effectiveSupportState(r) === st;
-                return `<button type="button" class="drawer-action-btn" data-sup-set="${escHtml(String(r.id))}" data-sup-state="${st}"
-                  style="justify-content:flex-start;width:100%;${active?'background:rgba(74,158,255,.18);color:var(--ink);font-weight:700':''}">
-                  ${active ? '✓ ' : ''}${escHtml(SUPPORT_STATE_LABEL[st])}
-                </button>`;
-              }).join('')}
-              <div style="border-top:1px solid var(--line);margin:4px 0 2px"></div>
-              ` : ''}
-              ${!isClosedStatus ? `
-              <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}" style="justify-content:flex-start;width:100%">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                Mark complete
-              </button>` : ''}
-              ${currentView !== 'all' && canPushToMyDay() && !isClosedStatus ? `
-              <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list" style="justify-content:flex-start;width:100%">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-                Push to my priorities
-              </button>` : ''}
-              ${canPushToMyDay() && !isClosedStatus ? `
-              <div class="drawer-plan-wrap" title="Queue it as a planned priority — it knocks on the Personal page that morning"
-                style="display:flex;gap:6px;align-items:center;padding:0">
-                <input type="date" class="drawer-plan-date" data-plan-date="${escHtml(String(r.id))}" min="${(d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date())}" style="flex:1">
-                <button type="button" class="drawer-action-btn plan" data-plan-myday="${escHtml(String(r.id))}" style="white-space:nowrap">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                  Plan
-                </button>
-              </div>` : ''}
-              ${!isClosedStatus ? `
-              <button type="button" class="drawer-action-btn delete" data-mark-delete="${escHtml(String(r.id))}" title="${r.deletion ? 'Remove deletion mark' : 'Mark this row for deletion in Smartsheets'}" style="justify-content:flex-start;width:100%">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                ${r.deletion ? 'Unmark delete' : 'Delete'}
-              </button>` : ''}
-            </div>
-          </div>
-        </div>
         <div class="drawer-foot">
           <span class="saved" data-saved></span>
           ${r.permalink ? `<a class="ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Smartsheets</a>` : ''}
@@ -5121,6 +5143,7 @@ function _wireDrawer(row, r, onCollapse){
                     : fieldName === 'Task Name' ? r.task
                     : fieldName === 'Owner' ? r.owner
                     : fieldName === 'Program' ? r.program
+                    : fieldName === 'Request Type' ? r.requestType
                     : fieldName === 'Completion Date' ? (r.completionDate || '').slice(0, 10)
                     : fieldName === 'Due Date' ? _isoDayString(r.dueDate)
                     : '';
@@ -5172,18 +5195,27 @@ function _wireDrawer(row, r, onCollapse){
       });
     });
     // "⋯ Actions" toggle — open the menu and close any other open menus.
+    // Inline display:none lives on the menu (so it really stays hidden until
+    // the user clicks); toggling drives style.display and the hidden attr
+    // together so both the outside-click handler and visual state stay in sync.
     row.querySelectorAll('[data-actions-menu]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.getAttribute('data-actions-menu');
         const menu = row.querySelector(`[data-actions-menu-list="${CSS.escape(id)}"]`);
         if (!menu) return;
-        // Close other open menus first
+        // Close every other open menu first.
         document.querySelectorAll('.drawer-actions-menu').forEach(m => {
-          if (m !== menu) m.setAttribute('hidden', '');
+          if (m !== menu) { m.setAttribute('hidden', ''); m.style.display = 'none'; }
         });
-        if (menu.hasAttribute('hidden')) menu.removeAttribute('hidden');
-        else menu.setAttribute('hidden', '');
+        const isHidden = menu.hasAttribute('hidden') || menu.style.display === 'none';
+        if (isHidden) {
+          menu.removeAttribute('hidden');
+          menu.style.display = 'flex';
+        } else {
+          menu.setAttribute('hidden', '');
+          menu.style.display = 'none';
+        }
       });
     });
     row.querySelectorAll('[data-push-myday]').forEach(b => b.addEventListener('click', (e) => {
@@ -8499,7 +8531,7 @@ async function pushField(r, fieldTitle, value, rowEl){
     const _activityKey = ({
       'Status': 'status', 'Ticket #': 'ticket', 'Details': 'details',
       'Outcome Details': 'outcome', 'Task Name': 'task', 'Owner': 'owner',
-      'Program': 'program',
+      'Program': 'program', 'Request Type': 'requestType',
       'Completion Date': 'completionDate', 'Due Date': 'dueDate'
     })[fieldTitle];
     const _activityPrev = _activityKey ? (r[_activityKey] ?? '') : '';
@@ -8511,6 +8543,7 @@ async function pushField(r, fieldTitle, value, rowEl){
     if (fieldTitle === 'Task Name') r.task = value;
     if (fieldTitle === 'Owner') r.owner = value;
     if (fieldTitle === 'Program') r.program = value;
+    if (fieldTitle === 'Request Type') r.requestType = value;
     if (fieldTitle === 'Completion Date') r.completionDate = value;
     if (fieldTitle === 'Due Date') r.dueDate = value;
     // Log to the Activity feed.
@@ -8713,7 +8746,10 @@ document.addEventListener('click', (e) => {
 // Close any open "⋯ Actions" menu on outside click.
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-actions-menu]') || e.target.closest('.drawer-actions-menu')) return;
-  document.querySelectorAll('.drawer-actions-menu').forEach(m => m.setAttribute('hidden', ''));
+  document.querySelectorAll('.drawer-actions-menu').forEach(m => {
+    m.setAttribute('hidden', '');
+    m.style.display = 'none';
+  });
 }, true);
 
 // Wire top-level controls
