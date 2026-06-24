@@ -945,6 +945,48 @@
     color: var(--ink);
   }
 
+  /* Tech Support chips — sits above the row list, one chip per state. */
+  .sup-chip-strip {
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    padding:10px 4px 4px;
+  }
+  .sup-chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:6px 12px; border-radius:99px;
+    background:rgba(255,255,255,.04); border:1px solid var(--line);
+    color:var(--w55); font-size:12px; font-weight:700; letter-spacing:.3px;
+    cursor:pointer; transition:all .15s;
+  }
+  .sup-chip:hover { color:var(--ink); border-color:var(--line2) }
+  .sup-chip.active { background:rgba(74,158,255,.18); border-color:rgba(74,158,255,.4); color:var(--ink) }
+  .sup-chip .sup-ct { font-size:11px; opacity:.7 }
+  .sup-chip.active .sup-ct { opacity:1 }
+  .sup-chip[data-state="unresponded"].active { background:rgba(248,113,113,.18); border-color:rgba(248,113,113,.4) }
+  .sup-chip[data-state="responded"].active   { background:rgba(251,191,36,.18); border-color:rgba(251,191,36,.4) }
+  .sup-chip[data-state="closing"].active     { background:rgba(244,114,182,.18); border-color:rgba(244,114,182,.4) }
+  .sup-chip[data-state="resolved"].active    { background:rgba(74,222,128,.16); border-color:rgba(74,222,128,.4) }
+
+  /* Per-row state pill + aging colors. */
+  .sup-state {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:2px 8px; border-radius:99px;
+    background:rgba(255,255,255,.06); border:1px solid var(--line);
+    color:var(--w55); font-size:10px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+  }
+  .sup-state[data-state="unresponded"] { background:rgba(248,113,113,.14); border-color:rgba(248,113,113,.32); color:#fca5a5 }
+  .sup-state[data-state="responded"]   { background:rgba(251,191,36,.14); border-color:rgba(251,191,36,.32); color:#fcd34d }
+  .sup-state[data-state="closing"]     { background:rgba(244,114,182,.14); border-color:rgba(244,114,182,.32); color:#f9a8d4 }
+  .sup-state[data-state="resolved"]    { background:rgba(74,222,128,.14); border-color:rgba(74,222,128,.32); color:#86efac }
+
+  /* Aging halo around rows that have stalled in their state. */
+  .row.sup-age-amber { box-shadow:inset 3px 0 0 #fbbf24 }
+  .row.sup-age-red   { box-shadow:inset 3px 0 0 #f87171; background:rgba(248,113,113,.04) }
+  .sup-age-pill {
+    font-size:10px; font-weight:800; padding:2px 7px; border-radius:99px;
+    background:rgba(248,113,113,.14); border:1px solid rgba(248,113,113,.32); color:#fca5a5;
+  }
+  .sup-age-pill.amber { background:rgba(251,191,36,.14); border-color:rgba(251,191,36,.32); color:#fcd34d }
+
   /* Tasks scope pill — acts as the umbrella "Tasks" tab + a native select for
      scope picking. Looks like a tab so it slots into the .view-toggle strip
      without breaking the visual rhythm. */
@@ -2881,6 +2923,10 @@
       In-Person
       <span class="view-tab-ct" id="visitsCount"></span>
     </button>
+    <button type="button" class="view-tab" data-view="support">
+      🛠 Tech Support
+      <span class="view-tab-ct" id="supportCount"></span>
+    </button>
     <button type="button" class="view-tab" data-view="transcripts">
       Transcripts
       <span class="view-tab-ct" id="transcriptsCount"></span>
@@ -3504,6 +3550,115 @@ async function toggleStar(rowId){
 function starBtnHTML(r){
   const on = !!stars[String(r.id)];
   return `<button type="button" class="q-star ${on ? 'on' : ''}" data-star="${escHtml(String(r.id))}" title="${on ? 'Unstar' : 'Star — keep this handy to reference later'}"><svg width="12" height="12" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+}
+
+// ============= Tech Support state lifecycle =============
+// Sub-Type="Tech Support" rows get their own 4-state workflow that lives on
+// top of the Smartsheet Status. State is stored in Firestore (ecm_support_state)
+// keyed by Smartsheet row ID. Two states sync back to Smartsheet Status:
+//   closing  → Smartsheet Status = "Not feasible - close ticket"
+//   resolved → Smartsheet Status = "Completed"
+// The other two (unresponded, responded) leave Smartsheet alone — it stays
+// whatever it is, typically "In Progress". A reverse-sync makes any row
+// closed in Smartsheet directly snap to local state=resolved so the picture
+// stays honest.
+const SUPPORT_STATES = ['unresponded', 'responded', 'closing', 'resolved'];
+const SUPPORT_STATE_LABEL = {
+  unresponded: 'Unresponded',
+  responded:   'Responded — pending user',
+  closing:     'User — no response, close',
+  resolved:    'Resolved'
+};
+// Days threshold per state for amber/red aging pills. Closing + resolved
+// don't age (closing is a staging state, resolved is terminal).
+const SUPPORT_AGING = {
+  unresponded: { amber: 1, red: 3 },
+  responded:   { amber: 3, red: 7 }
+};
+const supportStateCol = collection(db, 'ecm_support_state');
+let supportStates = {};
+let supportStatesUnsub = null;
+function subscribeSupportStates(){
+  if (supportStatesUnsub) try { supportStatesUnsub(); } catch {}
+  supportStatesUnsub = onSnapshot(supportStateCol, snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data() || {}; });
+    supportStates = next;
+    try { if (typeof render === 'function' && rows.length) render(); } catch {}
+  }, err => console.error('support state snapshot error', err));
+}
+// Predicate: does this row belong on the Tech Support tab?
+function isSupportRow(r){
+  return String(r.subType || '').trim().toLowerCase() === 'tech support';
+}
+// Resolve the effective state for a row. Closed-in-Smartsheet always reads
+// as resolved; otherwise read the stored state, defaulting to unresponded.
+function effectiveSupportState(r){
+  if (_rowClosed(r)) return 'resolved';
+  const stored = supportStates[String(r.id)];
+  const s = stored && stored.state;
+  return SUPPORT_STATES.includes(s) ? s : 'unresponded';
+}
+// Days since the state was last set (or since createdDate if never set).
+function supportStateAgeDays(r){
+  const stored = supportStates[String(r.id)];
+  const baseISO = (stored && stored.updatedAt) || r.createdDate;
+  if (!baseISO) return null;
+  const t = new Date(baseISO).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+function supportAgingClass(r){
+  const st = effectiveSupportState(r);
+  const th = SUPPORT_AGING[st];
+  if (!th) return '';
+  const d = supportStateAgeDays(r);
+  if (d == null) return '';
+  if (d >= th.red) return 'sup-age-red';
+  if (d >= th.amber) return 'sup-age-amber';
+  return '';
+}
+// Apply a state change. Writes Firestore + (for closing/resolved) pushes
+// the matching Smartsheet Status. The Firestore write happens first so
+// the UI snaps instantly; the SS write is fire-and-forget but surfaces
+// any error via toast.
+async function setSupportState(rowId, nextState, opts = {}){
+  const rid = String(rowId);
+  if (!SUPPORT_STATES.includes(nextState)) return;
+  const r = rows.find(x => String(x.id) === rid);
+  if (!r) return;
+  // Optional confirmation for the destructive Smartsheet writes.
+  if (!opts.skipConfirm) {
+    if (nextState === 'closing' && !confirm(`Mark Smartsheet status "Not feasible - close ticket"?\n\nUse when the user hasn't responded after multiple follow-ups.`)) return;
+    if (nextState === 'resolved' && !_rowClosed(r) && !confirm(`Mark Smartsheet status "Completed"?\n\nThis closes the ticket on the source sheet.`)) return;
+  }
+  const payload = {
+    rowId: rid, state: nextState,
+    updatedAt: new Date().toISOString(),
+    updatedBy: (typeof _currentActor === 'function' ? _currentActor() : 'Team')
+  };
+  supportStates[rid] = payload; // optimistic local
+  try { render(); } catch {}
+  try {
+    await setDoc(doc(db, 'ecm_support_state', rid), payload);
+  } catch (e) {
+    console.error('support state save failed', e);
+    toast("Couldn't save the support state.", 'err');
+  }
+  // Smartsheet sync for the terminal states.
+  const ssMap = { closing: 'Not feasible - close ticket', resolved: 'Completed' };
+  if (ssMap[nextState] && r.status !== ssMap[nextState]) {
+    try {
+      // pushField wants a DOM element for its saving indicator — pass a
+      // throwaway so we don't have to refactor. This still mirrors r.status.
+      const throwaway = document.createElement('div');
+      throwaway.innerHTML = '<span data-saved></span>';
+      await pushField(r, 'Status', ssMap[nextState], throwaway);
+    } catch (e) {
+      console.error('SS status sync failed', e);
+      toast("Saved locally, but couldn't update Smartsheet status.", 'err');
+    }
+  }
 }
 
 // ===== Toast =====
@@ -4259,6 +4414,12 @@ function applyFilters(){
   } else if (currentView === 'dev') {
     pool = pool.filter(r => isDevOrReportRow(r) || String(r.id) === String(expandedId));
   }
+  // Tech-Support rows live on their dedicated tab — exclude them from the
+  // task scopes so they don't double-count in Non-Dev/Dev/All queues.
+  // (Still visible if the user has the drawer open mid-edit.)
+  if (currentView === 'all' || currentView === 'dev' || currentView === 'allrows') {
+    pool = pool.filter(r => !isSupportRow(r) || String(r.id) === String(expandedId));
+  }
   // Ack view: hide already-acked rows by default so the queue clears as you go.
   // Acked tasks remain visible if filter is on All status (so you can still
   // see them — but the dot indicator only counts unacked).
@@ -4338,6 +4499,14 @@ function applyFilters(){
 
 function renderStatusBar(){
   const bar = document.getElementById('statusBar');
+  // Tabs that don't use Smartsheet-status filtering get an empty bar so it
+  // doesn't take vertical space. The Tech Support tab has its own state
+  // chips that live inside renderSupport().
+  const skipTabs = new Set(['support', 'visits', 'transcripts', 'activity', 'starred']);
+  if (skipTabs.has(currentView)) {
+    bar.innerHTML = '';
+    return;
+  }
   // Scope the chip counts to match what's actually visible in the current
   // tab. Without this, "Open 63" on the Non-Dev tab would count dev/report
   // rows that the tab itself excludes.
@@ -4542,6 +4711,20 @@ function _drawerHTML(r){
             </button>
             <div class="drawer-actions-menu" data-actions-menu-list="${escHtml(String(r.id))}" hidden
               style="position:absolute;top:calc(100% + 6px);left:0;min-width:240px;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:4px">
+              ${isSupportRow(r) ? `
+              <!-- Tech-Support sub-state picker. Only shown for Sub-Type=Tech Support
+                   rows; the chosen state lives in Firestore (ecm_support_state) and
+                   "closing"/"resolved" also write back to the Smartsheet Status. -->
+              <div style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--w55);padding:4px 6px 2px">Support state</div>
+              ${SUPPORT_STATES.map(st => {
+                const active = effectiveSupportState(r) === st;
+                return `<button type="button" class="drawer-action-btn" data-sup-set="${escHtml(String(r.id))}" data-sup-state="${st}"
+                  style="justify-content:flex-start;width:100%;${active?'background:rgba(74,158,255,.18);color:var(--ink);font-weight:700':''}">
+                  ${active ? '✓ ' : ''}${escHtml(SUPPORT_STATE_LABEL[st])}
+                </button>`;
+              }).join('')}
+              <div style="border-top:1px solid var(--line);margin:4px 0 2px"></div>
+              ` : ''}
               ${!isClosedStatus ? `
               <button type="button" class="drawer-action-btn" data-complete-row="${escHtml(String(r.id))}" style="justify-content:flex-start;width:100%">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -4697,6 +4880,17 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       openCompleteRowModal(r.id);
     }));
+    // Tech-Support state setters — one per state in the actions menu.
+    // Confirmation prompts live inside setSupportState (it knows which
+    // transitions push to Smartsheet).
+    row.querySelectorAll('[data-sup-set]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const rid = b.getAttribute('data-sup-set');
+      const next = b.getAttribute('data-sup-state');
+      setSupportState(rid, next);
+      // Collapse the actions menu after a choice.
+      row.querySelectorAll('.drawer-actions-menu').forEach(m => m.setAttribute('hidden', ''));
+    }));
     // Drawer-level Acknowledge / Un-ack buttons
     row.querySelectorAll('[data-ack]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4772,6 +4966,7 @@ function render(){
   updateWeeklyCount();
   try { updateActivityCount(); } catch {}
   updateStarredCount();
+  try { updateSupportCount(); } catch {}
   // Weekly view — priorities + deadline buckets.
   if (currentView === 'weekly') {
     renderWeekly();
@@ -4800,6 +4995,10 @@ function render(){
   }
   if (currentView === 'transcripts') {
     renderTranscripts();
+    return;
+  }
+  if (currentView === 'support') {
+    renderSupport();
     return;
   }
   const list = document.getElementById('list');
@@ -6654,6 +6853,10 @@ function _wireAckToggle(root){
 // Team-shared bookmarks, most recently starred first. Rows expand to the
 // full drawer; the ★ button unstars (live snapshot drops it from the list).
 let _starExpandedId = null;
+// Tech Support tab: which state chip is active + which row is open.
+// 'open' is the default chip — it shows everything except resolved.
+let _supportChip = 'open';
+let _supportExpandedId = null;
 function updateStarredCount(){
   const el = document.getElementById('starredCount');
   if (!el) return;
@@ -7435,6 +7638,142 @@ function renderStarred(){
   });
 }
 
+// ============= Tech Support tab render =============
+// Sub-Type="Tech Support" rows on their own tab. Filter chips for the 4
+// lifecycle states, with the Resolved chip hiding closed history by
+// default (per user request — they don't want to scroll past resolved
+// tickets when looking at the live queue).
+function renderSupport(){
+  const list = document.getElementById('list');
+  const metaEl = document.getElementById('metaCount');
+  // Pool: every tech-support row, respecting owner/program/search filters.
+  let pool = rows.filter(r => (r.task || '').trim() && !r.deletion && isSupportRow(r));
+  if (filterOwner)   pool = pool.filter(r => r.owner === filterOwner);
+  if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
+  if (filterSearch) {
+    const q = filterSearch.toLowerCase();
+    pool = pool.filter(r => _wkSearchMatch(r, q));
+  }
+  // Bucket by effective state.
+  const buckets = { unresponded: [], responded: [], closing: [], resolved: [] };
+  pool.forEach(r => {
+    const st = effectiveSupportState(r);
+    if (buckets[st]) buckets[st].push(r);
+  });
+  // Chip-based filter on top of buckets.
+  let visible;
+  if (_supportChip === 'open') {
+    visible = [...buckets.unresponded, ...buckets.responded, ...buckets.closing];
+  } else {
+    visible = buckets[_supportChip] || [];
+  }
+  // Sort: oldest-aged first within the open chips (most urgent surfaces),
+  // newest-resolved first in the resolved chip (most recent at top).
+  visible.sort((a, b) => {
+    if (_supportChip === 'resolved') {
+      return (Date.parse((supportStates[String(b.id)] || {}).updatedAt || b.createdDate || 0) || 0) -
+             (Date.parse((supportStates[String(a.id)] || {}).updatedAt || a.createdDate || 0) || 0);
+    }
+    const ad = supportStateAgeDays(a) ?? 0;
+    const bd = supportStateAgeDays(b) ?? 0;
+    return bd - ad; // oldest first
+  });
+  if (metaEl) {
+    metaEl.textContent = _supportChip === 'open'
+      ? `${visible.length} open · ${buckets.resolved.length} resolved`
+      : `${visible.length} ${SUPPORT_STATE_LABEL[_supportChip].toLowerCase()}`;
+  }
+  // Chip strip — one chip per state + an "All open" default.
+  const chipHTML = `
+    <div class="sup-chip-strip">
+      <button type="button" class="sup-chip ${_supportChip==='open'?'active':''}" data-sup-chip="open">All open <span class="sup-ct">${buckets.unresponded.length + buckets.responded.length + buckets.closing.length}</span></button>
+      <button type="button" class="sup-chip ${_supportChip==='unresponded'?'active':''}" data-sup-chip="unresponded" data-state="unresponded">Unresponded <span class="sup-ct">${buckets.unresponded.length}</span></button>
+      <button type="button" class="sup-chip ${_supportChip==='responded'?'active':''}" data-sup-chip="responded" data-state="responded">Responded <span class="sup-ct">${buckets.responded.length}</span></button>
+      <button type="button" class="sup-chip ${_supportChip==='closing'?'active':''}" data-sup-chip="closing" data-state="closing">Closing <span class="sup-ct">${buckets.closing.length}</span></button>
+      <button type="button" class="sup-chip ${_supportChip==='resolved'?'active':''}" data-sup-chip="resolved" data-state="resolved">Resolved <span class="sup-ct">${buckets.resolved.length}</span></button>
+    </div>`;
+  if (!visible.length) {
+    list.innerHTML = chipHTML + `<div class="empty">No rows in this state. ${pool.length === 0 ? 'Tag a Smartsheet row\'s <strong>Sub-Type</strong> as <strong>Tech Support</strong> to see it here.' : 'Try another chip.'}</div>`;
+    _wireSupportChips(list);
+    return;
+  }
+  // Row rendering — mirrors the Starred view's compact row, with the state
+  // pill on the right and an aging-halo class on the row itself.
+  list.innerHTML = chipHTML + visible.map(r => {
+    const expanded = _supportExpandedId != null && String(_supportExpandedId) === String(r.id);
+    const closed = _rowClosed(r);
+    const st = effectiveSupportState(r);
+    const ageDays = supportStateAgeDays(r);
+    const ageCls = supportAgingClass(r);
+    const pcol = programColor(r.program);
+    const programHTML = r.program
+      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
+      : '';
+    const ticketHTML = r.ticket
+      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
+      : '';
+    const ownerHTML = r.owner
+      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
+      : '';
+    const ssLink = r.permalink
+      ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+      : '';
+    const statePill = `<span class="sup-state" data-state="${st}">${escHtml(SUPPORT_STATE_LABEL[st])}</span>`;
+    const agePill = (ageDays != null && st !== 'resolved' && ageCls)
+      ? `<span class="sup-age-pill ${ageCls === 'sup-age-amber' ? 'amber' : ''}" title="Days since this state was set">${ageDays}d</span>`
+      : '';
+    return `
+      <div class="row ${expanded ? 'expanded' : ''} ${ageCls} ${closed ? 'is-closed-star' : ''}" data-support-row="${escHtml(String(r.id))}">
+        <div class="row-line">
+          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
+          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
+          <span class="wk-row-side">
+            ${statePill}
+            ${agePill}
+            ${programHTML}
+            ${ticketHTML}
+            ${ownerHTML}
+            <span class="wk-quick">
+              ${starBtnHTML(r)}
+              ${ssLink}
+            </span>
+          </span>
+        </div>
+        ${expanded ? _drawerHTML(r) : ''}
+      </div>`;
+  }).join('');
+  _wireSupportChips(list);
+  // Row expand wiring — same dance as renderStarred.
+  list.querySelectorAll('[data-support-row]').forEach(rowEl => {
+    const id = rowEl.getAttribute('data-support-row');
+    rowEl.addEventListener('click', (e) => {
+      if (e.target.closest('.drawer')) return;
+      if (e.target.closest('input, button, a, select, textarea')) return;
+      _supportExpandedId = (_supportExpandedId != null && String(_supportExpandedId) === String(id)) ? null : String(id);
+      render();
+    });
+    if (_supportExpandedId != null && String(_supportExpandedId) === String(id)) {
+      const r = rows.find(x => String(x.id) === String(id));
+      if (r) _wireDrawer(rowEl, r, () => { _supportExpandedId = null; render(); });
+    }
+  });
+}
+function _wireSupportChips(listEl){
+  listEl.querySelectorAll('[data-sup-chip]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _supportChip = btn.getAttribute('data-sup-chip');
+      render();
+    });
+  });
+}
+// Tab badge — count of open (non-resolved) tech-support rows.
+function updateSupportCount(){
+  const el = document.getElementById('supportCount');
+  if (!el) return;
+  const n = rows.filter(r => (r.task || '').trim() && !r.deletion && isSupportRow(r) && effectiveSupportState(r) !== 'resolved').length;
+  el.textContent = n ? String(n) : '';
+}
+
 // ----- Ack-on-touch prompt -----
 // The first time someone updates a task that nobody has acknowledged, ask
 // them to claim it (program right? data right? on it?). Acknowledging kills
@@ -8156,6 +8495,10 @@ document.querySelectorAll('.view-tab').forEach(b => {
     document.body.classList.toggle('view-starred', currentView === 'starred');
     document.body.classList.toggle('view-visits',  currentView === 'visits');
     document.body.classList.toggle('view-transcripts', currentView === 'transcripts');
+    document.body.classList.toggle('view-support', currentView === 'support');
+    // Entering the Tech Support tab — reset the chip filter back to 'open'
+    // so we always land on the live queue, not whatever was last selected.
+    if (currentView === 'support') _supportChip = 'open';
     updateTasksTabBadge();
     if (currentView !== 'ack') {
       selectedAckIds.clear();
@@ -8259,6 +8602,7 @@ subscribeAcks();
 subscribeInternal();
 subscribePriorities();
 subscribeStars();
+subscribeSupportStates();
 subscribeVisits();
 subscribeVisitsConfig();
 subscribeTranscriptBacklog();
