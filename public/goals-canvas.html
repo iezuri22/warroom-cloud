@@ -4522,13 +4522,16 @@ function ingredientTexts(arr){ return (arr || []).map(i => typeof i === 'string'
 // Render a saved-pictures preview block for the detail view. Returns '' when
 // no ingredient in the list has an image attached.
 function ingredientThumbsHtml(rows){
-  // Resolve each row's display image: explicit imageUrl first, otherwise
-  // try the ingredient library by normalized name. This catches ingredients
-  // that were added to the library AFTER the recipe was last loaded.
+  // Resolve each row's display image: ALWAYS prefer the master library
+  // when it has a match for the row's text. The library is curated and
+  // kept current; the recipe-saved imageUrl is often stale or 404 from
+  // old EZ Recipes data (which is why "1/4 cup Diced Red Onion" was
+  // showing blank even though Red Onion lives in the library with a pic).
   const resolved = (rows || []).map(it => {
-    if (it.imageUrl) return { ...it, _img: it.imageUrl, _src: 'recipe' };
     const lib = _libraryLookupForText(it.text);
-    return { ...it, _img: lib || null, _src: lib ? 'library' : null };
+    if (lib) return { ...it, _img: lib, _src: 'library' };
+    if (it.imageUrl) return { ...it, _img: it.imageUrl, _src: 'recipe' };
+    return { ...it, _img: null, _src: null };
   });
   if (!resolved.length) return '';
   const withImgs = resolved.filter(it => it._img);
