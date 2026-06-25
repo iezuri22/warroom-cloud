@@ -3850,6 +3850,17 @@ body { display:flex; flex-direction:column; position:relative }
     const doneTodayIndices = [];
     for (let i = 0; i < subs.length; i++) if (lectureDoneToday(subs[i])) doneTodayIndices.push(i);
     try { if (localStorage.getItem(consumedKey) === '1') return doneTodayIndices; } catch {}
+    // Deadline-day override: if the section is due today (or past), every
+    // unfinished lecture is due today — there's no tomorrow to push to.
+    // Mirrors the same fix in learning.html so the sprint drawer doesn't
+    // disagree with the Learning page.
+    if (section.deadline <= today) {
+      const all = new Set(doneTodayIndices);
+      for (let i = 0; i < subs.length; i++) if (!subs[i].done) all.add(i);
+      const arr = [...all].sort((a,b) => a - b);
+      try { localStorage.setItem(cacheKey, JSON.stringify(arr.map(i => subs[i].id).filter(Boolean))); } catch {}
+      return arr;
+    }
     const pace = pacingFor(section);
     let cached = null;
     try { const r = localStorage.getItem(cacheKey); if (r) cached = JSON.parse(r); } catch {}
@@ -3861,6 +3872,16 @@ body { display:flex; flex-direction:column; position:relative }
       const cachedIdx = cached.map(id => subs.findIndex(u => u.id === id)).filter(i => i >= 0);
       const union = new Set(cachedIdx);
       doneTodayIndices.forEach(i => union.add(i));
+      // Re-expand if pacing grew since cache write (deadline approached).
+      if (pace && union.size < pace.perDay) {
+        const need = pace.perDay - union.size;
+        const fillers = [];
+        for (let i = 0; i < subs.length && fillers.length < need; i++) {
+          if (!subs[i].done && !union.has(i)) fillers.push(i);
+        }
+        fillers.forEach(i => union.add(i));
+        try { localStorage.setItem(cacheKey, JSON.stringify([...union].map(i => subs[i].id).filter(Boolean))); } catch {}
+      }
       return [...union].sort((a,b) => a - b);
     }
     if (!pace) return doneTodayIndices;
