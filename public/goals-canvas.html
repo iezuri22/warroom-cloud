@@ -4264,9 +4264,12 @@ function effectiveLabelsFor(r){
   const meta = _recipeMeta.get(r.rid) || {};
   const stored = Array.isArray(meta.labels) ? meta.labels : [];
   const set = new Set(stored);
-  const tagLower = new Set((r.tags || []).map(t => String(t).toLowerCase()));
+  // Normalize for fuzzy matching: lowercase, strip spaces/underscores/dashes.
+  // So "Want to eat" matches "want_to_eat", "wantToEat", "Want To Eat", etc.
+  const norm = s => String(s || '').toLowerCase().replace(/[\s_\-]+/g, '');
+  const tagNorms = new Set((r.tags || []).map(norm));
   for (const L of _recipeLabels) {
-    if (tagLower.has(L.toLowerCase())) set.add(L);
+    if (tagNorms.has(norm(L))) set.add(L);
   }
   return [...set];
 }
@@ -4453,6 +4456,36 @@ async function loadEzRecipes(){
       return { decorated, hits };
     }
     let totalRecipes = 0, totalHits = 0;
+    // Some recipes carry meal categorization in fields other than `tags`
+    // (category / categories / mealType / meal_type / course / type, or even
+    // boolean breakfast/lunch/dinner flags). Sweep all those into the tags
+    // array so the War Room label chips pick them up.
+    function collectAllTags(r){
+      const out = [];
+      const push = v => { for (const x of ezTags(v)) out.push(x); };
+      push(r.tags);
+      push(r.category);
+      push(r.categories);
+      push(r.mealType);
+      push(r.meal_type);
+      push(r.meal);
+      push(r.course);
+      push(r.type);
+      // Boolean meal flags — common in meal-planner apps.
+      for (const key of ['breakfast','lunch','dinner','snack','dessert','wantToEat','want_to_eat']) {
+        if (r[key] === true || r[key] === 1 || r[key] === '1') out.push(key);
+      }
+      // Dedup, preserve order.
+      const seen = new Set(), uniq = [];
+      for (const t of out) {
+        const k = String(t).trim();
+        if (!k) continue;
+        const lower = k.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower); uniq.push(k);
+      }
+      return uniq;
+    }
     _ezRecipes = raw
       .map(r => {
         const baseIngs = ezIngredients(r);
@@ -4464,12 +4497,25 @@ async function loadEzRecipes(){
           title: r.title,
           url:   (r.recipe_url || r.sourceUrl || '').trim(),
           img:   (r.image_url || '').trim(),
-          tags:  ezTags(r.tags),
+          tags:  collectAllTags(r),
           notes: (r.notes || '').trim(),
           ingredients: decorated,
           steps:       ezSteps(r)
         };
       });
+    // Debug: dump the field names of the first few raw recipes so we can
+    // see what categorization EZ Recipes actually stores under. If no
+    // labels show up after this, paste the console output and I'll add
+    // whatever field name shows up.
+    if (raw.length) {
+      console.log('[ez] sample recipe field keys:',
+        raw.slice(0, 3).map(r => ({
+          title: r.title,
+          keys: Object.keys(r).filter(k => k !== 'ingredientsRows' && k !== 'steps' && k !== 'instructions'),
+          tags: r.tags, category: r.category, categories: r.categories,
+          mealType: r.mealType, meal_type: r.meal_type, course: r.course
+        })));
+    }
     console.log(`[ez] Attached library images to ${totalHits} ingredient lines across ${totalRecipes} recipes`);
     // Seed the master ingredient library from the EZ ingredient rows so
     // cross-recipe image edits propagate everywhere going forward.
