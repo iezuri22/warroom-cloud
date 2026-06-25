@@ -1031,8 +1031,14 @@
       <span style="flex:1"></span>
       <button class="tb-btn" id="ingLibClose">Close</button>
     </div>
-    <input type="search" id="ingLibSearch" placeholder="Search ingredients…"
-           style="width:100%;padding:9px 12px;background:var(--w03);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:13px;outline:none">
+    <div style="display:flex;gap:8px;align-items:center;width:100%">
+      <input type="search" id="ingLibSearch" placeholder="Search ingredients…"
+             style="flex:1;padding:9px 12px;background:var(--w03);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:13px;outline:none">
+      <button type="button" id="ingLibMissingChip" title="Show only ingredients without an image"
+              style="white-space:nowrap;padding:8px 12px;border-radius:99px;background:var(--w04);border:1px solid var(--line);color:var(--w70);font:inherit;font-size:12px;font-weight:700;cursor:pointer">
+        🚫 No image
+      </button>
+    </div>
     <div id="ingLibList"></div>
     <div class="gx-foot">
       <span class="ct">Changing an image here updates every recipe using it.</span>
@@ -2695,8 +2701,10 @@ document.getElementById('ingLibBtn').onclick     = () => openIngLibModal();
 
 // ============= Ingredient library modal ===================================
 let _ingLibQuery = '';
+let _ingLibMissingOnly = false;
 function openIngLibModal(){
   document.getElementById('ingLibBd').classList.add('open');
+  syncIngLibMissingChip();
   drawIngLibModal();
   setTimeout(() => document.getElementById('ingLibSearch')?.focus(), 30);
 }
@@ -2705,6 +2713,24 @@ document.getElementById('ingLibClose').addEventListener('click', closeIngLibModa
 document.getElementById('ingLibBd').addEventListener('click', (e) => {
   if (e.target.id === 'ingLibBd') closeIngLibModal();
 });
+document.getElementById('ingLibMissingChip')?.addEventListener('click', () => {
+  _ingLibMissingOnly = !_ingLibMissingOnly;
+  syncIngLibMissingChip();
+  drawIngLibModal();
+});
+function syncIngLibMissingChip(){
+  const chip = document.getElementById('ingLibMissingChip');
+  if (!chip) return;
+  if (_ingLibMissingOnly) {
+    chip.style.background = 'rgba(248,113,113,.18)';
+    chip.style.borderColor = 'rgba(248,113,113,.4)';
+    chip.style.color = '#fca5a5';
+  } else {
+    chip.style.background = '';
+    chip.style.borderColor = '';
+    chip.style.color = '';
+  }
+}
 document.getElementById('ingLibSearch').addEventListener('input', (e) => {
   _ingLibQuery = e.target.value || '';
   drawIngLibModal();
@@ -2881,6 +2907,9 @@ function drawIngLibModal(){
   _invalidateIngUsage();
   const entries = [..._ingLibrary.values()]
     .filter(e => {
+      // Optional filter: only ingredients without an image, for catching
+      // gaps after a library sync.
+      if (_ingLibMissingOnly && e.imageUrl) return false;
       if (!q) return true;
       if ((e.name || '').toLowerCase().includes(q)) return true;
       if (Array.isArray(e.aliases) && e.aliases.some(a => a.toLowerCase().includes(q))) return true;
