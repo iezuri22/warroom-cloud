@@ -1783,6 +1783,17 @@ function wireEvents(){
         }
         const input = sectionEl.querySelector('.st-deadline-input');
         if (!input) return;
+        // Ask whether today should be a valid pick for this deadline. Default
+        // is no — same-day deadlines start overdue immediately. The user
+        // occasionally wants to allow today for a same-day commit, so let
+        // them opt in via a confirm. The decision drives the input's `min`,
+        // which both the native picker and the apply-deadline guard read.
+        const allowToday = confirm(
+          'Allow TODAY as a deadline option?\n\n' +
+          'OK = today is allowed (same-day deadline, starts overdue immediately if missed).\n' +
+          'Cancel = tomorrow is the earliest pick (recommended).'
+        );
+        input.min = allowToday ? todayISO() : tomorrowISO();
         // Multi-strategy picker open:
         //   1. showPicker() — Chrome, Edge, Safari 16+, Firefox 101+.
         //   2. focus() — opens the picker on most modern desktop browsers
@@ -1802,11 +1813,12 @@ function wireEvents(){
       sectionEl.querySelector('[data-action="apply-deadline"]')?.addEventListener('change', (e) => {
         const v = (e.target.value || '').trim();
         if (!v) return;
-        // Block today (and earlier) — picker has min= but iPad's typed
-        // entry can bypass it. "Due today" pace doesn't make sense and
-        // would trip overdue immediately.
-        if (v <= todayISO()) {
-          alert('Pick a date in the future. Same-day deadlines aren\'t allowed — there\'s no runway.');
+        // Enforce the picker's current min — that captures whatever the user
+        // chose in the "allow today?" prompt. iPad's typed entry can bypass
+        // the picker's native min check, so we re-validate here.
+        const floor = e.target.min || tomorrowISO();
+        if (v < floor) {
+          alert(`Pick a date on or after ${floor}.`);
           e.target.value = '';
           return;
         }
