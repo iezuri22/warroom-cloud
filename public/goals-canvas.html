@@ -4546,13 +4546,14 @@ function ingredientThumbsHtml(rows){
           </div>`).join('')}
       </div>
       ${withoutImgs.length ? `
-        <div class="rpd-thumbs-head" style="margin-top:14px;color:#fcd34d">${withoutImgs.length} ingredient${withoutImgs.length===1?'':'s'} without a picture — tap the 🧂 Ingredients toolbar button to add images that propagate to every recipe.</div>
+        <div class="rpd-thumbs-head" style="margin-top:14px;color:#fcd34d">${withoutImgs.length} ingredient${withoutImgs.length===1?'':'s'} without a picture — tap a card to add it to the master library.</div>
         <div class="rpd-thumbs-grid">
           ${withoutImgs.map(it => `
-            <div class="rpd-thumb-card" style="opacity:.6">
-              <div style="display:flex;align-items:center;justify-content:center;height:80px;font-size:24px">🥬</div>
+            <button type="button" class="rpd-thumb-card" data-rpd-add-ing="${escapeAttr(it.text)}"
+              style="cursor:pointer;background:transparent;border:1px dashed rgba(252,211,77,.32);border-radius:8px;padding:0;font:inherit;text-align:left">
+              <div style="display:flex;align-items:center;justify-content:center;height:80px;font-size:22px;opacity:.55">➕</div>
               <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(it.text)}</div>
-            </div>`).join('')}
+            </button>`).join('')}
         </div>
       ` : ''}
     </div>`;
@@ -5014,6 +5015,20 @@ function drawEzDetail(){
   document.getElementById('rpdSave').addEventListener('click', saveEzDefaults);
   document.getElementById('rpdAdd').addEventListener('click', addEzDetailToBoard);
   document.getElementById('rpdReset')?.addEventListener('click', resetEzDefaults);
+  // Tap a missing-pic card to add the ingredient to the master library
+  // pre-filled with its name. Saving there propagates an image into every
+  // recipe that uses this ingredient — no need to bounce out manually.
+  document.querySelectorAll('[data-rpd-add-ing]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      const raw = b.getAttribute('data-rpd-add-ing') || '';
+      // Strip quantity/unit prefix so the library key is the bare name.
+      const cleaned = normalizeIngredientName(raw) || raw;
+      try { openIngAddModal({ name: cleaned, imageUrl: '' }); } catch (err) {
+        console.warn('open ingredient add failed', err);
+      }
+    });
+  });
 }
 
 async function saveEzDefaults(){
