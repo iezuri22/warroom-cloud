@@ -4305,9 +4305,10 @@ function normalizeIngredientName(text){
   if (!text) return '';
   // Strip leading quantity / unit so "1.5 cups blueberries" → "blueberries".
   // The regex eats numbers, fractions, common units, and surrounding punct.
-  const UNITS = '(cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|kg|ml|l|liter|liters|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bunch|sprig|sprigs)';
+  // Dashes/hyphens included so "1 -oz Bag" or "16-oz can" collapse cleanly.
+  const UNITS = '(cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|kg|ml|l|liter|liters|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bag|bags|box|boxes|bunch|sprig|sprigs)';
   let t = text.toLowerCase().trim();
-  t = t.replace(/^[\d\s\/\.,()]+/, '');                 // leading numbers + fractions
+  t = t.replace(/^[\d\s\/\.,()\-]+/, '');               // leading numbers, fractions, dashes
   t = t.replace(new RegExp('^' + UNITS + '\\.?\\s+'), ''); // unit word
   t = t.replace(/^(of|the|a|an)\s+/, '');               // articles
   // Drop trailing modifiers (", minced" / "to taste" / etc.)
@@ -4527,12 +4528,25 @@ function ingredientThumbsHtml(rows){
   // kept current; the recipe-saved imageUrl is often stale or 404 from
   // old EZ Recipes data (which is why "1/4 cup Diced Red Onion" was
   // showing blank even though Red Onion lives in the library with a pic).
-  const resolved = (rows || []).map(it => {
+  // Dedup by normalized name so "1/2 tsp Salt" and "1 tsp Salt" only
+  // render one Salt card. Manual label overrides (saved in _recipeMeta
+  // ingredientLabels) win over the auto-derived Title Case name.
+  const meta = _recipeMeta.get(_ezDetailRid) || {};
+  const labelOverrides = meta.ingredientLabels || {};
+  const seenKeys = new Set();
+  const resolved = [];
+  for (const it of (rows || [])) {
+    const key = normalizeIngredientName(it.text) || it.text.toLowerCase().trim();
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
     const lib = _libraryLookupForText(it.text);
-    if (lib) return { ...it, _img: lib, _src: 'library' };
-    if (it.imageUrl) return { ...it, _img: it.imageUrl, _src: 'recipe' };
-    return { ...it, _img: null, _src: null };
-  });
+    const override = labelOverrides[key];
+    const baseLabel = override || toTitleCase(normalizeIngredientName(it.text) || it.text);
+    const entry = { ...it, _img: null, _src: null, _key: key, _label: baseLabel, _hasOverride: !!override };
+    if (lib)            { entry._img = lib;        entry._src = 'library'; }
+    else if (it.imageUrl){ entry._img = it.imageUrl; entry._src = 'recipe'; }
+    resolved.push(entry);
+  }
   if (!resolved.length) return '';
   const withImgs = resolved.filter(it => it._img);
   const withoutImgs = resolved.filter(it => !it._img);
@@ -4540,31 +4554,23 @@ function ingredientThumbsHtml(rows){
     <div class="rpd-thumbs">
       <div class="rpd-thumbs-head">${withImgs.length} saved picture${withImgs.length===1?'':'s'} — drops onto the board with the recipe.</div>
       <div class="rpd-thumbs-grid">
-        ${withImgs.map(it => {
-          // Show just the ingredient name (no quantity/unit) under each thumb
-          // — the full line still lives in the textarea above.
-          const cleanLabel = toTitleCase(normalizeIngredientName(it.text) || it.text);
-          return `
-          <div class="rpd-thumb-card" title="${escapeAttr(it._src === 'library' ? 'From ingredient library · ' + it.text : it.text)}">
-            <img src="${escapeAttr(it._img)}" alt="${escapeAttr(cleanLabel)}" loading="lazy"
+        ${withImgs.map(it => `
+          <div class="rpd-thumb-card" title="${escapeAttr((it._src === 'library' ? 'From ingredient library · ' : '') + it.text + ' · Click name to rename')}" data-rpd-rename="${escapeAttr(it._key)}" data-rpd-orig="${escapeAttr(it.text)}">
+            <img src="${escapeAttr(it._img)}" alt="${escapeAttr(it._label)}" loading="lazy"
               onerror="this.style.display='none';this.nextElementSibling&&this.nextElementSibling.classList.add('show')">
             <div class="rpd-thumb-fallback" style="display:none;align-items:center;justify-content:center;height:80px;font-size:24px;opacity:.5">🥬</div>
-            <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(cleanLabel)}</div>
-          </div>`;
-        }).join('')}
+            <div class="lbl" title="${escapeAttr(it.text)}" style="cursor:text">${escapeHtml(it._label)}${it._hasOverride ? ' <span style="color:#86efac;font-size:9px">·edited</span>' : ''}</div>
+          </div>`).join('')}
       </div>
       ${withoutImgs.length ? `
         <div class="rpd-thumbs-head" style="margin-top:14px;color:#fcd34d">${withoutImgs.length} ingredient${withoutImgs.length===1?'':'s'} without a picture — tap a card to add it to the master library.</div>
         <div class="rpd-thumbs-grid">
-          ${withoutImgs.map(it => {
-            const cleanLabel = toTitleCase(normalizeIngredientName(it.text) || it.text);
-            return `
+          ${withoutImgs.map(it => `
             <button type="button" class="rpd-thumb-card" data-rpd-add-ing="${escapeAttr(it.text)}"
               style="cursor:pointer;background:transparent;border:1px dashed rgba(252,211,77,.32);border-radius:8px;padding:0;font:inherit;text-align:left">
               <div style="display:flex;align-items:center;justify-content:center;height:80px;font-size:22px;opacity:.55">➕</div>
-              <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(cleanLabel)}</div>
-            </button>`;
-          }).join('')}
+              <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(it._label)}</div>
+            </button>`).join('')}
         </div>
       ` : ''}
     </div>`;
@@ -5035,6 +5041,31 @@ function drawEzDetail(){
   document.getElementById('rpdSave').addEventListener('click', saveEzDefaults);
   document.getElementById('rpdAdd').addEventListener('click', addEzDetailToBoard);
   document.getElementById('rpdReset')?.addEventListener('click', resetEzDefaults);
+  // Click the label on a with-image card to rename the ingredient
+  // (saved as a per-recipe override in _recipeMeta.ingredientLabels).
+  document.querySelectorAll('[data-rpd-rename] .lbl').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const card = el.closest('[data-rpd-rename]');
+      if (!card) return;
+      const key = card.getAttribute('data-rpd-rename');
+      const orig = card.getAttribute('data-rpd-orig') || '';
+      const current = el.textContent.replace(/·edited.*$/,'').trim();
+      const next = prompt('Rename this ingredient label:\n\n(Original line: ' + orig + ')', current);
+      if (next == null) return;
+      const meta = _recipeMeta.get(_ezDetailRid) || {};
+      const labels = { ...(meta.ingredientLabels || {}) };
+      const cleaned = next.trim();
+      if (cleaned) labels[key] = cleaned;
+      else delete labels[key];
+      const patch = { ingredientLabels: labels, updatedAt: nowISO() };
+      _recipeMeta.set(_ezDetailRid, { ...meta, ...patch });
+      try {
+        await setDoc(doc(recipeMetaCol, _ezDetailRid), patch, { merge: true });
+      } catch (err) { console.warn('label rename save failed', err); }
+      drawEzDetail();
+    });
+  });
   // Tap a missing-pic card to add the ingredient to the master library
   // pre-filled with its name. Saving there propagates an image into every
   // recipe that uses this ingredient — no need to bounce out manually.
