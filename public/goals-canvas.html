@@ -4260,16 +4260,47 @@ let _recipeLabels = DEFAULT_RECIPE_LABELS.slice();
 // tag that case-insensitively matches a War Room label. Lets recipes that
 // were already tagged "Breakfast" / "Lunch" / "Dinner" in EZ Recipes show
 // up under those chips here without re-tagging.
+// Normalize: lowercase + strip spaces/underscores/dashes for fuzzy matching.
+// Used everywhere we compare labels against tags so "Want to eat" matches
+// "want_to_eat" / "wantToEat" / etc.
+function _normLabelTag(s){
+  return String(s || '').toLowerCase().replace(/[\s_\-]+/g, '');
+}
+// Does this tag (case/separator-insensitive) match any user-defined label?
+// Used to dedupe — labels render as their own chip strip, so a redundant
+// tag chip with the same name just adds noise.
+function tagMatchesLabel(tag){
+  const t = _normLabelTag(tag);
+  if (!t) return true;
+  for (const L of _recipeLabels) {
+    if (_normLabelTag(L) === t) return true;
+  }
+  return false;
+}
+// Filter the raw tag list down to the ones worth showing as tag chips —
+// drops anything that's already a label and drops the literal "recipe"
+// tag (EZ stamps it on every recipe, so it's pure noise).
+function distinctTagsFor(r){
+  const seen = new Set();
+  const out = [];
+  for (const t of (r.tags || [])) {
+    const k = String(t).trim();
+    if (!k) continue;
+    const lower = k.toLowerCase();
+    if (lower === 'recipe') continue;
+    if (tagMatchesLabel(k)) continue;
+    if (seen.has(lower)) continue;
+    seen.add(lower); out.push(k);
+  }
+  return out;
+}
 function effectiveLabelsFor(r){
   const meta = _recipeMeta.get(r.rid) || {};
   const stored = Array.isArray(meta.labels) ? meta.labels : [];
   const set = new Set(stored);
-  // Normalize for fuzzy matching: lowercase, strip spaces/underscores/dashes.
-  // So "Want to eat" matches "want_to_eat", "wantToEat", "Want To Eat", etc.
-  const norm = s => String(s || '').toLowerCase().replace(/[\s_\-]+/g, '');
-  const tagNorms = new Set((r.tags || []).map(norm));
+  const tagNorms = new Set((r.tags || []).map(_normLabelTag));
   for (const L of _recipeLabels) {
-    if (tagNorms.has(norm(L))) set.add(L);
+    if (tagNorms.has(_normLabelTag(L))) set.add(L);
   }
   return [...set];
 }
@@ -4597,15 +4628,20 @@ function drawEzTagBar(){
         || ingredientTexts(r.ingredients).some(t => t.toLowerCase().includes(q));
   });
   const counts = new Map();
-  for (const r of searchPool) for (const t of (r.tags || [])) {
-    const k = t.trim();
-    if (k) counts.set(k, (counts.get(k) || 0) + 1);
+  // Use distinctTagsFor so the tag chip strip doesn't echo what the
+  // label strip already shows, and drops the noisy literal "recipe" tag.
+  // Also collapse case variants (Lunch / lunch / LUNCH → one chip).
+  for (const r of searchPool) for (const t of distinctTagsFor(r)) {
+    const lower = t.toLowerCase();
+    const cur = counts.get(lower);
+    if (cur) counts.set(lower, { label: cur.label, n: cur.n + 1 });
+    else counts.set(lower, { label: t, n: 1 });
   }
-  const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const tags = [...counts.values()].sort((a, b) => b.n - a.n);
   if (!tags.length) { bar.innerHTML = ''; return; }
-  bar.innerHTML = tags.slice(0, 24).map(([t, n]) => `
-    <button type="button" class="rp-tag-chip${_ezSelectedTags.has(t) ? ' active' : ''}" data-rp-tag="${escapeAttr(t)}">
-      ${escapeHtml(t)}<span class="rp-tag-count">${n}</span>
+  bar.innerHTML = tags.slice(0, 24).map(({label, n}) => `
+    <button type="button" class="rp-tag-chip${_ezSelectedTags.has(label.toLowerCase()) ? ' active' : ''}" data-rp-tag="${escapeAttr(label.toLowerCase())}">
+      ${escapeHtml(label)}<span class="rp-tag-count">${n}</span>
     </button>
   `).join('') + (_ezSelectedTags.size ? '<button class="rp-tag-clear" id="rpTagClear">Clear tags</button>' : '');
   bar.querySelectorAll('[data-rp-tag]').forEach(b => {
@@ -4634,7 +4670,9 @@ function drawEzRecipeList(){
       if (!hay.includes(q)) return false;
     }
     if (_ezSelectedTags.size) {
-      const has = (r.tags || []).some(t => _ezSelectedTags.has(t));
+      // Selected tags are stored lowercase (chip data-rp-tag is lowercase
+      // to collapse case variants — see drawEzTagBar).
+      const has = (r.tags || []).some(t => _ezSelectedTags.has(String(t).toLowerCase()));
       if (!has) return false;
     }
     if (_ezSelectedLabels.size) {
@@ -4662,9 +4700,12 @@ function drawEzRecipeList(){
          <div class="rp-thumb-empty" style="display:none">🍳</div>`
       : `<div class="rp-thumb-empty">🍳</div>`;
     // Labels live above tags so the user-defined "Want to eat" jumps out.
+    // Card chips use distinctTagsFor so a tag that's also a label doesn't
+    // double up (no more "Breakfast Breakfast recipe"), and the "recipe"
+    // junk tag is filtered out entirely.
     const labelChips = (merged.labels || []).map(L =>
       `<span class="rp-tag" style="background:rgba(74,222,128,.16);color:#86efac">${escapeHtml(L)}</span>`).join('');
-    const tagChips = (r.tags || []).slice(0, 3).map(t => `<span class="rp-tag">${escapeHtml(t)}</span>`).join('');
+    const tagChips = distinctTagsFor(r).slice(0, 3).map(t => `<span class="rp-tag">${escapeHtml(t)}</span>`).join('');
     const chips = labelChips + tagChips;
     return `
       <div role="button" tabindex="0" class="rp-item" data-ez-i="${i}" title="Click to view + edit, then add to board">
