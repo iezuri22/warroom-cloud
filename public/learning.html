@@ -1551,6 +1551,22 @@ function renderSectionRow(c, s, n, startNum, isBook){
   const status = deadlineStatus(s.deadline, isDone);
   const pace = pacingFor(s);
   const unitLabel = isBook ? 'Chapter' : 'Section';
+  // For books, the section index doesn't always match the chapter number
+  // the user thinks in (a book has a Prologue + Parts + numbered chapters).
+  // Parse the title to derive a smarter badge label so "Chapter 1: Interference"
+  // shows CHAPTER 1 instead of whatever sequential index the section happens
+  // to land at.
+  const badgeLabel = (() => {
+    if (!isBook) return `${unitLabel} ${n}`;
+    const t = (s.title || '').trim();
+    const stop = /^(prologue|epilogue|foreword|preface|introduction|afterword)\b/i.exec(t);
+    if (stop) return stop[1].toUpperCase();
+    const part = /^part\s+([ivxlcdm]+|\d+)\b/i.exec(t);
+    if (part) return `PART ${part[1].toUpperCase()}`;
+    const chap = /^chapter\s+(\d+)\b/i.exec(t);
+    if (chap) return `CHAPTER ${chap[1]}`;
+    return `${unitLabel} ${n}`;
+  })();
 
   // Pill rendering: same 5 states. For books, the "locked until prev"
   // state never fires (cascade lock is off — books let you skip).
@@ -1649,7 +1665,7 @@ function renderSectionRow(c, s, n, startNum, isBook){
     <div class="section ${isDone ? 'done' : ''} ${isExpanded ? 'expanded' : ''} ${status.overdue ? 'is-overdue' : ''} ${archived ? 'is-archived' : ''}" data-section="${s.id}">
       <div class="section-head" data-action="toggle-section">
         <span class="chev">▶</span>
-        <span class="st-num">${unitLabel} ${n}</span>
+        <span class="st-num">${badgeLabel}</span>
         <span class="st-title">${esc(s.title)}</span>
         <span class="st-meta">
           ${progressBlock}
