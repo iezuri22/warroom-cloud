@@ -29,11 +29,13 @@
 
   /* ---------- Top bar ---------- */
   #topbar{
-    position:fixed;top:0;left:0;right:0;height:44px;z-index:30;
-    display:flex;align-items:center;gap:8px;padding:0 12px;
-    background:rgba(14,17,22,.85);backdrop-filter:blur(10px);
-    border-bottom:1px solid var(--line)
+    position:fixed;top:0;left:0;right:0;height:44px;z-index:60;
+    display:flex !important;align-items:center;gap:8px;padding:0 12px;
+    background:rgba(14,17,22,.92);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+    overflow-x:auto;overflow-y:hidden
   }
+  #topbar::-webkit-scrollbar{height:0}
   #topbar .title{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.2px}
   #topbar .spacer{flex:1}
   .tb-btn{
@@ -5604,11 +5606,12 @@ async function bootstrap(){
         try { await setDoc(doc(nodesCol, n.id), { boardId: n.boardId }, { merge: true }); } catch {}
       }
     }
-    // Heal cross-board parentage: a child whose boardId disagrees with its
-    // parent's boardId belongs with the parent. This catches stickies that
-    // were hijacked by the unparented-backfill bug in a previous session,
-    // and any other inconsistency from cross-board moves that left children
-    // behind. Walk multiple passes in case parent chains are deeper than one.
+    // Apply cross-board parentage healing IN MEMORY immediately so the
+    // first render shows the corrected boardIds. Persist to Firestore in the
+    // BACKGROUND — sequential awaits on dozens of mismatched stickies were
+    // making init drag long enough that the user thought the toolbar was
+    // missing (it just hadn't finished mounting).
+    const _toPersist = [];
     for (let pass = 0; pass < 3; pass++) {
       let healed = 0;
       for (const n of nodes.values()) {
@@ -5618,13 +5621,23 @@ async function bootstrap(){
         if (n.boardId !== parent.boardId) {
           n.boardId = parent.boardId;
           healed++;
-          try { await setDoc(doc(nodesCol, n.id), { boardId: n.boardId }, { merge: true }); } catch {}
+          _toPersist.push(n.id);
         }
       }
       if (!healed) break;
     }
     renderBoardBar();
     rerenderAll();
+    // Fire-and-forget persistence. Errors get logged, never block init.
+    (async () => {
+      for (const id of _toPersist) {
+        const n = nodes.get(id);
+        if (!n) continue;
+        try { await setDoc(doc(nodesCol, id), { boardId: n.boardId }, { merge: true }); }
+        catch (e) { console.warn('[goals] healing setDoc failed', id, e); }
+      }
+      if (_toPersist.length) console.log(`[goals] healed boardId on ${_toPersist.length} nodes`);
+    })();
     // Heal any stale parentId/type from previous sessions (e.g. user resized
     // a section to wrap around another one and the data never caught up).
     reconcileBoard();
