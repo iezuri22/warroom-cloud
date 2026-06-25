@@ -718,9 +718,13 @@
   #rpLabels .rp-tag-chip:hover, #rpTags .rp-tag-chip:hover{
     color:var(--ink); border-color:var(--line2); background:rgba(255,255,255,.04)
   }
-  #rpLabels .rp-tag-chip.active, #rpTags .rp-tag-chip.active{
-    background:rgba(74,158,255,.16); color:var(--accent, #4a9eff);
-    border-color:var(--accent, #4a9eff)
+  /* Active style now covers the detail-view label chips too — without
+     #rpdLabels in the selector, the detail chips never lit up so the user
+     couldn't tell which labels the recipe carried. */
+  #rpLabels .rp-tag-chip.active, #rpTags .rp-tag-chip.active, #rpdLabels .rp-tag-chip.active{
+    background:rgba(74,158,255,.2); color:#fff;
+    border-color:var(--accent, #4a9eff);
+    font-weight:700
   }
   #rpLabels .rp-tag-count, #rpTags .rp-tag-count{
     font-size:10px; opacity:.55; font-weight:600;
@@ -4492,13 +4496,16 @@ function recipeWithMeta(r){
     // Use effective labels (stored + auto-derived from EZ tags) so recipe
     // cards display the chips even when no one re-tagged in War Room.
     labels: effectiveLabelsFor(r),
+    // img override lets the user set a custom photo per recipe — falls back
+    // to the EZ-side image when no override is saved.
+    img:         (typeof meta.imageUrl === 'string' && meta.imageUrl.trim()) ? meta.imageUrl.trim() : r.img,
     // Ingredients are objects { text, imageUrl } now. Override may be saved as
     // strings (legacy) OR objects — normalize both. If user supplied only
     // text via the textarea, we keep imageUrl from the original EZ row when
     // the text matches.
     ingredients: mergeIngredientOverride(r.ingredients, meta.overrideIngredients),
     steps:       Array.isArray(meta.overrideSteps)       ? meta.overrideSteps       : r.steps,
-    _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps)
+    _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps || meta.imageUrl)
   };
 }
 function mergeIngredientOverride(original, override){
@@ -4515,19 +4522,56 @@ function ingredientTexts(arr){ return (arr || []).map(i => typeof i === 'string'
 // Render a saved-pictures preview block for the detail view. Returns '' when
 // no ingredient in the list has an image attached.
 function ingredientThumbsHtml(rows){
-  const withImgs = (rows || []).filter(it => it.imageUrl);
-  if (!withImgs.length) return '';
+  // Resolve each row's display image: explicit imageUrl first, otherwise
+  // try the ingredient library by normalized name. This catches ingredients
+  // that were added to the library AFTER the recipe was last loaded.
+  const resolved = (rows || []).map(it => {
+    if (it.imageUrl) return { ...it, _img: it.imageUrl, _src: 'recipe' };
+    const lib = _libraryLookupForText(it.text);
+    return { ...it, _img: lib || null, _src: lib ? 'library' : null };
+  });
+  if (!resolved.length) return '';
+  const withImgs = resolved.filter(it => it._img);
+  const withoutImgs = resolved.filter(it => !it._img);
   return `
     <div class="rpd-thumbs">
-      <div class="rpd-thumbs-head">${withImgs.length} saved picture${withImgs.length===1?'':'s'} from EZ — included on the board.</div>
+      <div class="rpd-thumbs-head">${withImgs.length} saved picture${withImgs.length===1?'':'s'} — drops onto the board with the recipe.</div>
       <div class="rpd-thumbs-grid">
         ${withImgs.map(it => `
-          <div class="rpd-thumb-card">
-            <img src="${escapeAttr(it.imageUrl)}" alt="${escapeAttr(it.text)}" loading="lazy">
+          <div class="rpd-thumb-card" title="${escapeAttr(it._src === 'library' ? 'From ingredient library' : 'Saved with recipe')}">
+            <img src="${escapeAttr(it._img)}" alt="${escapeAttr(it.text)}" loading="lazy"
+              onerror="this.style.display='none';this.nextElementSibling&&this.nextElementSibling.classList.add('show')">
+            <div class="rpd-thumb-fallback" style="display:none;align-items:center;justify-content:center;height:80px;font-size:24px;opacity:.5">🥬</div>
             <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(it.text)}</div>
           </div>`).join('')}
       </div>
+      ${withoutImgs.length ? `
+        <div class="rpd-thumbs-head" style="margin-top:14px;color:#fcd34d">${withoutImgs.length} ingredient${withoutImgs.length===1?'':'s'} without a picture — tap the 🧂 Ingredients toolbar button to add images that propagate to every recipe.</div>
+        <div class="rpd-thumbs-grid">
+          ${withoutImgs.map(it => `
+            <div class="rpd-thumb-card" style="opacity:.6">
+              <div style="display:flex;align-items:center;justify-content:center;height:80px;font-size:24px">🥬</div>
+              <div class="lbl" title="${escapeAttr(it.text)}">${escapeHtml(it.text)}</div>
+            </div>`).join('')}
+        </div>
+      ` : ''}
     </div>`;
+}
+// Look up an ingredient image from the master library by best-substring match
+// against the row's text. Same approach as the EZ-load-time matcher, just
+// running against _ingLibrary instead of the EZ ingredient_library table.
+function _libraryLookupForText(text){
+  if (!text) return null;
+  const t = String(text).toLowerCase();
+  let best = null, bestLen = 0;
+  for (const [name, entry] of _ingLibrary) {
+    if (!entry || !entry.imageUrl) continue;
+    if (t.includes(name) && name.length > bestLen) {
+      best = entry.imageUrl;
+      bestLen = name.length;
+    }
+  }
+  return best;
 }
 async function loadEzRecipes(){
   const card = document.getElementById('rpCard');
@@ -4900,8 +4944,9 @@ function drawEzDetail(){
   const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
   if (!r) { backToEzGrid(); return; }
   const merged = recipeWithMeta(r);
-  const heroImg = r.img
-    ? `<img src="${escapeAttr(r.img)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="rpd-no-img" style="display:none">🍳</div>`
+  const displayImg = merged.img;   // override OR EZ original
+  const heroImg = displayImg
+    ? `<img src="${escapeAttr(displayImg)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="rpd-no-img" style="display:none">🍳</div>`
     : `<div class="rpd-no-img">🍳</div>`;
   const labelChips = _recipeLabels.map(L => `
     <button type="button" class="rp-tag-chip${_ezDetailLabels.has(L) ? ' active' : ''}" data-rpd-label="${escapeAttr(L)}">
@@ -4923,6 +4968,13 @@ function drawEzDetail(){
             <h4>Labels</h4>
             <div class="rpd-labels" id="rpdLabels">${labelChips}</div>
             <div class="rpd-hint">Tap to add / remove. Labels live alongside EZ tags and let you filter the picker.</div>
+          </div>
+          <div class="rpd-section" style="margin-top:10px">
+            <h4>Recipe photo</h4>
+            <input type="url" id="rpdImageUrl" placeholder="Paste an image URL…"
+              value="${escapeAttr(_recipeMeta.get(_ezDetailRid)?.imageUrl || '')}"
+              style="width:100%;padding:8px 10px;background:var(--w03);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none">
+            <div class="rpd-hint">Leave blank to use the EZ default. Click Save defaults to apply.</div>
           </div>
         </div>
       </div>
@@ -4971,10 +5023,13 @@ async function saveEzDefaults(){
   const byText = new Map(_ezDetailIngredientRows.map(it => [it.text.toLowerCase(), it.imageUrl]));
   const lines = _ezDetailIngredients.split('\n').map(s => s.trim()).filter(Boolean);
   const overrideIngredients = lines.map(text => ({ text, imageUrl: byText.get(text.toLowerCase()) || null }));
+  const imgInp = document.getElementById('rpdImageUrl');
+  const imageUrl = imgInp ? imgInp.value.trim() : '';
   const payload = {
     labels: [..._ezDetailLabels],
     overrideIngredients,
     overrideSteps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean),
+    imageUrl: imageUrl || null,
     updatedAt: nowISO()
   };
   setStatus('Saving defaults…', 'sticky');
