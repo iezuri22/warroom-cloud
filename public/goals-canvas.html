@@ -1271,6 +1271,14 @@ function queueViewSave(){
 
 // ============= Render ============================
 function renderNode(n){
+  // Hard guard: never paint a node onto the canvas if it doesn't live on
+  // the active board. This is the final safety net — if any caller forgets
+  // to filter, the offending node still won't leak into the visible DOM.
+  // Skip the guard while activeBoardId hasn't been resolved yet (init).
+  if (activeBoardId && (n.boardId || null) !== activeBoardId) {
+    removeNodeEl(n.id);
+    return;
+  }
   let el = els.get(n.id);
   if (!el) {
     el = document.createElement('div');
@@ -4308,10 +4316,15 @@ function subscribeIngredientLibrary(){
       });
     });
     // Re-render any open sticky items so newly-arrived library images show.
+    // CRITICAL: only stickies on the ACTIVE board — renderNode appends to
+    // #canvas unconditionally, so iterating all stickies (across every
+    // board) drops other boards' nodes onto the active canvas. That's the
+    // glitch behind "previous goal content appears on top after refresh"
+    // — this snapshot lands during init and again whenever EZ syncs.
     for (const n of nodes.values()) {
-      if (n.type === 'sticky') {
-        try { renderNode(n); } catch {}
-      }
+      if (n.type !== 'sticky') continue;
+      if ((n.boardId || null) !== activeBoardId) continue;
+      try { renderNode(n); } catch {}
     }
     // Refresh the library modal if it's open (so uploads from another
     // device or in-recipe edits show up live).
