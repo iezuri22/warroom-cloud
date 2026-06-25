@@ -5586,9 +5586,42 @@ async function bootstrap(){
     if (unparented.length) {
       const home = activeBoardId;
       for (const n of unparented) {
-        n.boardId = home;
-        try { await setDoc(doc(nodesCol, n.id), { boardId: home }, { merge: true }); } catch {}
+        // Inherit from parent chain if possible — orphaning a sticky to
+        // whichever board the user happened to refresh on (the previous
+        // behavior) is the bug behind "after refresh, [active board] steals
+        // content from [other board]". A sticky whose parent section
+        // belongs to VitalTouch should follow that section, not get
+        // hijacked because today the user is looking at board "d".
+        let inherit = null;
+        let cur = n.parentId ? nodes.get(n.parentId) : null;
+        const seen = new Set();
+        while (cur && !seen.has(cur.id)) {
+          seen.add(cur.id);
+          if (cur.boardId) { inherit = cur.boardId; break; }
+          cur = cur.parentId ? nodes.get(cur.parentId) : null;
+        }
+        n.boardId = inherit || home;
+        try { await setDoc(doc(nodesCol, n.id), { boardId: n.boardId }, { merge: true }); } catch {}
       }
+    }
+    // Heal cross-board parentage: a child whose boardId disagrees with its
+    // parent's boardId belongs with the parent. This catches stickies that
+    // were hijacked by the unparented-backfill bug in a previous session,
+    // and any other inconsistency from cross-board moves that left children
+    // behind. Walk multiple passes in case parent chains are deeper than one.
+    for (let pass = 0; pass < 3; pass++) {
+      let healed = 0;
+      for (const n of nodes.values()) {
+        if (!n.parentId) continue;
+        const parent = nodes.get(n.parentId);
+        if (!parent || !parent.boardId) continue;
+        if (n.boardId !== parent.boardId) {
+          n.boardId = parent.boardId;
+          healed++;
+          try { await setDoc(doc(nodesCol, n.id), { boardId: n.boardId }, { merge: true }); } catch {}
+        }
+      }
+      if (!healed) break;
     }
     renderBoardBar();
     rerenderAll();
