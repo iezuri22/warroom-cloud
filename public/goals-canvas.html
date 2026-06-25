@@ -1590,11 +1590,27 @@ function activeNodes(){
 }
 
 function rerenderAll(){
-  // Only nodes on the active board live in the DOM. Remove any element whose
-  // node is gone or belongs to a different board.
+  // Only nodes on the active board live in the DOM. Two-pass cleanup:
+  //   1. Walk the els map (what we know we created) and remove anything
+  //      that isn't on the active board.
+  //   2. Walk the actual #canvas DOM for any .node element whose data-id
+  //      isn't on the active board. This catches orphans that fell out of
+  //      the els map (e.g. an element created via a code path that didn't
+  //      register, or the map lost the reference mid-snapshot) — those
+  //      were the source of the "old board content lingers" glitch.
   const liveOnBoard = new Set(activeNodes().map(n => n.id));
   for (const id of [...els.keys()]) {
     if (!liveOnBoard.has(id)) removeNodeEl(id);
+  }
+  const canvasEl = document.getElementById('canvas');
+  if (canvasEl) {
+    canvasEl.querySelectorAll('.node').forEach(el => {
+      const id = el.dataset.id;
+      if (!id || !liveOnBoard.has(id)) {
+        try { el.remove(); } catch {}
+        if (id) els.delete(id);
+      }
+    });
   }
   for (const n of activeNodes()) renderNode(n);
   updateEmptyHint();
@@ -1672,7 +1688,14 @@ function subscribeNodes(){
       nodes.set(id, n);
       // Only render if it's on the active board; otherwise just track state.
       if ((n.boardId || null) === activeBoardId) renderNode(n);
-      else removeNodeEl(id);
+      else {
+        removeNodeEl(id);
+        // Belt-and-suspenders: if a stale DOM element with this id slipped
+        // out of the els map, kill it directly so it doesn't linger on the
+        // canvas when boardId changes.
+        const ghost = document.querySelector(`#canvas .node[data-id="${id}"]`);
+        if (ghost) try { ghost.remove(); } catch {}
+      }
       dirty = true;
     });
     if (dirty) { updateEmptyHint(); rebuildToc(); }
