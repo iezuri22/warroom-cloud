@@ -783,6 +783,18 @@ function todaysPlannedFor(section){
       return doneTodayIndices;
     }
   } catch {}
+  // Deadline-day override: if the section is due today (or already past),
+  // there is no "tomorrow" — every unfinished lecture is due today. Without
+  // this, a stale lock from yesterday (when pace was lower) could fence off
+  // the remaining lectures as Tomorrow even though tomorrow is overdue.
+  if (section.deadline <= today) {
+    const all = new Set(doneTodayIndices);
+    for (let i = 0; i < subs.length; i++) if (!subs[i].done) all.add(i);
+    const arr = [...all].sort((a, b) => a - b);
+    const ids = arr.map(i => subs[i].id).filter(Boolean);
+    try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+    return arr;
+  }
   const pace = pacingFor(section);
   // Try to read previously locked plan for today.
   let cached = null;
@@ -807,6 +819,20 @@ function todaysPlannedFor(section){
     // a user finished a lecture that wasn't in the original locked plan.
     const union = new Set(cachedIndices);
     doneTodayIndices.forEach(i => union.add(i));
+    // Re-expand if pacing has grown since the cache was written (deadline
+    // got closer → perDay went up). Without this, the cache pins today's
+    // bucket at the smaller number and the extra lectures get pushed to
+    // Tomorrow, even though pace now wants them done today.
+    if (pace && union.size < pace.perDay) {
+      const need = pace.perDay - union.size;
+      const fillers = [];
+      for (let i = 0; i < subs.length && fillers.length < need; i++) {
+        if (!subs[i].done && !union.has(i)) fillers.push(i);
+      }
+      fillers.forEach(i => union.add(i));
+      const ids = [...union].map(i => subs[i].id).filter(Boolean);
+      try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+    }
     return [...union].sort((a, b) => a - b);
   }
   // No cache yet today — compute the slice. Reserve slots for what's already
