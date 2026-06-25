@@ -396,8 +396,9 @@
   }
   #ingLibList{
     flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding:4px;
-    display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
-    grid-auto-rows:max-content; gap:12px;
+    /* Smaller min lets ~6 cards fit per row instead of 4 on a wide modal. */
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+    grid-auto-rows:max-content; gap:10px;
     align-content:start
   }
   /* Explicit min-height + auto-rows above keep cards from collapsing when
@@ -406,14 +407,14 @@
   .ing-card{
     background:var(--w03); border:1px solid var(--line); border-radius:12px;
     overflow:hidden; display:flex; flex-direction:column; transition:.15s;
-    position:relative; min-height:260px
+    position:relative; min-height:190px
   }
   .ing-card:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.3)}
   .ing-card .ing-thumb{
-    width:100%; height:160px; flex:0 0 160px; background:rgba(255,255,255,.04) center/cover no-repeat;
+    width:100%; height:110px; flex:0 0 110px; background:rgba(255,255,255,.04) center/cover no-repeat;
     position:relative; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
-    font-size:40px; opacity:.5; color:var(--muted)
+    font-size:28px; opacity:.5; color:var(--muted)
   }
   .ing-card .ing-thumb.has-img{opacity:1}
   /* Top-right ⋯ menu trigger sits over the thumbnail */
@@ -425,9 +426,9 @@
   }
   .ing-card:hover .ing-menu-btn{opacity:1}
   .ing-menu-btn:hover{background:rgba(0,0,0,.8)}
-  .ing-card .ing-body{padding:10px 12px 12px}
+  .ing-card .ing-body{padding:8px 10px 10px}
   .ing-card .ing-name{
-    font-size:14px; font-weight:600; color:var(--ink); line-height:1.3;
+    font-size:13px; font-weight:600; color:var(--ink); line-height:1.25;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:3px
   }
   .ing-card .ing-uses{
@@ -1379,6 +1380,12 @@ function renderNode(n){
 
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+// Display helper: "apple cider vinegar" → "Apple Cider Vinegar".
+// Leaves underlying storage keys alone — the library key is still lowercase
+// so search/match logic keeps working; this only beautifies the rendered name.
+function toTitleCase(s){
+  return String(s || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 // Sync the .selected class on every node element to match selectedIds.
 function updateSelectionUI(){
@@ -2669,11 +2676,76 @@ document.getElementById('ingLibSearch').addEventListener('input', (e) => {
   _ingLibQuery = e.target.value || '';
   drawIngLibModal();
 });
-document.getElementById('ingLibAdd').addEventListener('click', () => {
-  const name = prompt('New ingredient name (e.g. saffron, ghee):', '');
-  if (!name || !name.trim()) return;
-  setLibraryImage(name.trim(), null).then(() => drawIngLibModal());
-});
+document.getElementById('ingLibAdd').addEventListener('click', () => openIngAddModal());
+function openIngAddModal(prefill){
+  // Close any open ⋯ menu so it doesn't sit on top of the modal.
+  try { closeIngMenu(); } catch {}
+  const old = document.getElementById('ingAddModal');
+  if (old) try { old.remove(); } catch {}
+  const wrap = document.createElement('div');
+  wrap.id = 'ingAddModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:400;display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px)';
+  wrap.innerHTML = `
+    <div style="background:var(--bg-elev,#15151B);border:1px solid var(--w15,rgba(255,255,255,.15));border-radius:14px;width:100%;max-width:440px;padding:20px 22px;color:var(--ink);font-family:inherit;box-shadow:0 24px 60px rgba(0,0,0,.6)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <span style="font-size:15px;font-weight:800;letter-spacing:.2px">🧂 Add ingredient</span>
+        <button id="ingAddX" style="margin-left:auto;background:transparent;border:none;color:var(--w55);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:6px" title="Close">✕</button>
+      </div>
+      <label style="display:block;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--w70);margin:0 0 6px">Name</label>
+      <input id="ingAddName" type="text" placeholder="e.g. saffron, ghee, ground beef" autocomplete="off"
+        value="${escapeAttr(prefill?.name || '')}"
+        style="width:100%;padding:9px 12px;background:var(--w06);border:1px solid var(--w15);border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;box-sizing:border-box">
+      <label style="display:block;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--w70);margin:14px 0 6px">Image URL <span style="text-transform:none;letter-spacing:0;font-weight:500;opacity:.7">(optional)</span></label>
+      <input id="ingAddUrl" type="url" placeholder="https://… (paste any image URL)" autocomplete="off"
+        value="${escapeAttr(prefill?.imageUrl || '')}"
+        style="width:100%;padding:9px 12px;background:var(--w06);border:1px solid var(--w15);border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;box-sizing:border-box">
+      <div id="ingAddPreviewWrap" style="margin-top:10px;display:none">
+        <div style="font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--w55);margin-bottom:6px">Preview</div>
+        <img id="ingAddPreview" alt="" style="max-width:100%;max-height:160px;border-radius:8px;border:1px solid var(--w12);background:var(--w03)">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--w12)">
+        <span style="flex:1"></span>
+        <button id="ingAddCancel" style="padding:8px 16px;border-radius:8px;font:inherit;font-size:12px;font-weight:800;letter-spacing:.3px;cursor:pointer;border:1px solid var(--w15);background:transparent;color:var(--w70)">Cancel</button>
+        <button id="ingAddSave" style="padding:8px 16px;border-radius:8px;font:inherit;font-size:12px;font-weight:800;letter-spacing:.3px;cursor:pointer;border:1px solid rgba(74,158,255,.6);background:rgba(74,158,255,.28);color:var(--ink)">+ Add</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { try { wrap.remove(); } catch {} };
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  document.getElementById('ingAddX').onclick = close;
+  document.getElementById('ingAddCancel').onclick = close;
+  const nameEl = document.getElementById('ingAddName');
+  const urlEl  = document.getElementById('ingAddUrl');
+  const previewWrap = document.getElementById('ingAddPreviewWrap');
+  const previewImg  = document.getElementById('ingAddPreview');
+  const refreshPreview = () => {
+    const u = urlEl.value.trim();
+    if (!u) { previewWrap.style.display = 'none'; return; }
+    previewWrap.style.display = '';
+    previewImg.onerror = () => { previewWrap.style.display = 'none'; };
+    previewImg.src = u;
+  };
+  urlEl.addEventListener('input', refreshPreview);
+  refreshPreview();
+  // Enter from name jumps to URL; Enter from URL saves.
+  nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); urlEl.focus(); } });
+  urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  async function save(){
+    const name = nameEl.value.trim();
+    if (!name) { nameEl.focus(); return; }
+    const url = urlEl.value.trim() || null;
+    try {
+      await setLibraryImage(name, url);
+      close();
+      try { drawIngLibModal(); } catch {}
+    } catch (e) {
+      console.error('add ingredient failed', e);
+      alert("Couldn't save: " + (e?.message || e));
+    }
+  }
+  document.getElementById('ingAddSave').onclick = save;
+  setTimeout(() => nameEl.focus(), 50);
+}
 document.getElementById('ingLibSync').addEventListener('click', async () => {
   setStatus('Scanning board…', 'sticky');
   const n = await seedLibraryFromCanvas();
@@ -2826,7 +2898,7 @@ function drawIngLibModal(){
           <button class="ing-menu-btn" data-action="ing-menu" title="More options">⋯</button>
         </div>
         <div class="ing-body">
-          <div class="ing-name" title="${escapeAttr(e.name)}">${escapeHtml(e.name)}</div>
+          <div class="ing-name" title="${escapeAttr(e.name)}">${escapeHtml(toTitleCase(e.name))}</div>
           ${usesLabel}
           ${recipeLine}
           ${aliases}
