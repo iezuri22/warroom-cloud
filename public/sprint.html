@@ -2172,6 +2172,32 @@ body { display:flex; flex-direction:column; position:relative }
         <span style="color:rgba(255,255,255,.4);font-size:14px">→</span>
       </div>`;
   }
+  // Book chapter — shown as a single queue card per chapter that's in
+  // today's pace window. No per-lecture checkbox (books don't have subs);
+  // tapping the card switches the sprint task to that chapter.
+  function bookChapterItemHtml(it, label){
+    const range = (it.pageStart && it.pageEnd)
+      ? (it.pageStart === it.pageEnd ? `Page ${it.pageStart}` : `Pages ${it.pageStart}–${it.pageEnd}`)
+      : '';
+    const title = range
+      ? `${range} of ${esc(it.sectionTitle || '')}`
+      : esc(it.sectionTitle || '');
+    const subline = it.sectionDeadline
+      ? `${esc(it.courseTitle)} · book chapter · due ${esc(it.sectionDeadline)}`
+      : `${esc(it.courseTitle)} · book chapter`;
+    return `
+      <div class="nt-item" data-kind="book-chapter" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}"
+        style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#15151B;border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,background .12s">
+        <span style="font-size:14px;width:24px;text-align:center">📖</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.55);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${subline}</div>
+        </div>
+        ${duePillHtml(it.dueText, it.dueCls)}
+        ${label ? `<span style="font-size:9px;font-weight:800;background:rgba(59,130,246,.2);color:#93c5fd;letter-spacing:.06em;padding:3px 8px;border-radius:99px">${esc(label)}</span>` : ''}
+        <span style="color:rgba(255,255,255,.4);font-size:14px">→</span>
+      </div>`;
+  }
   function priorityItemHtml(t){
     const jobChip = t.job ? `<span style="font-size:10px;font-weight:700;background:rgba(255,138,61,.16);color:#FF8A3D;padding:2px 7px;border-radius:99px;letter-spacing:.04em;margin-left:8px">${esc(t.job)}</span>` : '';
     // Done checkbox — writes done:true to tv_todos Firestore directly so
@@ -2232,6 +2258,7 @@ body { display:flex; flex-direction:column; position:relative }
       const enriched = { ...it,
         dueText: it.dueText || 'Today',
         dueCls: it.dueCls || 'today' };
+      if (it.kind === 'book-chapter') return bookChapterItemHtml(enriched, '');
       return lectureItemHtml(enriched, '');
     }).join('');
     $('nextTaskLectureCount').textContent = todayItems.length ? (todayItems.length + ' today') : '';
@@ -2339,6 +2366,26 @@ body { display:flex; flex-direction:column; position:relative }
           switchToTask(taskName, {
             source: 'learning',
             ids: { courseId, sectionId, subId, subIndex },
+            jobLabel: sec.courseTitle || 'LEARNING',
+          });
+        } else if (kind === 'book-chapter') {
+          const courseId = el.dataset.course;
+          const sectionId = el.dataset.section;
+          const c = readLearningCache();
+          const sec = c && c.sections.find(s => s.courseId === courseId && s.sectionId === sectionId);
+          if (!sec) return;
+          // Pull the matching book-chapter today-item so we can label the
+          // task with the page range, not just the chapter title.
+          const it = (c.today || []).find(x => x.kind === 'book-chapter' && x.sectionId === sectionId);
+          const range = (it && it.pageStart && it.pageEnd)
+            ? (it.pageStart === it.pageEnd ? `Page ${it.pageStart}` : `Pages ${it.pageStart}–${it.pageEnd}`)
+            : '';
+          const taskName = range
+            ? `${range} — ${sec.sectionTitle || ''}`
+            : (sec.sectionTitle || sec.courseTitle || 'Reading');
+          switchToTask(taskName, {
+            source: 'learning',
+            ids: { courseId, sectionId, kind: 'book-chapter' },
             jobLabel: sec.courseTitle || 'LEARNING',
           });
         } else if (kind === 'priority') {
@@ -3945,7 +3992,41 @@ body { display:flex; flex-direction:column; position:relative }
           sectionDeadline: s.deadline || '',
           subs,
         });
-        if (isBook || !s.deadline) continue;
+        if (!s.deadline) continue;
+        // Book chapters surface as a single "Pages X–Y" queue item per
+        // chapter — they don't have lecture sub-items, just a page count.
+        // Mirrors the page-range label used in learning.html's todayQueue.
+        if (isBook) {
+          const total = s.totalPages || 0;
+          const read  = Math.min(s.pagesRead || 0, total);
+          if (read >= total) continue; // chapter already complete
+          const pace = pacingFor(s);
+          // Only include if it's actually due today (deadline ≤ today) or
+          // would land in today's pace window. Same rule as lecture sections.
+          const dueToday = String(s.deadline) <= todayISO();
+          if (!dueToday && !pace) continue;
+          const perDay = (pace && pace.perDay) || (total - read);
+          const start = read + 1;
+          const end   = Math.min(read + perDay, total);
+          // Map deadline → dueCls for the orange/blue/etc pill.
+          let dueText = '', dueCls = '';
+          if (dueToday) { dueText = 'Today'; dueCls = 'today'; }
+          else if (pace) {
+            const daysOut = pace.days;
+            if (daysOut === 1)      { dueText = 'Tomorrow'; dueCls = 'tomorrow'; }
+            else if (daysOut <= 3)  { dueText = `In ${daysOut} days`; dueCls = 'soon'; }
+            else                    { dueText = `In ${daysOut} days`; dueCls = ''; }
+          }
+          todayItems.push({
+            kind: 'book-chapter',
+            courseId: c.id, courseTitle: c.title || '',
+            sectionId: s.id, sectionTitle: s.title || '',
+            sectionDeadline: s.deadline || '',
+            pageStart: start, pageEnd: end, totalPages: total, pagesRead: read,
+            dueText, dueCls,
+          });
+          continue;
+        }
         const planned = todaysPlannedFor(s);
         for (const i of planned) {
           const u = (s.subsections || [])[i];
