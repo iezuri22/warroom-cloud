@@ -4256,6 +4256,20 @@ async function seedLibraryFromCanvas(){
 }
 const DEFAULT_RECIPE_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
 let _recipeLabels = DEFAULT_RECIPE_LABELS.slice();
+// Effective labels for a recipe = stored labels (_recipeMeta) UNION any EZ
+// tag that case-insensitively matches a War Room label. Lets recipes that
+// were already tagged "Breakfast" / "Lunch" / "Dinner" in EZ Recipes show
+// up under those chips here without re-tagging.
+function effectiveLabelsFor(r){
+  const meta = _recipeMeta.get(r.rid) || {};
+  const stored = Array.isArray(meta.labels) ? meta.labels : [];
+  const set = new Set(stored);
+  const tagLower = new Set((r.tags || []).map(t => String(t).toLowerCase()));
+  for (const L of _recipeLabels) {
+    if (tagLower.has(L.toLowerCase())) set.add(L);
+  }
+  return [...set];
+}
 const _recipeMeta = new Map();   // rid -> { labels:[], overrideIngredients?:[], overrideSteps?:[] }
 const recipeLabelsDoc = doc(db, 'goals_canvas_config', 'recipe_labels');
 const recipeMetaCol   = collection(db, 'goals_canvas_recipe_meta');
@@ -4296,7 +4310,9 @@ function recipeWithMeta(r){
   const meta = _recipeMeta.get(r.rid) || {};
   return {
     ...r,
-    labels: Array.isArray(meta.labels) ? meta.labels : [],
+    // Use effective labels (stored + auto-derived from EZ tags) so recipe
+    // cards display the chips even when no one re-tagged in War Room.
+    labels: effectiveLabelsFor(r),
     // Ingredients are objects { text, imageUrl } now. Override may be saved as
     // strings (legacy) OR objects — normalize both. If user supplied only
     // text via the textarea, we keep imageUrl from the original EZ row when
@@ -4496,8 +4512,7 @@ function drawEzLabelFilters(){
   });
   const counts = new Map();
   for (const r of pool) {
-    const meta = _recipeMeta.get(r.rid);
-    for (const L of (meta?.labels || [])) counts.set(L, (counts.get(L) || 0) + 1);
+    for (const L of effectiveLabelsFor(r)) counts.set(L, (counts.get(L) || 0) + 1);
   }
   bar.innerHTML = _recipeLabels.map(L => {
     const n = counts.get(L) || 0;
@@ -4577,8 +4592,7 @@ function drawEzRecipeList(){
       if (!has) return false;
     }
     if (_ezSelectedLabels.size) {
-      const meta = _recipeMeta.get(r.rid);
-      const labels = meta?.labels || [];
+      const labels = effectiveLabelsFor(r);
       const has = labels.some(L => _ezSelectedLabels.has(L));
       if (!has) return false;
     }
