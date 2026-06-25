@@ -5698,6 +5698,45 @@ bootstrap();
 if (new URLSearchParams(location.search).get('embed') === '1') {
   document.body.classList.add('embed');
 }
+
+// Force a layout recalc on the topbar whenever the iframe becomes visible
+// or the window resizes. On refresh, the iframe loads while daily-planner's
+// tab container is briefly display:none, which means position:fixed elements
+// inside the iframe compute their position against a zero-height viewport and
+// end up rendered behind the daily-planner nav (invisible). Switching tabs
+// and coming back triggers a real layout pass which "fixes" it. We mirror
+// that here so the user doesn't have to bounce out.
+(function ensureTopbarVisible(){
+  const reflow = () => {
+    const tb = document.getElementById('topbar');
+    if (!tb) return;
+    // A no-op style toggle forces the browser to recalc layout for the
+    // element. translateZ(0) also nudges it onto its own compositor layer
+    // which fixes iOS Safari rendering glitches.
+    const prev = tb.style.transform || '';
+    tb.style.transform = 'translateZ(0)';
+    void tb.offsetHeight;
+    tb.style.transform = prev;
+    const bb = document.getElementById('boardBar');
+    if (bb) { const p = bb.style.transform || ''; bb.style.transform='translateZ(0)'; void bb.offsetHeight; bb.style.transform=p; }
+  };
+  // Run a few times after load — first paint, then 100/500ms later in case
+  // the iframe was hidden when we ran the first one.
+  window.addEventListener('pageshow', reflow);
+  window.addEventListener('resize', reflow);
+  document.addEventListener('visibilitychange', reflow);
+  setTimeout(reflow, 50);
+  setTimeout(reflow, 250);
+  setTimeout(reflow, 800);
+  // ResizeObserver on the body catches the moment daily-planner toggles
+  // the iframe container from display:none → block, which IS the moment
+  // the layout finally has nonzero dimensions.
+  try {
+    new ResizeObserver(entries => {
+      for (const e of entries) if (e.contentRect.height > 0) { reflow(); break; }
+    }).observe(document.body);
+  } catch {}
+})();
 </script>
 
 </body>
