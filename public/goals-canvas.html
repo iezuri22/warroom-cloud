@@ -79,6 +79,24 @@
   .board-tab:hover{color:var(--ink);border-color:var(--line2)}
   .board-tab.active{color:var(--ink);border-color:var(--accent);background:rgba(74,158,255,.12)}
   .board-tab .b-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+  /* Folder pills look slightly different — soft fill, count badge on right. */
+  .board-tab.folder{ background:rgba(255,255,255,.06); border-style:dashed }
+  .board-tab.folder:hover{ background:rgba(255,255,255,.09) }
+  .board-tab .b-count{
+    margin-left:4px; font-size:10px; font-weight:700;
+    background:rgba(255,255,255,.08); color:var(--ink);
+    padding:1px 6px; border-radius:8px; line-height:1.4
+  }
+  /* Breadcrumb at the start of the board bar. */
+  .b-crumb{
+    background:transparent; border:none; color:var(--muted);
+    font:inherit; font-size:12px; padding:0 4px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:4px; height:26px;
+  }
+  .b-crumb:hover{ color:var(--ink) }
+  .b-crumb.active{ color:var(--ink); font-weight:700 }
+  .b-crumb-sep{ color:var(--muted); margin:0 2px; font-size:11px }
+  .b-crumb-spacer{ display:inline-block; width:6px }
   /* Hover-revealed ✕ delete on every board tab. Hidden by default so the
      tab strip stays clean; appears on hover (touch devices: tap-hold). */
   .board-tab .b-del{
@@ -1112,6 +1130,7 @@ const db  = getFirestore(app);
 const nodesCol      = collection(db, 'goals_canvas_nodes');
 const pushQueueCol  = collection(db, 'goals_priority_pushes');
 const boardsCol     = collection(db, 'goals_canvas_boards');
+const foldersCol    = collection(db, 'goals_canvas_folders');
 const viewDoc       = doc(db, 'goals_canvas_view', 'me');  // map of { [boardId]: {panX, panY, zoom} }
 const todosCol      = collection(db, 'tv_todos');
 const ingredientLibCol = collection(db, 'ingredient_library');
@@ -1122,6 +1141,13 @@ const nodes  = new Map();       // id -> node data (ALL nodes from cloud)
 const els    = new Map();       // id -> DOM element (only nodes on the ACTIVE board)
 const boards = new Map();       // id -> { id, name, color, order, createdAt, updatedAt }
 let activeBoardId = null;
+// Folder grouping for boards. Each board has an optional folderId (top-level
+// = null). Folders themselves can have a parentFolderId for a single subfolder
+// level (max depth = 2). activeFolderId drives "which folder am I inside" in
+// the board strip — null means the root view.
+const folders = new Map(); // id -> { id, name, color, order, parentFolderId }
+let activeFolderId = null;
+const FOLDER_MAX_DEPTH = 2;
 let view = { panX: 0, panY: 0, zoom: 1 };
 const viewPerBoard = {};        // boardId -> { panX, panY, zoom } from Firestore
 let selectedId = null;          // back-compat for code that still reads "the" selection
@@ -5554,23 +5580,64 @@ async function promoteToFocus5(n, itemId){
 
 // ============= Boards (multiple "jobs") =============
 const ACTIVE_BOARD_KEY = 'goalsCanvas:activeBoardId';
+const ACTIVE_FOLDER_KEY = 'goalsCanvas:activeFolderId';
 
 function renderBoardBar(){
   const bar = document.getElementById('boardBar');
-  const list = [...boards.values()].sort(boardSort);
-  if (!list.length) {
+  const allBoards = [...boards.values()];
+  if (!allBoards.length) {
     bar.innerHTML = `<div class="board-bar-empty">Loading boards…</div>`;
     return;
   }
-  bar.innerHTML = list.map(b => {
+  // Build breadcrumb + render scope.
+  // Root view (activeFolderId=null): show all top-level folders + boards with no folderId.
+  // Inside a folder: show its subfolders + boards.
+  const cur = activeFolderId ? folders.get(activeFolderId) : null;
+  // Sanity: if activeFolderId points at a deleted/missing folder, treat as root.
+  if (activeFolderId && !cur) { activeFolderId = null; try { localStorage.removeItem(ACTIVE_FOLDER_KEY); } catch {} }
+  const scopeFolderId = activeFolderId;
+  const scopeFolders = [...folders.values()]
+    .filter(f => (f.parentFolderId || null) === scopeFolderId)
+    .sort(boardSort);
+  const scopeBoards = allBoards
+    .filter(b => (b.folderId || null) === scopeFolderId)
+    .sort(boardSort);
+  // Breadcrumb: 🏠 when at root, 🏠 / Folder when inside.
+  let crumb = '';
+  if (cur) {
+    const parent = cur.parentFolderId ? folders.get(cur.parentFolderId) : null;
+    const path = parent ? [parent, cur] : [cur];
+    crumb = `<button class="b-crumb" data-board-crumb="">🏠</button>` +
+      path.map(f => `<span class="b-crumb-sep">›</span><button class="b-crumb${f.id===activeFolderId?' active':''}" data-board-crumb="${escapeAttr(f.id)}" title="Right-click for rename / color">📁 ${escapeHtml(f.name)}</button>`).join('') +
+      `<span class="b-crumb-spacer"></span>`;
+  }
+  const folderPills = scopeFolders.map(f => {
+    const color = SECTION_HEX[f.color] || '#9ca3af';
+    const childBoards = allBoards.filter(b => (b.folderId || null) === f.id).length;
+    const childFolders = [...folders.values()].filter(x => (x.parentFolderId || null) === f.id).length;
+    const count = childBoards + childFolders;
+    return `<button class="board-tab folder" data-folder-id="${escapeAttr(f.id)}" title="Open folder · right-click for rename / color / delete">
+      <span class="b-dot" style="background:${color}"></span>
+      <span>📁 ${escapeHtml(f.name || 'Untitled')}</span>
+      <span class="b-count">${count}</span>
+    </button>`;
+  }).join('');
+  const boardPills = scopeBoards.map(b => {
     const color = SECTION_HEX[b.color] || '#9ca3af';
     const act = b.id === activeBoardId ? ' active' : '';
-    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for rename / color">
+    return `<div class="board-tab${act}" data-id="${b.id}" title="Right-click for rename / color / move to folder">
       <span class="b-dot" style="background:${color}"></span>
       <span>${escapeHtml(b.name || 'Untitled')}</span>
       <button class="b-del" data-board-del="${b.id}" title="Delete this board (with everything on it)">✕</button>
     </div>`;
-  }).join('') + `<button class="board-add" id="boardAddBtn" title="New board">+</button>`;
+  }).join('');
+  // Folder-create only when not already in a depth-2 (subfolder) to enforce
+  // the 2-level cap. cur === null → can make top-level folder. cur with no
+  // parentFolderId → can make subfolder. cur that IS a subfolder → no more.
+  const canAddFolder = !cur || (cur && !cur.parentFolderId);
+  bar.innerHTML = crumb + folderPills + boardPills +
+    `<button class="board-add" id="boardAddBtn" title="New board in this view">+ Board</button>` +
+    (canAddFolder ? `<button class="board-add" id="folderAddBtn" title="New folder">+ 📁</button>` : '');
 }
 
 async function switchToBoard(id){
@@ -5598,6 +5665,7 @@ async function createBoard(name){
   const order = boards.size;
   const board = {
     id, name: name || 'New board', color, order,
+    folderId: activeFolderId || null,   // create inside the current folder view
     createdAt: nowISO(), updatedAt: nowISO()
   };
   boards.set(id, board);
@@ -5605,6 +5673,92 @@ async function createBoard(name){
   renderBoardBar();
   switchToBoard(id);
   return board;
+}
+// ----- Folders -----
+async function createFolder(name){
+  const id = uid();
+  const used = new Set([...folders.values()].map(f => f.color));
+  const color = SECTION_COLORS.find(c => !used.has(c)) || SECTION_COLORS[folders.size % SECTION_COLORS.length];
+  const order = folders.size;
+  const folder = {
+    id, name: name || 'New folder', color, order,
+    parentFolderId: activeFolderId || null,
+    createdAt: nowISO(), updatedAt: nowISO()
+  };
+  folders.set(id, folder);
+  await setDoc(doc(foldersCol, id), folder);
+  renderBoardBar();
+  return folder;
+}
+async function renameFolder(id, name){
+  const f = folders.get(id);
+  if (!f) return;
+  f.name = name; f.updatedAt = nowISO();
+  await setDoc(doc(foldersCol, id), { name, updatedAt: f.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function setFolderColor(id, color){
+  const f = folders.get(id);
+  if (!f) return;
+  f.color = color; f.updatedAt = nowISO();
+  await setDoc(doc(foldersCol, id), { color, updatedAt: f.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+async function deleteFolder(id){
+  const f = folders.get(id);
+  if (!f) return;
+  const childBoards = [...boards.values()].filter(b => (b.folderId || null) === id);
+  const childFolders = [...folders.values()].filter(x => (x.parentFolderId || null) === id);
+  const msg = (childBoards.length || childFolders.length)
+    ? `Delete folder "${f.name}" and move its ${childBoards.length} board(s) + ${childFolders.length} subfolder(s) back to ${f.parentFolderId ? 'the parent folder' : 'the root view'}? (Nothing inside the boards is deleted.)`
+    : `Delete folder "${f.name}"?`;
+  if (!confirm(msg)) return;
+  // Move contents up to this folder's parent.
+  const newParent = f.parentFolderId || null;
+  for (const b of childBoards) {
+    b.folderId = newParent;
+    try { await setDoc(doc(boardsCol, b.id), { folderId: newParent, updatedAt: nowISO() }, { merge: true }); } catch {}
+  }
+  for (const sub of childFolders) {
+    sub.parentFolderId = newParent;
+    try { await setDoc(doc(foldersCol, sub.id), { parentFolderId: newParent, updatedAt: nowISO() }, { merge: true }); } catch {}
+  }
+  folders.delete(id);
+  try { await deleteDoc(doc(foldersCol, id)); } catch {}
+  if (activeFolderId === id) {
+    activeFolderId = newParent;
+    try {
+      if (newParent) localStorage.setItem(ACTIVE_FOLDER_KEY, newParent);
+      else localStorage.removeItem(ACTIVE_FOLDER_KEY);
+    } catch {}
+  }
+  renderBoardBar();
+}
+async function moveBoardToFolder(boardId, folderId){
+  const b = boards.get(boardId);
+  if (!b) return;
+  b.folderId = folderId || null;
+  b.updatedAt = nowISO();
+  await setDoc(doc(boardsCol, boardId), { folderId: b.folderId, updatedAt: b.updatedAt }, { merge: true });
+  renderBoardBar();
+}
+// Enter a folder (or return to root if id is null/empty).
+function enterFolder(id){
+  activeFolderId = id || null;
+  try {
+    if (activeFolderId) localStorage.setItem(ACTIVE_FOLDER_KEY, activeFolderId);
+    else localStorage.removeItem(ACTIVE_FOLDER_KEY);
+  } catch {}
+  renderBoardBar();
+}
+function subscribeFolders(){
+  onSnapshot(foldersCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') folders.delete(ch.doc.id);
+      else folders.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    renderBoardBar();
+  });
 }
 
 async function renameBoard(id, name){
@@ -5649,8 +5803,27 @@ async function deleteBoard(id){
 // Board-bar click + right-click handlers (delegated).
 document.getElementById('boardBar').addEventListener('click', (e) => {
   if (e.target.id === 'boardAddBtn' || e.target.closest('#boardAddBtn')) {
-    const name = prompt('Name this board (e.g. Meals, Personal, Fitness):', '');
+    const where = activeFolderId ? ` (will be added inside this folder)` : '';
+    const name = prompt('Name this board (e.g. Meals, Personal, Fitness):' + where, '');
     if (name && name.trim()) createBoard(name.trim());
+    return;
+  }
+  if (e.target.id === 'folderAddBtn' || e.target.closest('#folderAddBtn')) {
+    const where = activeFolderId ? ` (as a subfolder of current folder)` : '';
+    const name = prompt('Name this folder:' + where, '');
+    if (name && name.trim()) createFolder(name.trim());
+    return;
+  }
+  // Breadcrumb click — navigate to that folder (empty value = root).
+  const crumb = e.target.closest('[data-board-crumb]');
+  if (crumb) {
+    enterFolder(crumb.getAttribute('data-board-crumb') || null);
+    return;
+  }
+  // Folder pill click — enter the folder.
+  const folder = e.target.closest('[data-folder-id]');
+  if (folder) {
+    enterFolder(folder.getAttribute('data-folder-id'));
     return;
   }
   // The hover-revealed ✕ on the active tab deletes the whole board.
@@ -5660,24 +5833,73 @@ document.getElementById('boardBar').addEventListener('click', (e) => {
     deleteBoard(del.getAttribute('data-board-del'));
     return;
   }
-  const tab = e.target.closest('.board-tab');
+  const tab = e.target.closest('.board-tab[data-id]');
   if (tab) switchToBoard(tab.dataset.id);
 });
 document.getElementById('boardBar').addEventListener('contextmenu', (e) => {
-  const tab = e.target.closest('.board-tab');
+  // Folder pill context menu — rename/color/delete folder.
+  const folderEl = e.target.closest('[data-folder-id]');
+  if (folderEl) {
+    e.preventDefault();
+    const id = folderEl.getAttribute('data-folder-id');
+    const f = folders.get(id);
+    if (!f) return;
+    const swatches = SECTION_COLORS.map(c => {
+      const hex = SECTION_HEX[c];
+      const active = c === f.color ? ' active' : '';
+      return `<span class="cm-swatch${active}" data-cm="color" data-color="${c}" style="background:${hex}"></span>`;
+    }).join('');
+    cm.innerHTML = `
+      <div class="cm-item" data-cm="rename">✏︎ Rename folder</div>
+      <div class="cm-row">${swatches}</div>
+      <div class="cm-sep"></div>
+      <div class="cm-item danger" data-cm="delete">✕ Delete folder</div>
+    `;
+    cm.style.left = e.clientX + 'px';
+    cm.style.top  = e.clientY + 'px';
+    cm.classList.remove('hidden');
+    cm.onclick = (ev) => {
+      const c = ev.target.dataset.cm;
+      if (!c) return;
+      hideContextMenu();
+      if (c === 'rename') {
+        const name = prompt('New folder name:', f.name || '');
+        if (name && name.trim()) renameFolder(id, name.trim());
+      } else if (c === 'color') {
+        setFolderColor(id, ev.target.dataset.color);
+      } else if (c === 'delete') {
+        deleteFolder(id);
+      }
+    };
+    return;
+  }
+  const tab = e.target.closest('.board-tab[data-id]');
   if (!tab) return;
   e.preventDefault();
   const id = tab.dataset.id;
   const b = boards.get(id);
   if (!b) return;
-  const items = SECTION_COLORS.map(c => {
+  const swatches = SECTION_COLORS.map(c => {
     const hex = SECTION_HEX[c];
     const active = c === b.color ? ' active' : '';
     return `<span class="cm-swatch${active}" data-cm="color" data-color="${c}" style="background:${hex}"></span>`;
   }).join('');
+  // Build a "move to folder" submenu — root + every folder (with subfolder
+  // indentation). Excludes the board's current folder.
+  const moveOptions = [{ id: '', name: '🏠 Root (no folder)' }]
+    .concat([...folders.values()].filter(f => !f.parentFolderId).flatMap(top => {
+      const subs = [...folders.values()].filter(x => x.parentFolderId === top.id);
+      return [{ id: top.id, name: '📁 ' + top.name }, ...subs.map(s => ({ id: s.id, name: '   └ 📁 ' + s.name }))];
+    }))
+    .filter(o => (o.id || null) !== (b.folderId || null));
+  const moveList = moveOptions.length
+    ? `<div class="cm-sep"></div><div class="cm-item" data-cm="move-header" style="color:var(--muted);font-size:11px;pointer-events:none">Move to…</div>` +
+      moveOptions.map(o => `<div class="cm-item" data-cm="move" data-folder="${escapeAttr(o.id)}">${escapeHtml(o.name)}</div>`).join('')
+    : '';
   cm.innerHTML = `
     <div class="cm-item" data-cm="rename">✏︎ Rename</div>
-    <div class="cm-row">${items}</div>
+    <div class="cm-row">${swatches}</div>
+    ${moveList}
     <div class="cm-sep"></div>
     <div class="cm-item danger" data-cm="delete">✕ Delete board</div>
   `;
@@ -5695,6 +5917,8 @@ document.getElementById('boardBar').addEventListener('contextmenu', (e) => {
       setBoardColor(id, ev.target.dataset.color);
     } else if (c === 'delete') {
       deleteBoard(id);
+    } else if (c === 'move') {
+      moveBoardToFolder(id, ev.target.getAttribute('data-folder') || null);
     }
   };
 });
@@ -5722,6 +5946,14 @@ async function bootstrap(){
     if (!pick || !boards.has(pick)) pick = sorted[0].id;
     activeBoardId = pick;
     try { localStorage.setItem(ACTIVE_BOARD_KEY, activeBoardId); } catch {}
+
+    // 1b. Folders. Pull all and restore activeFolderId from localStorage.
+    try {
+      const fsnap = await getDocs(foldersCol);
+      fsnap.forEach(d => folders.set(d.id, { id: d.id, ...d.data() }));
+      const af = localStorage.getItem(ACTIVE_FOLDER_KEY);
+      if (af && folders.has(af)) activeFolderId = af;
+    } catch (e) { console.warn('[goals] folders load failed', e); }
 
     // 2. View map (per-board). Adopt any legacy top-level pan/zoom into the
     //    first board's slot so existing data isn't lost.
@@ -5812,6 +6044,7 @@ async function bootstrap(){
 
     // 4. Live subscriptions
     subscribeBoards();
+    subscribeFolders();
     subscribeNodes();
     subscribeView();
     subscribeLinkedTodos();
