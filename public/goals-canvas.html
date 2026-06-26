@@ -4494,6 +4494,9 @@ function recipeWithMeta(r){
   const meta = _recipeMeta.get(r.rid) || {};
   return {
     ...r,
+    // Title override lets the user rename a recipe per-card without
+    // touching the upstream EZ data. Falls back to the EZ-side title.
+    title:       (typeof meta.title === 'string' && meta.title.trim()) ? meta.title.trim() : r.title,
     // Use effective labels (stored + auto-derived from EZ tags) so recipe
     // cards display the chips even when no one re-tagged in War Room.
     labels: effectiveLabelsFor(r),
@@ -4506,7 +4509,7 @@ function recipeWithMeta(r){
     // the text matches.
     ingredients: mergeIngredientOverride(r.ingredients, meta.overrideIngredients),
     steps:       Array.isArray(meta.overrideSteps)       ? meta.overrideSteps       : r.steps,
-    _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps || meta.imageUrl)
+    _hasOverride: !!(meta.overrideIngredients || meta.overrideSteps || meta.imageUrl || meta.title)
   };
 }
 function mergeIngredientOverride(original, override){
@@ -4918,7 +4921,7 @@ function drawEzRecipeList(){
       <div role="button" tabindex="0" class="rp-item" data-ez-i="${i}" title="Click to view + edit, then add to board">
         ${thumb}
         <div class="rp-body">
-          <div class="rp-title">${escapeHtml(r.title)}</div>
+          <div class="rp-title">${escapeHtml(merged.title)}</div>
           ${chips ? `<div class="rp-tags">${chips}</div>` : ''}
           <div class="rp-meta">
             <span>${merged.ingredients.length} ingredients</span>
@@ -4983,7 +4986,11 @@ function drawEzDetail(){
   card.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <button class="tb-btn" id="rpdBack" title="Back to list">← Back</button>
-      <h3 style="margin:0">${escapeHtml(r.title)}</h3>
+      <input id="rpdTitle" type="text" value="${escapeAttr(merged.title)}"
+        title="Click to edit. Click Save defaults to commit."
+        style="flex:1;margin:0;background:transparent;border:1px solid transparent;border-radius:6px;color:var(--ink);font:inherit;font-size:18px;font-weight:700;padding:4px 8px;outline:none;min-width:0"
+        onfocus="this.style.borderColor='var(--line)'"
+        onblur="this.style.borderColor='transparent'">
       ${merged._hasOverride ? '<span style="font-size:11px;color:#86efac">Edited</span>' : ''}
     </div>
     <div id="rpDetail">
@@ -5091,11 +5098,18 @@ async function saveEzDefaults(){
   const overrideIngredients = lines.map(text => ({ text, imageUrl: byText.get(text.toLowerCase()) || null }));
   const imgInp = document.getElementById('rpdImageUrl');
   const imageUrl = imgInp ? imgInp.value.trim() : '';
+  const titleInp = document.getElementById('rpdTitle');
+  const r = _ezRecipes.find(x => x.rid === _ezDetailRid);
+  const typedTitle = titleInp ? titleInp.value.trim() : '';
+  // Only persist a title override if it's actually different from the EZ
+  // default — empty/identical means "no override".
+  const titleOverride = (typedTitle && typedTitle !== (r?.title || '')) ? typedTitle : null;
   const payload = {
     labels: [..._ezDetailLabels],
     overrideIngredients,
     overrideSteps:       _ezDetailSteps      .split('\n').map(s => s.trim()).filter(Boolean),
     imageUrl: imageUrl || null,
+    title: titleOverride,
     updatedAt: nowISO()
   };
   setStatus('Saving defaults…', 'sticky');
