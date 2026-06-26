@@ -3911,9 +3911,15 @@ body { display:flex; flex-direction:column; position:relative }
     const pace = pacingFor(section);
     let cached = null;
     try { const r = localStorage.getItem(cacheKey); if (r) cached = JSON.parse(r); } catch {}
+    // User is ahead of schedule (did more than pace asked) — keep today's
+    // plan open so the next lectures stay labeled "Today" instead of being
+    // shoved to Tomorrow. The user wants to keep going; respect that.
     if (pace && doneTodayIndices.length >= pace.perDay) {
-      try { localStorage.setItem(cacheKey, JSON.stringify(doneTodayIndices.map(i => subs[i].id).filter(Boolean))); } catch {}
-      return doneTodayIndices;
+      const ahead = new Set(doneTodayIndices);
+      for (let i = 0; i < subs.length; i++) if (!subs[i].done) ahead.add(i);
+      const arr = [...ahead].sort((a,b) => a - b);
+      try { localStorage.setItem(cacheKey, JSON.stringify(arr.map(i => subs[i].id).filter(Boolean))); } catch {}
+      return arr;
     }
     if (Array.isArray(cached)) {
       const cachedIdx = cached.map(id => subs.findIndex(u => u.id === id)).filter(i => i >= 0);

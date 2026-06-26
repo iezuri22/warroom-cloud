@@ -802,12 +802,18 @@ function todaysPlannedFor(section){
     const raw = localStorage.getItem(cacheKey);
     if (raw) cached = JSON.parse(raw);
   } catch {}
-  // If today's done count already meets/exceeds the pace target, today's
-  // bucket = exactly what's done today (no new lectures get promoted in).
+  // User is ahead of schedule (did more today than pace asked for). Don't
+  // shrink today's plan — keep the remaining lectures labeled "Today" so
+  // they can keep going. Capping the plan was the old "you finished 6,
+  // sprint refuses to advance to the next 3" bug. They earned the right
+  // to roll the next batch forward.
   if (pace && doneTodayIndices.length >= pace.perDay) {
-    const ids = doneTodayIndices.map(i => subs[i].id).filter(Boolean);
+    const ahead = new Set(doneTodayIndices);
+    for (let i = 0; i < subs.length; i++) if (!subs[i].done) ahead.add(i);
+    const arr = [...ahead].sort((a, b) => a - b);
+    const ids = arr.map(i => subs[i].id).filter(Boolean);
     try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
-    return doneTodayIndices;
+    return arr;
   }
   // Honor a previously cached plan — but reconcile it with reality so we
   // don't keep a stale "today" set when subsection IDs have shifted.
