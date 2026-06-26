@@ -4198,6 +4198,8 @@ const EZ_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 const EZ_EMAIL_KEY = 'ez-recipes-email';
 let _ezClient = null;
 let _ezRecipes = [];
+let _ezLoadedAt = 0;            // ms — when we last fetched from Supabase
+const _EZ_CACHE_TTL = 5 * 60_000; // re-use the fetched recipes for 5 min
 let _ezQuery = '';
 let _ezBusy = false;
 function ezClient(){
@@ -4648,6 +4650,13 @@ async function loadEzRecipes(){
   });
   ensureLabelDefaults();
   if (_ezBusy) return;
+  // Re-use the in-memory recipe list when it's fresh — skips the whole
+  // Supabase round trip (the big one) and the heavy decoration pass.
+  // The picker feels instant on the second open.
+  if (_ezRecipes.length && (Date.now() - _ezLoadedAt) < _EZ_CACHE_TTL) {
+    drawEzRecipeList();
+    return;
+  }
   _ezBusy = true;
   try {
     const c = ezClient();
@@ -4786,18 +4795,24 @@ async function loadEzRecipes(){
         })));
     }
     console.log(`[ez] Attached library images to ${totalHits} ingredient lines across ${totalRecipes} recipes`);
-    // Seed the master ingredient library from the EZ ingredient rows so
-    // cross-recipe image edits propagate everywhere going forward.
-    let seeded = 0;
-    for (const [name, url] of ingredientImageMap) {
-      // Skip if already in library (don't clobber user edits).
-      const k = name.toLowerCase().trim();
-      if (_ingLibrary.has(k)) continue;
-      seedLibrary(name, url).catch(()=>{});
-      seeded++;
-    }
-    if (seeded) console.log(`[ez] Seeded ${seeded} new entries into ingredient_library`);
+    // Render NOW so the user sees recipes immediately. The library-seed
+    // loop below is fire-and-forget and not on the critical path — it was
+    // making the picker feel slow on first open.
+    _ezLoadedAt = Date.now();
     drawEzRecipeList();
+    // Defer the master-library seeding to idle time so it doesn't block
+    // the render. Skips entries already in the library so a second open
+    // is a no-op.
+    setTimeout(() => {
+      let seeded = 0;
+      for (const [name, url] of ingredientImageMap) {
+        const k = name.toLowerCase().trim();
+        if (_ingLibrary.has(k)) continue;
+        seedLibrary(name, url).catch(()=>{});
+        seeded++;
+      }
+      if (seeded) console.log(`[ez] Seeded ${seeded} new entries into ingredient_library`);
+    }, 50);
   } catch (e) {
     console.error('[ez] load failed', e);
     drawEzPickerError('Couldn\'t reach EZ Recipes — check your connection.');
