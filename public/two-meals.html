@@ -1620,16 +1620,21 @@ async function doEzAuth(){
 function renderAll(){
   renderTopbar();
   renderSidebar();
-  // Toggle which content panel is visible based on currentView.
+  // Three views: 'week' (slot view), 'past-weeks' (history list),
+  // 'category:<name>' (filtered recipe grid). Toggle the right panel.
   const isWeek = currentView === 'week';
+  const isPast = currentView === 'past-weeks';
+  const isCat  = currentView.startsWith('category:');
   document.getElementById('slots').hidden = !isWeek;
-  document.getElementById('history').hidden = !isWeek || !mealWeeks.size;
-  document.getElementById('catView').hidden = isWeek;
+  document.getElementById('history').hidden = !(isWeek || isPast);
+  document.getElementById('catView').hidden = !isCat;
   document.getElementById('contentHint').hidden = !isWeek;
   if (isWeek) {
     renderSlots();
-    renderHistory();
-  } else {
+    renderHistory();  // small history below slots on the current-week view
+  } else if (isPast) {
+    renderHistory();  // full per-recipe history list, takes the whole pane
+  } else if (isCat) {
     renderCategoryView();
   }
   // Keep the Let's Cook list fresh when EZ data arrives or recipe_meta
@@ -1650,11 +1655,14 @@ function renderSidebar(){
     const labels = effectiveLabelsFor(r);
     for (const L of labels) if (catCounts.has(L)) catCounts.set(L, (catCounts.get(L) || 0) + 1);
   }
+  // Past weeks count — number of UNIQUE recipes ever used in any past
+  // mealWeek (excluding the current one). Derived, not assignable, so the
+  // user can't accidentally "tag" something into this bucket.
+  const pastCount = computeMealHistory().count.size;
 
   const items = [];
-  // 🎯 This week
-  items.push({ key: 'week', label: '🎯 This week', count: null });
-  // Then each category as its own sidebar item.
+  items.push({ key: 'week',       label: '🎯 This week', count: null });
+  items.push({ key: 'past-weeks', label: '🕒 Past weeks', count: pastCount });
   for (const L of LABELS) {
     items.push({ key: 'category:' + L, label: L, count: catCounts.get(L) || 0 });
   }
