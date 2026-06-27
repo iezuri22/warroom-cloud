@@ -4710,13 +4710,31 @@ async function openEzRecipePicker(){
   const bd = document.getElementById('rpBd');
   if (!bd) return;
   bd.classList.add('open');
-  // Decide what to show: login form or recipe list.
-  const c = ezClient();
-  if (!c) { drawEzPickerError('Recipe sync still loading — try again in a sec.'); return; }
-  let sess = null;
-  try { sess = (await c.auth.getSession()).data.session; } catch {}
-  if (!sess) { drawEzLogin(); return; }
-  await loadEzRecipes();
+  // Wrap everything below in try/catch — without this, ANY throw between
+  // here and the first innerHTML replacement leaves the user staring at the
+  // hardcoded "Pull from existing" markup that ships in the HTML (the modal
+  // is open but its contents were never rewritten). Errors here are now
+  // logged AND surfaced in the picker, instead of silently swallowed.
+  try {
+    // Decide what to show: login form or recipe list.
+    const c = ezClient();
+    if (!c) { drawEzPickerError('Recipe sync still loading — try again in a sec.'); return; }
+    // Race getSession against a 3s timeout so a hung Supabase auth refresh
+    // can't leave the user staring at the default "Pull from existing"
+    // markup forever. If the timer wins, we treat it as no-session and show
+    // the login form — at least the user gets actionable UI.
+    let sess = null;
+    try {
+      const timed = new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timeout')), 3000));
+      const got = await Promise.race([c.auth.getSession(), timed]);
+      sess = got?.data?.session || null;
+    } catch (e) { console.warn('[ez] getSession failed', e?.message || e); }
+    if (!sess) { drawEzLogin(); return; }
+    await loadEzRecipes();
+  } catch (e) {
+    console.error('[ez] openEzRecipePicker failed', e);
+    drawEzPickerError('Couldn\'t open EZ Recipes — ' + (e?.message || 'unknown error'));
+  }
 }
 function closeEzPicker(){
   document.getElementById('rpBd')?.classList.remove('open');
