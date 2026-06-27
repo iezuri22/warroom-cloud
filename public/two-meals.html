@@ -1477,18 +1477,34 @@ async function combineDuplicates(){
   alert(`Combined ${merged} duplicate group${merged === 1 ? '' : 's'}.`);
 }
 
+// Skip-check that respects existing aliases — fixes the bug where syncing
+// from EZ would re-add entries you'd combined in Goals (because the source
+// name lived on as an alias of the canonical entry, not its own doc).
+function alreadyInLibrary(k){
+  if (!k) return false;
+  if (ingredientLib.has(k)) return true;
+  for (const e of ingredientLib.values()) {
+    if (Array.isArray(e.aliases) && e.aliases.includes(k)) return true;
+  }
+  return false;
+}
+
 async function syncFromRecipes(){
   if (!ezRecipes.length) { alert('No recipes loaded yet — sign in or refresh first.'); return; }
-  let seeded = 0;
+  let seeded = 0, skipped = 0;
   for (const r of ezRecipes) {
     for (const it of (r.ingredients || [])) {
       const k = normalizeIngredientName(it.text);
-      if (!k || ingredientLib.has(k)) continue;
+      if (!k) continue;
+      if (alreadyInLibrary(k)) { skipped++; continue; }
       await setLibraryImage(it.text, it.imageUrl || null);
       seeded++;
     }
   }
-  alert(seeded ? `Added ${seeded} new ingredient${seeded === 1 ? '' : 's'} to the library.` : 'Library already has every loaded recipe ingredient.');
+  const msg = seeded
+    ? `Added ${seeded} new ingredient${seeded === 1 ? '' : 's'} (skipped ${skipped} already in your library, including aliases).`
+    : `Library already covers every loaded recipe ingredient (checked ${skipped}, all known).`;
+  alert(msg);
   drawIngLib();
 }
 
@@ -1499,7 +1515,7 @@ async function syncFromEz(){
   if (!sess) { alert('Sign in to EZ Recipes first.'); openEzAuth(); return; }
   const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
   if (error) { alert('EZ error: ' + (error.message || error)); return; }
-  let seeded = 0;
+  let seeded = 0, skipped = 0;
   for (const r of (data || [])) {
     if (String(r.id || '').startsWith('recipe_')) continue;
     const d = r.data || {};
@@ -1508,11 +1524,15 @@ async function syncFromEz(){
                   d.pic || d.picture || d.img || d.thumbnail || '').toString().trim();
     if (!name) continue;
     const k = normalizeIngredientName(name);
-    if (!k || ingredientLib.has(k)) continue;
+    if (!k) continue;
+    if (alreadyInLibrary(k)) { skipped++; continue; }
     await setLibraryImage(name, img || null);
     seeded++;
   }
-  alert(seeded ? `Added ${seeded} ingredient${seeded === 1 ? '' : 's'} from EZ.` : 'Library already has every EZ ingredient.');
+  const msg = seeded
+    ? `Added ${seeded} ingredient${seeded === 1 ? '' : 's'} from EZ (skipped ${skipped} already in your library, including aliases).`
+    : `Library already covers every EZ ingredient (checked ${skipped}, all known).`;
+  alert(msg);
   drawIngLib();
 }
 
