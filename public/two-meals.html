@@ -203,6 +203,32 @@
   .mini.primary:hover{ background:rgba(255,138,61,.26) }
   .mini.danger:hover{ color:#fca5a5;border-color:rgba(248,113,113,.4) }
 
+  /* Quick ingredient popover that drops from the slot's actions row */
+  .slot-ings-pop{
+    margin:0 16px 12px; padding:10px 12px; border-radius:10px;
+    background:var(--w03); border:1px solid var(--line);
+    max-height:300px; overflow-y:auto;
+  }
+  .slot-ings-pop[hidden]{ display:none }
+  .slot-ings-pop .sip-head{
+    font-size:10px; text-transform:uppercase; letter-spacing:.4px;
+    color:var(--w55); font-weight:800; margin-bottom:8px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .slot-ings-pop .sip-row{
+    display:flex; align-items:center; gap:8px; padding:5px 0;
+    font-size:13px; border-bottom:1px solid var(--line);
+  }
+  .slot-ings-pop .sip-row:last-child{ border-bottom:none }
+  .slot-ings-pop .sip-thumb{
+    width:28px; height:28px; border-radius:5px; object-fit:cover;
+    background:var(--w05); flex:0 0 28px;
+  }
+  .slot-ings-pop .sip-thumb.ph{
+    display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--muted);
+  }
+  .slot-ings-pop .sip-text{ flex:1; min-width:0; color:var(--ink) }
+
   /* Sides under each main slot */
   .sides{
     display:flex;flex-direction:column;gap:6px;padding:0 16px 8px;
@@ -532,7 +558,7 @@
   <span class="spacer"></span>
   <button class="tb-btn" id="ingLibBtn">🧂 Library</button>
   <button class="tb-btn" id="cookListBtn">🍴 Let's Cook</button>
-  <button class="tb-btn primary" id="groceryBtn" hidden>🛒 Grocery (both)</button>
+  <button class="tb-btn primary" id="groceryBtn">🛒 Grocery</button>
 </div>
 
 <div id="main">
@@ -843,6 +869,9 @@ const recipesCol       = collection(db, 'meals_recipes');
 // Comfort food, Meal-prep, Lazy Sunday, etc.) and have those filters live
 // in both the picker and Let's Cook list.
 const categoriesCol    = collection(db, 'meals_categories');
+// Grocery settings: pantry items the user wants hidden globally + manually
+// added items not tied to any recipe. Single doc per user.
+const groceryDoc       = doc(db, 'meals_grocery', 'singleton');
 
 // localStorage flag: when present, loadEz becomes a no-op and we serve
 // recipes from Firestore only. Set by the Disconnect EZ migrator.
@@ -888,6 +917,9 @@ const userCategories = new Map();  // id -> { name, order? }
 // pic uploaded here propagates to Goals canvas and vice versa. Normalized
 // name (lowercased, qty/units stripped) → { name, imageUrl, aliases[] }.
 const ingredientLib = new Map();
+// Grocery: { hidden: Set(normalized names), manual: [{id, text, checked}],
+// checked: Set(slotIdx-itemKey) }. Persisted in meals_grocery singleton.
+let grocery = { hidden: new Set(), manual: [], checked: new Set() };
 // Track recipe whose Cook walkthrough is open — used to scope writes and
 // re-render after recipe_meta snapshot updates.
 let cookOpenRid = null;
@@ -1187,6 +1219,34 @@ function drawCategories(){
       deleteCategory(id);
     });
   });
+}
+
+// ---------- Grocery state ----------
+function subscribeGrocery(){
+  onSnapshot(groceryDoc, (snap) => {
+    const d = snap.exists() ? (snap.data() || {}) : {};
+    grocery.hidden  = new Set(Array.isArray(d.hidden)  ? d.hidden  : []);
+    grocery.manual  = Array.isArray(d.manual) ? d.manual : [];
+    grocery.checked = new Set(Array.isArray(d.checked) ? d.checked : []);
+    if (document.getElementById('grocBg')?.classList.contains('open')) {
+      try { renderGrocery(); } catch {}
+    }
+  }, (err) => console.warn('[grocery] snapshot err', err));
+}
+let _grocerySaveTimer = null;
+function scheduleSaveGrocery(){
+  if (_grocerySaveTimer) clearTimeout(_grocerySaveTimer);
+  _grocerySaveTimer = setTimeout(async () => {
+    _grocerySaveTimer = null;
+    try {
+      await setDoc(groceryDoc, {
+        hidden: [...grocery.hidden],
+        manual: grocery.manual,
+        checked: [...grocery.checked],
+        updatedAt: nowISO()
+      }, { merge: true });
+    } catch (e) { console.warn('[grocery] save failed', e); }
+  }, 300);
 }
 
 // ---------- Categories ----------
@@ -1743,9 +1803,10 @@ function renderCategoryView(){
 function renderTopbar(){
   const k = isoWeekKey();
   document.getElementById('topbarWeek').textContent = '· Week of ' + weekDateRange(k);
-  const wk = mealWeeks.get(k);
-  const filled = wk && wk.slots && wk.slots.filter(Boolean).length === 2;
-  document.getElementById('groceryBtn').hidden = !filled;
+  // Grocery is always available now — even with empty slots you can use the
+  // manual-add list to build a freeform shopping list, and skipped items
+  // persist regardless of which slots are filled.
+  document.getElementById('groceryBtn').hidden = false;
 }
 function lookupRecipe(rid){
   if (!rid) return null;
@@ -1816,10 +1877,12 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
     </div>
     ${editable ? `<div class="slot-actions">
       <button class="mini primary" data-cook="${attr(rid)}">🍴 Cook</button>
+      <button class="mini" data-ings="${attr(rid)}|${slotIdx}">🥬 Ingredients</button>
       <button class="mini" data-view="${attr(rid)}">📖 View</button>
       <button class="mini" data-pick="${slotIdx}">↻ Replace</button>
       <button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">✕ Clear</button>
-    </div>` : ''}
+    </div>
+    <div class="slot-ings-pop" id="slotIngsPop_${slotIdx}" hidden></div>` : ''}
     ${sidesHtml}
     ${addSideBtn}
   </div>`;
@@ -1866,6 +1929,11 @@ function renderSlots(){
   el.querySelectorAll('[data-side-cook]').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
     openCook(b.getAttribute('data-side-cook'));
+  }));
+  el.querySelectorAll('[data-ings]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const [rid, idxStr] = b.getAttribute('data-ings').split('|');
+    toggleSlotIngsPopover(rid, parseInt(idxStr, 10));
   }));
   el.querySelectorAll('[data-side-clear]').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
@@ -2769,6 +2837,33 @@ function renderCookStep(){
   wireCookStepEdits(body, step);
 }
 
+// ---------- Slot ingredient popover ----------
+// Quick glance at a slot's ingredients without opening View or Cook.
+function toggleSlotIngsPopover(rid, slotIdx){
+  const pop = document.getElementById(`slotIngsPop_${slotIdx}`);
+  if (!pop) return;
+  // Toggle close if already open.
+  if (!pop.hidden) { pop.hidden = true; pop.innerHTML = ''; return; }
+  const raw = lookupRecipe(rid);
+  if (!raw) return;
+  const merged = recipeWithMeta(raw);
+  const ings = (merged.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
+  if (!ings.length) {
+    pop.innerHTML = `<div class="sip-head">🥬 Ingredients</div><div class="empty-msg" style="padding:10px 0">No ingredients listed.</div>`;
+  } else {
+    pop.innerHTML = `
+      <div class="sip-head">🥬 Ingredients · ${ings.length}</div>
+      ${ings.map(i => {
+        const img = i.imageUrl || libImageFor(i.text || '');
+        return `<div class="sip-row">
+          ${img ? `<img class="sip-thumb" src="${attr(img)}" alt="" loading="lazy" onerror="this.classList.add('ph');this.replaceWith(Object.assign(document.createElement('div'),{className:'sip-thumb ph',textContent:'🥄'}))">` : `<div class="sip-thumb ph">🥄</div>`}
+          <span class="sip-text">${esc(i.text)}</span>
+        </div>`;
+      }).join('')}`;
+  }
+  pop.hidden = false;
+}
+
 // ---------- Step ingredient picker ----------
 // Shows the recipe's full ingredient list first (so the user picks from
 // what's already established), then any library matches by search, then a
@@ -2974,29 +3069,146 @@ function wireCookStepEdits(body, step){
   });
 }
 
-// ---------- Grocery ----------
+// ---------- Grocery v2 ----------
+// Skipped ingredients (pantry-style) are stored by normalized name in
+// grocery.hidden — globally hidden across all weeks. Manual items live in
+// grocery.manual as { id, text, checked }. Checked state for recipe-derived
+// items keys on `${slotIdx}|${normalizedName}` so unchecking carries over
+// across recipes that share an ingredient.
 function openGrocery(){
-  const wk = mealWeeks.get(isoWeekKey());
-  if (!wk || !wk.slots) return;
-  const recipes = wk.slots.map(rid => rid ? lookupRecipe(rid) : null).filter(Boolean).map(r => recipeWithMeta(r));
+  document.getElementById('grocBg').classList.add('open');
+  renderGrocery();
+}
+function renderGrocery(){
   const body = document.getElementById('grocBody');
-  if (!recipes.length) { body.innerHTML = '<div class="empty-msg">Pick two meals first.</div>'; document.getElementById('grocBg').classList.add('open'); return; }
-  body.innerHTML = recipes.map((r, i) => {
-    const ings = (r.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
-    return `<div class="grocery-section">${esc(r.title)}</div>
-      <ul class="grocery-list">
-        ${ings.map((it, j) => `<li class="grocery-item" data-i="${i}-${j}">
-          <input type="checkbox" data-cb>
-          <span>${esc(it.text)}</span>
-        </li>`).join('')}
-      </ul>`;
-  }).join('');
-  body.querySelectorAll('.grocery-item').forEach(li => {
-    li.querySelector('[data-cb]').addEventListener('change', e => {
-      li.classList.toggle('checked', e.target.checked);
+  const wk = mealWeeks.get(isoWeekKey()) || { slots: [], sides: [] };
+  const slots = Array.isArray(wk.slots) ? wk.slots : [];
+  const sides = Array.isArray(wk.sides) ? wk.sides : [];
+
+  // Build per-recipe ingredient lists (mains + sides) with skip filter
+  // applied.
+  const sections = [];
+  const collectFromRid = (rid, label) => {
+    if (!rid) return;
+    const raw = lookupRecipe(rid);
+    if (!raw) return;
+    const merged = recipeWithMeta(raw);
+    const ings = (merged.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
+    sections.push({
+      title: label,
+      recipeTitle: merged.title,
+      items: ings.map(it => ({
+        text: it.text || '',
+        normalized: normalizeIngredientName(it.text || ''),
+        hidden: grocery.hidden.has(normalizeIngredientName(it.text || '')),
+      }))
+    });
+  };
+  slots.forEach((rid, i) => {
+    if (!rid) return;
+    collectFromRid(rid, `Meal #${i + 1}`);
+    if (Array.isArray(sides[i])) {
+      sides[i].forEach((sRid, j) => collectFromRid(sRid, `Meal #${i + 1} side ${j + 1}`));
+    }
+  });
+
+  // Manual items
+  const manualHtml = `
+    <div class="grocery-section">Manual items <span style="color:var(--muted);font-size:11px;font-weight:600;text-transform:none">${grocery.manual.length}</span></div>
+    ${grocery.manual.length ? `<ul class="grocery-list">${grocery.manual.map(m => `
+      <li class="grocery-item${m.checked ? ' checked' : ''}" data-manual-id="${attr(m.id)}">
+        <input type="checkbox" data-cb ${m.checked ? 'checked' : ''}>
+        <span>${esc(m.text)}</span>
+        <span style="flex:1"></span>
+        <button class="mini danger" data-act="m-del" title="Delete">✕</button>
+      </li>`).join('')}</ul>` : ''}
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input type="text" id="grocManualInput" class="cl-search" placeholder="+ Add an item (e.g. milk, paper towels)…" style="margin-bottom:0;flex:1">
+      <button class="tb-btn primary" id="grocManualAdd" style="background:var(--accent);color:#fff;border:none;white-space:nowrap">+ Add</button>
+    </div>`;
+
+  // Recipe sections + per-item skip button.
+  const recipeHtml = sections.length
+    ? sections.map((s, si) => {
+        const visibleItems = s.items.filter(it => !it.hidden);
+        const hiddenCount = s.items.length - visibleItems.length;
+        return `<div class="grocery-section">${esc(s.title)} <span style="color:var(--muted);font-size:11px;font-weight:600;text-transform:none">${esc(s.recipeTitle)}${hiddenCount ? ` · ${hiddenCount} skipped` : ''}</span></div>
+          ${visibleItems.length ? `<ul class="grocery-list">${visibleItems.map((it) => {
+            const key = `${si}|${it.normalized}`;
+            const checked = grocery.checked.has(key);
+            return `<li class="grocery-item${checked ? ' checked' : ''}" data-key="${attr(key)}" data-normalized="${attr(it.normalized)}">
+              <input type="checkbox" data-cb ${checked ? 'checked' : ''}>
+              <span>${esc(it.text)}</span>
+              <span style="flex:1"></span>
+              <button class="mini" data-act="skip" title="Hide this ingredient from future grocery lists (e.g. you always have it in pantry)">🚫 Skip</button>
+            </li>`;
+          }).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">All items skipped for this section.</div>'}`;
+      }).join('')
+    : '<div class="empty-msg">No mains in this week\'s slots yet. Manual items still work below.</div>';
+
+  // Pantry / hidden ingredients restore section.
+  const hiddenList = [...grocery.hidden];
+  const hiddenHtml = hiddenList.length
+    ? `<div class="grocery-section" style="margin-top:18px">🚫 Skipped (pantry) <span style="color:var(--muted);font-size:11px;font-weight:600;text-transform:none">${hiddenList.length}</span></div>
+       <div style="display:flex;flex-wrap:wrap;gap:6px">${hiddenList.map(name => `
+         <button class="tb-btn" data-act="unskip" data-name="${attr(name)}" style="font-size:11px;padding:4px 9px;border-radius:99px;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.3);color:#fca5a5">${esc(name)} ✕</button>
+       `).join('')}</div>`
+    : '';
+
+  body.innerHTML = manualHtml + recipeHtml + hiddenHtml;
+
+  // Manual add
+  const inp = document.getElementById('grocManualInput');
+  const addBtn = document.getElementById('grocManualAdd');
+  const doAdd = () => {
+    const t = (inp.value || '').trim();
+    if (!t) return;
+    const id = 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    grocery.manual.push({ id, text: t, checked: false });
+    inp.value = '';
+    scheduleSaveGrocery();
+    renderGrocery();
+  };
+  addBtn?.addEventListener('click', doAdd);
+  inp?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
+
+  // Manual item handlers
+  body.querySelectorAll('[data-manual-id]').forEach(li => {
+    const id = li.getAttribute('data-manual-id');
+    li.querySelector('[data-cb]')?.addEventListener('change', e => {
+      const m = grocery.manual.find(x => x.id === id);
+      if (m) { m.checked = e.target.checked; li.classList.toggle('checked', e.target.checked); scheduleSaveGrocery(); }
+    });
+    li.querySelector('[data-act="m-del"]')?.addEventListener('click', () => {
+      grocery.manual = grocery.manual.filter(x => x.id !== id);
+      scheduleSaveGrocery();
+      renderGrocery();
     });
   });
-  document.getElementById('grocBg').classList.add('open');
+
+  // Recipe-item handlers
+  body.querySelectorAll('[data-key]').forEach(li => {
+    const key = li.getAttribute('data-key');
+    const norm = li.getAttribute('data-normalized');
+    li.querySelector('[data-cb]')?.addEventListener('change', e => {
+      if (e.target.checked) grocery.checked.add(key);
+      else grocery.checked.delete(key);
+      li.classList.toggle('checked', e.target.checked);
+      scheduleSaveGrocery();
+    });
+    li.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
+      if (norm) grocery.hidden.add(norm);
+      scheduleSaveGrocery();
+      renderGrocery();
+    });
+  });
+
+  // Unskip
+  body.querySelectorAll('[data-act="unskip"]').forEach(btn => btn.addEventListener('click', () => {
+    grocery.hidden.delete(btn.getAttribute('data-name'));
+    scheduleSaveGrocery();
+    renderGrocery();
+  }));
 }
 
 // ---------- Wire up ----------
@@ -3084,6 +3296,7 @@ subscribeMealWeeks();
 subscribeRecipeMeta();
 subscribeIngredientLib();
 subscribeRecipes();
+subscribeGrocery();
 // Skip EZ entirely once you've disconnected — recipes flow in via the
 // subscribeRecipes mirror.
 if (!isEzDisconnected()) loadEz();
