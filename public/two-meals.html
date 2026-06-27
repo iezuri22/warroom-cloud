@@ -420,6 +420,7 @@
         <button class="tb-btn" id="ingLibCleanup" title="Find leftover source docs from past combines and remove them — keeps the combined target.">🧹 Clean up combines</button>
         <button class="tb-btn" id="ingLibSyncEz" title="Pull your full saved library from EZ Recipes (PotLuck)">⟳ Sync from EZ</button>
         <button class="tb-btn" id="ingLibSyncRecipes" title="Scan every loaded recipe and add missing ingredients">⟳ Sync from recipes</button>
+        <button class="tb-btn" id="ingLibDisconnectEz" title="One-time: save every EZ recipe to your own Firestore + stop calling EZ on every page load. Big speed win.">🔌 Disconnect EZ</button>
         <button class="tb-btn primary" id="ingLibAdd" style="background:var(--accent);color:#fff;border:none">+ Add ingredient</button>
       </div>
     </div>
@@ -603,6 +604,14 @@ const storage = getStorage(app);
 const mealWeeksCol     = collection(db, 'goals_canvas_meal_weeks');
 const recipeMetaCol    = collection(db, 'goals_canvas_recipe_meta');
 const ingredientLibCol = collection(db, 'ingredient_library');
+// Local mirror of EZ recipes. Once you "disconnect EZ" the user keeps the
+// snapshot here forever — no more Supabase round-trips on page load.
+const recipesCol       = collection(db, 'meals_recipes');
+
+// localStorage flag: when present, loadEz becomes a no-op and we serve
+// recipes from Firestore only. Set by the Disconnect EZ migrator.
+const EZ_DISCONNECTED_KEY = 'ez-recipes-disconnected';
+function isEzDisconnected(){ try { return !!localStorage.getItem(EZ_DISCONNECTED_KEY); } catch { return false; } }
 
 // EZ Recipes (Supabase) credentials — same as goals-canvas.html.
 const EZ_URL  = 'https://blqbxduxgimarrhgyfgn.supabase.co';
@@ -894,6 +903,42 @@ function subscribeMealWeeks(){
     renderAll();
   }, (err) => console.warn('[meals] snapshot err', err));
 }
+// Live mirror of meals_recipes. Once you've migrated, this is the source of
+// truth — every change here re-renders the rest of the page just like the
+// EZ pull used to. The shape matches what loadEz produces so downstream
+// code (lookupRecipe, recipeWithMeta, picker, Let's Cook list, etc.) didn't
+// need to change.
+function subscribeRecipes(){
+  onSnapshot(recipesCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      const id = ch.doc.id;
+      if (ch.type === 'removed') {
+        ezRecipes = ezRecipes.filter(r => r.rid !== id);
+        return;
+      }
+      const d = ch.doc.data() || {};
+      const next = {
+        rid: id,
+        title: d.title || '',
+        img: d.img || '',
+        tags: Array.isArray(d.tags) ? d.tags : [],
+        ingredients: Array.isArray(d.ingredients) ? d.ingredients : [],
+        steps: Array.isArray(d.steps) ? d.steps : []
+      };
+      const idx = ezRecipes.findIndex(r => r.rid === id);
+      if (idx >= 0) ezRecipes[idx] = next;
+      else ezRecipes.push(next);
+    });
+    if (isEzDisconnected()) {
+      // In disconnected mode the Firestore data is the truth — drive the
+      // ready-state banner off it too.
+      ezStatus = ezRecipes.length ? 'ready' : 'loading';
+      updateEzBanner();
+    }
+    renderAll();
+  }, (err) => console.warn('[recipes] snapshot err', err));
+}
+
 function subscribeRecipeMeta(){
   onSnapshot(recipeMetaCol, (snap) => {
     snap.docChanges().forEach(ch => {
@@ -998,6 +1043,14 @@ let _ezClientWaitTries = 0;
 const EZ_EMAIL_KEY = 'ez-recipes-last-email';
 
 async function loadEz(){
+  // Short-circuit when the user clicked Disconnect EZ — recipes flow in
+  // from the Firestore `meals_recipes` subscription instead.
+  if (isEzDisconnected()) {
+    console.log('[ez] disconnected — using Firestore mirror only');
+    ezStatus = ezRecipes.length ? 'ready' : 'loading';
+    updateEzBanner();
+    return;
+  }
   console.log('[ez] loadEz', { ezStatus, ezSignedIn });
   const c = ezClient();
   // Supabase CDN may not have parsed yet on first call — retry up to ~5s.
@@ -1493,6 +1546,52 @@ async function syncFromRecipes(){
     : `Library already covers every loaded recipe ingredient (checked ${skipped}, all known).`;
   alert(msg);
   drawIngLib();
+}
+
+// ---------- Disconnect EZ (one-time migration) ----------
+// Snapshot every loaded EZ recipe into Firestore's meals_recipes collection,
+// then flip a localStorage flag so loadEz becomes a no-op on every future
+// page load. After this runs, Meals + Goals load instantly because they
+// just stream from Firestore — no more Supabase auth, no more 200-recipe
+// network round-trip on init.
+async function disconnectEz(){
+  if (isEzDisconnected()) {
+    if (!confirm('You\'re already disconnected from EZ. Re-run the migration to refresh from EZ once more?')) return;
+    // Clear the flag temporarily so loadEz can pull again.
+    localStorage.removeItem(EZ_DISCONNECTED_KEY);
+  }
+  if (!ezRecipes.length) {
+    // Force a fresh EZ pull first so we have something to migrate.
+    alert('Pulling recipes from EZ first…');
+    await loadEz();
+  }
+  if (!ezRecipes.length) {
+    alert('No recipes loaded yet — sign in to EZ or wait for the load to finish, then try again.');
+    return;
+  }
+  if (!confirm(`Save your ${ezRecipes.length} EZ recipes to your own Firestore and stop calling EZ on every page load?\n\nAfter this, Meals will load instantly because it streams from Firestore instead of hitting Supabase. You can re-run this anytime to pull fresh from EZ.`)) {
+    // User backed out. Restore flag if we cleared it.
+    return;
+  }
+  let written = 0;
+  for (const r of ezRecipes) {
+    try {
+      await setDoc(doc(recipesCol, r.rid), {
+        title: r.title || '',
+        img: r.img || '',
+        tags: Array.isArray(r.tags) ? r.tags : [],
+        ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+        steps: Array.isArray(r.steps) ? r.steps : [],
+        migratedAt: nowISO()
+      });
+      written++;
+    } catch (e) { console.warn('[recipes] migrate failed for', r.rid, e); }
+  }
+  // Flip the flag — future page loads skip EZ entirely.
+  try { localStorage.setItem(EZ_DISCONNECTED_KEY, '1'); } catch {}
+  ezStatus = 'ready';
+  updateEzBanner();
+  alert(`Migrated ${written} of ${ezRecipes.length} recipes. EZ sync disabled — Meals will load instantly from now on.`);
 }
 
 async function syncFromEz(){
@@ -2175,6 +2274,7 @@ document.getElementById('ingLibAdd').addEventListener('click', addIngredientProm
 document.getElementById('ingLibSyncEz').addEventListener('click', syncFromEz);
 document.getElementById('ingLibSyncRecipes').addEventListener('click', syncFromRecipes);
 document.getElementById('ingLibCleanup').addEventListener('click', cleanupOrphans);
+document.getElementById('ingLibDisconnectEz').addEventListener('click', disconnectEz);
 // Step ingredient picker
 document.getElementById('ingPickClose').addEventListener('click', closeStepIngPicker);
 document.getElementById('ingPickBg').addEventListener('click', e => { if (e.target.id === 'ingPickBg') closeStepIngPicker(); });
@@ -2215,7 +2315,10 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 subscribeMealWeeks();
 subscribeRecipeMeta();
 subscribeIngredientLib();
-loadEz();
+subscribeRecipes();
+// Skip EZ entirely once you've disconnected — recipes flow in via the
+// subscribeRecipes mirror.
+if (!isEzDisconnected()) loadEz();
 
 renderAll();
 </script>
