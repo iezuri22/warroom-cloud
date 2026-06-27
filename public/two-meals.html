@@ -417,6 +417,7 @@
       <div id="ingLibGrid"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
         <span style="color:var(--muted);font-size:12px;flex:1">Changes here update every recipe using the ingredient.</span>
+        <button class="tb-btn" id="ingLibDedupe" title="Find singular/plural duplicates and merge them">🔀 Combine duplicates</button>
         <button class="tb-btn" id="ingLibSyncEz" title="Pull your full saved library from EZ Recipes (PotLuck)">⟳ Sync from EZ</button>
         <button class="tb-btn" id="ingLibSyncRecipes" title="Scan every loaded recipe and add missing ingredients">⟳ Sync from recipes</button>
         <button class="tb-btn primary" id="ingLibAdd" style="background:var(--accent);color:#fff;border:none">+ Add ingredient</button>
@@ -436,11 +437,19 @@
   }
   .il-card:hover{ border-color:var(--accent);transform:translateY(-1px) }
   .il-thumb{
-    width:100%;height:110px;background:var(--w05) center/cover no-repeat;
+    width:100%;height:110px;background:var(--w05);
     display:flex;align-items:center;justify-content:center;font-size:30px;color:var(--muted);
-    position:relative;
+    position:relative;overflow:hidden;
   }
-  .il-thumb.has-img{ color:transparent }
+  .il-thumb img{
+    width:100%;height:100%;object-fit:cover;display:block;
+  }
+  /* Placeholder positioned absolutely so it stays centered when the <img>
+     fails to load and we drop it via onerror. */
+  .il-thumb .il-ph{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;
+  }
   .il-menu{
     position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:6px;
     background:rgba(0,0,0,.55);color:#fff;border:none;cursor:pointer;display:flex;
@@ -1268,12 +1277,26 @@ function drawIngLib(){
     </div>`;
     return;
   }
+  // Treat whitespace-only URLs as "no image" so we don't pretend the entry
+  // has a photo when it really doesn't.
+  const cleanUrl = u => (typeof u === 'string' && u.trim()) ? u.trim() : '';
   grid.innerHTML = entries.map(e => {
-    const hasImg = !!e.imageUrl;
+    const url = cleanUrl(e.imageUrl);
+    // Render an <img> with onerror that drops itself; the <span class="il-ph">
+    // sits underneath so it shows whenever the img isn't visible — either no
+    // URL at all OR the URL failed to load. That's the fix for the "white
+    // empty cards" — broken background-image URLs were silently swallowed.
+    const imgHtml = url
+      ? `<img src="${attr(url)}" alt="" loading="lazy" onerror="this.remove()">`
+      : '';
+    // Placeholder is ALWAYS rendered (and the <img> overlays it when
+    // present). On img onerror the <img> removes itself and the
+    // placeholder surfaces — fixes the "white empty card" cases where
+    // a stored URL turned out to be broken or expired.
     return `<div class="il-card" data-ing="${attr(e.name)}">
-      <div class="il-thumb ${hasImg ? 'has-img' : ''}" data-act="thumb"
-           ${hasImg ? `style="background-image:url('${attr(e.imageUrl)}')"` : ''}>
-        ${hasImg ? '' : '🥬'}
+      <div class="il-thumb" data-act="thumb">
+        <span class="il-ph">🥬</span>
+        ${imgHtml}
         <button class="il-menu" data-act="menu" title="More options">⋯</button>
       </div>
       <div class="il-name" title="${attr(e.name)}">${esc(e.name)}</div>
@@ -1375,6 +1398,83 @@ async function addIngredientPrompt(){
   const url = prompt(`Image URL for "${name.trim()}" (optional, leave blank):`, '');
   if (url === null) return;
   await setLibraryImage(name.trim(), url.trim() || null);
+}
+
+// ---------- Combine duplicates ----------
+// Returns the canonical form (drops trailing 's', 'es', or 'ies' → 'y')
+// so duplicate-detection treats "apples", "potatoes", "berries" as the same
+// entry as "apple", "potato", "berry".
+function singularize(name){
+  if (!name) return name;
+  // Multi-word: only singularize the LAST word ("baby potatoes" → "baby potato").
+  const parts = name.split(/\s+/);
+  const last = parts[parts.length - 1];
+  let singLast = last;
+  if (/ies$/i.test(last) && last.length > 3) singLast = last.slice(0, -3) + 'y';
+  else if (/sses$/i.test(last)) singLast = last.slice(0, -2);
+  else if (/oes$/i.test(last) && last.length > 3) singLast = last.slice(0, -2);
+  else if (/s$/i.test(last) && !/ss$/i.test(last) && last.length > 2) singLast = last.slice(0, -1);
+  parts[parts.length - 1] = singLast;
+  return parts.join(' ');
+}
+// Find groups of entries that share a singularized key. Each group will be
+// merged: pick the entry that has an image (or the shortest name if neither
+// does) as the canonical, fold the others in as aliases, delete them.
+function findDuplicateGroups(){
+  const groups = new Map();   // singularized key -> [entryName, ...]
+  for (const e of ingredientLib.values()) {
+    const k = singularize(e.name);
+    if (!k) continue;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e.name);
+  }
+  return [...groups.entries()]
+    .filter(([_, names]) => names.length > 1)
+    .map(([key, names]) => ({ key, names }));
+}
+async function combineDuplicates(){
+  const groups = findDuplicateGroups();
+  if (!groups.length) { alert('No singular/plural duplicates found.'); return; }
+  const summary = groups.map(g => `  • ${g.key}: ${g.names.join(', ')}`).join('\n');
+  if (!confirm(`Found ${groups.length} duplicate group${groups.length === 1 ? '' : 's'}:\n\n${summary}\n\nCombine them? Each group keeps the entry with the best photo and folds the others in as aliases.`)) return;
+  let merged = 0;
+  for (const g of groups) {
+    // Pick canonical: shortest name with an image. Fall back to shortest.
+    const entries = g.names.map(n => ingredientLib.get(n)).filter(Boolean);
+    const withImg = entries.filter(e => (e.imageUrl || '').trim());
+    const pool = withImg.length ? withImg : entries;
+    pool.sort((a, b) => a.name.length - b.name.length);
+    const keeper = pool[0];
+    if (!keeper) continue;
+    const losers = entries.filter(e => e.name !== keeper.name);
+    if (!losers.length) continue;
+    // Adopt loser names + their aliases into keeper aliases (deduped).
+    const aliasSet = new Set([...(keeper.aliases || [])]);
+    losers.forEach(l => {
+      aliasSet.add(l.name);
+      (l.aliases || []).forEach(a => aliasSet.add(a));
+    });
+    // Keep best image: keeper's if it has one, else first loser with one.
+    const bestImg = keeper.imageUrl || losers.find(l => (l.imageUrl || '').trim())?.imageUrl || null;
+    // Write keeper update + tombstone losers.
+    try {
+      await setDoc(doc(ingredientLibCol, encodeIngredientKey(keeper.name)), {
+        name: keeper.name,
+        imageUrl: bestImg,
+        aliases: [...aliasSet],
+        updatedAt: nowISO()
+      }, { merge: true });
+      ingredientLib.set(keeper.name, { name: keeper.name, imageUrl: bestImg, aliases: [...aliasSet] });
+      for (const l of losers) {
+        await setDoc(doc(ingredientLibCol, encodeIngredientKey(l.name)),
+          { _deleted: true, updatedAt: nowISO() }, { merge: true });
+        ingredientLib.delete(l.name);
+      }
+      merged++;
+    } catch (e) { console.warn('[ingLib] combine failed for', g.key, e); }
+  }
+  drawIngLib();
+  alert(`Combined ${merged} duplicate group${merged === 1 ? '' : 's'}.`);
 }
 
 async function syncFromRecipes(){
@@ -2067,6 +2167,7 @@ document.getElementById('ingLibMissingChip').addEventListener('click', e => {
 document.getElementById('ingLibAdd').addEventListener('click', addIngredientPrompt);
 document.getElementById('ingLibSyncEz').addEventListener('click', syncFromEz);
 document.getElementById('ingLibSyncRecipes').addEventListener('click', syncFromRecipes);
+document.getElementById('ingLibDedupe').addEventListener('click', combineDuplicates);
 // Step ingredient picker
 document.getElementById('ingPickClose').addEventListener('click', closeStepIngPicker);
 document.getElementById('ingPickBg').addEventListener('click', e => { if (e.target.id === 'ingPickBg') closeStepIngPicker(); });
