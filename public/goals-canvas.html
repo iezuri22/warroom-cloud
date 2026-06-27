@@ -4836,17 +4836,53 @@ function normalizeIngredientName(text){
   t = t.replace(/,.*$/, '').replace(/\bto taste\b.*$/, '').trim();
   return t;
 }
+// Lookup priority (matters when many entries could match):
+//   1. Exact normalized-name match
+//   2. Alias hit
+//   3. Library name CONTAINS the query — shortest wins ("sriracha" picks up
+//      the photo from "sriracha mayo" entry rather than missing entirely)
+//   4. Query CONTAINS a library name — longest wins ("diced red onion"
+//      resolves through "red onion" before "onion")
+// Returns null only when nothing has an image.
 function libImageFor(text){
   const k = normalizeIngredientName(text);
   if (!k) return null;
+  // 1. Exact
   const direct = _ingLibrary.get(k);
   if (direct?.imageUrl) return direct.imageUrl;
-  // Alias resolution: if this name has been combined into another, surface
-  // the target's image so combined ingredients show consistently.
+  // 2. Alias resolution
   for (const e of _ingLibrary.values()) {
-    if (Array.isArray(e.aliases) && e.aliases.includes(k)) return e.imageUrl || null;
+    if (Array.isArray(e.aliases) && e.aliases.includes(k) && e.imageUrl) return e.imageUrl;
   }
-  return null;
+  // 3. Library name CONTAINS query — prefer shortest libname for specificity.
+  let best3 = null;
+  for (const [name, e] of _ingLibrary) {
+    if (!e.imageUrl) continue;
+    if (name.length <= k.length) continue;
+    if (!name.includes(k)) continue;
+    const idx = name.indexOf(k);
+    const before = idx === 0 ? '' : name[idx - 1];
+    const after  = name[idx + k.length] || '';
+    if (before && !/\s|-|_/.test(before)) continue;
+    if (after  && !/\s|-|_/.test(after))  continue;
+    if (!best3 || name.length < best3.name.length) best3 = { name, url: e.imageUrl };
+  }
+  if (best3) return best3.url;
+  // 4. Query CONTAINS a library name — prefer longest libname for specificity.
+  let best4 = null;
+  for (const [name, e] of _ingLibrary) {
+    if (!e.imageUrl) continue;
+    if (name.length < 3) continue;
+    if (name.length >= k.length) continue;
+    if (!k.includes(name)) continue;
+    const idx = k.indexOf(name);
+    const before = idx === 0 ? '' : k[idx - 1];
+    const after  = k[idx + name.length] || '';
+    if (before && !/\s|-|_/.test(before)) continue;
+    if (after  && !/\s|-|_/.test(after))  continue;
+    if (!best4 || name.length > best4.name.length) best4 = { name, url: e.imageUrl };
+  }
+  return best4 ? best4.url : null;
 }
 // Set / update an ingredient image in the library — propagates everywhere.
 async function setLibraryImage(text, imageUrl){
