@@ -359,9 +359,10 @@
   <div class="hint">Two meals. Just two. Could be breakfast, lunch, or dinner — pick what you'll actually commit to this week. Stop scrolling, start cooking.</div>
   <div class="ez-banner" id="ezBanner" hidden>
     <div class="ez-msg">
-      <b>Sign in to EZ Recipes</b>
-      <span>Use your PotLuck email + password — same as the Goals tab.</span>
+      <b id="ezBannerTitle">Sign in to EZ Recipes</b>
+      <span id="ezBannerSub">Use your PotLuck email + password — same as the Goals tab.</span>
     </div>
+    <button id="ezBannerRetry" style="background:transparent;color:var(--ink);border:1px solid var(--line2);margin-right:6px">↻ Retry</button>
     <button id="ezBannerBtn">Sign in</button>
   </div>
   <div class="slots" id="slots"></div>
@@ -840,13 +841,33 @@ async function setMealSlot(weekKey, slotIdx, recipeId){
 }
 
 // ---------- Load EZ recipes (best-effort) ----------
-let ezSignedIn = false;     // tracks Supabase session presence
+// ezStatus drives the banner. Distinct values let the user see *why* they're
+// not getting recipes instead of always blaming a missing session.
+let ezSignedIn = false;
+let ezStatus = 'loading';   // 'loading' | 'no-supabase' | 'no-session' | 'fetching' | 'ready' | 'error'
+let ezError = '';
 let _ezAuthListenerWired = false;
+let _ezClientWaitTries = 0;
 const EZ_EMAIL_KEY = 'ez-recipes-last-email';
 
 async function loadEz(){
+  console.log('[ez] loadEz', { ezStatus, ezSignedIn });
   const c = ezClient();
-  if (!c) return;
+  // Supabase CDN may not have parsed yet on first call — retry up to ~5s.
+  if (!c) {
+    _ezClientWaitTries++;
+    if (_ezClientWaitTries < 10) {
+      ezStatus = 'loading';
+      updateEzBanner();
+      console.log('[ez] waiting for Supabase CDN…', _ezClientWaitTries);
+      setTimeout(loadEz, 500);
+    } else {
+      ezStatus = 'no-supabase';
+      ezError = 'Supabase script failed to load. Check your network / ad-blocker.';
+      updateEzBanner();
+    }
+    return;
+  }
   // First time only: subscribe to Supabase auth changes so a session that
   // becomes available LATER (persistSession deserialization, sign-in on
   // another tab, token refresh) re-triggers a load instead of leaving the
@@ -858,22 +879,34 @@ async function loadEz(){
         console.log('[ez] auth state:', event, !!session);
         const wasSignedIn = ezSignedIn;
         ezSignedIn = !!session;
-        updateEzBanner();
-        // If the session just arrived (or refreshed), pull recipes.
-        if (session && !wasSignedIn) loadEz();
-        // If user signed out, clear the cached recipes so the banner state
-        // matches the data state.
-        if (!session && wasSignedIn) { ezRecipes = []; renderAll(); }
+        if (session && !wasSignedIn) loadEz();   // refresh on new session
+        if (!session && wasSignedIn) {
+          ezRecipes = []; ezStatus = 'no-session'; updateEzBanner(); renderAll();
+        }
       });
     } catch (e) { console.warn('[ez] auth listener wire failed', e); }
   }
   try {
-    const sess = (await c.auth.getSession()).data.session;
-    ezSignedIn = !!sess;
+    ezStatus = 'loading';
     updateEzBanner();
-    if (!sess) return; // user not signed in to EZ; recipes won't load
+    const sess = (await c.auth.getSession()).data.session;
+    console.log('[ez] getSession ->', sess ? `signed in as ${sess.user?.email}` : 'no session');
+    ezSignedIn = !!sess;
+    if (!sess) {
+      ezStatus = 'no-session';
+      updateEzBanner();
+      return;
+    }
+    ezStatus = 'fetching';
+    updateEzBanner();
     const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
-    if (error) { console.warn('[ez]', error); return; }
+    if (error) {
+      console.warn('[ez]', error);
+      ezStatus = 'error';
+      ezError = error.message || 'Failed to fetch recipes';
+      updateEzBanner();
+      return;
+    }
     const recipes = (data || []).filter(r => String(r.id || '').startsWith('recipe_'));
     ezRecipes = recipes
       .map(r => ({ rid: r.id, ...(r.data || {}) }))
@@ -886,17 +919,42 @@ async function loadEz(){
         ingredients: ezIngredients(r),
         steps:       ezSteps(r),
       }));
+    console.log(`[ez] loaded ${ezRecipes.length} recipes`);
+    ezStatus = 'ready';
+    updateEzBanner();
     renderAll();
-  } catch (e) { console.error('[ez] load', e); }
+  } catch (e) {
+    console.error('[ez] load', e);
+    ezStatus = 'error';
+    ezError = e?.message || String(e);
+    updateEzBanner();
+  }
 }
 
 // ---------- EZ sign-in UI ----------
 function updateEzBanner(){
-  // Show the banner when: not signed in AND there's something to load
-  // (either picker is being used or one of the slots references a recipe).
   const banner = document.getElementById('ezBanner');
   if (!banner) return;
-  banner.hidden = ezSignedIn;
+  const titleEl = document.getElementById('ezBannerTitle');
+  const subEl   = document.getElementById('ezBannerSub');
+  const signBtn = document.getElementById('ezBannerBtn');
+  const retryBtn = document.getElementById('ezBannerRetry');
+  // Banner is hidden only when EZ is happy AND we actually have recipes.
+  const happy = ezStatus === 'ready' && ezRecipes.length > 0;
+  banner.hidden = happy;
+  if (!titleEl || !subEl) return;
+  const cfg = {
+    'loading':     ['Loading EZ Recipes…', 'Checking your PotLuck session — usually under a second.', false, true],
+    'no-supabase': ['Couldn’t reach EZ Recipes', ezError || 'The Supabase script failed to load. Disable any ad/script blocker for this site, then retry.', false, true],
+    'no-session':  ['Sign in to EZ Recipes', 'Use your PotLuck email + password — same as the Goals tab.', true, true],
+    'fetching':    ['Loading your recipes…', 'One Supabase round-trip — usually a couple seconds.', false, false],
+    'ready':       ['No recipes loaded', 'Your EZ account has no recipes yet. Add some at potluck.app and retry.', false, true],
+    'error':       ['EZ Recipes error', ezError || 'Unknown error talking to Supabase. Retry, then check console for details.', true, true]
+  }[ezStatus] || ['Loading EZ Recipes…', '', false, true];
+  titleEl.textContent = cfg[0];
+  subEl.textContent   = cfg[1];
+  if (signBtn)  signBtn.hidden  = !cfg[2];
+  if (retryBtn) retryBtn.hidden = !cfg[3];
 }
 function openEzAuth(){
   const bg = document.getElementById('ezAuthBg');
@@ -1704,6 +1762,11 @@ document.getElementById('cookListBg').addEventListener('click', e => { if (e.tar
 document.getElementById('cookListSearch').addEventListener('input', e => { cookListQuery = e.target.value || ''; renderCookList(); });
 // EZ auth wiring
 document.getElementById('ezBannerBtn').addEventListener('click', openEzAuth);
+document.getElementById('ezBannerRetry').addEventListener('click', () => {
+  // Reset the CDN-wait counter so Retry actually retries from scratch.
+  _ezClientWaitTries = 0;
+  loadEz();
+});
 document.getElementById('ezAuthClose').addEventListener('click', closeEzAuth);
 document.getElementById('ezAuthBg').addEventListener('click', e => { if (e.target.id === 'ezAuthBg') closeEzAuth(); });
 document.getElementById('ezAuthGo').addEventListener('click', doEzAuth);
