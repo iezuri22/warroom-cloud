@@ -168,6 +168,36 @@
   /* Cook walkthrough — mirrors goals-canvas "Let's Cook" styling */
   #cookBg .modal-card{ max-width:820px } /* narrower than the picker, like Goals */
   #cookH .cook-recipe-sub{ font-size:13px;color:var(--muted);margin-left:6px;font-weight:500 }
+  /* Per-step media block — mirrors Goals' cs-media-block */
+  .cook-step .cs-media-block{
+    display:flex;gap:14px;align-items:flex-start;
+    margin-top:18px;padding-top:14px;border-top:1px solid var(--line);
+  }
+  .cook-step .cs-media-thumb{
+    flex:0 0 200px;width:200px;height:140px;border-radius:8px;overflow:hidden;
+    background:var(--w05);border:1px solid var(--line);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);
+    font-size:12px;text-align:center;padding:8px;
+  }
+  .cook-step .cs-media-thumb img,
+  .cook-step .cs-media-thumb video{ width:100%;height:100%;object-fit:cover }
+  .cook-step .cs-media-info{ flex:1;min-width:0 }
+  .cook-step .cs-media-info h5{ margin:0 0 4px;font-size:13px;color:var(--ink) }
+  .cook-step .cs-media-info p{ margin:0;font-size:12px;color:var(--muted);line-height:1.5 }
+  /* Curated step ingredients (read-only mirror from Goals) */
+  .cook-step .cs-step-ings{ display:flex;flex-direction:column;gap:8px;margin-top:6px }
+  .cook-step .cs-step-ing-row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;
+    background:var(--w04);border:1px solid var(--line);border-radius:8px;
+  }
+  .cook-step .cs-step-ing-row .thumb{
+    width:38px;height:38px;border-radius:6px;background:var(--w05) center/cover no-repeat;
+    flex:0 0 38px;display:flex;align-items:center;justify-content:center;
+    font-size:18px;color:var(--muted);border:1px solid var(--line);overflow:hidden;
+  }
+  .cook-step .cs-step-ing-row .thumb img{ width:100%;height:100%;object-fit:cover }
+  .cook-step .cs-step-ing-row .ing-name{ flex:1;font-size:13px;font-weight:600;color:var(--ink) }
+  .cook-step .cs-step-ing-row .ing-amount{ font-size:12px;color:var(--muted) }
   .cook-step{
     background:var(--w03);border:1px solid var(--line);border-radius:10px;
     padding:18px 22px;margin-bottom:14px;
@@ -413,6 +443,10 @@ function recipeWithMeta(r){
     ingredients: Array.isArray(meta.overrideIngredients) ? meta.overrideIngredients : r.ingredients,
     steps:       Array.isArray(meta.overrideSteps) ? meta.overrideSteps : r.steps,
     labels:      effectiveLabelsFor(r),
+    // Rich step data synced from Goals (per-step media + curated ingredients).
+    // Falls back to undefined when no Goals edit has happened yet — Cook then
+    // uses plain steps + auto-matched ingredients.
+    cookSteps:   Array.isArray(meta.cookSteps) ? meta.cookSteps : undefined,
   };
 }
 function effectiveLabelsFor(r){
@@ -758,9 +792,11 @@ function openView(rid){
 
 // ---------- Cook walkthrough ----------
 // Mirrors goals-canvas "Let's Cook": recipe title as subtitle, big readable
-// step text, auto-matched ingredient cards underneath, and Prev/position/Next
-// chrome with disabled states at the bounds.
-let cookSteps = [];
+// step text, per-step media + curated ingredient cards (synced from Goals
+// via recipe_meta.cookSteps), with auto-match fallback when no Goals data,
+// and Prev/position/Next chrome with disabled states at the bounds.
+let cookSteps = [];   // either ['text', ...] or [{text, mediaUrl, mediaType, stepIngredients}, ...]
+let cookRich  = false; // true when cookSteps came from Goals (rich objects)
 let cookIdx = 0;
 let cookTitle = '';
 let cookIngs = [];  // {text, imageUrl}[] — the recipe's full ingredient list
@@ -769,17 +805,23 @@ function openCook(rid){
   const raw = lookupRecipe(rid);
   if (!raw) return;
   const merged = recipeWithMeta(raw);
-  cookSteps = merged.steps || [];
+  // Prefer the rich cookSteps array synced from Goals — it carries per-step
+  // media URL and the user's curated step ingredients. Falls back to the
+  // plain string array from EZ Recipes.
+  if (Array.isArray(merged.cookSteps) && merged.cookSteps.length) {
+    cookSteps = merged.cookSteps;
+    cookRich = true;
+  } else {
+    cookSteps = merged.steps || [];
+    cookRich = false;
+  }
   cookTitle = merged.title;
-  // Normalize the recipe's ingredients into {text, imageUrl} so the step
-  // auto-matcher can pluck thumbs without re-normalizing each render.
   cookIngs = (merged.ingredients || []).map(it =>
     typeof it === 'string' ? { text: it, imageUrl: null }
                            : { text: it?.text || '', imageUrl: it?.imageUrl || null }
   ).filter(i => i.text);
   cookIdx = 0;
   if (!cookSteps.length) { openView(rid); return; }
-  // Modal head: emoji on the title, recipe name as a muted subtitle (matches Goals).
   document.getElementById('cookH').innerHTML =
     `🍴 Let's Cook<span class="cook-recipe-sub">— ${esc(cookTitle)}</span>`;
   renderCookStep();
@@ -810,21 +852,69 @@ function ingredientsForStep(stepText){
 function renderCookStep(){
   const body = document.getElementById('cookBody');
   const total = cookSteps.length;
-  const step = cookSteps[cookIdx];
-  const ings = ingredientsForStep(step);
-  const ingsHtml = ings.length
-    ? `<div class="cs-ings">${ings.map(ing => `
-        <div class="cs-ing">
-          ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
-          <div class="nm">${esc(ing.text)}</div>
-        </div>`).join('')}</div>`
-    : `<div class="cs-empty">No ingredients linked to this step.</div>`;
+  const raw = cookSteps[cookIdx];
+  // Normalize current step into { text, mediaUrl, mediaType, stepIngredients }.
+  const step = (cookRich && raw && typeof raw === 'object')
+    ? { text: raw.text || '', mediaUrl: raw.mediaUrl || null, mediaType: raw.mediaType || null, stepIngredients: Array.isArray(raw.stepIngredients) ? raw.stepIngredients : [] }
+    : { text: String(raw || ''), mediaUrl: null, mediaType: null, stepIngredients: [] };
+
+  // Ingredients block: curated (from Goals) if present, else auto-match.
+  let ingsHtml = '';
+  let ingsHead = '';
+  if (step.stepIngredients.length) {
+    ingsHead = 'Ingredients for this step';
+    ingsHtml = `<div class="cs-step-ings">${step.stepIngredients.map(ing => `
+      <div class="cs-step-ing-row">
+        <div class="thumb">
+          ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}
+        </div>
+        <div class="ing-name">${esc(ing.name || ing.text || '')}</div>
+        ${ing.amount ? `<div class="ing-amount">${esc(ing.amount)}</div>` : ''}
+      </div>`).join('')}</div>`;
+  } else {
+    const ings = ingredientsForStep(step.text);
+    ingsHead = ings.length ? 'Auto-matched ingredients' : '';
+    ingsHtml = ings.length
+      ? `<div class="cs-ings">${ings.map(ing => `
+          <div class="cs-ing">
+            ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+            <div class="nm">${esc(ing.text)}</div>
+          </div>`).join('')}</div>`
+      : `<div class="cs-empty">No ingredients linked to this step.</div>`;
+  }
+
+  // Per-step media block — image / video / placeholder.
+  let mediaHtml = '';
+  if (step.mediaUrl) {
+    const thumb = step.mediaType === 'video'
+      ? `<video src="${attr(step.mediaUrl)}" muted playsinline preload="metadata"></video>`
+      : `<img src="${attr(step.mediaUrl)}" alt="" loading="lazy">`;
+    mediaHtml = `
+      <div class="cs-media-block">
+        <div class="cs-media-thumb" data-action="cook-open-media">${thumb}</div>
+        <div class="cs-media-info">
+          <h5>Your shot of this step</h5>
+          <p>${step.mediaType === 'video' ? 'Tap the video to play full size.' : 'Tap the image to view full size.'} Set in the Goals tab.</p>
+        </div>
+      </div>`;
+  } else {
+    mediaHtml = `
+      <div class="cs-media-block">
+        <div class="cs-media-thumb">+ Add a photo or video<br><span style="font-size:11px;opacity:.7">(in Goals → Let's Cook)</span></div>
+        <div class="cs-media-info">
+          <h5>Your shot of this step</h5>
+          <p>Open this recipe in the Goals tab to attach a photo or short video. It'll show up here automatically.</p>
+        </div>
+      </div>`;
+  }
+
   body.innerHTML = `
     <div class="cook-step">
       <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
-      <div class="cs-text">${esc(step)}</div>
-      <div class="cs-ings-head">${ings.length ? 'Ingredients for this step' : 'Auto-matched ingredients'}</div>
+      <div class="cs-text">${esc(step.text)}</div>
+      ${ingsHead ? `<div class="cs-ings-head">${ingsHead}</div>` : ''}
       ${ingsHtml}
+      ${mediaHtml}
     </div>
     <div class="cook-nav">
       <button class="tb-btn" id="cookPrev" ${cookIdx === 0 ? 'disabled' : ''}>← Previous</button>
@@ -837,6 +927,10 @@ function renderCookStep(){
     </div>`;
   document.getElementById('cookPrev').onclick = () => { if (cookIdx > 0) { cookIdx--; renderCookStep(); } };
   document.getElementById('cookNext').onclick = () => { if (cookIdx < total - 1) { cookIdx++; renderCookStep(); } };
+  // Click the media thumb → open in a new tab (full size).
+  body.querySelectorAll('[data-action="cook-open-media"]').forEach(el =>
+    el.addEventListener('click', () => { if (step.mediaUrl) window.open(step.mediaUrl, '_blank', 'noopener'); })
+  );
 }
 
 // ---------- Grocery ----------

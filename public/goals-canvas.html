@@ -4130,6 +4130,13 @@ function startCook(sectionId){
   }
   _cookIdx = 0;
   drawCookStep();
+  // Backfill recipe_meta on open — for already-existing recipes that haven't
+  // had a step edited yet, this is what makes the per-step pics + ingredients
+  // appear immediately on the Two Meals page. Skip when the recipe has no
+  // ezRid (free-form board recipe, not from EZ Recipes).
+  if (_cookSection?.ezRid) {
+    try { syncCookStepsToMeta(); } catch (e) { console.warn('[meta] cook sync (open)', e); }
+  }
 }
 
 // Generate every match candidate for an ingredient: canonical noun, plural /
@@ -4395,6 +4402,29 @@ async function writeStepUpdate(step){
   item.mediaType = step.mediaType;
   item.stepIngredients = step.stepIngredients || [];
   await saveNode(sticky);
+  // Mirror the full step list to recipe_meta so the standalone Two Meals
+  // page can render per-step pics + curated ingredients (it can't read
+  // sticky items directly).
+  try { await syncCookStepsToMeta(); } catch (e) { console.warn('[meta] cook sync', e); }
+}
+
+// Write the in-memory _cookSteps array to goals_canvas_recipe_meta keyed by
+// the active recipe section's ezRid. Two Meals reads this back. Storing the
+// whole ordered array (not just one step) keeps step-index alignment stable
+// even if the user reorders or removes steps in Goals.
+async function syncCookStepsToMeta(){
+  if (!_cookSection || !_cookSection.ezRid) return;
+  const rid = _cookSection.ezRid;
+  const cookSteps = (_cookSteps || []).map(s => ({
+    text: s.text || '',
+    mediaUrl: s.mediaUrl || null,
+    mediaType: s.mediaType || null,
+    stepIngredients: Array.isArray(s.stepIngredients) ? s.stepIngredients : []
+  }));
+  await setDoc(doc(recipeMetaCol, rid), {
+    cookSteps,
+    cookStepsUpdatedAt: nowISO()
+  }, { merge: true });
 }
 
 // Picker modal to choose an ingredient (library + free text) for the step.
@@ -4482,6 +4512,7 @@ async function uploadStepMedia(){
       await saveNode(sticky);
       step.mediaUrl = url;
       step.mediaType = item.mediaType;
+      try { await syncCookStepsToMeta(); } catch (e) { console.warn('[meta] cook sync', e); }
     }
     setStatus(isVideo ? 'Video uploaded ✓' : 'Photo uploaded ✓');
     drawCookStep();
@@ -4506,6 +4537,7 @@ async function removeStepMedia(){
     await saveNode(sticky);
     step.mediaUrl = null;
     step.mediaType = null;
+    try { await syncCookStepsToMeta(); } catch (e) { console.warn('[meta] cook sync', e); }
   }
   drawCookStep();
 }
@@ -4706,8 +4738,11 @@ async function setLibraryImage(text, imageUrl){
 function encodeIngredientKey(k){
   return encodeURIComponent(k).replace(/\./g, '%2E').replace(/%/g, '_');
 }
+let _ingLibRerenderTimer = null;
+let _ingLibChangedKeys = new Set();
 function subscribeIngredientLibrary(){
   onSnapshot(ingredientLibCol, (snap) => {
+    const changedKeys = new Set();
     snap.docChanges().forEach(ch => {
       const d = ch.doc.data() || {};
       const k = (d.name || '').toLowerCase().trim();
@@ -4718,23 +4753,49 @@ function subscribeIngredientLibrary(){
         imageUrl: d.imageUrl || null,
         aliases: Array.isArray(d.aliases) ? d.aliases : []
       });
+      changedKeys.add(k);
     });
-    // Re-render any open sticky items so newly-arrived library images show.
-    // CRITICAL: only stickies on the ACTIVE board — renderNode appends to
-    // #canvas unconditionally, so iterating all stickies (across every
-    // board) drops other boards' nodes onto the active canvas. That's the
-    // glitch behind "previous goal content appears on top after refresh"
-    // — this snapshot lands during init and again whenever EZ syncs.
-    for (const n of nodes.values()) {
-      if (n.type !== 'sticky') continue;
-      if ((n.boardId || null) !== activeBoardId) continue;
-      try { renderNode(n); } catch {}
-    }
-    // Refresh the library modal if it's open (so uploads from another
-    // device or in-recipe edits show up live).
-    if (document.getElementById('ingLibBd')?.classList.contains('open')) {
-      try { drawIngLibModal(); } catch {}
-    }
+    // PERF: only re-render stickies whose ingredient text references one of
+    // the keys that actually changed in this snapshot. The old code
+    // re-rendered every active-board sticky on every event, which got
+    // pathological once EZ sync started writing many ingredient rows.
+    // Also debounce so a burst of changes collapses into one re-render
+    // pass.
+    for (const k of changedKeys) _ingLibChangedKeys.add(k);
+    if (_ingLibRerenderTimer) clearTimeout(_ingLibRerenderTimer);
+    _ingLibRerenderTimer = setTimeout(() => {
+      const keys = [..._ingLibChangedKeys];
+      _ingLibChangedKeys = new Set();
+      _ingLibRerenderTimer = null;
+      // Build a quick lowercased haystack from each sticky's text + items,
+      // then re-render only the ones that mention a changed name (or one of
+      // its aliases). For library-wide events that include many keys
+      // (initial snapshot), fall back to the old behavior — that's a one-
+      // time cost on load.
+      const isInitialBurst = keys.length > 12;
+      for (const n of nodes.values()) {
+        if (n.type !== 'sticky') continue;
+        if ((n.boardId || null) !== activeBoardId) continue;
+        if (!isInitialBurst) {
+          const hay = ((n.text || '') + ' ' + (n.items || []).map(i => i.text || '').join(' ')).toLowerCase();
+          let touched = false;
+          for (const k of keys) {
+            if (hay.includes(k)) { touched = true; break; }
+            const ent = _ingLibrary.get(k);
+            if (ent && Array.isArray(ent.aliases) && ent.aliases.some(a => a && hay.includes(a.toLowerCase()))) {
+              touched = true; break;
+            }
+          }
+          if (!touched) continue;
+        }
+        try { renderNode(n); } catch {}
+      }
+      // Refresh the library modal if it's open (so uploads from another
+      // device or in-recipe edits show up live).
+      if (document.getElementById('ingLibBd')?.classList.contains('open')) {
+        try { drawIngLibModal(); } catch {}
+      }
+    }, 120);
   });
 }
 // One-shot seeding helper: pumps a name+image into the library. Used when
@@ -5982,11 +6043,23 @@ function renderBoardBar(){
       path.map(f => `<span class="b-crumb-sep">›</span><button class="b-crumb${f.id===activeFolderId?' active':''}" data-board-crumb="${escapeAttr(f.id)}" title="Right-click for rename / color">📁 ${escapeHtml(f.name)}</button>`).join('') +
       `<span class="b-crumb-spacer"></span>`;
   }
+  // Pre-compute folder/board child counts in two passes so the .map() below
+  // is O(folders) instead of O(folders²). The old code did a fresh
+  // [...folders.values()].filter(...) per pill, which made renderBoardBar()
+  // pathological — and subscribeFolders fires this on every folder change.
+  const boardCountByFolder = new Map();
+  for (const b of allBoards) {
+    const k = b.folderId || null;
+    boardCountByFolder.set(k, (boardCountByFolder.get(k) || 0) + 1);
+  }
+  const folderCountByParent = new Map();
+  for (const f of folders.values()) {
+    const k = f.parentFolderId || null;
+    folderCountByParent.set(k, (folderCountByParent.get(k) || 0) + 1);
+  }
   const folderPills = scopeFolders.map(f => {
     const color = SECTION_HEX[f.color] || '#9ca3af';
-    const childBoards = allBoards.filter(b => (b.folderId || null) === f.id).length;
-    const childFolders = [...folders.values()].filter(x => (x.parentFolderId || null) === f.id).length;
-    const count = childBoards + childFolders;
+    const count = (boardCountByFolder.get(f.id) || 0) + (folderCountByParent.get(f.id) || 0);
     return `<button class="board-tab folder" data-folder-id="${escapeAttr(f.id)}" title="Open folder · right-click for rename / color / delete">
       <span class="b-dot" style="background:${color}"></span>
       <span>📁 ${escapeHtml(f.name || 'Untitled')}</span>
