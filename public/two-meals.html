@@ -427,39 +427,50 @@
 </div>
 
 <style>
-  /* Ingredient library grid */
+  /* Ingredient library grid — match Goals' .ing-card styling 1:1 */
   #ingLibGrid{
-    display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px;
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+    grid-auto-rows:max-content;gap:10px;align-content:start;padding:4px;
   }
   .il-card{
-    background:var(--w03);border:1px solid var(--line);border-radius:10px;overflow:hidden;
-    display:flex;flex-direction:column;cursor:pointer;transition:.12s;
+    background:var(--w03);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden;display:flex;flex-direction:column;cursor:pointer;
+    transition:.15s;position:relative;
   }
-  .il-card:hover{ border-color:var(--accent);transform:translateY(-1px) }
+  .il-card:hover{
+    border-color:var(--line2);transform:translateY(-1px);
+    box-shadow:0 4px 14px rgba(0,0,0,.3);
+  }
   .il-thumb{
-    width:100%;height:110px;background:var(--w05);
-    display:flex;align-items:center;justify-content:center;font-size:30px;color:var(--muted);
+    width:100%;height:110px;flex:0 0 110px;
+    background:rgba(255,255,255,.04) center/cover no-repeat;
+    display:flex;align-items:center;justify-content:center;
+    font-size:28px;opacity:.5;color:var(--muted);
     position:relative;overflow:hidden;
   }
-  .il-thumb img{
-    width:100%;height:100%;object-fit:cover;display:block;
-  }
-  /* Placeholder positioned absolutely so it stays centered when the <img>
-     fails to load and we drop it via onerror. */
+  .il-thumb img{ width:100%;height:100%;object-fit:cover;display:block }
+  .il-thumb.has-img{ opacity:1 }
   .il-thumb .il-ph{
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     pointer-events:none;
   }
   .il-menu{
-    position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:6px;
-    background:rgba(0,0,0,.55);color:#fff;border:none;cursor:pointer;display:flex;
-    align-items:center;justify-content:center;font-size:14px;
+    position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:50%;
+    background:rgba(0,0,0,.55);color:#fff;border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    font-size:14px;font-weight:700;backdrop-filter:blur(6px);
+    transition:.12s;opacity:0;line-height:1;
   }
-  .il-menu:hover{ background:rgba(0,0,0,.75) }
+  .il-card:hover .il-menu{ opacity:1 }
+  .il-menu:hover{ background:rgba(0,0,0,.8) }
+  .il-body{ padding:8px 10px 10px }
   .il-name{
-    padding:8px 10px 10px;font-size:12.5px;font-weight:700;color:var(--ink);
-    line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-    text-transform:capitalize;
+    font-size:13px;font-weight:600;color:var(--ink);line-height:1.25;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px;
+  }
+  .il-aliases{
+    font-size:10px;color:var(--muted);margin-top:6px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic;
   }
   .il-empty{
     text-align:center;color:var(--muted);padding:48px 16px;font-size:14px;line-height:1.6;
@@ -679,6 +690,10 @@ function weekDateRange(key){
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function attr(s){ return esc(s).replace(/\n/g, '&#10;'); }
 function nowISO(){ return new Date().toISOString(); }
+// Used to title-case ingredient names in the library cards (matches Goals).
+function toTitleCase(s){
+  return String(s || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
 
 function recipeWithMeta(r){
   const meta = recipeMeta.get(r.rid) || {};
@@ -1282,24 +1297,25 @@ function drawIngLib(){
   const cleanUrl = u => (typeof u === 'string' && u.trim()) ? u.trim() : '';
   grid.innerHTML = entries.map(e => {
     const url = cleanUrl(e.imageUrl);
-    // Render an <img> with onerror that drops itself; the <span class="il-ph">
-    // sits underneath so it shows whenever the img isn't visible — either no
-    // URL at all OR the URL failed to load. That's the fix for the "white
-    // empty cards" — broken background-image URLs were silently swallowed.
+    const hasImg = !!url;
     const imgHtml = url
       ? `<img src="${attr(url)}" alt="" loading="lazy" onerror="this.remove()">`
       : '';
-    // Placeholder is ALWAYS rendered (and the <img> overlays it when
-    // present). On img onerror the <img> removes itself and the
-    // placeholder surfaces — fixes the "white empty card" cases where
-    // a stored URL turned out to be broken or expired.
+    // Same layout as Goals' .ing-card: title-cased name, aliases as italic
+    // gray caption, hover-only ⋯ menu in the corner.
+    const aliases = (Array.isArray(e.aliases) && e.aliases.length)
+      ? `<div class="il-aliases" title="${attr('Also: ' + e.aliases.join(', '))}">Also: ${esc(e.aliases.join(', '))}</div>`
+      : '';
     return `<div class="il-card" data-ing="${attr(e.name)}">
-      <div class="il-thumb" data-act="thumb">
+      <div class="il-thumb ${hasImg ? 'has-img' : ''}" data-act="thumb">
         <span class="il-ph">🥬</span>
         ${imgHtml}
         <button class="il-menu" data-act="menu" title="More options">⋯</button>
       </div>
-      <div class="il-name" title="${attr(e.name)}">${esc(e.name)}</div>
+      <div class="il-body">
+        <div class="il-name" title="${attr(e.name)}">${esc(toTitleCase(e.name))}</div>
+        ${aliases}
+      </div>
     </div>`;
   }).join('');
   grid.querySelectorAll('.il-card').forEach(card => {
