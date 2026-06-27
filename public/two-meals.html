@@ -417,7 +417,7 @@
       <div id="ingLibGrid"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
         <span style="color:var(--muted);font-size:12px;flex:1">Changes here update every recipe using the ingredient.</span>
-        <button class="tb-btn" id="ingLibDedupe" title="Find singular/plural duplicates and merge them">🔀 Combine duplicates</button>
+        <button class="tb-btn" id="ingLibCleanup" title="Find leftover source docs from past combines and remove them — keeps the combined target.">🧹 Clean up combines</button>
         <button class="tb-btn" id="ingLibSyncEz" title="Pull your full saved library from EZ Recipes (PotLuck)">⟳ Sync from EZ</button>
         <button class="tb-btn" id="ingLibSyncRecipes" title="Scan every loaded recipe and add missing ingredients">⟳ Sync from recipes</button>
         <button class="tb-btn primary" id="ingLibAdd" style="background:var(--accent);color:#fff;border:none">+ Add ingredient</button>
@@ -582,7 +582,7 @@
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-import { getFirestore, collection, doc, getDocs, setDoc, onSnapshot }
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-storage.js';
@@ -1416,81 +1416,52 @@ async function addIngredientPrompt(){
   await setLibraryImage(name.trim(), url.trim() || null);
 }
 
-// ---------- Combine duplicates ----------
-// Returns the canonical form (drops trailing 's', 'es', or 'ies' → 'y')
-// so duplicate-detection treats "apples", "potatoes", "berries" as the same
-// entry as "apple", "potato", "berry".
-function singularize(name){
-  if (!name) return name;
-  // Multi-word: only singularize the LAST word ("baby potatoes" → "baby potato").
-  const parts = name.split(/\s+/);
-  const last = parts[parts.length - 1];
-  let singLast = last;
-  if (/ies$/i.test(last) && last.length > 3) singLast = last.slice(0, -3) + 'y';
-  else if (/sses$/i.test(last)) singLast = last.slice(0, -2);
-  else if (/oes$/i.test(last) && last.length > 3) singLast = last.slice(0, -2);
-  else if (/s$/i.test(last) && !/ss$/i.test(last) && last.length > 2) singLast = last.slice(0, -1);
-  parts[parts.length - 1] = singLast;
-  return parts.join(' ');
-}
-// Find groups of entries that share a singularized key. Each group will be
-// merged: pick the entry that has an image (or the shortest name if neither
-// does) as the canonical, fold the others in as aliases, delete them.
-function findDuplicateGroups(){
-  const groups = new Map();   // singularized key -> [entryName, ...]
+// ---------- Clean up orphan combines ----------
+// Find orphan source docs from past combines. An "orphan" is an entry
+// whose normalized name appears in ANOTHER entry's aliases array — meaning
+// Goals' combine successfully added the alias to the canonical target, but
+// the source doc was never (or only partially) deleted. The user already
+// did the merge intent; we just need to finish the cleanup.
+function findOrphanedCombines(){
+  // Build alias-to-target index: for every name that appears in some
+  // entry's aliases list, remember which entry "claims" it.
+  const aliasOwners = new Map();   // alias name -> canonical entry name
   for (const e of ingredientLib.values()) {
-    const k = singularize(e.name);
-    if (!k) continue;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(e.name);
+    if (!Array.isArray(e.aliases)) continue;
+    for (const a of e.aliases) {
+      const k = (a || '').toLowerCase().trim();
+      if (k && !aliasOwners.has(k)) aliasOwners.set(k, e.name);
+    }
   }
-  return [...groups.entries()]
-    .filter(([_, names]) => names.length > 1)
-    .map(([key, names]) => ({ key, names }));
+  // Anything in the library whose name is one of those alias keys AND
+  // isn't itself the owner is an orphan.
+  const orphans = [];
+  for (const e of ingredientLib.values()) {
+    const owner = aliasOwners.get(e.name);
+    if (owner && owner !== e.name) orphans.push({ source: e.name, target: owner });
+  }
+  return orphans;
 }
-async function combineDuplicates(){
-  const groups = findDuplicateGroups();
-  if (!groups.length) { alert('No singular/plural duplicates found.'); return; }
-  const summary = groups.map(g => `  • ${g.key}: ${g.names.join(', ')}`).join('\n');
-  if (!confirm(`Found ${groups.length} duplicate group${groups.length === 1 ? '' : 's'}:\n\n${summary}\n\nCombine them? Each group keeps the entry with the best photo and folds the others in as aliases.`)) return;
-  let merged = 0;
-  for (const g of groups) {
-    // Pick canonical: shortest name with an image. Fall back to shortest.
-    const entries = g.names.map(n => ingredientLib.get(n)).filter(Boolean);
-    const withImg = entries.filter(e => (e.imageUrl || '').trim());
-    const pool = withImg.length ? withImg : entries;
-    pool.sort((a, b) => a.name.length - b.name.length);
-    const keeper = pool[0];
-    if (!keeper) continue;
-    const losers = entries.filter(e => e.name !== keeper.name);
-    if (!losers.length) continue;
-    // Adopt loser names + their aliases into keeper aliases (deduped).
-    const aliasSet = new Set([...(keeper.aliases || [])]);
-    losers.forEach(l => {
-      aliasSet.add(l.name);
-      (l.aliases || []).forEach(a => aliasSet.add(a));
-    });
-    // Keep best image: keeper's if it has one, else first loser with one.
-    const bestImg = keeper.imageUrl || losers.find(l => (l.imageUrl || '').trim())?.imageUrl || null;
-    // Write keeper update + tombstone losers.
+async function cleanupOrphans(){
+  const orphans = findOrphanedCombines();
+  if (!orphans.length) {
+    alert('No leftover combine sources to clean up — your library is consistent.');
+    return;
+  }
+  const sample = orphans.slice(0, 12).map(o => `  • ${o.source}  →  ${o.target}`).join('\n');
+  const more = orphans.length > 12 ? `\n  …and ${orphans.length - 12} more` : '';
+  if (!confirm(`Found ${orphans.length} orphan${orphans.length === 1 ? '' : 's'} from past combines (source kept living after the merge):\n\n${sample}${more}\n\nDelete these sources so only the combined target remains?`)) return;
+  let deleted = 0;
+  for (const o of orphans) {
     try {
-      await setDoc(doc(ingredientLibCol, encodeIngredientKey(keeper.name)), {
-        name: keeper.name,
-        imageUrl: bestImg,
-        aliases: [...aliasSet],
-        updatedAt: nowISO()
-      }, { merge: true });
-      ingredientLib.set(keeper.name, { name: keeper.name, imageUrl: bestImg, aliases: [...aliasSet] });
-      for (const l of losers) {
-        await setDoc(doc(ingredientLibCol, encodeIngredientKey(l.name)),
-          { _deleted: true, updatedAt: nowISO() }, { merge: true });
-        ingredientLib.delete(l.name);
-      }
-      merged++;
-    } catch (e) { console.warn('[ingLib] combine failed for', g.key, e); }
+      // Real Firestore delete (not tombstone) so the doc is fully gone.
+      await deleteDoc(doc(ingredientLibCol, encodeIngredientKey(o.source)));
+      ingredientLib.delete(o.source);
+      deleted++;
+    } catch (e) { console.warn('[ingLib] cleanup failed for', o.source, e); }
   }
   drawIngLib();
-  alert(`Combined ${merged} duplicate group${merged === 1 ? '' : 's'}.`);
+  alert(`Cleaned up ${deleted} orphan${deleted === 1 ? '' : 's'}.`);
 }
 
 // Skip-check that respects existing aliases — fixes the bug where syncing
@@ -2203,7 +2174,7 @@ document.getElementById('ingLibMissingChip').addEventListener('click', e => {
 document.getElementById('ingLibAdd').addEventListener('click', addIngredientPrompt);
 document.getElementById('ingLibSyncEz').addEventListener('click', syncFromEz);
 document.getElementById('ingLibSyncRecipes').addEventListener('click', syncFromRecipes);
-document.getElementById('ingLibDedupe').addEventListener('click', combineDuplicates);
+document.getElementById('ingLibCleanup').addEventListener('click', cleanupOrphans);
 // Step ingredient picker
 document.getElementById('ingPickClose').addEventListener('click', closeStepIngPicker);
 document.getElementById('ingPickBg').addEventListener('click', e => { if (e.target.id === 'ingPickBg') closeStepIngPicker(); });
