@@ -766,6 +766,8 @@ function renderPicker(){
 }
 
 // ---------- View ----------
+// Reading-mode: full recipe at a glance — hero photo, ingredients, all steps
+// with their pics + per-step ingredients (when Goals has synced cookSteps).
 function openView(rid){
   const raw = lookupRecipe(rid);
   if (!raw) return;
@@ -773,7 +775,43 @@ function openView(rid){
   document.getElementById('cookH').textContent = '📖 ' + merged.title;
   const body = document.getElementById('cookBody');
   const ings = (merged.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
-  const steps = merged.steps || [];
+  // Prefer the rich Goals-synced cookSteps; fall back to plain string steps.
+  const rich = Array.isArray(merged.cookSteps) && merged.cookSteps.length;
+  const steps = rich ? merged.cookSteps : (merged.steps || []);
+
+  const stepHtml = (s, i) => {
+    // Normalize either rich object or plain string into the same shape.
+    const text = rich ? (s.text || '') : String(s || '');
+    const mediaUrl  = rich ? (s.mediaUrl || null)  : null;
+    const mediaType = rich ? (s.mediaType || null) : null;
+    const stepIngs  = rich && Array.isArray(s.stepIngredients) ? s.stepIngredients : [];
+
+    let mediaBlock = '';
+    if (mediaUrl) {
+      const thumb = mediaType === 'video'
+        ? `<video src="${attr(mediaUrl)}" muted playsinline preload="metadata" style="width:100%;border-radius:8px;display:block"></video>`
+        : `<img src="${attr(mediaUrl)}" alt="" loading="lazy" style="width:100%;border-radius:8px;display:block">`;
+      mediaBlock = `<div style="margin:10px 0 6px;cursor:pointer" data-view-media="${attr(mediaUrl)}">${thumb}</div>`;
+    }
+
+    let ingsBlock = '';
+    if (stepIngs.length) {
+      ingsBlock = `<div class="cs-step-ings" style="margin-top:10px">${stepIngs.map(ing => `
+        <div class="cs-step-ing-row">
+          <div class="thumb">${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}</div>
+          <div class="ing-name">${esc(ing.name || ing.text || '')}</div>
+          ${ing.amount ? `<div class="ing-amount">${esc(ing.amount)}</div>` : ''}
+        </div>`).join('')}</div>`;
+    }
+
+    return `<div class="cook-step">
+      <div class="cs-num">Step ${i + 1}</div>
+      <div class="cs-text">${esc(text)}</div>
+      ${mediaBlock}
+      ${ingsBlock}
+    </div>`;
+  };
+
   body.innerHTML = `
     ${merged.img ? `<img src="${attr(merged.img)}" alt="" style="width:100%;max-height:300px;object-fit:cover;border-radius:10px;margin-bottom:14px">` : ''}
     <div class="cs-num" style="margin-bottom:8px">Ingredients</div>
@@ -782,11 +820,12 @@ function openView(rid){
     </div>
     <div class="cs-num" style="margin-bottom:8px">Steps</div>
     <div style="margin:8px 0">
-      ${steps.map((s, i) => `<div class="cook-step">
-        <div class="cs-num">Step ${i + 1}</div>
-        <div class="cs-text">${esc(s)}</div>
-      </div>`).join('') || '<div class="empty-msg">No steps listed.</div>'}
+      ${steps.map(stepHtml).join('') || '<div class="empty-msg">No steps listed.</div>'}
     </div>`;
+  // Click any step's media → open full size.
+  body.querySelectorAll('[data-view-media]').forEach(el =>
+    el.addEventListener('click', () => window.open(el.getAttribute('data-view-media'), '_blank', 'noopener'))
+  );
   document.getElementById('cookBg').classList.add('open');
 }
 
