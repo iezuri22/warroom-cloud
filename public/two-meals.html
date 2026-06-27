@@ -424,6 +424,43 @@
   </div>
 </div>
 
+<!-- Step ingredient picker (opens above Cook modal) -->
+<div class="modal-bg" id="ingPickBg" style="z-index:250">
+  <div class="modal-card" style="max-width:520px">
+    <div class="modal-head">
+      <h2>Add ingredient for this step</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="ingPickClose">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <input type="search" id="ingPickSearch" placeholder="Search or type a new ingredient…" autocomplete="off"
+             style="width:100%;padding:10px 14px;background:var(--w04);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;margin-bottom:14px">
+      <div id="ingPickBody"></div>
+    </div>
+  </div>
+</div>
+<style>
+  .ip-section{ font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--w55);margin:12px 0 6px;font-weight:800 }
+  .ip-row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;
+    transition:.12s;border:1px solid transparent;
+  }
+  .ip-row:hover{ background:var(--w04);border-color:var(--accent) }
+  .ip-row .thumb{
+    width:34px;height:34px;border-radius:6px;background:var(--w05);overflow:hidden;
+    display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--muted);flex:0 0 34px;
+  }
+  .ip-row .thumb img{ width:100%;height:100%;object-fit:cover }
+  .ip-row .nm{ flex:1;font-size:13px;font-weight:600;color:var(--ink) }
+  .ip-row .badge{ font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px }
+  .ip-custom{
+    margin-top:14px;padding:10px 14px;border-radius:8px;background:rgba(74,222,128,.14);
+    border:1px dashed rgba(74,222,128,.45);color:#86efac;font-size:13px;font-weight:700;cursor:pointer;
+    text-align:center;
+  }
+  .ip-custom:hover{ background:rgba(74,222,128,.22) }
+</style>
+
 <!-- EZ Recipes sign-in modal -->
 <div class="modal-bg" id="ezAuthBg">
   <div class="modal-card" style="max-width:420px">
@@ -804,11 +841,32 @@ async function setMealSlot(weekKey, slotIdx, recipeId){
 
 // ---------- Load EZ recipes (best-effort) ----------
 let ezSignedIn = false;     // tracks Supabase session presence
+let _ezAuthListenerWired = false;
 const EZ_EMAIL_KEY = 'ez-recipes-last-email';
 
 async function loadEz(){
   const c = ezClient();
   if (!c) return;
+  // First time only: subscribe to Supabase auth changes so a session that
+  // becomes available LATER (persistSession deserialization, sign-in on
+  // another tab, token refresh) re-triggers a load instead of leaving the
+  // banner stuck on "Sign in".
+  if (!_ezAuthListenerWired) {
+    _ezAuthListenerWired = true;
+    try {
+      c.auth.onAuthStateChange((event, session) => {
+        console.log('[ez] auth state:', event, !!session);
+        const wasSignedIn = ezSignedIn;
+        ezSignedIn = !!session;
+        updateEzBanner();
+        // If the session just arrived (or refreshed), pull recipes.
+        if (session && !wasSignedIn) loadEz();
+        // If user signed out, clear the cached recipes so the banner state
+        // matches the data state.
+        if (!session && wasSignedIn) { ezRecipes = []; renderAll(); }
+      });
+    } catch (e) { console.warn('[ez] auth listener wire failed', e); }
+  }
   try {
     const sess = (await c.auth.getSession()).data.session;
     ezSignedIn = !!sess;
@@ -1383,6 +1441,96 @@ function renderCookStep(){
   wireCookStepEdits(body, step);
 }
 
+// ---------- Step ingredient picker ----------
+// Shows the recipe's full ingredient list first (so the user picks from
+// what's already established), then any library matches by search, then a
+// "+ Custom" tail. Tapping an item adds it to the current step's ingredients.
+let _ingPickQuery = '';
+function openStepIngPicker(){
+  _ingPickQuery = '';
+  const inp = document.getElementById('ingPickSearch');
+  inp.value = '';
+  renderStepIngPicker();
+  document.getElementById('ingPickBg').classList.add('open');
+  setTimeout(() => inp.focus(), 30);
+}
+function closeStepIngPicker(){ document.getElementById('ingPickBg').classList.remove('open'); }
+function renderStepIngPicker(){
+  const body = document.getElementById('ingPickBody');
+  const q = _ingPickQuery.trim().toLowerCase();
+  // Names already added to THIS step — exclude them so the user doesn't
+  // double-add. Compare on normalized form to dedupe across qty-prefixed
+  // duplicates.
+  const already = new Set(
+    (cookSteps[cookIdx]?.stepIngredients || [])
+      .map(i => normalizeIngredientName(i.name || i.text || ''))
+      .filter(Boolean)
+  );
+  // 1) Recipe's own ingredients (the primary affordance — user said: "show
+  // me options of the recipe ingredients that's already established")
+  const recipeIngs = cookIngs
+    .filter(ing => !already.has(normalizeIngredientName(ing.text)))
+    .filter(ing => !q || ing.text.toLowerCase().includes(q));
+  // 2) Library matches that aren't already on the recipe (so we don't
+  // duplicate). Limit to 12 to keep the list scannable.
+  const recipeKeys = new Set(cookIngs.map(i => normalizeIngredientName(i.text)));
+  const libMatches = [...ingredientLib.values()]
+    .filter(e => e.name && !already.has(e.name) && !recipeKeys.has(e.name))
+    .filter(e => !q || e.name.includes(q) || (e.aliases || []).some(a => a.includes(q)))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 12);
+
+  const recipeHtml = recipeIngs.length ? `
+    <div class="ip-section">From this recipe</div>
+    ${recipeIngs.map(ing => {
+      const img = ing.imageUrl || libImageFor(ing.text);
+      return `<div class="ip-row" data-pick="recipe" data-text="${attr(ing.text)}" data-img="${attr(img || '')}">
+        <div class="thumb">${img ? `<img src="${attr(img)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}</div>
+        <div class="nm">${esc(ing.text)}</div>
+        <span class="badge">recipe</span>
+      </div>`;
+    }).join('')}
+  ` : '';
+
+  const libHtml = libMatches.length ? `
+    <div class="ip-section">From your library</div>
+    ${libMatches.map(e => `
+      <div class="ip-row" data-pick="lib" data-text="${attr(e.name)}" data-img="${attr(e.imageUrl || '')}">
+        <div class="thumb">${e.imageUrl ? `<img src="${attr(e.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}</div>
+        <div class="nm">${esc(e.name)}</div>
+        <span class="badge">library</span>
+      </div>`).join('')}
+  ` : '';
+
+  // Empty state for the search.
+  const emptyHtml = (!recipeIngs.length && !libMatches.length)
+    ? (q ? `<div class="empty-msg" style="padding:20px 16px">No matches for "${esc(q)}".</div>`
+         : `<div class="empty-msg" style="padding:20px 16px">All this recipe's ingredients are already on this step. Use Custom below to add something else.</div>`)
+    : '';
+
+  // "+ Custom" tail — uses whatever the user typed as the new name. Always
+  // visible so a fresh entry is one tap away.
+  const customLabel = q ? `+ Add custom: "${esc(q)}"` : '+ Add custom ingredient';
+  const customHtml = `<div class="ip-custom" data-pick="custom">${customLabel}</div>`;
+
+  body.innerHTML = recipeHtml + libHtml + emptyHtml + customHtml;
+
+  body.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => {
+    const kind = el.getAttribute('data-pick');
+    let name = '', imageUrl = null;
+    if (kind === 'custom') { name = (_ingPickQuery || '').trim(); }
+    else { name = el.getAttribute('data-text') || ''; imageUrl = el.getAttribute('data-img') || null; }
+    if (!name) { document.getElementById('ingPickSearch')?.focus(); return; }
+    // Fall back to the library if the picked row didn't carry an image.
+    if (!imageUrl) imageUrl = libImageFor(name);
+    cookSteps[cookIdx].stepIngredients = cookSteps[cookIdx].stepIngredients || [];
+    cookSteps[cookIdx].stepIngredients.push({ name, amount: '', imageUrl });
+    commitCookSteps(cookOpenRid, cookSteps);
+    closeStepIngPicker();
+    renderCookStep();
+  }));
+}
+
 // All edit handlers for the current step card. Pulls current cookSteps[cookIdx]
 // fresh each time so writes apply against the latest state.
 function wireCookStepEdits(body, step){
@@ -1414,21 +1562,10 @@ function wireCookStepEdits(body, step){
       renderCookStep();
     };
   }
-  // Add a blank ingredient row.
+  // Open the step-ingredient picker — shows the recipe's own ingredients
+  // first so the user can pick from what's already established.
   const addBtn = body.querySelector('[data-act="ing-add"]');
-  if (addBtn) {
-    addBtn.onclick = () => {
-      cookSteps[cookIdx].stepIngredients = cookSteps[cookIdx].stepIngredients || [];
-      cookSteps[cookIdx].stepIngredients.push({ name: '', amount: '', imageUrl: null });
-      commitCookSteps(cookOpenRid, cookSteps);
-      renderCookStep();
-      // Focus the new name input.
-      setTimeout(() => {
-        const rows = body.querySelectorAll('[data-ing-i]');
-        rows[rows.length - 1]?.querySelector('[data-act="ing-name"]')?.focus();
-      }, 30);
-    };
-  }
+  if (addBtn) addBtn.onclick = () => openStepIngPicker();
   // Ingredient row handlers.
   body.querySelectorAll('[data-ing-i]').forEach(row => {
     const i = +row.dataset.ingI;
@@ -1549,6 +1686,18 @@ document.getElementById('grocClose').addEventListener('click', () => document.ge
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
 // Let's Cook (all recipes list)
+// Step ingredient picker
+document.getElementById('ingPickClose').addEventListener('click', closeStepIngPicker);
+document.getElementById('ingPickBg').addEventListener('click', e => { if (e.target.id === 'ingPickBg') closeStepIngPicker(); });
+document.getElementById('ingPickSearch').addEventListener('input', e => { _ingPickQuery = e.target.value || ''; renderStepIngPicker(); });
+document.getElementById('ingPickSearch').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    // Enter behaves like clicking the first row (or +Custom if no rows).
+    const first = document.querySelector('#ingPickBody [data-pick]:not(.ip-custom)');
+    (first || document.querySelector('#ingPickBody .ip-custom'))?.click();
+  }
+});
 document.getElementById('cookListBtn').addEventListener('click', openCookList);
 document.getElementById('cookListClose').addEventListener('click', closeCookList);
 document.getElementById('cookListBg').addEventListener('click', e => { if (e.target.id === 'cookListBg') closeCookList(); });
