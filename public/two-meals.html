@@ -152,6 +152,36 @@
   .h-card .name{ font-size:12.5px;font-weight:600;color:var(--ink);line-clamp:2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden }
   .h-card.empty{ color:var(--muted);font-size:12px;justify-content:center;padding:18px 6px;cursor:default }
 
+  /* History v2 — row per recipe with favorite + re-add */
+  .hv-row{
+    display:flex;align-items:center;gap:12px;padding:10px 12px;
+    background:var(--w03);border:1px solid var(--line);border-radius:10px;
+    margin-bottom:8px;cursor:pointer;transition:.12s;
+  }
+  .hv-row:hover{ border-color:var(--line2);background:var(--w04) }
+  .hv-row.fav{ border-color:rgba(255,204,77,.45);background:rgba(255,204,77,.06) }
+  .hv-row.fav:hover{ background:rgba(255,204,77,.12) }
+  .hv-thumb{
+    width:54px;height:54px;border-radius:8px;object-fit:cover;background:var(--w06);flex:0 0 54px;
+  }
+  .hv-thumb.placeholder{
+    display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--muted);
+  }
+  .hv-body{ flex:1;min-width:0 }
+  .hv-title{
+    font-size:13.5px;font-weight:700;color:var(--ink);line-height:1.3;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px;
+  }
+  .hv-meta{ display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted) }
+  .hv-count{ font-weight:700;color:var(--ink) }
+  .hv-star{
+    background:transparent;border:none;color:var(--muted);cursor:pointer;
+    font-size:22px;line-height:1;padding:4px 8px;border-radius:6px;
+    transition:.12s;
+  }
+  .hv-star:hover{ color:#ffcc4d;background:rgba(255,204,77,.1) }
+  .hv-row.fav .hv-star{ color:#ffcc4d }
+
   /* Modal */
   .modal-bg{
     position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);
@@ -1612,36 +1642,135 @@ function renderSlots(){
   const addThird = document.getElementById('addThirdBtn');
   if (addThird) addThird.addEventListener('click', () => setShowThird(k, true));
 }
-function renderHistory(){
+// Walk every past mealWeek and tally how many times each recipe was a main
+// (or a side). Returns { count Map, last Map (weekKey of most recent use) }.
+function computeMealHistory(){
   const thisWeek = isoWeekKey();
-  const past = [...mealWeeks.values()]
-    .filter(w => w.weekKey !== thisWeek && Array.isArray(w.slots) && w.slots.some(Boolean))
-    .sort((a,b) => (b.weekKey || '').localeCompare(a.weekKey || ''));
-  const el = document.getElementById('history');
-  if (!past.length) { el.hidden = true; return; }
-  el.hidden = false;
-  el.innerHTML = `<div class="history-head">Past weeks</div>` + past.slice(0, 24).map(w => {
-    return `<div class="history-row">
-      <div class="history-label">Week of ${weekDateRange(w.weekKey)}</div>
-      <div class="history-slots">
-        ${historyCardHtml(w.slots[0])}
-        ${historyCardHtml(w.slots[1])}
-      </div>
-    </div>`;
-  }).join('');
+  const count = new Map();   // rid -> times made
+  const last  = new Map();   // rid -> most recent weekKey
+  for (const w of mealWeeks.values()) {
+    if (w.weekKey === thisWeek) continue;        // current week isn't history yet
+    const slots = Array.isArray(w.slots) ? w.slots : [];
+    const sides = Array.isArray(w.sides) ? w.sides : [];
+    const allRids = [...slots, ...sides.flat()].filter(Boolean);
+    const seenInThisWeek = new Set();
+    for (const rid of allRids) {
+      if (seenInThisWeek.has(rid)) continue;     // don't double-count main+side same week
+      seenInThisWeek.add(rid);
+      count.set(rid, (count.get(rid) || 0) + 1);
+      const prev = last.get(rid);
+      if (!prev || w.weekKey > prev) last.set(rid, w.weekKey);
+    }
+  }
+  return { count, last };
 }
-function historyCardHtml(rid){
-  if (!rid) return `<div class="h-card empty">(empty)</div>`;
-  const raw = lookupRecipe(rid);
-  if (!raw) return `<div class="h-card empty">Recipe not loaded</div>`;
-  const merged = recipeWithMeta(raw);
-  const img = merged.img
-    ? `<img src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-    : `<div style="width:48px;height:48px;border-radius:6px;background:var(--w06);display:flex;align-items:center;justify-content:center;font-size:18px;opacity:.5">🍳</div>`;
-  return `<div class="h-card" data-view-rid="${attr(rid)}">
-    ${img}
-    <div class="name">${esc(merged.title)}</div>
-  </div>`;
+
+function isFavorite(rid){
+  return !!(recipeMeta.get(rid)?.favorite);
+}
+async function toggleFavorite(rid){
+  const cur = recipeMeta.get(rid) || {};
+  const next = { ...cur, favorite: !cur.favorite };
+  recipeMeta.set(rid, next);
+  try { await setDoc(doc(recipeMetaCol, rid), { favorite: !!next.favorite, updatedAt: nowISO() }, { merge: true }); }
+  catch (e) { console.warn('[fav] save', e); }
+  renderAll();
+}
+// Drop the recipe into the next empty slot of the CURRENT week. If both
+// mains are full and the 3rd-meal slot is hidden, expose it. If everything
+// is full, do nothing (user must clear a slot first).
+async function reAddToCurrentWeek(rid){
+  const wk = getMealWeek(isoWeekKey());
+  // Look for an empty main slot first (0, then 1, then 2 if showThird).
+  for (let i = 0; i < (wk.showThird ? 3 : 2); i++) {
+    if (!wk.slots[i]) { await setMealSlot(isoWeekKey(), i, rid); return; }
+  }
+  // No empty main and 3rd meal hidden — auto-expose slot 2 and use it.
+  if (!wk.showThird) {
+    await setShowThird(isoWeekKey(), true);
+    await setMealSlot(isoWeekKey(), 2, rid);
+    return;
+  }
+  alert('All three meal slots are full this week. Clear one first, or add as a side.');
+}
+
+function renderHistory(){
+  const el = document.getElementById('history');
+  const { count, last } = computeMealHistory();
+  if (!count.size) { el.hidden = true; return; }
+  el.hidden = false;
+
+  // Build the per-recipe list. Each row carries title, image, times made,
+  // last made label, favorite state.
+  const entries = [...count.entries()]
+    .map(([rid, n]) => {
+      const raw = lookupRecipe(rid);
+      const merged = raw ? recipeWithMeta(raw) : null;
+      return {
+        rid,
+        title: merged?.title || 'Recipe not loaded',
+        img: merged?.img || '',
+        times: n,
+        lastWeek: last.get(rid) || '',
+        fav: isFavorite(rid),
+        loaded: !!raw
+      };
+    })
+    .sort((a, b) => {
+      // Favorites pinned to top, then most-recent, then most-made.
+      if (a.fav !== b.fav) return a.fav ? -1 : 1;
+      if (a.lastWeek !== b.lastWeek) return (b.lastWeek || '').localeCompare(a.lastWeek || '');
+      return b.times - a.times;
+    });
+
+  const favs = entries.filter(e => e.fav);
+  const rest = entries.filter(e => !e.fav);
+
+  const rowHtml = e => {
+    const star = e.fav ? '★' : '☆';
+    const lastLabel = e.lastWeek ? `Last: ${weekDateRange(e.lastWeek) || e.lastWeek}` : '';
+    const thumb = e.img
+      ? `<img class="hv-thumb" src="${attr(e.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="hv-thumb placeholder">🍳</div>`;
+    return `<div class="hv-row${e.fav ? ' fav' : ''}" data-rid="${attr(e.rid)}">
+      ${thumb}
+      <div class="hv-body">
+        <div class="hv-title">${esc(e.title)}</div>
+        <div class="hv-meta">
+          <span class="hv-count">Made ${e.times}×</span>
+          ${lastLabel ? `<span class="hv-last">${esc(lastLabel)}</span>` : ''}
+        </div>
+      </div>
+      <button class="hv-star" data-act="fav" title="${e.fav ? 'Unstar' : 'Star this meal'}">${star}</button>
+      ${e.loaded ? `<button class="mini primary" data-act="readd" title="Add to next empty slot this week">+ Cook this week</button>` : ''}
+    </div>`;
+  };
+
+  let html = '';
+  if (favs.length) {
+    html += `<div class="history-head">⭐ Favorites</div>`;
+    html += favs.map(rowHtml).join('');
+  }
+  if (rest.length) {
+    html += `<div class="history-head"${favs.length ? ' style="margin-top:18px"' : ''}>Recent meals</div>`;
+    html += rest.slice(0, 50).map(rowHtml).join('');
+  }
+  el.innerHTML = html;
+
+  // Wire handlers.
+  el.querySelectorAll('.hv-row').forEach(row => {
+    const rid = row.getAttribute('data-rid');
+    row.querySelector('[data-act="fav"]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleFavorite(rid);
+    });
+    row.querySelector('[data-act="readd"]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      reAddToCurrentWeek(rid);
+    });
+    // Click row body → open View.
+    row.addEventListener('click', () => openView(rid));
+  });
 }
 
 // ---------- Ingredient Library modal ----------
