@@ -933,8 +933,12 @@ function subscribeRecipes(){
       // In disconnected mode the Firestore data is the truth — drive the
       // ready-state banner off it too.
       ezStatus = ezRecipes.length ? 'ready' : 'loading';
-      updateEzBanner();
     }
+    // Always re-run updateEzBanner so the 'recipes loaded → hide banner'
+    // check fires regardless of connection mode. Without this, recipes
+    // arriving via Firestore AFTER loadEz returned (timeout / 0 results)
+    // left the banner stuck on stale text even though recipes were live.
+    updateEzBanner();
     renderAll();
   }, (err) => console.warn('[recipes] snapshot err', err));
 }
@@ -1159,9 +1163,16 @@ function updateEzBanner(){
   const subEl   = document.getElementById('ezBannerSub');
   const signBtn = document.getElementById('ezBannerBtn');
   const retryBtn = document.getElementById('ezBannerRetry');
-  // Banner is hidden only when EZ is happy AND we actually have recipes.
-  const happy = ezStatus === 'ready' && ezRecipes.length > 0;
-  banner.hidden = happy;
+  // Top-level: if recipes are loaded from ANY source (EZ pull, Firestore
+  // mirror, or in-memory cache), hide the banner. Recipes being present
+  // beats every other state — no point saying 'No recipes loaded' when the
+  // slots are obviously rendering them.
+  if (ezRecipes.length > 0) {
+    banner.hidden = true;
+    return;
+  }
+  // Otherwise the banner reflects the real load state.
+  banner.hidden = false;
   if (!titleEl || !subEl) return;
   const cfg = {
     'loading':     ['Loading EZ Recipes…', 'Checking your PotLuck session — usually under a second.', false, true],
