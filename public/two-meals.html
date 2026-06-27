@@ -93,6 +93,40 @@
   .mini.primary:hover{ background:rgba(255,138,61,.26) }
   .mini.danger:hover{ color:#fca5a5;border-color:rgba(248,113,113,.4) }
 
+  /* Sides under each main slot */
+  .sides{
+    display:flex;flex-direction:column;gap:6px;padding:0 16px 8px;
+  }
+  .side-row{
+    display:flex;align-items:center;gap:10px;padding:7px 10px;
+    background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;
+    font-size:12.5px;
+  }
+  .side-row.missing{ color:var(--muted);font-style:italic }
+  .side-thumb{
+    width:32px;height:32px;border-radius:6px;object-fit:cover;flex:0 0 32px;
+    background:var(--w05);
+  }
+  .side-thumb.placeholder{
+    display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--muted);
+  }
+  .side-title{ flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink) }
+  .side-spacer{ flex:1 }
+  .add-side{
+    margin:0 16px 12px;padding:7px 12px;border-radius:8px;
+    background:transparent;border:1px dashed var(--line2);color:var(--muted);
+    font:inherit;font-size:11.5px;font-weight:700;cursor:pointer;text-align:left;display:block;
+  }
+  .add-side:hover{ color:var(--ink);border-color:var(--accent) }
+
+  /* Add-third-meal button — sits below the two main slots */
+  .add-third{
+    grid-column:1 / -1;margin-top:6px;padding:14px 18px;border-radius:12px;
+    background:transparent;border:1px dashed var(--line2);color:var(--muted);
+    font:inherit;font-size:13px;font-weight:700;cursor:pointer;text-align:center;
+  }
+  .add-third:hover{ color:var(--ink);border-color:var(--accent) }
+
   /* Bottom actions */
   .below-slots{ margin-top:14px;display:flex;gap:8px;flex-wrap:wrap }
 
@@ -356,6 +390,7 @@
   <h1>🎯 Two Meals</h1>
   <span class="week" id="topbarWeek"></span>
   <span class="spacer"></span>
+  <button class="tb-btn" id="catBtn" title="Manage your recipe categories">🏷️ Categories</button>
   <button class="tb-btn" id="ingLibBtn">🧂 Library</button>
   <button class="tb-btn" id="cookListBtn">🍴 Let's Cook</button>
   <button class="tb-btn primary" id="groceryBtn" hidden>🛒 Grocery (both)</button>
@@ -402,6 +437,50 @@
     <div class="modal-body" id="cookBody"></div>
   </div>
 </div>
+
+<!-- Categories management modal -->
+<div class="modal-bg" id="catBg">
+  <div class="modal-card" style="max-width:520px">
+    <div class="modal-head">
+      <h2>🏷️ Categories</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="catClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5">
+        Categories show up as filter chips in the meal picker and Let's Cook list.
+        The four defaults (Want to eat, Breakfast, Lunch, Dinner) are always available.
+        Add your own below — e.g. Quick weeknight, Comfort food, Meal-prep.
+      </p>
+      <div id="catList"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <input type="text" id="catNew" class="cl-search" placeholder="New category name…" style="margin-bottom:0;flex:1">
+        <button class="tb-btn primary" id="catAdd" style="background:var(--accent);color:#fff;border:none;white-space:nowrap">+ Add</button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  #catList{ display:flex;flex-direction:column;gap:6px }
+  .cat-row{
+    display:flex;align-items:center;gap:10px;padding:9px 12px;
+    background:var(--w03);border:1px solid var(--line);border-radius:8px;
+  }
+  .cat-row .cat-name{
+    flex:1;background:transparent;border:none;color:var(--ink);font:inherit;
+    font-size:13px;font-weight:600;outline:none;padding:2px 4px;border-radius:4px;
+  }
+  .cat-row .cat-name:focus{ background:var(--w05) }
+  .cat-row.default{ opacity:.55 }
+  .cat-row.default .cat-name{ pointer-events:none }
+  .cat-row .cat-tag{
+    font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700;
+  }
+  .cat-row .del{
+    background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:4px 8px;border-radius:5px;
+  }
+  .cat-row .del:hover{ color:#f87171;background:rgba(248,113,113,.1) }
+</style>
 
 <!-- Ingredient library — master list of ingredients with photos -->
 <div class="modal-bg" id="ingLibBg">
@@ -612,6 +691,11 @@ const ingredientLibCol = collection(db, 'ingredient_library');
 // Local mirror of EZ recipes. Once you "disconnect EZ" the user keeps the
 // snapshot here forever — no more Supabase round-trips on page load.
 const recipesCol       = collection(db, 'meals_recipes');
+// User-defined categories. Replaces the hardcoded label set so the user can
+// tag recipes with whatever buckets make sense for them (Quick weeknight,
+// Comfort food, Meal-prep, Lazy Sunday, etc.) and have those filters live
+// in both the picker and Let's Cook list.
+const categoriesCol    = collection(db, 'meals_categories');
 
 // localStorage flag: when present, loadEz becomes a no-op and we serve
 // recipes from Firestore only. Set by the Disconnect EZ migrator.
@@ -642,7 +726,16 @@ let ezRecipes = [];
 let pickingSlot = null;
 let pickerQuery = '';
 let pickerLabel = '';
-const LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
+// When pickingForSide is set, the picker is selecting a side dish for
+// pickingSlot rather than replacing the main meal.
+let pickingForSide = false;
+// LABELS is now reactive — populated from the meals_categories Firestore
+// collection on init, plus the four defaults so a brand-new user still has
+// something usable. Anywhere that previously read from this array still
+// works; it's just a let now instead of const.
+const DEFAULT_LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
+let LABELS = [...DEFAULT_LABELS];
+const userCategories = new Map();  // id -> { name, order? }
 
 // Master ingredient library — same Firestore collection Goals uses, so a
 // pic uploaded here propagates to Goals canvas and vice versa. Normalized
@@ -899,6 +992,101 @@ function subscribeIngredientLib(){
   });
 }
 
+// ---------- Categories modal ----------
+function openCategories(){
+  document.getElementById('catBg').classList.add('open');
+  drawCategories();
+  setTimeout(() => document.getElementById('catNew')?.focus(), 30);
+}
+function closeCategories(){ document.getElementById('catBg').classList.remove('open'); }
+function drawCategories(){
+  const list = document.getElementById('catList');
+  const defaultRows = DEFAULT_LABELS.map(L =>
+    `<div class="cat-row default">
+      <span class="cat-name">${esc(L)}</span>
+      <span class="cat-tag">built-in</span>
+    </div>`).join('');
+  const customRows = [...userCategories.values()]
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map(c => `<div class="cat-row" data-id="${attr(c.id)}">
+      <input type="text" class="cat-name" data-act="rename" value="${attr(c.name || '')}">
+      <button class="del" data-act="del" title="Delete">✕</button>
+    </div>`).join('');
+  list.innerHTML = defaultRows + customRows;
+  list.querySelectorAll('[data-id]').forEach(row => {
+    const id = row.getAttribute('data-id');
+    row.querySelector('[data-act="rename"]')?.addEventListener('blur', e => {
+      const v = e.target.value.trim();
+      const cur = userCategories.get(id);
+      if (!cur || v === cur.name) return;
+      renameCategory(id, v);
+    });
+    row.querySelector('[data-act="del"]')?.addEventListener('click', () => {
+      const cur = userCategories.get(id);
+      if (!confirm(`Delete category "${cur?.name || ''}"? Recipes tagged with it won't lose anything else.`)) return;
+      deleteCategory(id);
+    });
+  });
+}
+
+// ---------- Categories ----------
+function recomputeLabels(){
+  // Build LABELS from defaults + user categories, in order, deduped.
+  const seen = new Set();
+  const out = [];
+  for (const L of DEFAULT_LABELS) {
+    const k = L.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(L); }
+  }
+  const userOrdered = [...userCategories.values()]
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  for (const c of userOrdered) {
+    const k = (c.name || '').toLowerCase().trim();
+    if (k && !seen.has(k)) { seen.add(k); out.push(c.name); }
+  }
+  LABELS = out;
+}
+function subscribeCategories(){
+  onSnapshot(categoriesCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') userCategories.delete(ch.doc.id);
+      else userCategories.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    recomputeLabels();
+    renderAll();
+    if (document.getElementById('cookListBg')?.classList.contains('open')) renderCookList();
+    if (document.getElementById('catBg')?.classList.contains('open')) drawCategories();
+  }, (err) => console.warn('[categories] snapshot err', err));
+}
+async function addCategory(name){
+  const n = (name || '').trim();
+  if (!n) return;
+  const id = 'cat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  const order = userCategories.size;
+  try {
+    await setDoc(doc(categoriesCol, id), { name: n, order, createdAt: nowISO() });
+    userCategories.set(id, { id, name: n, order });
+    recomputeLabels();
+  } catch (e) { console.error('[categories] add failed', e); alert('Couldn\'t save category.'); }
+}
+async function renameCategory(id, name){
+  const n = (name || '').trim();
+  if (!n) return;
+  try {
+    await setDoc(doc(categoriesCol, id), { name: n, updatedAt: nowISO() }, { merge: true });
+    const cur = userCategories.get(id) || {};
+    userCategories.set(id, { ...cur, name: n });
+    recomputeLabels();
+  } catch (e) { console.error('[categories] rename failed', e); }
+}
+async function deleteCategory(id){
+  try {
+    await deleteDoc(doc(categoriesCol, id));
+    userCategories.delete(id);
+    recomputeLabels();
+  } catch (e) { console.error('[categories] delete failed', e); }
+}
+
 function subscribeMealWeeks(){
   onSnapshot(mealWeeksCol, (snap) => {
     snap.docChanges().forEach(ch => {
@@ -1029,16 +1217,65 @@ function commitCookSteps(rid, steps){
   cookRich = true;
   scheduleSaveCookSteps(rid, steps);
 }
-async function setMealSlot(weekKey, slotIdx, recipeId){
-  const cur = mealWeeks.get(weekKey) || { weekKey, slots: [null, null] };
-  const slots = Array.isArray(cur.slots) ? cur.slots.slice() : [null, null];
+// Get the meal-week document with normalized shape (slots length 2 minimum,
+// sides parallel array, mainsExtraVisible flag for the optional 3rd meal
+// UI).
+function getMealWeek(weekKey){
+  const cur = mealWeeks.get(weekKey) || { weekKey };
+  const slots = Array.isArray(cur.slots) ? cur.slots.slice() : [];
   while (slots.length < 2) slots.push(null);
-  slots[slotIdx] = recipeId || null;
-  const payload = { weekKey, slots, updatedAt: nowISO() };
+  const sides = Array.isArray(cur.sides) ? cur.sides.slice() : [];
+  while (sides.length < slots.length) sides.push([]);
+  return {
+    weekKey,
+    slots,
+    sides: sides.map(s => Array.isArray(s) ? s : []),
+    showThird: !!cur.showThird || !!slots[2]  // auto-show when filled
+  };
+}
+
+async function saveMealWeek(weekKey, wk){
+  const payload = {
+    weekKey,
+    slots: wk.slots,
+    sides: wk.sides,
+    showThird: wk.showThird,
+    updatedAt: nowISO()
+  };
   mealWeeks.set(weekKey, payload);
   try { await setDoc(doc(mealWeeksCol, weekKey), payload, { merge: true }); }
   catch (e) { console.error('[meals] save', e); }
   renderAll();
+}
+
+async function setMealSlot(weekKey, slotIdx, recipeId){
+  const wk = getMealWeek(weekKey);
+  // Allow setting a 3rd slot by auto-expanding the array.
+  while (wk.slots.length <= slotIdx) { wk.slots.push(null); wk.sides.push([]); }
+  wk.slots[slotIdx] = recipeId || null;
+  if (slotIdx === 2 && recipeId) wk.showThird = true;
+  await saveMealWeek(weekKey, wk);
+}
+async function setShowThird(weekKey, on){
+  const wk = getMealWeek(weekKey);
+  wk.showThird = !!on;
+  // Make sure the slot exists when we show it.
+  while (wk.slots.length < 3) { wk.slots.push(null); wk.sides.push([]); }
+  await saveMealWeek(weekKey, wk);
+}
+async function addMealSide(weekKey, slotIdx, recipeId){
+  const wk = getMealWeek(weekKey);
+  while (wk.sides.length <= slotIdx) wk.sides.push([]);
+  if (!Array.isArray(wk.sides[slotIdx])) wk.sides[slotIdx] = [];
+  // De-dupe — don't add the same side twice.
+  if (recipeId && !wk.sides[slotIdx].includes(recipeId)) wk.sides[slotIdx].push(recipeId);
+  await saveMealWeek(weekKey, wk);
+}
+async function removeMealSide(weekKey, slotIdx, sideIdx){
+  const wk = getMealWeek(weekKey);
+  if (!Array.isArray(wk.sides[slotIdx])) return;
+  wk.sides[slotIdx].splice(sideIdx, 1);
+  await saveMealWeek(weekKey, wk);
 }
 
 // ---------- Load EZ recipes (best-effort) ----------
@@ -1251,14 +1488,37 @@ function lookupRecipe(rid){
   if (!rid) return null;
   return ezRecipes.find(r => r.rid === rid) || null;
 }
-function slotHtml(rid, slotIdx, weekKey, editable){
+// Render one side row (compact card under the main slot).
+function sideRowHtml(rid, slotIdx, sideIdx, weekKey){
+  const raw = lookupRecipe(rid);
+  if (!raw) {
+    return `<div class="side-row missing">
+      <span class="side-thumb placeholder">🍳</span>
+      <span class="side-title">Recipe not loaded</span>
+      <button class="mini danger" data-side-clear="${slotIdx}|${sideIdx}|${attr(weekKey)}">✕</button>
+    </div>`;
+  }
+  const merged = recipeWithMeta(raw);
+  const thumb = merged.img
+    ? `<img class="side-thumb" src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<span class="side-thumb placeholder">🍲</span>`;
+  return `<div class="side-row">
+    ${thumb}
+    <span class="side-title">${esc(merged.title)}</span>
+    <span class="side-spacer"></span>
+    <button class="mini" data-side-cook="${attr(rid)}" title="Open Cook on this side">🍴</button>
+    <button class="mini danger" data-side-clear="${slotIdx}|${sideIdx}|${attr(weekKey)}" title="Remove side">✕</button>
+  </div>`;
+}
+function slotHtml(rid, slotIdx, weekKey, editable, sides){
   const raw = lookupRecipe(rid);
   if (!rid) {
     if (!editable) return `<div class="slot empty" style="pointer-events:none;opacity:.5;border-style:solid;border-width:1px"><div class="h">(empty)</div></div>`;
+    const label = slotIdx === 2 ? 'Pick the 3rd meal' : `Pick meal #${slotIdx + 1}`;
     return `<div class="slot empty" data-pick="${slotIdx}">
       <div class="plus">+</div>
-      <div class="h">Pick meal #${slotIdx + 1}</div>
-      <div class="sub">From your EZ Recipes</div>
+      <div class="h">${label}</div>
+      <div class="sub">From your recipes</div>
     </div>`;
   }
   if (!raw) {
@@ -1276,6 +1536,14 @@ function slotHtml(rid, slotIdx, weekKey, editable){
     ? `<img class="slot-img" src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
     : `<div class="slot-img placeholder">🍳</div>`;
   const labels = (merged.labels || []).slice(0, 3).map(L => `<span class="slot-chip">${esc(L)}</span>`).join('');
+  // Sides — hidden by default, revealed by the "+ Add side" button.
+  const hasSides = Array.isArray(sides) && sides.length > 0;
+  const sidesHtml = hasSides
+    ? `<div class="sides">${sides.map((sRid, i) => sideRowHtml(sRid, slotIdx, i, weekKey)).join('')}</div>`
+    : '';
+  const addSideBtn = editable
+    ? `<button class="add-side" data-add-side="${slotIdx}">+ Add side</button>`
+    : '';
   return `<div class="slot">
     ${img}
     <div class="slot-body">
@@ -1289,17 +1557,34 @@ function slotHtml(rid, slotIdx, weekKey, editable){
       <button class="mini" data-pick="${slotIdx}">↻ Replace</button>
       <button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">✕ Clear</button>
     </div>` : ''}
+    ${sidesHtml}
+    ${addSideBtn}
   </div>`;
 }
 function renderSlots(){
   const k = isoWeekKey();
-  const wk = mealWeeks.get(k) || { weekKey: k, slots: [null, null] };
-  const slots = Array.isArray(wk.slots) ? wk.slots : [null, null];
+  const wk = getMealWeek(k);
   const el = document.getElementById('slots');
-  el.innerHTML = slotHtml(slots[0], 0, k, true) + slotHtml(slots[1], 1, k, true);
+  let html = slotHtml(wk.slots[0], 0, k, true, wk.sides[0])
+           + slotHtml(wk.slots[1], 1, k, true, wk.sides[1]);
+  if (wk.showThird) {
+    html += slotHtml(wk.slots[2] || null, 2, k, true, wk.sides[2]);
+  } else {
+    html += `<button class="add-third" id="addThirdBtn">+ Add a third meal this week</button>`;
+  }
+  el.innerHTML = html;
+  // Main slot pickers
   el.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
     pickingSlot = parseInt(b.getAttribute('data-pick'), 10);
+    pickingForSide = false;
+    openPicker();
+  }));
+  // Side pickers
+  el.querySelectorAll('[data-add-side]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    pickingSlot = parseInt(b.getAttribute('data-add-side'), 10);
+    pickingForSide = true;
     openPicker();
   }));
   el.querySelectorAll('[data-clear]').forEach(b => b.addEventListener('click', e => {
@@ -1315,6 +1600,17 @@ function renderSlots(){
     e.stopPropagation();
     openView(b.getAttribute('data-view'));
   }));
+  el.querySelectorAll('[data-side-cook]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    openCook(b.getAttribute('data-side-cook'));
+  }));
+  el.querySelectorAll('[data-side-clear]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const [s, i, w] = b.getAttribute('data-side-clear').split('|');
+    removeMealSide(w, parseInt(s, 10), parseInt(i, 10));
+  }));
+  const addThird = document.getElementById('addThirdBtn');
+  if (addThird) addThird.addEventListener('click', () => setShowThird(k, true));
 }
 function renderHistory(){
   const thisWeek = isoWeekKey();
@@ -1757,7 +2053,10 @@ function renderCookList(){
 
 // ---------- Picker ----------
 function openPicker(){
-  document.getElementById('pickerH').textContent = `Pick meal #${pickingSlot + 1}`;
+  const slotLabel = pickingSlot === 2 ? 'the 3rd meal' : `meal #${pickingSlot + 1}`;
+  document.getElementById('pickerH').textContent = pickingForSide
+    ? `Pick a side for ${slotLabel}`
+    : `Pick ${slotLabel}`;
   document.getElementById('pickerBg').classList.add('open');
   pickerQuery = '';
   pickerLabel = '';
@@ -1766,6 +2065,7 @@ function openPicker(){
 }
 function closePicker(){
   pickingSlot = null;
+  pickingForSide = false;
   document.getElementById('pickerBg').classList.remove('open');
 }
 function renderPicker(){
@@ -1818,7 +2118,8 @@ function renderPicker(){
   grid.querySelectorAll('[data-rid]').forEach(c => c.addEventListener('click', () => {
     const rid = c.getAttribute('data-rid');
     const wk = isoWeekKey();
-    setMealSlot(wk, pickingSlot, rid);
+    if (pickingForSide) addMealSide(wk, pickingSlot, rid);
+    else setMealSlot(wk, pickingSlot, rid);
     closePicker();
   }));
 }
@@ -2305,6 +2606,19 @@ document.getElementById('grocClose').addEventListener('click', () => document.ge
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
 // Let's Cook (all recipes list)
+// Categories management modal
+document.getElementById('catBtn').addEventListener('click', openCategories);
+document.getElementById('catClose').addEventListener('click', closeCategories);
+document.getElementById('catBg').addEventListener('click', e => { if (e.target.id === 'catBg') closeCategories(); });
+document.getElementById('catAdd').addEventListener('click', async () => {
+  const inp = document.getElementById('catNew');
+  await addCategory(inp.value);
+  inp.value = '';
+  drawCategories();
+});
+document.getElementById('catNew').addEventListener('keydown', async e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('catAdd').click(); }
+});
 // Ingredient library modal
 document.getElementById('ingLibBtn').addEventListener('click', openIngLib);
 document.getElementById('ingLibClose').addEventListener('click', closeIngLib);
@@ -2357,6 +2671,7 @@ document.addEventListener('click', e => {
 if (new URLSearchParams(location.search).get('embed') === '1') {
   document.body.classList.add('embed');
 }
+subscribeCategories();
 subscribeMealWeeks();
 subscribeRecipeMeta();
 subscribeIngredientLib();
