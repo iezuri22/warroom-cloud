@@ -273,6 +273,48 @@
   /* Empty / loading */
   .empty-msg{ text-align:center;color:var(--muted);padding:40px 16px;font-size:14px }
 
+  /* Let's Cook all-recipes list */
+  #cookListBody{ display:flex;flex-direction:column;gap:8px }
+  .cl-search{
+    width:100%;padding:11px 14px;background:var(--w04);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;
+    margin-bottom:10px;
+  }
+  .cl-chips{ display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px }
+  .cl-chip{
+    padding:6px 11px;border-radius:99px;background:var(--w04);border:1px solid var(--line);
+    color:var(--w70);font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+  }
+  .cl-chip.active{ background:var(--accent);color:#fff;border-color:transparent }
+  .cl-row{
+    display:flex;gap:14px;align-items:center;padding:11px 12px;
+    background:var(--w03);border:1px solid var(--line);border-radius:10px;
+    cursor:pointer;transition:.12s;
+  }
+  .cl-row:hover{ border-color:var(--accent);transform:translateX(2px) }
+  .cl-thumb{
+    width:64px;height:64px;border-radius:8px;background:var(--w05);overflow:hidden;
+    flex:0 0 64px;display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--muted);
+  }
+  .cl-thumb img{ width:100%;height:100%;object-fit:cover }
+  .cl-body{ flex:1;min-width:0 }
+  .cl-title{ font-size:14px;font-weight:700;color:var(--ink);line-height:1.3;margin-bottom:4px }
+  .cl-meta{ display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--muted) }
+  .cl-meta .cl-lbl{
+    padding:2px 7px;border-radius:99px;background:rgba(74,222,128,.16);color:#86efac;font-weight:700;
+  }
+  .cl-steps{
+    flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;
+  }
+  .cl-steps .n{
+    font-size:18px;font-weight:800;color:var(--ink);line-height:1;
+  }
+  .cl-steps .lbl{ font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700 }
+  .cl-steps.edited .n{ color:var(--accent) }
+  .cl-steps.edited::after{
+    content:"●";color:var(--accent);font-size:9px;line-height:1;
+  }
+
   /* EZ sign-in banner — shown above slots when no Supabase session yet */
   .ez-banner{
     display:flex;align-items:center;gap:12px;
@@ -309,6 +351,7 @@
   <h1>🎯 Two Meals</h1>
   <span class="week" id="topbarWeek"></span>
   <span class="spacer"></span>
+  <button class="tb-btn" id="cookListBtn">🍴 Let's Cook</button>
   <button class="tb-btn primary" id="groceryBtn" hidden>🛒 Grocery (both)</button>
 </div>
 
@@ -350,6 +393,22 @@
       <button class="tb-btn" id="cookClose">Close</button>
     </div>
     <div class="modal-body" id="cookBody"></div>
+  </div>
+</div>
+
+<!-- Let's Cook — list of every recipe with step counts -->
+<div class="modal-bg" id="cookListBg">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>🍴 Let's Cook · <span id="cookListCount" style="color:var(--muted);font-weight:600"></span></h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="cookListClose">Close</button>
+    </div>
+    <div class="modal-body">
+      <input type="search" class="cl-search" id="cookListSearch" placeholder="Search recipe, ingredient, tag…" autocomplete="off">
+      <div class="cl-chips" id="cookListChips"></div>
+      <div id="cookListBody"></div>
+    </div>
   </div>
 </div>
 
@@ -446,6 +505,10 @@ const ingredientLib = new Map();
 // Track recipe whose Cook walkthrough is open — used to scope writes and
 // re-render after recipe_meta snapshot updates.
 let cookOpenRid = null;
+
+// Let's Cook (all recipes) list state
+let cookListQuery = '';
+let cookListLabel = '';
 // Save coalescer: debounce per-rid writes so rapid edits collapse into
 // one Firestore round-trip.
 const _pendingSaves = new Map();   // rid -> { steps, timer }
@@ -813,6 +876,11 @@ function renderAll(){
   renderTopbar();
   renderSlots();
   renderHistory();
+  // Keep the Let's Cook list fresh when EZ data arrives or recipe_meta
+  // changes (step counts depend on both).
+  if (document.getElementById('cookListBg')?.classList.contains('open')) {
+    try { renderCookList(); } catch {}
+  }
 }
 function renderTopbar(){
   const k = isoWeekKey();
@@ -920,6 +988,94 @@ function historyCardHtml(rid){
     ${img}
     <div class="name">${esc(merged.title)}</div>
   </div>`;
+}
+
+// ---------- Let's Cook (all recipes) ----------
+// Returns the effective step count for a recipe: prefers recipe_meta
+// cookSteps (the rich edited list), falls back to the EZ string steps.
+function stepCountFor(rid){
+  const meta = recipeMeta.get(rid) || {};
+  if (Array.isArray(meta.cookSteps)) return meta.cookSteps.length;
+  const raw = lookupRecipe(rid);
+  if (!raw) return 0;
+  return (recipeWithMeta(raw).steps || []).length;
+}
+function hasEditedCookSteps(rid){
+  const meta = recipeMeta.get(rid) || {};
+  return Array.isArray(meta.cookSteps) && meta.cookSteps.length > 0;
+}
+function openCookList(){
+  cookListQuery = '';
+  cookListLabel = '';
+  document.getElementById('cookListSearch').value = '';
+  renderCookList();
+  document.getElementById('cookListBg').classList.add('open');
+  setTimeout(() => document.getElementById('cookListSearch')?.focus(), 30);
+}
+function closeCookList(){ document.getElementById('cookListBg').classList.remove('open'); }
+function renderCookList(){
+  // Label chips with counts
+  const chipsEl = document.getElementById('cookListChips');
+  chipsEl.innerHTML = LABELS.map(L => {
+    const n = ezRecipes.filter(r => effectiveLabelsFor(r).includes(L)).length;
+    return `<button type="button" class="cl-chip${cookListLabel === L ? ' active' : ''}" data-l="${attr(L)}">${esc(L)} ${n}</button>`;
+  }).join('');
+  chipsEl.querySelectorAll('[data-l]').forEach(b => b.addEventListener('click', () => {
+    const L = b.getAttribute('data-l');
+    cookListLabel = (cookListLabel === L) ? '' : L;
+    renderCookList();
+  }));
+  // Filtered list
+  const q = cookListQuery.trim().toLowerCase();
+  const matches = ezRecipes.filter(r => {
+    if (cookListLabel && !effectiveLabelsFor(r).includes(cookListLabel)) return false;
+    if (!q) return true;
+    const merged = recipeWithMeta(r);
+    const hay = (merged.title + ' ' + (r.tags || []).join(' ') + ' ' + (merged.ingredients || []).map(i => i.text || '').join(' ')).toLowerCase();
+    return hay.includes(q);
+  }).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  // Count badge in header
+  document.getElementById('cookListCount').textContent =
+    `${matches.length}${matches.length !== ezRecipes.length ? ' of ' + ezRecipes.length : ''} recipe${matches.length === 1 ? '' : 's'}`;
+
+  const body = document.getElementById('cookListBody');
+  if (!ezRecipes.length) {
+    body.innerHTML = ezSignedIn
+      ? `<div class="empty-msg">No recipes loaded yet. Add some in EZ Recipes / PotLuck, then refresh.</div>`
+      : `<div class="empty-msg">Not signed in to EZ Recipes.<br><button class="tb-btn primary" id="clSignInBtn" style="margin-top:14px">Sign in</button></div>`;
+    const sb = document.getElementById('clSignInBtn');
+    if (sb) sb.addEventListener('click', openEzAuth);
+    return;
+  }
+  if (!matches.length) {
+    body.innerHTML = `<div class="empty-msg">No recipes match the current filter.</div>`;
+    return;
+  }
+  body.innerHTML = matches.map(r => {
+    const merged = recipeWithMeta(r);
+    const n = stepCountFor(r.rid);
+    const edited = hasEditedCookSteps(r.rid);
+    const labels = (merged.labels || []).slice(0, 2).map(L => `<span class="cl-lbl">${esc(L)}</span>`).join('');
+    const thumb = merged.img
+      ? `<img src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'🍳'}))">`
+      : '🍳';
+    return `<div class="cl-row" data-rid="${attr(r.rid)}">
+      <div class="cl-thumb">${thumb}</div>
+      <div class="cl-body">
+        <div class="cl-title">${esc(merged.title)}</div>
+        <div class="cl-meta">${labels}${(merged.ingredients || []).length} ingredients</div>
+      </div>
+      <div class="cl-steps${edited ? ' edited' : ''}" title="${edited ? 'You\\'ve edited these steps' : 'From EZ Recipes'}">
+        <span class="n">${n}</span>
+        <span class="lbl">step${n === 1 ? '' : 's'}</span>
+      </div>
+    </div>`;
+  }).join('');
+  body.querySelectorAll('[data-rid]').forEach(row => row.addEventListener('click', () => {
+    const rid = row.getAttribute('data-rid');
+    closeCookList();
+    openCook(rid);
+  }));
 }
 
 // ---------- Picker ----------
@@ -1392,6 +1548,11 @@ document.getElementById('cookBg').addEventListener('click', e => {
 document.getElementById('grocClose').addEventListener('click', () => document.getElementById('grocBg').classList.remove('open'));
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
+// Let's Cook (all recipes list)
+document.getElementById('cookListBtn').addEventListener('click', openCookList);
+document.getElementById('cookListClose').addEventListener('click', closeCookList);
+document.getElementById('cookListBg').addEventListener('click', e => { if (e.target.id === 'cookListBg') closeCookList(); });
+document.getElementById('cookListSearch').addEventListener('input', e => { cookListQuery = e.target.value || ''; renderCookList(); });
 // EZ auth wiring
 document.getElementById('ezBannerBtn').addEventListener('click', openEzAuth);
 document.getElementById('ezAuthClose').addEventListener('click', closeEzAuth);
