@@ -1099,15 +1099,35 @@ async function loadEz(){
     }
     ezStatus = 'fetching';
     updateEzBanner();
-    const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
-    if (error) {
-      console.warn('[ez]', error);
-      ezStatus = 'error';
-      ezError = error.message || 'Failed to fetch recipes';
-      updateEzBanner();
-      return;
+    // PAGINATE — single .select() across all rows hits Supabase's per-
+    // statement timeout once the dataset grows. Pull 40 rows at a time
+    // and accumulate until we get an empty page. Updates the banner sub-
+    // text with progress so the user knows it's actually doing work.
+    const PAGE = 40;
+    const all = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const subEl = document.getElementById('ezBannerSub');
+      if (subEl) subEl.textContent = `Pulled ${all.length} rows so far…`;
+      const { data, error } = await c
+        .from('meal_planner_data')
+        .select('*')
+        .eq('user_id', sess.user.id)
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (error) {
+        console.warn('[ez] page error', error);
+        ezStatus = 'error';
+        ezError = error.message || 'Failed to fetch recipes';
+        updateEzBanner();
+        return;
+      }
+      const rows = data || [];
+      if (!rows.length) break;
+      all.push(...rows);
+      // Defensive cap so a runaway loop can't hang the page.
+      if (offset > 50_000) break;
     }
-    const recipes = (data || []).filter(r => String(r.id || '').startsWith('recipe_'));
+    const recipes = all.filter(r => String(r.id || '').startsWith('recipe_'));
     ezRecipes = recipes
       .map(r => ({ rid: r.id, ...(r.data || {}) }))
       .filter(r => r.title && !r.isDraft)
@@ -1119,7 +1139,7 @@ async function loadEz(){
         ingredients: ezIngredients(r),
         steps:       ezSteps(r),
       }));
-    console.log(`[ez] loaded ${ezRecipes.length} recipes`);
+    console.log(`[ez] loaded ${ezRecipes.length} recipes (from ${all.length} rows)`);
     ezStatus = 'ready';
     updateEzBanner();
     renderAll();
