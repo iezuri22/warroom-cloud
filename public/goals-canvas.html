@@ -2855,13 +2855,22 @@ async function createNode(type, opts){
 }
 
 document.getElementById('addSectionBtn').onclick = () => createNode('section');
-document.getElementById('addStickyBtn').onclick  = () => createNode('sticky');
-document.getElementById('addRecipeBtn').onclick  = () => createRecipeTemplate();
-document.getElementById('ezRecipeBtn').onclick   = () => openEzRecipePicker();
-document.getElementById('groceryBtn').onclick    = () => openGroceryModal();
-document.getElementById('cookBtn').onclick       = () => openCookPicker();
-document.getElementById('ingLibBtn').onclick     = () => openIngLibModal();
-document.getElementById('twoMealsBtn').onclick   = () => openTwoMealsModal();
+// Optional-chained so a missing toolbar button can't HALT module evaluation
+// here — that's exactly what happened with #twoMealsBtn (the toolbar item
+// was removed when Two Meals moved to its own War Room tab, but this line
+// stayed and threw TypeError 'Cannot set property of null'). The throw
+// stopped the script before `let _ezClient` was reached at module bottom,
+// so clicking EZ Recipes later hit TDZ "Cannot access '_ezClient' before
+// initialization". Optional-chained assignment is a no-op when the element
+// is missing.
+const _safeBind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+_safeBind('addStickyBtn',  () => createNode('sticky'));
+_safeBind('addRecipeBtn',  () => createRecipeTemplate());
+_safeBind('ezRecipeBtn',   () => openEzRecipePicker());
+_safeBind('groceryBtn',    () => openGroceryModal());
+_safeBind('cookBtn',       () => openCookPicker());
+_safeBind('ingLibBtn',     () => openIngLibModal());
+_safeBind('twoMealsBtn',   () => openTwoMealsModal());
 
 // ============= 🎯 Two Meals (weekly commitment) ==========================
 function subscribeMealWeeks(){
@@ -4643,12 +4652,20 @@ async function removeStepMedia(){
 const EZ_URL  = 'https://blqbxduxgimarrhgyfgn.supabase.co';
 const EZ_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscWJ4ZHV4Z2ltYXJyaGd5ZmduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc1NjgyNDcsImV4cCI6MjA4MzE0NDI0N30.iNrBLJLSQEUEV24VCnhrMPTTJ6A_0rIuSAOinuFd-vM';
 const EZ_EMAIL_KEY = 'ez-recipes-email';
-let _ezClient = null;
-let _ezRecipes = [];
-let _ezLoadedAt = 0;            // ms — when we last fetched from Supabase
+// IMPORTANT: var (not let) so these are HOISTED with initial undefined,
+// avoiding any temporal-dead-zone error if a click handler somewhere above
+// this line ends up calling ezClient() before module evaluation reaches
+// here. (The user hit "Cannot access '_ezClient' before initialization"
+// when something between the EZ button's onclick wiring and this line
+// threw during module load.) Using var means the worst case is _ezClient
+// being undefined — which the `if (_ezClient) return _ezClient;` line
+// already handles correctly.
+var _ezClient = null;
+var _ezRecipes = [];
+var _ezLoadedAt = 0;            // ms — when we last fetched from Supabase
 const _EZ_CACHE_TTL = 5 * 60_000; // re-use the fetched recipes for 5 min
-let _ezQuery = '';
-let _ezBusy = false;
+var _ezQuery = '';
+var _ezBusy = false;
 function ezClient(){
   if (_ezClient) return _ezClient;
   if (!window.supabase || !window.supabase.createClient) return null;
