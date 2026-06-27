@@ -403,13 +403,72 @@
     padding:18px 22px;margin-bottom:14px;
   }
   .cook-step .cs-num{
-    font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
-    font-weight:700;margin-bottom:10px;
+    font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);
+    font-weight:800;margin-bottom:14px;
   }
+  /* Step text is the main thing on the page — make it big and easy to read
+     from across the kitchen. Up from 16 → 22 with a slightly tighter line
+     height so a 4-line step doesn't take the whole screen. */
   .cook-step .cs-text{
-    font-size:16px;line-height:1.5;color:var(--ink);margin-bottom:18px;
-    white-space:pre-wrap;
+    font-size:22px;line-height:1.45;color:var(--ink);margin-bottom:20px;
+    font-weight:600; white-space:pre-wrap;
   }
+  /* Tip — italic block with a left bar so it stands out from the step text. */
+  .cook-step .cs-tip-wrap{
+    margin:0 0 18px; padding:10px 14px;
+    background:rgba(255,204,77,.07); border-left:3px solid #ffcc4d;
+    border-radius:0 8px 8px 0;
+  }
+  .cook-step .cs-tip-label{
+    font-size:10px; text-transform:uppercase; letter-spacing:.5px;
+    color:#ffcc4d; font-weight:800; margin-bottom:4px;
+  }
+  .cook-step .cs-tip-text{
+    font-size:14px; line-height:1.5; color:var(--ink); font-style:italic;
+    white-space:pre-wrap; outline:none;
+  }
+  .cook-step .cs-tip-text[contenteditable]:empty::before{
+    content:'Add a tip — anything future-you should know about this step (peeling trick, timing reminder, swap…)';
+    color:var(--muted); font-weight:400;
+  }
+  /* Substeps — nested mini-cards under the main step. Each one has its own
+     text + optional ingredients + optional photo. */
+  .cook-step .cs-substeps-head{
+    font-size:10px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--muted); font-weight:800; margin:18px 0 8px;
+    border-top:1px solid var(--line); padding-top:14px;
+  }
+  .cook-step .cs-substep{
+    background:var(--w04); border:1px solid var(--line); border-radius:8px;
+    padding:10px 14px; margin-bottom:8px; position:relative;
+  }
+  .cook-step .cs-ss-letter{
+    font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+    color:var(--accent); font-weight:800; margin-bottom:5px;
+  }
+  .cook-step .cs-ss-text{
+    font-size:15px; line-height:1.5; color:var(--ink); white-space:pre-wrap;
+    outline:none; margin-bottom:6px;
+  }
+  .cook-step .cs-ss-text[contenteditable]:empty::before{
+    content:'Describe this sub-step…'; color:var(--muted);
+  }
+  .cook-step .cs-ss-del{
+    position:absolute; top:8px; right:8px;
+    background:transparent; border:none; color:var(--muted);
+    cursor:pointer; font-size:12px; padding:4px 7px; border-radius:5px;
+  }
+  .cook-step .cs-ss-del:hover{ color:#f87171; background:rgba(248,113,113,.1) }
+  .cook-step .cs-ss-thumb{
+    width:100%; max-height:200px; object-fit:cover; border-radius:6px; margin-top:6px;
+  }
+  .cook-step .cs-add-substep{
+    margin-top:4px; padding:9px 13px; border-radius:7px;
+    background:transparent; border:1px dashed var(--line2); color:var(--muted);
+    font:inherit; font-size:12px; font-weight:700; cursor:pointer;
+    text-align:left; display:block; width:100%;
+  }
+  .cook-step .cs-add-substep:hover{ color:var(--ink); border-color:var(--accent) }
   /* Editable step text — visual cue on hover/focus + placeholder. */
   .cook-step .cs-text[contenteditable]:empty::before{
     content: attr(data-placeholder); color:var(--muted); font-style:italic;
@@ -2574,6 +2633,8 @@ function openView(rid){
     const mediaUrl  = rich ? (s.mediaUrl || null)  : null;
     const mediaType = rich ? (s.mediaType || null) : null;
     const stepIngs  = rich && Array.isArray(s.stepIngredients) ? s.stepIngredients : [];
+    const tip       = rich ? (s.tip || '') : '';
+    const substeps  = rich && Array.isArray(s.substeps) ? s.substeps : [];
 
     let mediaBlock = '';
     if (mediaUrl) {
@@ -2593,9 +2654,28 @@ function openView(rid){
         </div>`).join('')}</div>`;
     }
 
+    const tipBlock = tip
+      ? `<div class="cs-tip-wrap" style="margin-top:10px"><div class="cs-tip-label">💡 Tip</div><div class="cs-tip-text">${esc(tip)}</div></div>`
+      : '';
+
+    const ssLetter = idx => String.fromCharCode(97 + idx);
+    const substepsBlock = substeps.length
+      ? `<div class="cs-substeps-head">Sub-steps</div>` + substeps.map((ss, j) => {
+          const ssText = (ss && typeof ss === 'object') ? (ss.text || '') : String(ss || '');
+          const ssMedia = (ss && typeof ss === 'object') ? ss.mediaUrl : null;
+          return `<div class="cs-substep">
+            <div class="cs-ss-letter">Step ${i + 1}${ssLetter(j)}</div>
+            <div class="cs-ss-text" style="font-size:14px">${esc(ssText)}</div>
+            ${ssMedia ? `<img class="cs-ss-thumb" src="${attr(ssMedia)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+          </div>`;
+        }).join('')
+      : '';
+
     return `<div class="cook-step">
       <div class="cs-num">Step ${i + 1}</div>
       <div class="cs-text">${esc(text)}</div>
+      ${tipBlock}
+      ${substepsBlock}
       ${mediaBlock}
       ${ingsBlock}
     </div>`;
@@ -2742,10 +2822,18 @@ function renderCookStep(){
     return;
   }
   const raw = cookSteps[cookIdx] || {};
-  // Normalize current step into { text, mediaUrl, mediaType, stepIngredients }.
+  // Normalize current step. tip + substeps are new optional fields — existing
+  // steps from the EZ import / older recipe_meta docs just default to empty.
   const step = (raw && typeof raw === 'object')
-    ? { text: raw.text || '', mediaUrl: raw.mediaUrl || null, mediaType: raw.mediaType || null, stepIngredients: Array.isArray(raw.stepIngredients) ? raw.stepIngredients : [] }
-    : { text: String(raw || ''), mediaUrl: null, mediaType: null, stepIngredients: [] };
+    ? {
+        text: raw.text || '',
+        mediaUrl: raw.mediaUrl || null,
+        mediaType: raw.mediaType || null,
+        stepIngredients: Array.isArray(raw.stepIngredients) ? raw.stepIngredients : [],
+        tip: typeof raw.tip === 'string' ? raw.tip : '',
+        substeps: Array.isArray(raw.substeps) ? raw.substeps : []
+      }
+    : { text: String(raw || ''), mediaUrl: null, mediaType: null, stepIngredients: [], tip: '', substeps: [] };
 
   // Ingredients block: curated step ingredients (editable). When the step
   // has none yet, also show auto-matched ingredients from the recipe's full
@@ -2808,12 +2896,46 @@ function renderCookStep(){
       </div>`;
   }
 
+  // 💡 Tip block — always present, editable on click, shows placeholder when empty.
+  const tipHtml = `
+    <div class="cs-tip-wrap">
+      <div class="cs-tip-label">💡 Tip</div>
+      <div class="cs-tip-text" data-act="tip-text" contenteditable="plaintext-only">${esc(step.tip)}</div>
+    </div>`;
+
+  // Sub-steps — nested mini-cards under the main step. Each one is its own
+  // editable text + optional photo. Lettered a/b/c so they look like an
+  // assembly checklist.
+  const substepLetter = i => String.fromCharCode(97 + i); // a, b, c…
+  const substepsHtml = `
+    ${step.substeps.length ? `<div class="cs-substeps-head">Sub-steps</div>` : ''}
+    ${step.substeps.map((ss, i) => {
+      const text = (ss && typeof ss === 'object') ? (ss.text || '') : String(ss || '');
+      const mediaUrl = (ss && typeof ss === 'object') ? ss.mediaUrl : null;
+      const mediaThumb = mediaUrl
+        ? `<img class="cs-ss-thumb" src="${attr(mediaUrl)}" alt="" loading="lazy" onerror="this.remove()">`
+        : '';
+      return `<div class="cs-substep" data-ss-i="${i}">
+        <div class="cs-ss-letter">Step ${cookIdx + 1}${substepLetter(i)}</div>
+        <div class="cs-ss-text" data-act="ss-text" contenteditable="plaintext-only">${esc(text)}</div>
+        ${mediaThumb}
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="tb-btn" data-act="ss-media" style="font-size:11px;padding:4px 9px">${mediaUrl ? '↻ Replace photo' : '📷 Add photo'}</button>
+          ${mediaUrl ? `<button class="tb-btn" data-act="ss-media-clear" style="font-size:11px;padding:4px 9px;color:#f87171">Remove</button>` : ''}
+        </div>
+        <button class="cs-ss-del" data-act="ss-del" title="Delete this sub-step">✕</button>
+      </div>`;
+    }).join('')}
+    <button class="cs-add-substep" data-act="ss-add">+ Add sub-step (e.g. prep rice, prep veggies, plate)</button>`;
+
   body.innerHTML = `
     <div class="cook-step">
       <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
       <div class="cs-text" data-act="step-text" contenteditable="plaintext-only"
            data-placeholder="Click to add this step's instructions…"
-           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 18px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 20px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+      ${tipHtml}
+      ${substepsHtml}
       <div class="cs-ings-head">${ingsHead}</div>
       ${curatedHtml}
       <button class="cs-add-step-ing" data-act="ing-add" style="margin-top:8px;padding:8px 12px;border-radius:6px;background:transparent;border:1px dashed var(--line2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">+ Add ingredient for this step</button>
@@ -2957,6 +3079,65 @@ function renderStepIngPicker(){
 // All edit handlers for the current step card. Pulls current cookSteps[cookIdx]
 // fresh each time so writes apply against the latest state.
 function wireCookStepEdits(body, step){
+  // Editable tip — blur saves.
+  const tipEl = body.querySelector('[data-act="tip-text"]');
+  if (tipEl) {
+    tipEl.addEventListener('blur', () => {
+      const v = (tipEl.textContent || '').trim();
+      if (v === (cookSteps[cookIdx]?.tip || '')) return;
+      cookSteps[cookIdx].tip = v;
+      commitCookSteps(cookOpenRid, cookSteps);
+    });
+  }
+
+  // Add a substep.
+  body.querySelector('[data-act="ss-add"]')?.addEventListener('click', () => {
+    cookSteps[cookIdx].substeps = cookSteps[cookIdx].substeps || [];
+    cookSteps[cookIdx].substeps.push({ text: '', mediaUrl: null, mediaType: null });
+    commitCookSteps(cookOpenRid, cookSteps);
+    renderCookStep();
+    // Auto-focus the new substep's text.
+    setTimeout(() => {
+      const rows = body.querySelectorAll('[data-ss-i]');
+      rows[rows.length - 1]?.querySelector('[data-act="ss-text"]')?.focus();
+    }, 30);
+  });
+  // Per-substep handlers.
+  body.querySelectorAll('[data-ss-i]').forEach(row => {
+    const i = +row.dataset.ssI;
+    row.querySelector('[data-act="ss-text"]')?.addEventListener('blur', e => {
+      const v = (e.target.textContent || '').trim();
+      const cur = cookSteps[cookIdx].substeps[i] || {};
+      const ssCur = typeof cur === 'object' ? cur : { text: String(cur || '') };
+      if (v === (ssCur.text || '')) return;
+      cookSteps[cookIdx].substeps[i] = { ...ssCur, text: v };
+      commitCookSteps(cookOpenRid, cookSteps);
+    });
+    row.querySelector('[data-act="ss-del"]')?.addEventListener('click', () => {
+      cookSteps[cookIdx].substeps.splice(i, 1);
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    });
+    row.querySelector('[data-act="ss-media"]')?.addEventListener('click', async () => {
+      const file = await pickFile('image/*,video/*');
+      if (!file) return;
+      const up = await uploadToStorage(file, `substep/${cookOpenRid}/${cookIdx}/${i}`);
+      if (!up) return;
+      const cur = cookSteps[cookIdx].substeps[i] || {};
+      const ssCur = typeof cur === 'object' ? cur : { text: String(cur || '') };
+      cookSteps[cookIdx].substeps[i] = { ...ssCur, mediaUrl: up.url, mediaType: up.type };
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    });
+    row.querySelector('[data-act="ss-media-clear"]')?.addEventListener('click', () => {
+      const cur = cookSteps[cookIdx].substeps[i] || {};
+      const ssCur = typeof cur === 'object' ? cur : { text: String(cur || '') };
+      cookSteps[cookIdx].substeps[i] = { ...ssCur, mediaUrl: null, mediaType: null };
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    });
+  });
+
   // Editable step text — focus shows the dashed border, blur saves.
   const textEl = body.querySelector('[data-act="step-text"]');
   if (textEl) {
