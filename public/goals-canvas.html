@@ -4427,6 +4427,96 @@ async function syncCookStepsToMeta(){
   }, { merge: true });
 }
 
+// Board-agnostic version of the step builder used by the backfill: walks
+// nodes Map by parentId so it works for sections on ANY board, not just the
+// active one. Mirrors startCook()'s "Steps subsection first, then direct
+// numbered stickies" fallback.
+function buildCookStepsForSection(section){
+  const sectionId = section.id;
+  const boardId = section.boardId || null;
+  // Find subsections that are children of this section.
+  const subs = [...nodes.values()].filter(n =>
+    n.type === 'subsection' && n.parentId === sectionId && (n.boardId || null) === boardId
+  );
+  let stepsSubsection = subs.find(s => /step/i.test(s.title || ''));
+  if (!stepsSubsection) stepsSubsection = subs.find(s => !/ingredient/i.test(s.title || ''));
+  const cookSteps = [];
+  if (stepsSubsection) {
+    const stepStickies = [...nodes.values()].filter(n =>
+      n.type === 'sticky' && n.parentId === stepsSubsection.id && (n.boardId || null) === boardId
+    );
+    for (const s of stepStickies) {
+      for (const it of (s.items || [])) {
+        const text = (it.text || '').trim();
+        if (!text) continue;
+        cookSteps.push({
+          text,
+          mediaUrl: it.mediaUrl || null,
+          mediaType: it.mediaType || null,
+          stepIngredients: Array.isArray(it.stepIngredients) ? it.stepIngredients : []
+        });
+      }
+    }
+  }
+  // Fallback: numbered / "Step …" stickies hung directly off the section.
+  if (!cookSteps.length) {
+    const direct = [...nodes.values()].filter(n =>
+      n.type === 'sticky' && n.parentId === sectionId && (n.boardId || null) === boardId
+    );
+    for (const s of direct) {
+      for (const it of (s.items || [])) {
+        const text = (it.text || '').trim();
+        if (!text || !/^(\d+[\.\)]|step\b)/i.test(text)) continue;
+        cookSteps.push({
+          text,
+          mediaUrl: it.mediaUrl || null,
+          mediaType: it.mediaType || null,
+          stepIngredients: Array.isArray(it.stepIngredients) ? it.stepIngredients : []
+        });
+      }
+    }
+  }
+  return cookSteps;
+}
+
+// One-shot batch backfill: walk every recipe section across every board, and
+// for any ezRid that doesn't yet have cookSteps in recipe_meta, build + write
+// them. Idempotent — once a recipe is synced the next run skips it. Runs on
+// every Goals load (after recipeMeta + nodes have streamed in) so newly-
+// added recipes get covered without a manual trigger.
+let _backfillCookStepsRan = false;
+async function backfillAllCookSteps(){
+  if (_backfillCookStepsRan) return;
+  _backfillCookStepsRan = true;
+  const todo = [];
+  const seen = new Set(); // dedupe by ezRid in case the same recipe lives on multiple boards
+  for (const n of nodes.values()) {
+    if (n.type !== 'section') continue;
+    if (!n.ezRid) continue;
+    if (seen.has(n.ezRid)) continue;
+    if (recipeMeta.get(n.ezRid)?.cookSteps) continue; // already synced
+    seen.add(n.ezRid);
+    todo.push(n);
+  }
+  if (!todo.length) { console.log('[meta] backfill: nothing to do'); return; }
+  console.log(`[meta] backfilling cookSteps for ${todo.length} recipes…`);
+  let written = 0;
+  for (const section of todo) {
+    const steps = buildCookStepsForSection(section);
+    if (!steps.length) continue; // skip recipes with no detectable steps
+    try {
+      await setDoc(doc(recipeMetaCol, section.ezRid), {
+        cookSteps: steps,
+        cookStepsUpdatedAt: nowISO()
+      }, { merge: true });
+      written++;
+    } catch (e) { console.warn('[meta] backfill failed for', section.ezRid, e); }
+    // 30ms gap between writes so a 50-recipe backfill doesn't slam Firestore.
+    await new Promise(r => setTimeout(r, 30));
+  }
+  console.log(`[meta] backfill wrote ${written} of ${todo.length} recipes`);
+}
+
 // Picker modal to choose an ingredient (library + free text) for the step.
 function openStepIngPicker(){
   let q = '';
@@ -6500,6 +6590,12 @@ async function bootstrap(){
     // Seed the library from existing canvas data once the library snapshot
     // has had a beat to load. Won't overwrite existing entries.
     setTimeout(() => { seedLibraryFromCanvas().catch(()=>{}); }, 1200);
+    // One-shot backfill of cookSteps → recipe_meta so the Two Meals page
+    // shows per-step pics + curated ingredients for every existing recipe,
+    // not just the ones the user re-opens in Let's Cook. Idempotent — skips
+    // recipes whose meta already has cookSteps. Delayed so recipeMeta has
+    // received its initial snapshot first.
+    setTimeout(() => { backfillAllCookSteps().catch(()=>{}); }, 2500);
 
     setStatus(activeNodes().length ? '' : 'Empty board — click + Section to begin');
     setTimeout(()=> statusEl.classList.add('hidden'), 1200);
