@@ -474,6 +474,10 @@
   }
   .tm-mini:hover{ color:var(--ink); background:var(--w08) }
   .tm-mini.danger:hover{ color:#fca5a5; border-color:rgba(248,113,113,.4) }
+  .tm-mini.primary{
+    background:rgba(255,138,61,.16); border-color:rgba(255,138,61,.4); color:#FF8A3D
+  }
+  .tm-mini.primary:hover{ background:rgba(255,138,61,.26) }
   .tm-past-head{
     margin-top:12px; padding-top:14px; border-top:1px solid var(--line);
     font-size:11px; text-transform:uppercase; letter-spacing:.5px; font-weight:800; color:var(--w55);
@@ -2894,6 +2898,55 @@ function _recipeLookup(rid){
   if (!rid) return null;
   return _ezRecipes.find(r => r.rid === rid) || null;
 }
+// Find an on-board section node that was created from the given EZ recipe id.
+// Returns the node or null. Searches across ALL boards.
+function findRecipeSectionByRid(rid){
+  if (!rid) return null;
+  for (const n of nodes.values()) {
+    if (n.type === 'section' && n.ezRid === rid) return n;
+  }
+  return null;
+}
+// Drop the recipe scaffold onto the active board from a Two Meals slot.
+// If already on the board (or any board), just jumps to it.
+async function _twoMealsAddToBoard(rid){
+  const existing = findRecipeSectionByRid(rid);
+  if (existing) {
+    // Already exists — switch boards if needed, then scroll to it.
+    if (existing.boardId && existing.boardId !== activeBoardId) {
+      try { await switchToBoard(existing.boardId); } catch {}
+    }
+    closeTwoMealsModal();
+    focusOnRect({ x: existing.x, y: existing.y, w: existing.w, h: existing.h }, 80);
+    setStatus('Already on this board', 'ok');
+    return;
+  }
+  const r = _recipeLookup(rid);
+  if (!r) { setStatus('Recipe not loaded — open EZ Recipes first', 'error'); return; }
+  const merged = recipeWithMeta(r);
+  closeTwoMealsModal();
+  await createRecipeFromEz({ ...merged, rid: r.rid });
+}
+// Open Let's Cook walkthrough on the recipe section that matches this rid.
+// If the recipe isn't on any board, ask the user if they want to add it.
+async function _twoMealsCook(rid){
+  const sec = findRecipeSectionByRid(rid);
+  if (!sec) {
+    if (confirm('This recipe isn\'t on any board yet. Add it first?')) {
+      await _twoMealsAddToBoard(rid);
+    }
+    return;
+  }
+  if (sec.boardId && sec.boardId !== activeBoardId) {
+    try { await switchToBoard(sec.boardId); } catch {}
+  }
+  closeTwoMealsModal();
+  // Open the cook modal then start cook on the matching section.
+  try {
+    openCookPicker();
+    setTimeout(() => { try { startCook(sec.id); } catch {} }, 50);
+  } catch {}
+}
 function _twoMealsSlotHtml(rid, slotIdx, weekKey, editable){
   const raw = _recipeLookup(rid);
   const merged = raw ? recipeWithMeta(raw) : null;
@@ -2913,9 +2966,14 @@ function _twoMealsSlotHtml(rid, slotIdx, weekKey, editable){
   const title = escapeHtml(merged?.title || '(recipe not in cache)');
   const labels = (merged?.labels || []).slice(0, 3).map(L =>
     `<span class="tm-slot-chip">${escapeHtml(L)}</span>`).join('');
+  const onBoard = !!findRecipeSectionByRid(rid);
   const editBar = editable
     ? `<div class="tm-slot-actions">
-        <button class="tm-mini" data-tm-open="${escapeAttr(rid)}">↗ Open</button>
+        <button class="tm-mini primary" data-tm-add-board="${escapeAttr(rid)}" title="${onBoard ? 'Already on a board — jump to it' : 'Drop this recipe on the active board'}">
+          ${onBoard ? '✓ On board' : '+ Add to board'}
+        </button>
+        <button class="tm-mini primary" data-tm-cook="${escapeAttr(rid)}" title="Start Let's Cook walkthrough">🍴 Cook</button>
+        <button class="tm-mini" data-tm-open="${escapeAttr(rid)}" title="Open recipe to edit ingredients/labels/photo">✎ Edit</button>
         <button class="tm-mini" data-tm-pick="${slotIdx}">↻ Replace</button>
         <button class="tm-mini danger" data-tm-clear="${slotIdx}|${escapeAttr(weekKey)}">✕ Clear</button>
        </div>`
@@ -2989,6 +3047,14 @@ function drawTwoMealsModal(){
     e.stopPropagation();
     const [slotIdx, wkKey] = b.getAttribute('data-tm-clear').split('|');
     setMealSlot(wkKey, parseInt(slotIdx, 10), null);
+  }));
+  card.querySelectorAll('[data-tm-add-board]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _twoMealsAddToBoard(b.getAttribute('data-tm-add-board'));
+  }));
+  card.querySelectorAll('[data-tm-cook]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _twoMealsCook(b.getAttribute('data-tm-cook'));
   }));
 }
 function _twoMealsBackdropClose(e){
@@ -5515,6 +5581,9 @@ async function createRecipeFromEz(r){
     section.w = SW; section.h = SH;
     if (r.img)  section.imageUrl = r.img;
     if (r.url)  section.sourceUrl = r.url;
+    // Tag the section with the source EZ recipe id so features like Two Meals
+    // → 🍴 Cook can find this section by recipe later.
+    if (r.rid)  section.ezRid = r.rid;
     await saveNode(section);
     renderNode(section);
 
