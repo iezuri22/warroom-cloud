@@ -210,6 +210,34 @@
     font-size:16px;line-height:1.5;color:var(--ink);margin-bottom:18px;
     white-space:pre-wrap;
   }
+  /* Editable step text — visual cue on hover/focus + placeholder. */
+  .cook-step .cs-text[contenteditable]:empty::before{
+    content: attr(data-placeholder); color:var(--muted); font-style:italic;
+  }
+  .cook-step .cs-text[contenteditable]:hover{ border-color:var(--line2) !important }
+  .cook-step .cs-text[contenteditable]:focus{ background:var(--w04) }
+  /* Hover affordance on step ingredient thumb upload */
+  .cook-step .cs-step-ing-row .thumb{ cursor:pointer;transition:.12s }
+  .cook-step .cs-step-ing-row .thumb:hover{ border-color:var(--accent) }
+  .cook-step .cs-step-ing-row .ing-name,
+  .cook-step .cs-step-ing-row .ing-amount{
+    background:transparent;border:none;color:var(--ink);font-size:13px;
+    font-weight:600;outline:none;font-family:inherit;padding:4px 6px;
+    border-radius:5px;min-width:0;
+  }
+  .cook-step .cs-step-ing-row .ing-name{ flex:1 }
+  .cook-step .cs-step-ing-row .ing-amount{
+    width:110px;flex:0 0 110px;font-weight:500;font-size:12px;
+    color:var(--muted);border:1px dashed var(--line);
+  }
+  .cook-step .cs-step-ing-row .ing-name:focus,
+  .cook-step .cs-step-ing-row .ing-amount:focus{ background:var(--w05) }
+  .cook-step .cs-step-ing-row .ing-amount:focus{ border-color:var(--accent);border-style:solid }
+  .cook-step .cs-step-ing-row .del{
+    background:transparent;border:none;color:var(--muted);cursor:pointer;
+    font-size:14px;padding:4px 8px;border-radius:5px;
+  }
+  .cook-step .cs-step-ing-row .del:hover{ color:#f87171;background:rgba(248,113,113,.1) }
   .cook-step .cs-ings-head{
     font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);
     font-weight:600;margin:18px 0 10px;border-top:1px solid var(--line);padding-top:14px;
@@ -365,18 +393,25 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
 import { getFirestore, collection, doc, getDocs, setDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-storage.js';
 
-// Same Firebase project as the rest of War Room.
+// Same Firebase project as the rest of War Room. storageBucket added so
+// per-step photo uploads from Cook walkthrough work without bouncing to
+// Goals.
 const firebaseConfig = {
   apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
   authDomain: "tv-todos.firebaseapp.com",
-  projectId: "tv-todos"
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app"
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
-const mealWeeksCol = collection(db, 'goals_canvas_meal_weeks');
-const recipeMetaCol = collection(db, 'goals_canvas_recipe_meta');
+const mealWeeksCol     = collection(db, 'goals_canvas_meal_weeks');
+const recipeMetaCol    = collection(db, 'goals_canvas_recipe_meta');
+const ingredientLibCol = collection(db, 'ingredient_library');
 
 // EZ Recipes (Supabase) credentials — same as goals-canvas.html.
 const EZ_URL  = 'https://blqbxduxgimarrhgyfgn.supabase.co';
@@ -403,6 +438,33 @@ let pickingSlot = null;
 let pickerQuery = '';
 let pickerLabel = '';
 const LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
+
+// Master ingredient library — same Firestore collection Goals uses, so a
+// pic uploaded here propagates to Goals canvas and vice versa. Normalized
+// name (lowercased, qty/units stripped) → { name, imageUrl, aliases[] }.
+const ingredientLib = new Map();
+// Track recipe whose Cook walkthrough is open — used to scope writes and
+// re-render after recipe_meta snapshot updates.
+let cookOpenRid = null;
+// Save coalescer: debounce per-rid writes so rapid edits collapse into
+// one Firestore round-trip.
+const _pendingSaves = new Map();   // rid -> { steps, timer }
+function scheduleSaveCookSteps(rid, steps){
+  const cur = _pendingSaves.get(rid) || {};
+  if (cur.timer) clearTimeout(cur.timer);
+  _pendingSaves.set(rid, {
+    steps,
+    timer: setTimeout(async () => {
+      _pendingSaves.delete(rid);
+      try {
+        await setDoc(doc(recipeMetaCol, rid), {
+          cookSteps: steps,
+          cookStepsUpdatedAt: nowISO()
+        }, { merge: true });
+      } catch (e) { console.error('[meta] save cookSteps', e); }
+    }, 400)
+  });
+}
 
 // ---------- Week helpers ----------
 function isoWeekKey(d){
@@ -516,7 +578,65 @@ function ezSteps(r){
   return out;
 }
 
+// ---------- Ingredient library helpers ----------
+// Same normalizer Goals uses so the same lookups work both ways.
+function normalizeIngredientName(text){
+  if (!text) return '';
+  const UNITS = '(cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|kg|ml|l|liter|liters|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bag|bags|box|boxes|bunch|sprig|sprigs)';
+  let t = text.toLowerCase().trim();
+  t = t.replace(/^[\d\s\/\.,()\-]+/, '');
+  t = t.replace(new RegExp('^' + UNITS + '\\.?\\s+'), '');
+  t = t.replace(/^(of|the|a|an)\s+/, '');
+  t = t.replace(/,.*$/, '').replace(/\bto taste\b.*$/, '').trim();
+  return t;
+}
+function libImageFor(text){
+  if (!text) return null;
+  const k = normalizeIngredientName(text);
+  if (!k) return null;
+  const hit = ingredientLib.get(k);
+  if (hit?.imageUrl) return hit.imageUrl;
+  // Alias scan.
+  for (const e of ingredientLib.values()) {
+    if (Array.isArray(e.aliases) && e.aliases.includes(k)) return e.imageUrl || null;
+  }
+  return null;
+}
+function encodeIngredientKey(k){
+  return encodeURIComponent(k).replace(/\./g, '%2E').replace(/%/g, '_');
+}
+async function setLibraryImage(text, imageUrl){
+  const k = normalizeIngredientName(text);
+  if (!k) return;
+  ingredientLib.set(k, { name: k, imageUrl: imageUrl || null });
+  try {
+    await setDoc(doc(ingredientLibCol, encodeIngredientKey(k)), {
+      name: k, imageUrl: imageUrl || null, updatedAt: nowISO()
+    }, { merge: true });
+  } catch (e) { console.warn('[ingLib] save failed', e); }
+}
+
 // ---------- Firestore subscriptions ----------
+function subscribeIngredientLib(){
+  onSnapshot(ingredientLibCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      const d = ch.doc.data() || {};
+      const k = (d.name || '').toLowerCase().trim();
+      if (!k) return;
+      if (ch.type === 'removed') ingredientLib.delete(k);
+      else ingredientLib.set(k, {
+        name: d.name,
+        imageUrl: d.imageUrl || null,
+        aliases: Array.isArray(d.aliases) ? d.aliases : []
+      });
+    });
+    // Re-render the open Cook walkthrough so library updates surface.
+    if (document.getElementById('cookBg')?.classList.contains('open') && cookOpenRid) {
+      renderCookStep();
+    }
+  });
+}
+
 function subscribeMealWeeks(){
   onSnapshot(mealWeeksCol, (snap) => {
     snap.docChanges().forEach(ch => {
@@ -533,7 +653,79 @@ function subscribeRecipeMeta(){
       else recipeMeta.set(ch.doc.id, ch.doc.data() || {});
     });
     renderAll();
+    // Re-render the open Cook walkthrough so edits made elsewhere (Goals
+    // canvas, another tab) appear live.
+    if (document.getElementById('cookBg')?.classList.contains('open') && cookOpenRid) {
+      // Pull fresh cookSteps from the just-updated meta.
+      const meta = recipeMeta.get(cookOpenRid);
+      if (meta && Array.isArray(meta.cookSteps)) {
+        cookSteps = meta.cookSteps;
+        cookRich = true;
+      }
+      renderCookStep();
+    }
   }, (err) => console.warn('[meta] snapshot err', err));
+}
+
+// ---------- File picker + storage upload ----------
+function pickFile(accept){
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept || 'image/*,video/*';
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+// Returns the public download URL after upload, or null on failure.
+async function uploadToStorage(file, pathPrefix){
+  if (!file) return null;
+  if (file.size > 50 * 1024 * 1024) { alert('File must be under 50 MB'); return null; }
+  const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
+  const path = `${pathPrefix}-${Date.now()}${ext}`;
+  const ref = storageRef(storage, path);
+  try {
+    const isVideo = (file.type || '').startsWith('video/');
+    await uploadBytes(ref, file, { contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg') });
+    return { url: await getDownloadURL(ref), type: isVideo ? 'video' : 'image' };
+  } catch (e) {
+    console.error('[meals] upload failed', e);
+    alert('Upload failed: ' + (e?.message || 'check Storage rules'));
+    return null;
+  }
+}
+
+// ---------- Cook write helpers ----------
+// Read the current cookSteps array (rich), seeding it from plain string
+// steps if recipe_meta has nothing yet. Mutating the returned array won't
+// persist — call commitCookSteps to save.
+function readCookSteps(rid){
+  const meta = recipeMeta.get(rid) || {};
+  if (Array.isArray(meta.cookSteps)) return meta.cookSteps.map(s => ({
+    text: s.text || '',
+    mediaUrl: s.mediaUrl || null,
+    mediaType: s.mediaType || null,
+    stepIngredients: Array.isArray(s.stepIngredients) ? s.stepIngredients.map(i => ({...i})) : []
+  }));
+  // Seed from EZ steps if available.
+  const raw = lookupRecipe(rid);
+  if (!raw) return [];
+  const merged = recipeWithMeta(raw);
+  return (merged.steps || []).map(t => ({
+    text: String(t || ''),
+    mediaUrl: null,
+    mediaType: null,
+    stepIngredients: []
+  }));
+}
+function commitCookSteps(rid, steps){
+  // Optimistic local update so the UI re-renders immediately without
+  // waiting for the Firestore round-trip.
+  const meta = recipeMeta.get(rid) || {};
+  recipeMeta.set(rid, { ...meta, cookSteps: steps, cookStepsUpdatedAt: nowISO() });
+  cookSteps = steps;
+  cookRich = true;
+  scheduleSaveCookSteps(rid, steps);
 }
 async function setMealSlot(weekKey, slotIdx, recipeId){
   const cur = mealWeeks.get(weekKey) || { weekKey, slots: [null, null] };
@@ -877,16 +1069,11 @@ function openCook(rid){
   const raw = lookupRecipe(rid);
   if (!raw) return;
   const merged = recipeWithMeta(raw);
-  // Prefer the rich cookSteps array synced from Goals — it carries per-step
-  // media URL and the user's curated step ingredients. Falls back to the
-  // plain string array from EZ Recipes.
-  if (Array.isArray(merged.cookSteps) && merged.cookSteps.length) {
-    cookSteps = merged.cookSteps;
-    cookRich = true;
-  } else {
-    cookSteps = merged.steps || [];
-    cookRich = false;
-  }
+  cookOpenRid = rid;
+  // Always use the rich shape so editing has somewhere to write. readCookSteps
+  // seeds from EZ string steps if recipe_meta has nothing yet.
+  cookSteps = readCookSteps(rid);
+  cookRich = true;
   cookTitle = merged.title;
   cookIngs = (merged.ingredients || []).map(it =>
     typeof it === 'string' ? { text: it, imageUrl: null }
@@ -895,10 +1082,6 @@ function openCook(rid){
   cookIdx = 0;
   document.getElementById('cookH').innerHTML =
     `🍴 Let's Cook<span class="cook-recipe-sub">— ${esc(cookTitle)}</span>`;
-  // ALWAYS render Cook's own layout, even when steps are missing. The old
-  // fallback to openView() made Cook look identical to View (same modal,
-  // same DOM), which is why the buttons felt the same. Now Cook keeps its
-  // step-by-step chrome and shows a clear empty state if no steps exist.
   renderCookStep();
   document.getElementById('cookBg').classList.add('open');
 }
@@ -927,56 +1110,63 @@ function ingredientsForStep(stepText){
 function renderCookStep(){
   const body = document.getElementById('cookBody');
   const total = cookSteps.length;
-  // Empty state — keep Cook chrome but tell the user where to add steps.
-  // This used to fall back to openView, which made Cook visually
-  // indistinguishable from View.
+  // Empty state — offer a one-click "+ Add first step" instead of dead-ending.
   if (!total) {
     body.innerHTML = `
       <div class="cook-step">
-        <div class="cs-num">No steps available</div>
+        <div class="cs-num">No steps yet</div>
         <div class="cs-text" style="color:var(--muted)">
-          This recipe doesn't have steps in EZ Recipes yet, and Goals hasn't
-          synced any either. Add steps in EZ / PotLuck, or open the recipe
-          in the Goals tab and use 🍴 Let's Cook to add them.
+          This recipe doesn't have any steps captured yet.
         </div>
-      </div>
-      <div class="cook-nav">
-        <span class="cn-pos">No steps to walk through</span>
+        <button class="tb-btn primary" id="cookAddFirst"
+                style="background:var(--accent);color:#fff;border:none;margin-top:14px;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer">
+          + Add first step
+        </button>
       </div>`;
+    document.getElementById('cookAddFirst').onclick = () => {
+      cookSteps = [{ text: '', mediaUrl: null, mediaType: null, stepIngredients: [] }];
+      commitCookSteps(cookOpenRid, cookSteps);
+      cookIdx = 0;
+      renderCookStep();
+    };
     return;
   }
-  const raw = cookSteps[cookIdx];
+  const raw = cookSteps[cookIdx] || {};
   // Normalize current step into { text, mediaUrl, mediaType, stepIngredients }.
-  const step = (cookRich && raw && typeof raw === 'object')
+  const step = (raw && typeof raw === 'object')
     ? { text: raw.text || '', mediaUrl: raw.mediaUrl || null, mediaType: raw.mediaType || null, stepIngredients: Array.isArray(raw.stepIngredients) ? raw.stepIngredients : [] }
     : { text: String(raw || ''), mediaUrl: null, mediaType: null, stepIngredients: [] };
 
-  // Ingredients block: curated (from Goals) if present, else auto-match.
-  let ingsHtml = '';
-  let ingsHead = '';
-  if (step.stepIngredients.length) {
-    ingsHead = 'Ingredients for this step';
-    ingsHtml = `<div class="cs-step-ings">${step.stepIngredients.map(ing => `
-      <div class="cs-step-ing-row">
-        <div class="thumb">
-          ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}
-        </div>
-        <div class="ing-name">${esc(ing.name || ing.text || '')}</div>
-        ${ing.amount ? `<div class="ing-amount">${esc(ing.amount)}</div>` : ''}
-      </div>`).join('')}</div>`;
-  } else {
-    const ings = ingredientsForStep(step.text);
-    ingsHead = ings.length ? 'Auto-matched ingredients' : '';
-    ingsHtml = ings.length
-      ? `<div class="cs-ings">${ings.map(ing => `
-          <div class="cs-ing">
-            ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
-            <div class="nm">${esc(ing.text)}</div>
-          </div>`).join('')}</div>`
-      : `<div class="cs-empty">No ingredients linked to this step.</div>`;
-  }
+  // Ingredients block: curated step ingredients (editable). When the step
+  // has none yet, also show auto-matched ingredients from the recipe's full
+  // list so the user has something useful to glance at.
+  const curated = step.stepIngredients;
+  const auto = curated.length ? [] : ingredientsForStep(step.text);
+  const ingsHead = curated.length ? 'Ingredients for this step' : (auto.length ? 'Auto-matched ingredients' : 'Ingredients for this step');
+  const curatedHtml = curated.length
+    ? `<div class="cs-step-ings">${curated.map((ing, i) => {
+        const img = ing.imageUrl || libImageFor(ing.name || ing.text || '');
+        return `<div class="cs-step-ing-row" data-ing-i="${i}">
+          <div class="thumb" data-act="ing-photo" title="Click to upload a photo for this ingredient">
+            ${img ? `<img src="${attr(img)}" alt="" loading="lazy" onerror="this.remove()">` : '🥄'}
+          </div>
+          <input type="text" class="ing-name" data-act="ing-name" value="${attr(ing.name || ing.text || '')}" placeholder="Ingredient">
+          <input type="text" class="ing-amount" data-act="ing-amount" value="${attr(ing.amount || '')}" placeholder="amount">
+          <button class="del" data-act="ing-del" title="Remove">✕</button>
+        </div>`;
+      }).join('')}</div>`
+    : (auto.length
+        ? `<div class="cs-ings">${auto.map(ing => `
+            <div class="cs-ing">
+              ${ing.imageUrl ? `<img src="${attr(ing.imageUrl)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+              <div class="nm">${esc(ing.text)}</div>
+            </div>`).join('')}</div>
+           <div style="margin-top:8px">
+             <button class="tb-btn" data-act="adopt-auto" title="Add these as editable step ingredients">↓ Add these to my step list</button>
+           </div>`
+        : `<div class="cs-empty">No ingredients linked to this step yet.</div>`);
 
-  // Per-step media block — image / video / placeholder.
+  // Per-step media block — clickable upload affordance when empty, view+replace when set.
   let mediaHtml = '';
   if (step.mediaUrl) {
     const thumb = step.mediaType === 'video'
@@ -984,19 +1174,26 @@ function renderCookStep(){
       : `<img src="${attr(step.mediaUrl)}" alt="" loading="lazy">`;
     mediaHtml = `
       <div class="cs-media-block">
-        <div class="cs-media-thumb" data-action="cook-open-media">${thumb}</div>
+        <div class="cs-media-thumb" data-act="media-open">${thumb}</div>
         <div class="cs-media-info">
           <h5>Your shot of this step</h5>
-          <p>${step.mediaType === 'video' ? 'Tap the video to play full size.' : 'Tap the image to view full size.'} Set in the Goals tab.</p>
+          <p>Tap the thumb to view full size, or use the buttons below.</p>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="tb-btn" data-act="media-replace">↻ Replace</button>
+            <button class="tb-btn" data-act="media-remove" style="color:#f87171">Remove</button>
+          </div>
         </div>
       </div>`;
   } else {
     mediaHtml = `
       <div class="cs-media-block">
-        <div class="cs-media-thumb">+ Add a photo or video<br><span style="font-size:11px;opacity:.7">(in Goals → Let's Cook)</span></div>
+        <div class="cs-media-thumb" data-act="media-upload" style="cursor:pointer">
+          📷<br><span style="font-size:11px">Tap to add a photo or video</span>
+        </div>
         <div class="cs-media-info">
           <h5>Your shot of this step</h5>
-          <p>Open this recipe in the Goals tab to attach a photo or short video. It'll show up here automatically.</p>
+          <p>Snap a photo or short video while you cook. It saves to this step so future-you has the visual reference.</p>
+          <button class="tb-btn" data-act="media-upload" style="margin-top:8px">⬆ Upload photo / video</button>
         </div>
       </div>`;
   }
@@ -1004,10 +1201,17 @@ function renderCookStep(){
   body.innerHTML = `
     <div class="cook-step">
       <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
-      <div class="cs-text">${esc(step.text)}</div>
-      ${ingsHead ? `<div class="cs-ings-head">${ingsHead}</div>` : ''}
-      ${ingsHtml}
+      <div class="cs-text" data-act="step-text" contenteditable="plaintext-only"
+           data-placeholder="Click to add this step's instructions…"
+           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 18px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+      <div class="cs-ings-head">${ingsHead}</div>
+      ${curatedHtml}
+      <button class="cs-add-step-ing" data-act="ing-add" style="margin-top:8px;padding:8px 12px;border-radius:6px;background:transparent;border:1px dashed var(--line2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">+ Add ingredient for this step</button>
       ${mediaHtml}
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button class="tb-btn" data-act="step-insert-after" title="Insert a new step after this one">+ Step after</button>
+        <button class="tb-btn" data-act="step-delete" style="color:#f87171" title="Delete this step">🗑 Delete step</button>
+      </div>
     </div>
     <div class="cook-nav">
       <button class="tb-btn" id="cookPrev" ${cookIdx === 0 ? 'disabled' : ''}>← Previous</button>
@@ -1020,10 +1224,133 @@ function renderCookStep(){
     </div>`;
   document.getElementById('cookPrev').onclick = () => { if (cookIdx > 0) { cookIdx--; renderCookStep(); } };
   document.getElementById('cookNext').onclick = () => { if (cookIdx < total - 1) { cookIdx++; renderCookStep(); } };
-  // Click the media thumb → open in a new tab (full size).
-  body.querySelectorAll('[data-action="cook-open-media"]').forEach(el =>
-    el.addEventListener('click', () => { if (step.mediaUrl) window.open(step.mediaUrl, '_blank', 'noopener'); })
-  );
+  wireCookStepEdits(body, step);
+}
+
+// All edit handlers for the current step card. Pulls current cookSteps[cookIdx]
+// fresh each time so writes apply against the latest state.
+function wireCookStepEdits(body, step){
+  // Editable step text — focus shows the dashed border, blur saves.
+  const textEl = body.querySelector('[data-act="step-text"]');
+  if (textEl) {
+    textEl.addEventListener('focus', () => textEl.style.border = '1px dashed var(--accent)');
+    textEl.addEventListener('blur', () => {
+      textEl.style.border = '1px dashed transparent';
+      const v = (textEl.textContent || '').trim();
+      if (v === cookSteps[cookIdx]?.text) return;
+      cookSteps[cookIdx].text = v;
+      commitCookSteps(cookOpenRid, cookSteps);
+    });
+    textEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textEl.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); textEl.textContent = step.text; textEl.blur(); }
+    });
+  }
+  // Adopt auto-matched ingredients into the curated list.
+  const adoptBtn = body.querySelector('[data-act="adopt-auto"]');
+  if (adoptBtn) {
+    adoptBtn.onclick = () => {
+      const auto = ingredientsForStep(cookSteps[cookIdx].text);
+      cookSteps[cookIdx].stepIngredients = auto.map(ing => ({
+        name: ing.text, amount: '', imageUrl: ing.imageUrl || libImageFor(ing.text) || null
+      }));
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    };
+  }
+  // Add a blank ingredient row.
+  const addBtn = body.querySelector('[data-act="ing-add"]');
+  if (addBtn) {
+    addBtn.onclick = () => {
+      cookSteps[cookIdx].stepIngredients = cookSteps[cookIdx].stepIngredients || [];
+      cookSteps[cookIdx].stepIngredients.push({ name: '', amount: '', imageUrl: null });
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+      // Focus the new name input.
+      setTimeout(() => {
+        const rows = body.querySelectorAll('[data-ing-i]');
+        rows[rows.length - 1]?.querySelector('[data-act="ing-name"]')?.focus();
+      }, 30);
+    };
+  }
+  // Ingredient row handlers.
+  body.querySelectorAll('[data-ing-i]').forEach(row => {
+    const i = +row.dataset.ingI;
+    row.querySelector('[data-act="ing-name"]')?.addEventListener('blur', e => {
+      const newName = e.target.value.trim();
+      if (newName === cookSteps[cookIdx].stepIngredients[i].name) return;
+      cookSteps[cookIdx].stepIngredients[i].name = newName;
+      // If the new name matches the library, adopt its photo.
+      if (!cookSteps[cookIdx].stepIngredients[i].imageUrl) {
+        const libImg = libImageFor(newName);
+        if (libImg) cookSteps[cookIdx].stepIngredients[i].imageUrl = libImg;
+      }
+      commitCookSteps(cookOpenRid, cookSteps);
+    });
+    row.querySelector('[data-act="ing-amount"]')?.addEventListener('blur', e => {
+      const a = e.target.value.trim();
+      if (a === cookSteps[cookIdx].stepIngredients[i].amount) return;
+      cookSteps[cookIdx].stepIngredients[i].amount = a;
+      commitCookSteps(cookOpenRid, cookSteps);
+    });
+    row.querySelector('[data-act="ing-del"]')?.addEventListener('click', () => {
+      cookSteps[cookIdx].stepIngredients.splice(i, 1);
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    });
+    row.querySelector('[data-act="ing-photo"]')?.addEventListener('click', async () => {
+      const file = await pickFile('image/*');
+      if (!file) return;
+      const ing = cookSteps[cookIdx].stepIngredients[i];
+      const up = await uploadToStorage(file, `step-ing/${cookOpenRid}/${ing.name || 'ing'}`);
+      if (!up) return;
+      ing.imageUrl = up.url;
+      // Save BOTH on this step AND in the master library so all recipes using
+      // this ingredient name pick it up next time.
+      commitCookSteps(cookOpenRid, cookSteps);
+      if (ing.name) setLibraryImage(ing.name, up.url);
+      renderCookStep();
+    });
+  });
+  // Step media.
+  body.querySelectorAll('[data-act="media-upload"], [data-act="media-replace"]').forEach(el => {
+    el.addEventListener('click', async () => {
+      const file = await pickFile('image/*,video/*');
+      if (!file) return;
+      const up = await uploadToStorage(file, `step-media/${cookOpenRid}/${cookIdx}`);
+      if (!up) return;
+      cookSteps[cookIdx].mediaUrl = up.url;
+      cookSteps[cookIdx].mediaType = up.type;
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    });
+  });
+  body.querySelector('[data-act="media-open"]')?.addEventListener('click', () => {
+    const url = cookSteps[cookIdx]?.mediaUrl;
+    if (url) window.open(url, '_blank', 'noopener');
+  });
+  body.querySelector('[data-act="media-remove"]')?.addEventListener('click', () => {
+    if (!confirm('Remove this step\'s photo / video?')) return;
+    cookSteps[cookIdx].mediaUrl = null;
+    cookSteps[cookIdx].mediaType = null;
+    commitCookSteps(cookOpenRid, cookSteps);
+    renderCookStep();
+  });
+  // Insert a new step right after this one and jump to it.
+  body.querySelector('[data-act="step-insert-after"]')?.addEventListener('click', () => {
+    cookSteps.splice(cookIdx + 1, 0, { text: '', mediaUrl: null, mediaType: null, stepIngredients: [] });
+    commitCookSteps(cookOpenRid, cookSteps);
+    cookIdx++;
+    renderCookStep();
+  });
+  // Delete the current step (with confirm).
+  body.querySelector('[data-act="step-delete"]')?.addEventListener('click', () => {
+    if (!confirm('Delete this step?')) return;
+    cookSteps.splice(cookIdx, 1);
+    if (cookIdx >= cookSteps.length) cookIdx = Math.max(0, cookSteps.length - 1);
+    commitCookSteps(cookOpenRid, cookSteps);
+    renderCookStep();
+  });
 }
 
 // ---------- Grocery ----------
@@ -1055,8 +1382,13 @@ function openGrocery(){
 document.getElementById('pickerClose').addEventListener('click', closePicker);
 document.getElementById('pickerBg').addEventListener('click', e => { if (e.target.id === 'pickerBg') closePicker(); });
 document.getElementById('pickerSearch').addEventListener('input', e => { pickerQuery = e.target.value || ''; renderPicker(); });
-document.getElementById('cookClose').addEventListener('click', () => document.getElementById('cookBg').classList.remove('open'));
-document.getElementById('cookBg').addEventListener('click', e => { if (e.target.id === 'cookBg') e.currentTarget.classList.remove('open'); });
+document.getElementById('cookClose').addEventListener('click', () => {
+  document.getElementById('cookBg').classList.remove('open');
+  cookOpenRid = null;
+});
+document.getElementById('cookBg').addEventListener('click', e => {
+  if (e.target.id === 'cookBg') { e.currentTarget.classList.remove('open'); cookOpenRid = null; }
+});
 document.getElementById('grocClose').addEventListener('click', () => document.getElementById('grocBg').classList.remove('open'));
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
@@ -1078,6 +1410,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 }
 subscribeMealWeeks();
 subscribeRecipeMeta();
+subscribeIngredientLib();
 loadEz();
 
 renderAll();
