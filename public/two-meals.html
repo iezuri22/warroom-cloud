@@ -1585,31 +1585,32 @@ async function syncFromRecipes(){
   drawIngLib();
 }
 
-// ---------- Disconnect EZ (one-time migration) ----------
-// Snapshot every loaded EZ recipe into Firestore's meals_recipes collection,
-// then flip a localStorage flag so loadEz becomes a no-op on every future
-// page load. After this runs, Meals + Goals load instantly because they
-// just stream from Firestore — no more Supabase auth, no more 200-recipe
-// network round-trip on init.
+// ---------- Disconnect EZ (one-shot, bulletproof) ----------
+// Goal: stop calling EZ on every page load. The flag is what actually does
+// that — once it's set, loadEz becomes a no-op. The migration is a nice-to-
+// have on top.
+//
+// Old version was fragile: bailed before setting the flag if ezRecipes was
+// empty, tried to force a full EZ pull mid-call (which would also time
+// out). User hit Disconnect 3 times in a row and the flag never stuck.
+//
+// New version: SET THE FLAG FIRST. Then save whatever is in memory. If
+// memory is empty but Firestore already has recipes from a prior partial
+// attempt, the slots keep working — we just need the flag set.
 async function disconnectEz(){
-  if (isEzDisconnected()) {
-    if (!confirm('You\'re already disconnected from EZ. Re-run the migration to refresh from EZ once more?')) return;
-    // Clear the flag temporarily so loadEz can pull again.
-    localStorage.removeItem(EZ_DISCONNECTED_KEY);
-  }
-  if (!ezRecipes.length) {
-    // Force a fresh EZ pull first so we have something to migrate.
-    alert('Pulling recipes from EZ first…');
-    await loadEz();
-  }
-  if (!ezRecipes.length) {
-    alert('No recipes loaded yet — sign in to EZ or wait for the load to finish, then try again.');
+  const wasDisconnected = isEzDisconnected();
+  if (wasDisconnected && !confirm('Already disconnected from EZ. Re-save what\'s loaded in memory and refresh the disconnect?')) return;
+  // 1. Flag goes ON immediately so any in-flight loadEz pagination stops
+  // affecting future runs, and any new page loads skip EZ entirely.
+  try { localStorage.setItem(EZ_DISCONNECTED_KEY, '1'); } catch (e) {
+    alert('Couldn\'t set localStorage flag — your browser may be in private mode. Refresh and try again.');
     return;
   }
-  if (!confirm(`Save your ${ezRecipes.length} EZ recipes to your own Firestore and stop calling EZ on every page load?\n\nAfter this, Meals will load instantly because it streams from Firestore instead of hitting Supabase. You can re-run this anytime to pull fresh from EZ.`)) {
-    // User backed out. Restore flag if we cleared it.
-    return;
-  }
+  console.log('[ez] disconnect flag SET — loadEz is now a no-op');
+  // 2. Save whatever ezRecipes we currently have to Firestore (merge so we
+  // don't lose any recipe_meta linkage). This handles the in-memory data
+  // from any partial EZ pull, or from the Firestore mirror itself
+  // (re-saving is idempotent).
   let written = 0;
   for (const r of ezRecipes) {
     try {
@@ -1620,15 +1621,17 @@ async function disconnectEz(){
         ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
         steps: Array.isArray(r.steps) ? r.steps : [],
         migratedAt: nowISO()
-      });
+      }, { merge: true });
       written++;
     } catch (e) { console.warn('[recipes] migrate failed for', r.rid, e); }
   }
-  // Flip the flag — future page loads skip EZ entirely.
-  try { localStorage.setItem(EZ_DISCONNECTED_KEY, '1'); } catch {}
   ezStatus = 'ready';
   updateEzBanner();
-  alert(`Migrated ${written} of ${ezRecipes.length} recipes. EZ sync disabled — Meals will load instantly from now on.`);
+  // 3. Tell the user exactly what state they're in.
+  const msg = written
+    ? `✓ EZ disconnected. Saved ${written} recipes to Firestore.\n\nHard-refresh Meals to see the speed gain — the 'Pulled X rows' banner should be gone.`
+    : `✓ EZ disconnected. No in-memory recipes to save (Firestore mirror already serving).\n\nHard-refresh Meals to verify the 'Pulled X rows' banner disappears.`;
+  alert(msg);
 }
 
 async function syncFromEz(){
