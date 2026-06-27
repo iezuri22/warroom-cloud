@@ -3446,6 +3446,10 @@ function renderStepIngPicker(){
     if (kind === 'custom') { name = (_ingPickQuery || '').trim(); }
     else { name = el.getAttribute('data-text') || ''; imageUrl = el.getAttribute('data-img') || null; }
     if (!name) { document.getElementById('ingPickSearch')?.focus(); return; }
+    // Strip quantity + units and title-case the result so the step shows
+    // "Hard-Boiled Eggs" instead of "2 hard-boiled eggs". Library lookup
+    // uses the cleaned name so the thumb still resolves.
+    name = cleanIngredientName(name);
     // Fall back to the library if the picked row didn't carry an image.
     if (!imageUrl) imageUrl = libImageFor(name);
     cookSteps[cookIdx].stepIngredients = cookSteps[cookIdx].stepIngredients || [];
@@ -3454,6 +3458,25 @@ function renderStepIngPicker(){
     closeStepIngPicker();
     renderCookStep();
   }));
+}
+
+// Strip the leading qty + unit from an ingredient line and Title Case it.
+// "1/4 cup Onion, diced"  →  "Onion, Diced"
+// "2 hard-boiled eggs"     →  "Hard-Boiled Eggs"
+// "1 1/2 tbsp Olive Oil"   →  "Olive Oil"
+// "salt"                   →  "Salt"
+function cleanIngredientName(text){
+  if (!text) return '';
+  let t = String(text).trim();
+  // Drop leading qty / fraction / unicode fraction.
+  t = t.replace(/^[\d¼-¾⅐-⅞./\s]+/, '');
+  // Drop a leading unit word if there is one.
+  const UNITS = '(cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|lb|lbs|pound|pounds|g|gram|grams|kg|ml|l|liter|liters|pinch|dash|clove|cloves|stick|sticks|slice|slices|piece|pieces|head|can|cans|package|packages|bag|bags|box|boxes|bunch|sprig|sprigs)';
+  t = t.replace(new RegExp('^' + UNITS + '\\.?\\s+', 'i'), '');
+  t = t.replace(/^(of|the|a|an)\s+/i, '');
+  // Title Case each word — keep hyphens, but cap after them too.
+  t = t.toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase());
+  return t.trim();
 }
 
 // All edit handlers for the current step card. Pulls current cookSteps[cookIdx]
@@ -3506,8 +3529,11 @@ function wireCookStepEdits(body, step){
   if (adoptBtn) {
     adoptBtn.onclick = () => {
       const auto = ingredientsForStep(cookSteps[cookIdx].text);
+      // Strip qty + units and title-case so adopted ingredients show as
+      // "Hard-Boiled Eggs", not "2 hard-boiled eggs".
       cookSteps[cookIdx].stepIngredients = auto.map(ing => ({
-        name: ing.text, amount: '', imageUrl: ing.imageUrl || libImageFor(ing.text) || null
+        name: cleanIngredientName(ing.text), amount: '',
+        imageUrl: ing.imageUrl || libImageFor(ing.text) || null
       }));
       commitCookSteps(cookOpenRid, cookSteps);
       renderCookStep();
