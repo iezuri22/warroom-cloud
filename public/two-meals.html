@@ -464,23 +464,56 @@ function ezTags(v){
   if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
   return String(v).split(/[,#]/).map(x => x.trim()).filter(Boolean);
 }
+// Mirror goals-canvas.html's parsers so two-meals reads the SAME EZ fields.
+// EZ stores steps under r.prepSteps / r.cookSteps (NOT r.steps), and
+// ingredients under r.ingredientsRows with separate qty/unit/name fields.
+// The previous version read only r.steps + r.ingredients (.text), which
+// matched nothing — that's why openCook was silently falling back to
+// openView (no steps means Cook had nothing to walk through).
 function ezIngredients(r){
-  const rows = r.ingredientsRows || r.ingredients_rows || r.ingredients || [];
-  if (!Array.isArray(rows)) return [];
-  return rows.map(it => {
-    if (typeof it === 'string') return { text: it, imageUrl: null };
-    if (it && typeof it === 'object') return {
-      text: (it.text || it.name || it.ingredient || '').toString().trim(),
-      imageUrl: (it.image_url || it.imageUrl || it.image || null) || null
-    };
-    return null;
-  }).filter(x => x && x.text);
+  const pickImage = obj => {
+    if (!obj || typeof obj !== 'object') return null;
+    return (obj.image_url || obj.imageUrl || obj.image || obj.photo || obj.photoUrl ||
+            obj.pic || obj.picture || obj.img || obj.thumbnail || null) || null;
+  };
+  const fromRow = x => {
+    if (typeof x === 'string') return { text: x.trim(), imageUrl: null };
+    // Build full text from qty + unit + name so we display "2 tbsp Olive Oil"
+    // instead of just "Olive Oil". Fall back to a plain text/name field if
+    // those structured fields aren't populated.
+    const built = [x.qty, x.unit, x.name].map(y => (y || '').toString().trim()).filter(Boolean).join(' ').trim();
+    const text = built || (x.text || x.ingredient || '').toString().trim();
+    return { text, imageUrl: pickImage(x) };
+  };
+  let rows = [];
+  if (Array.isArray(r.ingredientsRows)) rows = r.ingredientsRows.map(fromRow);
+  else if (Array.isArray(r.ingredients_rows)) rows = r.ingredients_rows.map(fromRow);
+  else if (Array.isArray(r.ingredients))   rows = r.ingredients.map(fromRow);
+  else if (typeof r.ingredients === 'string')
+    rows = r.ingredients.split('\n').map(s => ({ text: s.trim(), imageUrl: null }));
+  return rows.filter(it => it.text);
 }
 function ezSteps(r){
-  const v = r.steps || r.instructions || r.directions || r.method || [];
-  if (Array.isArray(v)) return v.map(s => typeof s === 'string' ? s : (s?.text || s?.step || '')).filter(Boolean);
-  if (typeof v === 'string') return v.split(/\n+/).map(s => s.trim()).filter(Boolean);
-  return [];
+  const out = [];
+  const pull = arr => { if (Array.isArray(arr)) arr.forEach(s => {
+    const t = (s && (s.text || s.caption)) || (typeof s === 'string' ? s : '');
+    if (t && t.trim()) out.push(t.trim());
+  }); };
+  // Primary EZ source.
+  pull(r.prepSteps);
+  pull(r.cookSteps);
+  // Generic fallbacks for non-EZ recipe shapes.
+  if (!out.length) {
+    const v = r.steps || r.instructions || r.directions || r.method || [];
+    if (Array.isArray(v)) v.forEach(s => {
+      const t = typeof s === 'string' ? s : (s?.text || s?.step || '');
+      if (t && t.trim()) out.push(t.trim());
+    });
+    else if (typeof v === 'string') v.split(/\n+/).forEach(s => {
+      if (s.trim()) out.push(s.trim());
+    });
+  }
+  return out;
 }
 
 // ---------- Firestore subscriptions ----------
@@ -860,9 +893,12 @@ function openCook(rid){
                            : { text: it?.text || '', imageUrl: it?.imageUrl || null }
   ).filter(i => i.text);
   cookIdx = 0;
-  if (!cookSteps.length) { openView(rid); return; }
   document.getElementById('cookH').innerHTML =
     `🍴 Let's Cook<span class="cook-recipe-sub">— ${esc(cookTitle)}</span>`;
+  // ALWAYS render Cook's own layout, even when steps are missing. The old
+  // fallback to openView() made Cook look identical to View (same modal,
+  // same DOM), which is why the buttons felt the same. Now Cook keeps its
+  // step-by-step chrome and shows a clear empty state if no steps exist.
   renderCookStep();
   document.getElementById('cookBg').classList.add('open');
 }
@@ -891,6 +927,24 @@ function ingredientsForStep(stepText){
 function renderCookStep(){
   const body = document.getElementById('cookBody');
   const total = cookSteps.length;
+  // Empty state — keep Cook chrome but tell the user where to add steps.
+  // This used to fall back to openView, which made Cook visually
+  // indistinguishable from View.
+  if (!total) {
+    body.innerHTML = `
+      <div class="cook-step">
+        <div class="cs-num">No steps available</div>
+        <div class="cs-text" style="color:var(--muted)">
+          This recipe doesn't have steps in EZ Recipes yet, and Goals hasn't
+          synced any either. Add steps in EZ / PotLuck, or open the recipe
+          in the Goals tab and use 🍴 Let's Cook to add them.
+        </div>
+      </div>
+      <div class="cook-nav">
+        <span class="cn-pos">No steps to walk through</span>
+      </div>`;
+    return;
+  }
   const raw = cookSteps[cookIdx];
   // Normalize current step into { text, mediaUrl, mediaType, stepIngredients }.
   const step = (cookRich && raw && typeof raw === 'object')
