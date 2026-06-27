@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>🎯 Two Meals — War Room</title>
+<link rel="icon" href="/favicon.ico">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#050507; --bg-elev:#15151B;
+    --ink:#fff; --muted:rgba(255,255,255,.55); --w55:rgba(255,255,255,.55);
+    --w70:rgba(255,255,255,.7); --w15:rgba(255,255,255,.15);
+    --w03:rgba(255,255,255,.03); --w04:rgba(255,255,255,.04);
+    --w06:rgba(255,255,255,.06); --w08:rgba(255,255,255,.08);
+    --w10:rgba(255,255,255,.1); --w12:rgba(255,255,255,.12);
+    --line:rgba(255,255,255,.1); --line2:rgba(255,255,255,.15);
+    --accent:#FF8A3D;
+  }
+  *{box-sizing:border-box}
+  html,body{
+    margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif;
+    -webkit-user-select:none;user-select:none;
+  }
+  body.embed{ background:transparent }
+
+  /* Top bar */
+  #topbar{
+    position:sticky;top:0;z-index:30;
+    display:flex;align-items:center;gap:12px;padding:14px 24px;
+    background:rgba(14,17,22,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  #topbar h1{ font-size:18px;font-weight:800;margin:0;letter-spacing:.2px }
+  #topbar .week{ font-size:13px;color:var(--muted);font-weight:600;margin-left:4px }
+  #topbar .spacer{ flex:1 }
+  .tb-btn{
+    height:32px;padding:0 12px;border-radius:8px;
+    background:var(--w04);border:1px solid var(--line);color:var(--ink);
+    font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;transition:.12s;
+  }
+  .tb-btn:hover{ background:var(--w08);border-color:var(--line2) }
+  .tb-btn.primary{
+    background:rgba(255,138,61,.16);border-color:rgba(255,138,61,.5);color:var(--accent);
+  }
+  .tb-btn.primary:hover{ background:rgba(255,138,61,.26) }
+
+  #main{ padding:18px 24px 80px; max-width:1200px; margin:0 auto }
+  .hint{ font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:18px }
+
+  /* Slots */
+  .slots{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px }
+  @media (max-width:640px){ .slots{ grid-template-columns:1fr } }
+  .slot{
+    background:var(--w03);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;display:flex;flex-direction:column;
+    transition:.15s;min-height:260px;
+  }
+  .slot:hover{ border-color:var(--line2) }
+  .slot.empty{
+    border:2px dashed rgba(255,138,61,.4);background:rgba(255,138,61,.04);
+    align-items:center;justify-content:center;cursor:pointer;text-align:center;gap:8px;
+  }
+  .slot.empty:hover{ background:rgba(255,138,61,.08) }
+  .slot.empty .plus{ font-size:48px;color:var(--accent);font-weight:300;line-height:1 }
+  .slot.empty .h{ font-size:14px;color:var(--muted);font-weight:600 }
+  .slot.empty .sub{ font-size:11px;color:var(--muted);opacity:.7 }
+  .slot-img{ width:100%;height:200px;object-fit:cover;background:var(--w06);border-bottom:1px solid var(--line) }
+  .slot-img.placeholder{ display:flex;align-items:center;justify-content:center;font-size:44px;opacity:.4 }
+  .slot-body{ padding:12px 16px;flex:1 }
+  .slot-title{
+    font-size:16px;font-weight:700;line-height:1.3;color:var(--ink);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .slot-chips{ display:flex;flex-wrap:wrap;gap:4px;margin-top:6px }
+  .slot-chip{
+    font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;
+    background:rgba(74,222,128,.16);color:#86efac;
+  }
+  .slot-meta{ font-size:11px;color:var(--muted);margin-top:6px }
+  .slot-actions{
+    display:flex;gap:6px;padding:8px 16px 12px;flex-wrap:wrap;
+  }
+  .mini{
+    padding:6px 11px;border-radius:99px;font:inherit;font-size:11.5px;font-weight:700;
+    background:var(--w04);border:1px solid var(--line);color:var(--w70);cursor:pointer;
+  }
+  .mini:hover{ color:var(--ink);background:var(--w08) }
+  .mini.primary{ background:rgba(255,138,61,.16);border-color:rgba(255,138,61,.4);color:var(--accent) }
+  .mini.primary:hover{ background:rgba(255,138,61,.26) }
+  .mini.danger:hover{ color:#fca5a5;border-color:rgba(248,113,113,.4) }
+
+  /* Bottom actions */
+  .below-slots{ margin-top:14px;display:flex;gap:8px;flex-wrap:wrap }
+
+  /* History */
+  .history{ margin-top:28px;padding-top:18px;border-top:1px solid var(--line) }
+  .history-head{
+    font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--w55);font-weight:800;margin-bottom:10px;
+  }
+  .history-row{
+    background:var(--w03);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;margin-bottom:10px;
+  }
+  .history-label{ font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px }
+  .history-slots{ display:grid;grid-template-columns:1fr 1fr;gap:8px }
+  @media (max-width:520px){ .history-slots{ grid-template-columns:1fr } }
+  .h-card{
+    display:flex;gap:10px;align-items:center;background:var(--w04);
+    border-radius:8px;padding:6px;cursor:pointer;
+  }
+  .h-card:hover{ background:var(--w06) }
+  .h-card img{ width:48px;height:48px;border-radius:6px;object-fit:cover;background:var(--w06) }
+  .h-card .name{ font-size:12.5px;font-weight:600;color:var(--ink);line-clamp:2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden }
+  .h-card.empty{ color:var(--muted);font-size:12px;justify-content:center;padding:18px 6px;cursor:default }
+
+  /* Modal */
+  .modal-bg{
+    position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);
+    z-index:200;display:none;align-items:flex-start;justify-content:center;padding:48px 16px;
+  }
+  .modal-bg.open{ display:flex }
+  .modal-card{
+    background:var(--bg-elev);border:1px solid var(--line2);border-radius:14px;
+    width:100%;max-width:1100px;max-height:86vh;overflow:hidden;
+    display:flex;flex-direction:column;color:var(--ink);
+    box-shadow:0 24px 60px rgba(0,0,0,.6);
+  }
+  .modal-head{
+    display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line);
+  }
+  .modal-head h2{ margin:0;font-size:16px;font-weight:800 }
+  .modal-head .spacer{ flex:1 }
+  .modal-body{ flex:1;overflow:auto;padding:18px 20px }
+
+  /* Picker grid */
+  #pickerSearch{
+    width:100%;padding:10px 14px;background:var(--w04);border:1px solid var(--line);
+    border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;
+  }
+  #pickerSearch::placeholder{ color:var(--w55) }
+  #pickerChips{ display:flex;flex-wrap:wrap;gap:6px;margin-top:10px }
+  .pchip{
+    padding:5px 11px;border-radius:99px;background:var(--w04);border:1px solid var(--line);
+    color:var(--w70);font-size:11.5px;font-weight:700;cursor:pointer;
+  }
+  .pchip:hover{ color:var(--ink);background:var(--w08) }
+  .pchip.active{ background:rgba(74,158,255,.22);border-color:rgba(74,158,255,.5);color:#fff }
+  #pickerGrid{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(170px,1fr));gap:10px;margin-top:14px;
+  }
+  .pcard{
+    background:var(--w03);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    cursor:pointer;display:flex;flex-direction:column;transition:.12s;
+  }
+  .pcard:hover{ border-color:var(--accent);transform:translateY(-1px) }
+  .pcard img{ width:100%;height:110px;object-fit:cover;background:var(--w06) }
+  .pcard .empty-thumb{ width:100%;height:110px;display:flex;align-items:center;justify-content:center;font-size:28px;opacity:.4;background:var(--w06) }
+  .pcard .pbody{ padding:8px 10px 10px;flex:1 }
+  .pcard .ptitle{ font-size:12.5px;font-weight:700;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden }
+  .pcard .pchips{ display:flex;gap:4px;flex-wrap:wrap;margin-top:4px }
+  .pcard .pchip-mini{ font-size:9px;padding:1px 6px;border-radius:99px;background:rgba(74,222,128,.16);color:#86efac;font-weight:700 }
+
+  /* Cook walkthrough */
+  .cook-step{
+    background:var(--w04);border:1px solid var(--line);border-radius:12px;
+    padding:18px 22px;margin-bottom:14px;
+  }
+  .cook-step-n{ font-size:11px;color:var(--accent);font-weight:800;letter-spacing:.4px;text-transform:uppercase }
+  .cook-step-text{ font-size:15px;line-height:1.55;margin-top:6px;color:var(--ink) }
+  .cook-nav{
+    display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:12px;
+  }
+
+  /* Grocery list */
+  .grocery-list{ margin:0;padding:0;list-style:none }
+  .grocery-item{
+    display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);
+    font-size:14px;
+  }
+  .grocery-item input[type=checkbox]{ width:18px;height:18px;cursor:pointer }
+  .grocery-item.checked{ opacity:.5;text-decoration:line-through }
+  .grocery-section{ font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--w55);margin:14px 0 4px;font-weight:800 }
+
+  /* Empty / loading */
+  .empty-msg{ text-align:center;color:var(--muted);padding:40px 16px;font-size:14px }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>🎯 Two Meals</h1>
+  <span class="week" id="topbarWeek"></span>
+  <span class="spacer"></span>
+  <button class="tb-btn primary" id="groceryBtn" hidden>🛒 Grocery (both)</button>
+</div>
+
+<div id="main">
+  <div class="hint">Two meals. Just two. Could be breakfast, lunch, or dinner — pick what you'll actually commit to this week. Stop scrolling, start cooking.</div>
+  <div class="slots" id="slots"></div>
+  <div class="history" id="history" hidden></div>
+</div>
+
+<!-- Picker modal -->
+<div class="modal-bg" id="pickerBg">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="pickerH">Pick a meal</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="pickerClose">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <input type="search" id="pickerSearch" placeholder="Search recipe, ingredient, tag…" autocomplete="off">
+      <div id="pickerChips"></div>
+      <div id="pickerGrid"><div class="empty-msg">Loading recipes…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Cook modal -->
+<div class="modal-bg" id="cookBg">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="cookH">Let's Cook</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="cookClose">Close</button>
+    </div>
+    <div class="modal-body" id="cookBody"></div>
+  </div>
+</div>
+
+<!-- Grocery modal -->
+<div class="modal-bg" id="grocBg">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>🛒 Grocery list — both meals</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="grocClose">Close</button>
+    </div>
+    <div class="modal-body" id="grocBody"></div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, getDocs, setDoc, onSnapshot }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+// Same Firebase project as the rest of War Room.
+const firebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const mealWeeksCol = collection(db, 'goals_canvas_meal_weeks');
+const recipeMetaCol = collection(db, 'goals_canvas_recipe_meta');
+
+// EZ Recipes (Supabase) credentials — same as goals-canvas.html.
+const EZ_URL  = 'https://blqbxduxgimarrhgyfgn.supabase.co';
+const EZ_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscWJ4ZHV4Z2ltYXJyaGd5ZmduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU4MjU1NzcsImV4cCI6MjA1MTQwMTU3N30.lhBh5HiKzD-tEPNDA4F6tSMz-h3CqL8pZsK1H3aXl6w';
+
+let _ezClient = null;
+function ezClient(){
+  if (_ezClient) return _ezClient;
+  if (!window.supabase || !window.supabase.createClient) return null;
+  _ezClient = window.supabase.createClient(EZ_URL, EZ_ANON, {
+    auth: { persistSession: true, storageKey: 'sb-ez-recipes-auth' }
+  });
+  return _ezClient;
+}
+
+// ---------- State ----------
+const mealWeeks = new Map();
+const recipeMeta = new Map();
+let ezRecipes = [];
+let pickingSlot = null;
+let pickerQuery = '';
+let pickerLabel = '';
+const LABELS = ['Want to eat', 'Breakfast', 'Lunch', 'Dinner'];
+
+// ---------- Week helpers ----------
+function isoWeekKey(d){
+  d = new Date(d || Date.now());
+  d.setUTCHours(0,0,0,0);
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+function weekDateRange(key){
+  const m = /^(\d{4})-W(\d{1,2})$/.exec(key || '');
+  if (!m) return '';
+  const year = +m[1], week = +m[2];
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const week1Mon = new Date(jan4);
+  week1Mon.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+  const mon = new Date(week1Mon);
+  mon.setUTCDate(week1Mon.getUTCDate() + (week - 1) * 7);
+  const sun = new Date(mon);
+  sun.setUTCDate(mon.getUTCDate() + 6);
+  const fmt = d => d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  return `${fmt(mon)} – ${fmt(sun)}`;
+}
+
+// ---------- Helpers ----------
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function attr(s){ return esc(s).replace(/\n/g, '&#10;'); }
+function nowISO(){ return new Date().toISOString(); }
+
+function recipeWithMeta(r){
+  const meta = recipeMeta.get(r.rid) || {};
+  return {
+    ...r,
+    title:       (typeof meta.title === 'string' && meta.title.trim()) ? meta.title.trim() : r.title,
+    img:         (typeof meta.imageUrl === 'string' && meta.imageUrl.trim()) ? meta.imageUrl.trim() : r.img,
+    ingredients: Array.isArray(meta.overrideIngredients) ? meta.overrideIngredients : r.ingredients,
+    steps:       Array.isArray(meta.overrideSteps) ? meta.overrideSteps : r.steps,
+    labels:      effectiveLabelsFor(r),
+  };
+}
+function effectiveLabelsFor(r){
+  const meta = recipeMeta.get(r.rid) || {};
+  const stored = Array.isArray(meta.labels) ? meta.labels : [];
+  const set = new Set(stored);
+  const norm = s => String(s || '').toLowerCase().replace(/[\s_\-]+/g, '');
+  const tagNorms = new Set((r.tags || []).map(norm));
+  for (const L of LABELS) if (tagNorms.has(norm(L))) set.add(L);
+  return [...set];
+}
+
+function ezTags(v){
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
+  return String(v).split(/[,#]/).map(x => x.trim()).filter(Boolean);
+}
+function ezIngredients(r){
+  const rows = r.ingredientsRows || r.ingredients_rows || r.ingredients || [];
+  if (!Array.isArray(rows)) return [];
+  return rows.map(it => {
+    if (typeof it === 'string') return { text: it, imageUrl: null };
+    if (it && typeof it === 'object') return {
+      text: (it.text || it.name || it.ingredient || '').toString().trim(),
+      imageUrl: (it.image_url || it.imageUrl || it.image || null) || null
+    };
+    return null;
+  }).filter(x => x && x.text);
+}
+function ezSteps(r){
+  const v = r.steps || r.instructions || r.directions || r.method || [];
+  if (Array.isArray(v)) return v.map(s => typeof s === 'string' ? s : (s?.text || s?.step || '')).filter(Boolean);
+  if (typeof v === 'string') return v.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  return [];
+}
+
+// ---------- Firestore subscriptions ----------
+function subscribeMealWeeks(){
+  onSnapshot(mealWeeksCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') mealWeeks.delete(ch.doc.id);
+      else mealWeeks.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    renderAll();
+  }, (err) => console.warn('[meals] snapshot err', err));
+}
+function subscribeRecipeMeta(){
+  onSnapshot(recipeMetaCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') recipeMeta.delete(ch.doc.id);
+      else recipeMeta.set(ch.doc.id, ch.doc.data() || {});
+    });
+    renderAll();
+  }, (err) => console.warn('[meta] snapshot err', err));
+}
+async function setMealSlot(weekKey, slotIdx, recipeId){
+  const cur = mealWeeks.get(weekKey) || { weekKey, slots: [null, null] };
+  const slots = Array.isArray(cur.slots) ? cur.slots.slice() : [null, null];
+  while (slots.length < 2) slots.push(null);
+  slots[slotIdx] = recipeId || null;
+  const payload = { weekKey, slots, updatedAt: nowISO() };
+  mealWeeks.set(weekKey, payload);
+  try { await setDoc(doc(mealWeeksCol, weekKey), payload, { merge: true }); }
+  catch (e) { console.error('[meals] save', e); }
+  renderAll();
+}
+
+// ---------- Load EZ recipes (best-effort) ----------
+async function loadEz(){
+  const c = ezClient();
+  if (!c) return;
+  try {
+    const sess = (await c.auth.getSession()).data.session;
+    if (!sess) return; // user not signed in to EZ; recipes won't load
+    const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
+    if (error) { console.warn('[ez]', error); return; }
+    const recipes = (data || []).filter(r => String(r.id || '').startsWith('recipe_'));
+    ezRecipes = recipes
+      .map(r => ({ rid: r.id, ...(r.data || {}) }))
+      .filter(r => r.title && !r.isDraft)
+      .map(r => ({
+        rid:   r.rid,
+        title: r.title,
+        img:   (r.image_url || '').trim(),
+        tags:  ezTags(r.tags).concat(ezTags(r.category), ezTags(r.categories), ezTags(r.mealType), ezTags(r.meal_type), ezTags(r.course), ezTags(r.type)),
+        ingredients: ezIngredients(r),
+        steps:       ezSteps(r),
+      }));
+    renderAll();
+  } catch (e) { console.error('[ez] load', e); }
+}
+
+// ---------- Renderers ----------
+function renderAll(){
+  renderTopbar();
+  renderSlots();
+  renderHistory();
+}
+function renderTopbar(){
+  const k = isoWeekKey();
+  document.getElementById('topbarWeek').textContent = '· Week of ' + weekDateRange(k);
+  const wk = mealWeeks.get(k);
+  const filled = wk && wk.slots && wk.slots.filter(Boolean).length === 2;
+  document.getElementById('groceryBtn').hidden = !filled;
+}
+function lookupRecipe(rid){
+  if (!rid) return null;
+  return ezRecipes.find(r => r.rid === rid) || null;
+}
+function slotHtml(rid, slotIdx, weekKey, editable){
+  const raw = lookupRecipe(rid);
+  if (!rid) {
+    if (!editable) return `<div class="slot empty" style="pointer-events:none;opacity:.5;border-style:solid;border-width:1px"><div class="h">(empty)</div></div>`;
+    return `<div class="slot empty" data-pick="${slotIdx}">
+      <div class="plus">+</div>
+      <div class="h">Pick meal #${slotIdx + 1}</div>
+      <div class="sub">From your EZ Recipes</div>
+    </div>`;
+  }
+  if (!raw) {
+    return `<div class="slot">
+      <div class="slot-img placeholder">🍳</div>
+      <div class="slot-body">
+        <div class="slot-title">Recipe not loaded</div>
+        <div class="slot-meta">${rid}</div>
+      </div>
+      ${editable ? `<div class="slot-actions"><button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">Clear</button></div>` : ''}
+    </div>`;
+  }
+  const merged = recipeWithMeta(raw);
+  const img = merged.img
+    ? `<img class="slot-img" src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="slot-img placeholder">🍳</div>`;
+  const labels = (merged.labels || []).slice(0, 3).map(L => `<span class="slot-chip">${esc(L)}</span>`).join('');
+  return `<div class="slot">
+    ${img}
+    <div class="slot-body">
+      <div class="slot-title">${esc(merged.title)}</div>
+      <div class="slot-chips">${labels}</div>
+      <div class="slot-meta">${(merged.ingredients || []).length} ingredients · ${(merged.steps || []).length} steps</div>
+    </div>
+    ${editable ? `<div class="slot-actions">
+      <button class="mini primary" data-cook="${attr(rid)}">🍴 Cook</button>
+      <button class="mini" data-view="${attr(rid)}">📖 View</button>
+      <button class="mini" data-pick="${slotIdx}">↻ Replace</button>
+      <button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">✕ Clear</button>
+    </div>` : ''}
+  </div>`;
+}
+function renderSlots(){
+  const k = isoWeekKey();
+  const wk = mealWeeks.get(k) || { weekKey: k, slots: [null, null] };
+  const slots = Array.isArray(wk.slots) ? wk.slots : [null, null];
+  const el = document.getElementById('slots');
+  el.innerHTML = slotHtml(slots[0], 0, k, true) + slotHtml(slots[1], 1, k, true);
+  el.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    pickingSlot = parseInt(b.getAttribute('data-pick'), 10);
+    openPicker();
+  }));
+  el.querySelectorAll('[data-clear]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const [s, w] = b.getAttribute('data-clear').split('|');
+    setMealSlot(w, parseInt(s, 10), null);
+  }));
+  el.querySelectorAll('[data-cook]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    openCook(b.getAttribute('data-cook'));
+  }));
+  el.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    openView(b.getAttribute('data-view'));
+  }));
+}
+function renderHistory(){
+  const thisWeek = isoWeekKey();
+  const past = [...mealWeeks.values()]
+    .filter(w => w.weekKey !== thisWeek && Array.isArray(w.slots) && w.slots.some(Boolean))
+    .sort((a,b) => (b.weekKey || '').localeCompare(a.weekKey || ''));
+  const el = document.getElementById('history');
+  if (!past.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `<div class="history-head">Past weeks</div>` + past.slice(0, 24).map(w => {
+    return `<div class="history-row">
+      <div class="history-label">Week of ${weekDateRange(w.weekKey)}</div>
+      <div class="history-slots">
+        ${historyCardHtml(w.slots[0])}
+        ${historyCardHtml(w.slots[1])}
+      </div>
+    </div>`;
+  }).join('');
+}
+function historyCardHtml(rid){
+  if (!rid) return `<div class="h-card empty">(empty)</div>`;
+  const raw = lookupRecipe(rid);
+  if (!raw) return `<div class="h-card empty">Recipe not loaded</div>`;
+  const merged = recipeWithMeta(raw);
+  const img = merged.img
+    ? `<img src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<div style="width:48px;height:48px;border-radius:6px;background:var(--w06);display:flex;align-items:center;justify-content:center;font-size:18px;opacity:.5">🍳</div>`;
+  return `<div class="h-card" data-view-rid="${attr(rid)}">
+    ${img}
+    <div class="name">${esc(merged.title)}</div>
+  </div>`;
+}
+
+// ---------- Picker ----------
+function openPicker(){
+  document.getElementById('pickerH').textContent = `Pick meal #${pickingSlot + 1}`;
+  document.getElementById('pickerBg').classList.add('open');
+  pickerQuery = '';
+  pickerLabel = '';
+  document.getElementById('pickerSearch').value = '';
+  renderPicker();
+}
+function closePicker(){
+  pickingSlot = null;
+  document.getElementById('pickerBg').classList.remove('open');
+}
+function renderPicker(){
+  // Chips
+  const chipsEl = document.getElementById('pickerChips');
+  chipsEl.innerHTML = LABELS.map(L => {
+    const n = ezRecipes.filter(r => effectiveLabelsFor(r).includes(L)).length;
+    return `<button type="button" class="pchip${pickerLabel === L ? ' active' : ''}" data-l="${attr(L)}">${esc(L)} ${n}</button>`;
+  }).join('');
+  chipsEl.querySelectorAll('[data-l]').forEach(b => b.addEventListener('click', () => {
+    const L = b.getAttribute('data-l');
+    pickerLabel = (pickerLabel === L) ? '' : L;
+    renderPicker();
+  }));
+  // Grid
+  const q = pickerQuery.trim().toLowerCase();
+  const matches = ezRecipes.filter(r => {
+    if (pickerLabel && !effectiveLabelsFor(r).includes(pickerLabel)) return false;
+    if (!q) return true;
+    const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.text || '').join(' ')).toLowerCase();
+    return hay.includes(q);
+  }).sort((a,b) => (a.title || '').localeCompare(b.title || ''));
+  const grid = document.getElementById('pickerGrid');
+  if (!ezRecipes.length) {
+    grid.innerHTML = `<div class="empty-msg">No recipes loaded. Open the Goals tab once to sign into EZ Recipes, then come back.</div>`;
+    return;
+  }
+  if (!matches.length) {
+    grid.innerHTML = `<div class="empty-msg">No recipes match.</div>`;
+    return;
+  }
+  grid.innerHTML = matches.map(r => {
+    const merged = recipeWithMeta(r);
+    const img = merged.img
+      ? `<img src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="empty-thumb" style="display:none">🍳</div>`
+      : `<div class="empty-thumb">🍳</div>`;
+    const chips = (merged.labels || []).slice(0,2).map(L => `<span class="pchip-mini">${esc(L)}</span>`).join('');
+    return `<div class="pcard" data-rid="${attr(r.rid)}">
+      ${img}
+      <div class="pbody">
+        <div class="ptitle">${esc(merged.title)}</div>
+        <div class="pchips">${chips}</div>
+      </div>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('[data-rid]').forEach(c => c.addEventListener('click', () => {
+    const rid = c.getAttribute('data-rid');
+    const wk = isoWeekKey();
+    setMealSlot(wk, pickingSlot, rid);
+    closePicker();
+  }));
+}
+
+// ---------- View ----------
+function openView(rid){
+  const raw = lookupRecipe(rid);
+  if (!raw) return;
+  const merged = recipeWithMeta(raw);
+  document.getElementById('cookH').textContent = '📖 ' + merged.title;
+  const body = document.getElementById('cookBody');
+  const ings = (merged.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
+  const steps = merged.steps || [];
+  body.innerHTML = `
+    ${merged.img ? `<img src="${attr(merged.img)}" alt="" style="width:100%;max-height:300px;object-fit:cover;border-radius:10px;margin-bottom:14px">` : ''}
+    <div class="cook-step-n">Ingredients</div>
+    <div style="margin:8px 0 18px">
+      ${ings.map(i => `<div style="padding:6px 0;border-bottom:1px solid var(--line);font-size:14px">${esc(i.text)}</div>`).join('') || '<div class="empty-msg">No ingredients listed.</div>'}
+    </div>
+    <div class="cook-step-n">Steps</div>
+    <div style="margin:8px 0">
+      ${steps.map((s, i) => `<div class="cook-step">
+        <div class="cook-step-n">Step ${i + 1}</div>
+        <div class="cook-step-text">${esc(s)}</div>
+      </div>`).join('') || '<div class="empty-msg">No steps listed.</div>'}
+    </div>`;
+  document.getElementById('cookBg').classList.add('open');
+}
+
+// ---------- Cook walkthrough ----------
+let cookSteps = []; let cookIdx = 0; let cookTitle = '';
+function openCook(rid){
+  const raw = lookupRecipe(rid);
+  if (!raw) return;
+  const merged = recipeWithMeta(raw);
+  cookSteps = merged.steps || [];
+  cookTitle = merged.title;
+  cookIdx = 0;
+  if (!cookSteps.length) { openView(rid); return; }
+  document.getElementById('cookH').textContent = '🍴 ' + cookTitle;
+  renderCookStep();
+  document.getElementById('cookBg').classList.add('open');
+}
+function renderCookStep(){
+  const body = document.getElementById('cookBody');
+  const total = cookSteps.length;
+  const step = cookSteps[cookIdx];
+  body.innerHTML = `
+    <div class="cook-step">
+      <div class="cook-step-n">Step ${cookIdx + 1} of ${total}</div>
+      <div class="cook-step-text">${esc(step)}</div>
+    </div>
+    <div class="cook-nav">
+      <button class="tb-btn" id="cookPrev" ${cookIdx === 0 ? 'disabled' : ''}>← Prev</button>
+      <div style="color:var(--muted);font-size:12px">${cookIdx + 1} / ${total}</div>
+      <button class="tb-btn primary" id="cookNext">${cookIdx === total - 1 ? 'Done ✓' : 'Next →'}</button>
+    </div>`;
+  document.getElementById('cookPrev').onclick = () => { if (cookIdx > 0) { cookIdx--; renderCookStep(); } };
+  document.getElementById('cookNext').onclick = () => {
+    if (cookIdx === total - 1) document.getElementById('cookBg').classList.remove('open');
+    else { cookIdx++; renderCookStep(); }
+  };
+}
+
+// ---------- Grocery ----------
+function openGrocery(){
+  const wk = mealWeeks.get(isoWeekKey());
+  if (!wk || !wk.slots) return;
+  const recipes = wk.slots.map(rid => rid ? lookupRecipe(rid) : null).filter(Boolean).map(r => recipeWithMeta(r));
+  const body = document.getElementById('grocBody');
+  if (!recipes.length) { body.innerHTML = '<div class="empty-msg">Pick two meals first.</div>'; document.getElementById('grocBg').classList.add('open'); return; }
+  body.innerHTML = recipes.map((r, i) => {
+    const ings = (r.ingredients || []).map(it => typeof it === 'string' ? { text: it } : it);
+    return `<div class="grocery-section">${esc(r.title)}</div>
+      <ul class="grocery-list">
+        ${ings.map((it, j) => `<li class="grocery-item" data-i="${i}-${j}">
+          <input type="checkbox" data-cb>
+          <span>${esc(it.text)}</span>
+        </li>`).join('')}
+      </ul>`;
+  }).join('');
+  body.querySelectorAll('.grocery-item').forEach(li => {
+    li.querySelector('[data-cb]').addEventListener('change', e => {
+      li.classList.toggle('checked', e.target.checked);
+    });
+  });
+  document.getElementById('grocBg').classList.add('open');
+}
+
+// ---------- Wire up ----------
+document.getElementById('pickerClose').addEventListener('click', closePicker);
+document.getElementById('pickerBg').addEventListener('click', e => { if (e.target.id === 'pickerBg') closePicker(); });
+document.getElementById('pickerSearch').addEventListener('input', e => { pickerQuery = e.target.value || ''; renderPicker(); });
+document.getElementById('cookClose').addEventListener('click', () => document.getElementById('cookBg').classList.remove('open'));
+document.getElementById('cookBg').addEventListener('click', e => { if (e.target.id === 'cookBg') e.currentTarget.classList.remove('open'); });
+document.getElementById('grocClose').addEventListener('click', () => document.getElementById('grocBg').classList.remove('open'));
+document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
+document.getElementById('groceryBtn').addEventListener('click', openGrocery);
+// History card click → view
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-view-rid]');
+  if (c) openView(c.getAttribute('data-view-rid'));
+});
+
+// ---------- Init ----------
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+subscribeMealWeeks();
+subscribeRecipeMeta();
+loadEz();
+
+renderAll();
+</script>
+
+</body>
+</html>
