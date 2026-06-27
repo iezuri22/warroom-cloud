@@ -368,6 +368,30 @@
   /* Cook walkthrough — mirrors goals-canvas "Let's Cook" styling */
   #cookBg .modal-card{ max-width:820px } /* narrower than the picker, like Goals */
   #cookH .cook-recipe-sub{ font-size:13px;color:var(--muted);margin-left:6px;font-weight:500 }
+  /* Per-step layout — content on the left, photo block on the right.
+     Compresses vertical space so the user can see step text + tip +
+     ingredients without the photo pushing everything down. */
+  .cook-step .cs-row{
+    display:grid; grid-template-columns:1fr 240px; gap:18px;
+    align-items:start;
+  }
+  @media (max-width:680px){
+    .cook-step .cs-row{ grid-template-columns:1fr }
+  }
+  .cook-step .cs-side{
+    position:sticky; top:8px;
+  }
+  /* In the side column the media block stacks vertically (photo on top,
+     description below) instead of side-by-side. */
+  .cook-step .cs-side .cs-media-block{
+    flex-direction:column; gap:10px; margin-top:0; padding-top:0; border-top:none;
+  }
+  .cook-step .cs-side .cs-media-thumb{
+    width:100%; height:170px; flex:none;
+  }
+  .cook-step .cs-side .cs-media-info{ font-size:12px }
+  .cook-step .cs-side .cs-media-info h5{ margin:0 0 4px; font-size:12px }
+  .cook-step .cs-side .cs-media-info p{ font-size:11px; line-height:1.4 }
   /* Per-step media block — mirrors Goals' cs-media-block */
   .cook-step .cs-media-block{
     display:flex;gap:14px;align-items:flex-start;
@@ -504,6 +528,64 @@
   .cook-step .cs-toc-item .cs-toc-text{ flex:1; color:var(--ink) }
   .cook-step .cs-toc-item .cs-toc-text:empty::before{
     content:'(no text yet)'; color:var(--muted); font-style:italic;
+  }
+
+  /* Cook view toggle in the modal head */
+  .cv-mode-toggle{
+    display:inline-flex; background:var(--w04); border:1px solid var(--line);
+    border-radius:99px; padding:2px;
+  }
+  .cv-mode-toggle button{
+    background:transparent; border:none; color:var(--muted);
+    font:inherit; font-size:11.5px; font-weight:700;
+    padding:5px 11px; border-radius:99px; cursor:pointer;
+  }
+  .cv-mode-toggle button.active{ background:var(--accent); color:#fff }
+
+  /* 'All steps' overview — every step + substep as a compact row in one
+     scrollable list. Click a row to jump to its full page. */
+  #cookAllList{ display:flex; flex-direction:column; gap:10px }
+  .ca-row{
+    display:flex; gap:14px; align-items:flex-start;
+    background:var(--w03); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; cursor:pointer; transition:.12s;
+  }
+  .ca-row:hover{ border-color:var(--accent); transform:translateX(2px) }
+  .ca-row.sub{
+    margin-left:32px; background:var(--w04); border-left:3px solid var(--accent);
+  }
+  .ca-num{
+    flex:0 0 50px; font-size:14px; font-weight:800; color:var(--accent);
+    text-transform:uppercase; letter-spacing:.4px;
+  }
+  .ca-body{ flex:1; min-width:0 }
+  .ca-text{
+    font-size:16px; line-height:1.45; color:var(--ink); font-weight:600;
+    white-space:pre-wrap;
+  }
+  .ca-row.sub .ca-text{ font-size:14px; font-weight:500 }
+  .ca-tip{
+    margin-top:8px; padding:6px 10px; font-size:12px; color:var(--ink);
+    background:rgba(255,204,77,.06); border-left:2px solid #ffcc4d;
+    border-radius:0 6px 6px 0; font-style:italic;
+  }
+  .ca-ings{
+    margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;
+  }
+  .ca-ings .ca-ing{
+    display:inline-flex; align-items:center; gap:5px; padding:2px 8px;
+    background:var(--w05); border-radius:99px; font-size:11px; color:var(--w70);
+  }
+  .ca-ings .ca-ing .ca-ing-thumb{
+    width:18px; height:18px; border-radius:4px; object-fit:cover;
+  }
+  .ca-thumb{
+    flex:0 0 90px; width:90px; height:70px; border-radius:6px;
+    object-fit:cover; background:var(--w05);
+  }
+  .ca-thumb.ph{
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; color:var(--muted);
   }
   /* Editable step text — visual cue on hover/focus + placeholder. */
   .cook-step .cs-text[contenteditable]:empty::before{
@@ -700,7 +782,11 @@
     <div class="modal-head">
       <h2 id="cookH">Let's Cook</h2>
       <span class="spacer"></span>
-      <button class="tb-btn" id="cookClose">Close</button>
+      <div class="cv-mode-toggle" id="cookModeToggle">
+        <button data-mode="step" class="active">Step-by-step</button>
+        <button data-mode="all">All steps</button>
+      </div>
+      <button class="tb-btn" id="cookClose" style="margin-left:10px">Close</button>
     </div>
     <div class="modal-body" id="cookBody"></div>
   </div>
@@ -2789,6 +2875,7 @@ let cookSteps = [];   // either ['text', ...] or [{text, mediaUrl, mediaType, st
 let cookRich  = false; // true when cookSteps came from Goals (rich objects)
 let cookIdx = 0;      // current MAIN step index (for compat with old code)
 let cookFlatIdx = 0;  // current position in the flattened (main + substep) list
+let cookViewMode = 'step';  // 'step' = walk one at a time; 'all' = scroll list of every step
 let cookTitle = '';
 let cookIngs = [];  // {text, imageUrl}[] — the recipe's full ingredient list
 
@@ -2855,6 +2942,9 @@ function ingredientsForStep(stepText){
 }
 
 function renderCookStep(){
+  // Honor the view-mode toggle. 'all' renders every step + substep as a
+  // scrollable list; 'step' walks one page at a time.
+  if (cookViewMode === 'all') { renderCookAll(); return; }
   const body = document.getElementById('cookBody');
   const total = cookSteps.length;
   // Empty state — offer a one-click "+ Add first step" instead of dead-ending.
@@ -3047,11 +3137,15 @@ function renderCookStep(){
           <span>sub-step of</span>
           <b>${esc(parentText || 'Step ' + (cur.stepIdx + 1))}</b>
         </div>
-        <div class="cs-num">${ssLabel} of Step ${cur.stepIdx + 1}</div>
-        <div class="cs-text" data-act="ss-text-big" contenteditable="plaintext-only"
-             data-placeholder="What needs to happen in this sub-step…"
-             style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 20px;border:1px dashed transparent">${esc(ssText)}</div>
-        ${ssMediaHtml}
+        <div class="cs-row">
+          <div class="cs-main">
+            <div class="cs-num">${ssLabel} of Step ${cur.stepIdx + 1}</div>
+            <div class="cs-text" data-act="ss-text-big" contenteditable="plaintext-only"
+                 data-placeholder="What needs to happen in this sub-step…"
+                 style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 20px;border:1px dashed transparent">${esc(ssText)}</div>
+          </div>
+          <aside class="cs-side">${ssMediaHtml}</aside>
+        </div>
         <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
           <button class="tb-btn" data-act="ss-delete" style="color:#f87171" title="Delete this sub-step">🗑 Delete sub-step</button>
         </div>
@@ -3088,19 +3182,24 @@ function renderCookStep(){
       </div>
     </div>` : '';
 
+  // Two-column layout: content on the left, media block on the right (sticky).
   body.innerHTML = tocHtml + `
     <div class="cook-step">
-      <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
-      <div class="cs-text" data-act="step-text" contenteditable="plaintext-only"
-           data-placeholder="Click to add this step's instructions…"
-           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 20px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
-      ${tipHtml}
-      ${substepsPreview}
-      <button class="cs-add-substep" data-act="ss-add">+ Add sub-step (e.g. prep rice, prep veggies, plate)</button>
-      <div class="cs-ings-head">${ingsHead}</div>
-      ${curatedHtml}
-      <button class="cs-add-step-ing" data-act="ing-add" style="margin-top:8px;padding:8px 12px;border-radius:6px;background:transparent;border:1px dashed var(--line2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">+ Add ingredient for this step</button>
-      ${mediaHtml}
+      <div class="cs-row">
+        <div class="cs-main">
+          <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
+          <div class="cs-text" data-act="step-text" contenteditable="plaintext-only"
+               data-placeholder="Click to add this step's instructions…"
+               style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 20px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+          ${tipHtml}
+          ${substepsPreview}
+          <button class="cs-add-substep" data-act="ss-add">+ Add sub-step (e.g. prep rice, prep veggies, plate)</button>
+          <div class="cs-ings-head">${ingsHead}</div>
+          ${curatedHtml}
+          <button class="cs-add-step-ing" data-act="ing-add" style="margin-top:8px;padding:8px 12px;border-radius:6px;background:transparent;border:1px dashed var(--line2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">+ Add ingredient for this step</button>
+        </div>
+        <aside class="cs-side">${mediaHtml}</aside>
+      </div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button class="tb-btn" data-act="step-insert-after" title="Insert a new step after this one">+ Step after</button>
         <button class="tb-btn" data-act="step-delete" style="color:#f87171" title="Delete this step">🗑 Delete step</button>
@@ -3189,6 +3288,55 @@ function wireSubstepPageEdits(body, stepIdx, subIdx){
     const ss = getCookSubstep(stepIdx, subIdx);
     if (ss?.mediaUrl) window.open(ss.mediaUrl, '_blank', 'noopener');
   });
+}
+
+// 'All steps' overview — every step + substep in one scrollable list.
+// Read-only at-a-glance (with click-to-jump back to step view).
+function renderCookAll(){
+  const body = document.getElementById('cookBody');
+  if (!cookSteps.length) {
+    body.innerHTML = `<div class="empty-msg" style="padding:60px 16px">No steps in this recipe yet. Switch to Step-by-step to add the first one.</div>`;
+    return;
+  }
+  const flat = flattenCookSteps();
+  const ssLetter = idx => String.fromCharCode(97 + idx);
+  const html = flat.map((f, i) => {
+    const isMain = f.kind === 'main';
+    const step = cookSteps[f.stepIdx] || {};
+    const ss = isMain ? null : (getCookSubstep(f.stepIdx, f.subIdx) || {});
+    const text = isMain ? (step.text || '') : (ss.text || '');
+    const mediaUrl = isMain ? step.mediaUrl : ss.mediaUrl;
+    const tip = isMain ? (step.tip || '') : '';
+    const ingsArr = isMain && Array.isArray(step.stepIngredients) ? step.stepIngredients : [];
+    const label = isMain ? `${f.stepIdx + 1}` : `${f.stepIdx + 1}${ssLetter(f.subIdx)}`;
+    const thumb = mediaUrl
+      ? `<img class="ca-thumb" src="${attr(mediaUrl)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ca-thumb ph',textContent:'🍳'}))">`
+      : `<div class="ca-thumb ph">🍳</div>`;
+    const ingsHtml = ingsArr.length
+      ? `<div class="ca-ings">${ingsArr.map(ing => {
+          const img = ing.imageUrl || libImageFor(ing.name || ing.text || '');
+          return `<span class="ca-ing">${img ? `<img class="ca-ing-thumb" src="${attr(img)}" alt="" loading="lazy" onerror="this.remove()">` : ''}${esc(ing.name || ing.text || '')}${ing.amount ? ` — ${esc(ing.amount)}` : ''}</span>`;
+        }).join('')}</div>`
+      : '';
+    return `<div class="ca-row${isMain ? '' : ' sub'}" data-flat-i="${i}">
+      <div class="ca-num">Step ${label}</div>
+      <div class="ca-body">
+        <div class="ca-text">${esc(text) || '<em style="color:var(--muted)">(no text yet — tap to edit)</em>'}</div>
+        ${tip ? `<div class="ca-tip">💡 ${esc(tip)}</div>` : ''}
+        ${ingsHtml}
+      </div>
+      ${thumb}
+    </div>`;
+  }).join('');
+  body.innerHTML = `<div id="cookAllList">${html}</div>`;
+  // Click any row to jump to its full Step page.
+  body.querySelectorAll('[data-flat-i]').forEach(row => row.addEventListener('click', () => {
+    cookFlatIdx = +row.getAttribute('data-flat-i');
+    cookViewMode = 'step';
+    // Reflect in the toggle.
+    document.querySelectorAll('#cookModeToggle button').forEach(b => b.classList.toggle('active', b.getAttribute('data-mode') === 'step'));
+    renderCookStep();
+  }));
 }
 
 // ---------- Slot ingredient popover ----------
@@ -3595,6 +3743,14 @@ function renderGrocery(){
 document.getElementById('pickerClose').addEventListener('click', closePicker);
 document.getElementById('pickerBg').addEventListener('click', e => { if (e.target.id === 'pickerBg') closePicker(); });
 document.getElementById('pickerSearch').addEventListener('input', e => { pickerQuery = e.target.value || ''; renderPicker(); });
+// Cook mode toggle (Step-by-step vs All steps).
+document.querySelectorAll('#cookModeToggle button').forEach(b => b.addEventListener('click', () => {
+  const mode = b.getAttribute('data-mode');
+  if (mode === cookViewMode) return;
+  cookViewMode = mode;
+  document.querySelectorAll('#cookModeToggle button').forEach(x => x.classList.toggle('active', x === b));
+  renderCookStep();
+}));
 document.getElementById('cookClose').addEventListener('click', () => {
   document.getElementById('cookBg').classList.remove('open');
   cookOpenRid = null;
