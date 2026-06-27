@@ -188,6 +188,35 @@
 
   /* Empty / loading */
   .empty-msg{ text-align:center;color:var(--muted);padding:40px 16px;font-size:14px }
+
+  /* EZ sign-in banner — shown above slots when no Supabase session yet */
+  .ez-banner{
+    display:flex;align-items:center;gap:12px;
+    background:linear-gradient(180deg, rgba(99,102,241,.16), rgba(99,102,241,.08));
+    border:1px solid rgba(99,102,241,.45);
+    border-radius:12px;padding:12px 14px;margin-bottom:14px;
+    font-size:13px;
+  }
+  .ez-banner .ez-msg{ flex:1;line-height:1.45 }
+  .ez-banner .ez-msg b{ display:block;font-size:13.5px;margin-bottom:2px }
+  .ez-banner .ez-msg span{ color:var(--muted);font-size:12px }
+  .ez-banner button{
+    background:var(--accent);color:#fff;border:none;border-radius:8px;
+    padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;
+  }
+  .ez-banner button:hover{ filter:brightness(1.1) }
+
+  /* EZ sign-in form (inside auth modal) */
+  .ez-form{ display:flex;flex-direction:column;gap:10px }
+  .ez-form input{
+    width:100%;height:38px;padding:0 12px;border-radius:8px;
+    background:var(--w03,#1a1f27);border:1px solid var(--line);color:var(--ink);
+    font-size:14px;
+  }
+  .ez-form input:focus{ outline:none;border-color:var(--accent) }
+  .ez-form .ez-err{ font-size:12px;color:#f87171;min-height:14px }
+  .ez-form .ez-row{ display:flex;gap:8px;justify-content:flex-end;margin-top:4px }
+  .ez-form .ez-go{ background:var(--accent);color:#fff;border:none }
 </style>
 </head>
 <body>
@@ -201,6 +230,13 @@
 
 <div id="main">
   <div class="hint">Two meals. Just two. Could be breakfast, lunch, or dinner — pick what you'll actually commit to this week. Stop scrolling, start cooking.</div>
+  <div class="ez-banner" id="ezBanner" hidden>
+    <div class="ez-msg">
+      <b>Sign in to EZ Recipes</b>
+      <span>Use your PotLuck email + password — same as the Goals tab.</span>
+    </div>
+    <button id="ezBannerBtn">Sign in</button>
+  </div>
   <div class="slots" id="slots"></div>
   <div class="history" id="history" hidden></div>
 </div>
@@ -245,6 +281,30 @@
   </div>
 </div>
 
+<!-- EZ Recipes sign-in modal -->
+<div class="modal-bg" id="ezAuthBg">
+  <div class="modal-card" style="max-width:420px">
+    <div class="modal-head">
+      <h2>Sign in to EZ Recipes</h2>
+      <span class="spacer"></span>
+      <button class="tb-btn" id="ezAuthClose">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 14px;font-size:12.5px;color:var(--muted);line-height:1.5">
+        Use the same email + password as the PotLuck site. Your session syncs with the Goals tab.
+      </p>
+      <form class="ez-form" id="ezAuthForm" onsubmit="return false">
+        <input id="ezAuthEmail" type="email" placeholder="Email" autocomplete="email">
+        <input id="ezAuthPass"  type="password" placeholder="Password" autocomplete="current-password">
+        <div class="ez-err" id="ezAuthErr"></div>
+        <div class="ez-row">
+          <button class="tb-btn ez-go" id="ezAuthGo">Sign in</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
 import { getFirestore, collection, doc, getDocs, setDoc, onSnapshot }
@@ -270,8 +330,11 @@ let _ezClient = null;
 function ezClient(){
   if (_ezClient) return _ezClient;
   if (!window.supabase || !window.supabase.createClient) return null;
+  // IMPORTANT: storageKey must match goals-canvas.html so a sign-in done on
+  // Goals is visible to this page (and vice-versa). They live on the same
+  // origin, so the session lands in the shared localStorage entry.
   _ezClient = window.supabase.createClient(EZ_URL, EZ_ANON, {
-    auth: { persistSession: true, storageKey: 'sb-ez-recipes-auth' }
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ez-recipes-auth' }
   });
   return _ezClient;
 }
@@ -392,11 +455,16 @@ async function setMealSlot(weekKey, slotIdx, recipeId){
 }
 
 // ---------- Load EZ recipes (best-effort) ----------
+let ezSignedIn = false;     // tracks Supabase session presence
+const EZ_EMAIL_KEY = 'ez-recipes-last-email';
+
 async function loadEz(){
   const c = ezClient();
   if (!c) return;
   try {
     const sess = (await c.auth.getSession()).data.session;
+    ezSignedIn = !!sess;
+    updateEzBanner();
     if (!sess) return; // user not signed in to EZ; recipes won't load
     const { data, error } = await c.from('meal_planner_data').select('*').eq('user_id', sess.user.id);
     if (error) { console.warn('[ez]', error); return; }
@@ -414,6 +482,45 @@ async function loadEz(){
       }));
     renderAll();
   } catch (e) { console.error('[ez] load', e); }
+}
+
+// ---------- EZ sign-in UI ----------
+function updateEzBanner(){
+  // Show the banner when: not signed in AND there's something to load
+  // (either picker is being used or one of the slots references a recipe).
+  const banner = document.getElementById('ezBanner');
+  if (!banner) return;
+  banner.hidden = ezSignedIn;
+}
+function openEzAuth(){
+  const bg = document.getElementById('ezAuthBg');
+  bg.classList.add('open');
+  document.getElementById('ezAuthErr').textContent = '';
+  document.getElementById('ezAuthPass').value = '';
+  try { document.getElementById('ezAuthEmail').value = localStorage.getItem(EZ_EMAIL_KEY) || ''; } catch {}
+  setTimeout(() => {
+    const emailEl = document.getElementById('ezAuthEmail');
+    (emailEl.value ? document.getElementById('ezAuthPass') : emailEl).focus();
+  }, 30);
+}
+function closeEzAuth(){ document.getElementById('ezAuthBg').classList.remove('open'); }
+async function doEzAuth(){
+  const email = document.getElementById('ezAuthEmail').value.trim();
+  const pass  = document.getElementById('ezAuthPass').value;
+  const err   = document.getElementById('ezAuthErr');
+  if (!email || !pass) { err.textContent = 'Enter email and password.'; return; }
+  const c = ezClient();
+  if (!c) { err.textContent = 'Supabase client unavailable.'; return; }
+  err.textContent = 'Signing in…';
+  const { error } = await c.auth.signInWithPassword({ email, password: pass });
+  document.getElementById('ezAuthPass').value = '';
+  if (error) { err.textContent = error.message || 'Login failed.'; return; }
+  try { localStorage.setItem(EZ_EMAIL_KEY, email); } catch {}
+  err.textContent = '';
+  closeEzAuth();
+  await loadEz();
+  // If we were mid-picker, refresh its grid.
+  if (document.getElementById('pickerBg').classList.contains('open')) renderPicker();
 }
 
 // ---------- Renderers ----------
@@ -565,7 +672,11 @@ function renderPicker(){
   }).sort((a,b) => (a.title || '').localeCompare(b.title || ''));
   const grid = document.getElementById('pickerGrid');
   if (!ezRecipes.length) {
-    grid.innerHTML = `<div class="empty-msg">No recipes loaded. Open the Goals tab once to sign into EZ Recipes, then come back.</div>`;
+    grid.innerHTML = ezSignedIn
+      ? `<div class="empty-msg">No recipes loaded yet. Add some in EZ Recipes / PotLuck, then refresh.</div>`
+      : `<div class="empty-msg">Not signed in to EZ Recipes.<br><button class="tb-btn primary" id="pickerSignInBtn" style="margin-top:14px">Sign in</button></div>`;
+    const sb = document.getElementById('pickerSignInBtn');
+    if (sb) sb.addEventListener('click', openEzAuth);
     return;
   }
   if (!matches.length) {
@@ -688,6 +799,12 @@ document.getElementById('cookBg').addEventListener('click', e => { if (e.target.
 document.getElementById('grocClose').addEventListener('click', () => document.getElementById('grocBg').classList.remove('open'));
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
+// EZ auth wiring
+document.getElementById('ezBannerBtn').addEventListener('click', openEzAuth);
+document.getElementById('ezAuthClose').addEventListener('click', closeEzAuth);
+document.getElementById('ezAuthBg').addEventListener('click', e => { if (e.target.id === 'ezAuthBg') closeEzAuth(); });
+document.getElementById('ezAuthGo').addEventListener('click', doEzAuth);
+document.getElementById('ezAuthForm').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doEzAuth(); } });
 // History card click → view
 document.addEventListener('click', e => {
   const c = e.target.closest('[data-view-rid]');
