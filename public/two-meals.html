@@ -3365,6 +3365,19 @@ function renderCookStep(){
     };
     return;
   }
+  // CRITICAL ORDERING: resolve cookFlatIdx → cur → cookIdx FIRST, before
+  // we read cookSteps[cookIdx]. Previously this resolution happened ~100
+  // lines down, so the `step` variable + step ingredients + media + tip
+  // were all built from the PREVIOUS render's cookIdx. After a Next click,
+  // the header would say "Step 4" (which uses post-update cookIdx) but the
+  // body still showed Step 3's content — the duplicated-step glitch.
+  {
+    const flatNow = flattenCookSteps();
+    if (cookFlatIdx >= flatNow.length) cookFlatIdx = flatNow.length - 1;
+    if (cookFlatIdx < 0) cookFlatIdx = 0;
+    const curNow = flatNow[cookFlatIdx] || { kind: 'main', stepIdx: 0 };
+    cookIdx = curNow.stepIdx;
+  }
   const raw = cookSteps[cookIdx] || {};
   // Normalize current step. tip + substeps are new optional fields — existing
   // steps from the EZ import / older recipe_meta docs just default to empty.
