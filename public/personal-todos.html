@@ -14434,23 +14434,45 @@ const VOICE = {
     // banner above the priority lists. Click → opens the Learning page.
     let _learningCourses = [];
     function _ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-    function _learningPacing(section, isBook){
+    function _todayLocalISO(){ return _ymd(new Date()); }
+    function _lectureDoneToday(u){
+      if (!u || !u.done || !u.doneAt) return false;
+      try { return _ymd(new Date(u.doneAt)) === _todayLocalISO(); }
+      catch { return false; }
+    }
+    // For a course section: today's NET remaining lectures = perDay target
+    // minus whatever was already finished today. Zero means the day is done.
+    function _learningCourseRemainingToday(section){
       if (!section.deadline) return null;
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const due = new Date(section.deadline + 'T12:00:00');
       const days = Math.ceil((due - today) / 86400000);
       if (days <= 0) return null;
-      if (isBook || typeof section.totalPages === 'number') {
-        const rem = (section.totalPages || 0) - (section.pagesRead || 0);
-        if (rem <= 0) return null;
-        return { perDay: Math.ceil(rem / days), unit: 'pages' };
-      }
-      const total = (section.subsections || []).length;
-      const done = (section.subsections || []).filter(u => u.done).length;
-      const rem = total - done;
+      const subs = section.subsections || [];
+      const totalRem = subs.filter(u => !u.done).length;
+      if (totalRem <= 0) return null;
+      const perDay = Math.ceil(totalRem / days);
+      const doneToday = subs.filter(_lectureDoneToday).length;
+      const remToday = Math.max(0, perDay - doneToday);
+      return { perDay, doneToday, remToday, unit: remToday === 1 ? 'lecture' : 'lectures' };
+    }
+    // For a book chapter: surface the daily page target. Skip when the
+    // chapter is fully read; we don't track pages-read-today (no field
+    // for that), so we always show the daily target.
+    function _learningBookRemainingToday(section){
+      if (!section.deadline) return null;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const due = new Date(section.deadline + 'T12:00:00');
+      const days = Math.ceil((due - today) / 86400000);
+      if (days <= 0) return null;
+      const total = section.totalPages || 0;
+      const read = section.pagesRead || 0;
+      const rem = total - read;
       if (rem <= 0) return null;
-      return { perDay: Math.ceil(rem / days), unit: rem === 1 ? 'lecture' : 'lectures' };
+      const perDay = Math.ceil(rem / days);
+      return { perDay, remToday: perDay, unit: 'pages' };
     }
     function renderLearningBanner(){
       const el = document.getElementById('learningBanner');
@@ -14459,16 +14481,25 @@ const VOICE = {
       for (const c of _learningCourses) {
         const isBook = (c.type || 'course') === 'book';
         for (const s of (c.sections || [])) {
-          const pace = _learningPacing(s, isBook);
-          if (!pace) continue;
-          lines.push({ course: c, section: s, pace, isBook });
+          if (isBook) {
+            const r = _learningBookRemainingToday(s);
+            if (r) lines.push({ course: c, section: s, ...r, isBook: true });
+          } else {
+            const r = _learningCourseRemainingToday(s);
+            if (!r) continue;
+            // Skip sections where today's target is already met — that's
+            // the whole point of this banner: only surface what's left.
+            if (r.remToday <= 0) continue;
+            lines.push({ course: c, section: s, ...r, isBook: false });
+          }
         }
       }
       if (!lines.length) { el.style.display = 'none'; el.classList.add('empty'); return; }
       el.classList.remove('empty');
       el.style.display = 'flex';
-      const items = lines.slice(0, 3).map(({ course, section, pace }) => {
-        return `<span class="strong">${pace.perDay} ${pace.unit}</span> of ${escapeHtml(section.title || 'a section')}`;
+      const items = lines.slice(0, 3).map(({ section, remToday, unit, isBook }) => {
+        const prefix = isBook ? '📖' : '🎓';
+        return `<span class="strong">${prefix} ${remToday} ${unit}</span> of ${escapeHtml(section.title || (isBook ? 'a chapter' : 'a section'))}`;
       });
       const more = lines.length > 3 ? ` <span style="opacity:.65">+ ${lines.length - 3} more</span>` : '';
       el.innerHTML = `
@@ -14477,11 +14508,25 @@ const VOICE = {
           <span class="lb-head">Today's Learning</span>
           <span class="lb-line">${items.join(' · ')}${more}</span>
         </span>
-        <a href="/learning.html" class="lb-go">Open →</a>`;
-      el.onclick = (e) => {
-        if (e.target.closest('a')) return;
+        <a href="#" class="lb-go" data-act="open-learning">Open →</a>`;
+      // Inside the daily-planner shell the page lives in an iframe — a
+      // plain href would only swap the iframe's URL while the SHELL tab
+      // stays on Personal. postMessage tells the parent to flip its
+      // active tab to Learning. Fall back to top-level nav when we're
+      // standalone (no parent / same window).
+      const openLearning = (e) => {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'warroom:switch-tab', tab: 'learning' }, '*');
+            return;
+          }
+        } catch {}
         window.location.href = '/learning.html';
       };
+      el.onclick = openLearning;
+      const goLink = el.querySelector('[data-act="open-learning"]');
+      if (goLink) goLink.onclick = openLearning;
     }
     function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
     function _subscribeLearning(){
