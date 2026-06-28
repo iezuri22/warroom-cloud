@@ -795,6 +795,17 @@ function todaysPlannedFor(section){
     try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
     return arr;
   }
+  // Future-deadline override: the user picked a deadline of tomorrow or
+  // later, so today is "buffer" — only show as Today the lectures they
+  // ACTUALLY finished today. Everything else falls into Tomorrow / In N
+  // days via the pacing math. Previously the auto-fill below would promote
+  // perDay items into today's bucket, surfacing "TODAY" pills on lectures
+  // the user had no intent to do today.
+  if (section.deadline > today) {
+    const ids = doneTodayIndices.map(i => subs[i].id).filter(Boolean);
+    try { localStorage.setItem(cacheKey, JSON.stringify(ids)); } catch {}
+    return doneTodayIndices;
+  }
   const pace = pacingFor(section);
   // Try to read previously locked plan for today.
   let cached = null;
@@ -896,7 +907,9 @@ function lectureDueLabel(section, lectureIndex){
   if (pos < 0) return null;
   const dayOffset = Math.floor(pos / pace.perDay) + 1;
   // Cap so we don't say "in 30 days" when deadline is only 5 days out.
-  const capped = Math.min(dayOffset, Math.max(1, pace.days - 1));
+  // pace.days now means work-days available (today is excluded as a buffer
+  // when the deadline is in the future), so the cap is just pace.days.
+  const capped = Math.min(dayOffset, Math.max(1, pace.days));
   if (capped === 1) return { text: 'Tomorrow', cls: 'tomorrow' };
   if (capped <= 3)  return { text: 'In ' + capped + ' days', cls: 'soon' };
   return { text: 'In ' + capped + ' days', cls: '' };
@@ -904,23 +917,35 @@ function lectureDueLabel(section, lectureIndex){
 
 // Per-day pacing helper. Given a section/chapter with a deadline, compute
 // how many lectures (or pages) the user needs to finish per day to make it.
+//
+// "days" is calendar-day distance from today to the deadline date. The old
+// version mixed a midnight-local "today" with a noon-local "due" and used
+// Math.ceil on the ms ratio — that gave 1.5 days for a tomorrow deadline,
+// rounding to 2, so 15 lectures got split into 8 today + 7 tomorrow even
+// though the user explicitly chose a tomorrow deadline meaning "I'll do
+// it tomorrow". Now we compare pure calendar days so tomorrow = 1 day,
+// the day after = 2, etc.
 function pacingFor(section){
   if (!section.deadline) return null;
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const due = new Date(section.deadline + 'T12:00:00');
-  const days = Math.ceil((due - today) / 86400000);
-  if (days <= 0) return null;
+  const todayD = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(section.deadline);
+  if (!m) return null;
+  const dueD = new Date(+m[1], +m[2] - 1, +m[3]);
+  const days = Math.max(0, Math.round((dueD - todayD) / 86400000));
+  // Deadline TODAY: everything has to be done today → effective work-days = 1.
+  // Deadline TOMORROW: 1 work day (tomorrow). Day after = 2. Etc.
+  const workDays = Math.max(1, days || 1);
   if (typeof section.totalPages === 'number') {
     const remaining = section.totalPages - (section.pagesRead || 0);
     if (remaining <= 0) return null;
-    return { perDay: Math.ceil(remaining / days), unit: 'pages', remaining, days };
+    return { perDay: Math.ceil(remaining / workDays), unit: 'pages', remaining, days: workDays };
   }
   const total = (section.subsections || []).length;
   const done = (section.subsections || []).filter(u => u.done).length;
   const remaining = total - done;
   if (remaining <= 0) return null;
-  return { perDay: Math.ceil(remaining / days), unit: remaining === 1 ? 'lecture' : 'lectures', remaining, days };
+  return { perDay: Math.ceil(remaining / workDays), unit: remaining === 1 ? 'lecture' : 'lectures', remaining, days: workDays };
 }
 // In-page two-button dialog for the "allow today as deadline?" decision.
 // Replaces window.confirm() because the native confirm consumes the
