@@ -3154,7 +3154,8 @@ function renderCookStep(){
         : `<div class="cs-empty">No ingredients linked to this step yet.</div>`);
 
   // Step photo as a full-width banner. When empty: a single subtle button.
-  // No wall of "Snap a photo or short video…" text anymore.
+  // All buttons are type="button" so they never accidentally submit a form
+  // wrapper or get hijacked by Enter-in-contenteditable behavior.
   let mediaHtml = '';
   if (step.mediaUrl) {
     const thumb = step.mediaType === 'video'
@@ -3164,12 +3165,12 @@ function renderCookStep(){
       <div class="cs-photo-banner">
         ${thumb}
         <div class="cs-photo-actions">
-          <button data-act="media-replace">↻ Replace</button>
-          <button class="danger" data-act="media-remove">✕ Remove</button>
+          <button type="button" data-act="media-replace">↻ Replace</button>
+          <button type="button" class="danger" data-act="media-remove">✕ Remove</button>
         </div>
       </div>`;
   } else {
-    mediaHtml = `<button class="cs-photo-add" data-act="media-upload">📷 Add photo / video</button>`;
+    mediaHtml = `<button type="button" class="cs-photo-add" data-act="media-upload">📷 Add photo / video</button>`;
   }
 
   // Subtle top-tip line — contenteditable in place, no big amber block.
@@ -3236,12 +3237,12 @@ function renderCookStep(){
         <div class="cs-photo-banner">
           ${thumb}
           <div class="cs-photo-actions">
-            <button data-act="ss-media-replace">↻ Replace</button>
-            <button class="danger" data-act="ss-media-clear">✕ Remove</button>
+            <button type="button" data-act="ss-media-replace">↻ Replace</button>
+            <button type="button" class="danger" data-act="ss-media-clear">✕ Remove</button>
           </div>
         </div>`;
     } else {
-      ssMediaHtml = `<button class="cs-photo-add" data-act="ss-media-upload">📷 Add photo / video</button>`;
+      ssMediaHtml = `<button type="button" class="cs-photo-add" data-act="ss-media-upload">📷 Add photo / video</button>`;
     }
     body.innerHTML = tocHtml + `
       <div class="cook-step cs-sub">
@@ -3422,14 +3423,28 @@ function wireSubstepPageEdits(body, stepIdx, subIdx){
     cookFlatIdx = Math.max(0, idx);
     renderCookStep();
   });
-  // Media upload / replace / clear / open
-  const handleUpload = async () => {
+  // Media upload / replace / clear / open. Surfaces errors loudly so a
+  // silent Storage failure no longer looks like the click did nothing.
+  const handleUpload = async (ev) => {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    const btn = ev?.currentTarget || null;
     const file = await pickFile('image/*,video/*');
+    console.log('[cook] substep media file picked:', file && { name:file.name, type:file.type, size:file.size });
     if (!file) return;
-    const up = await uploadToStorage(file, `substep/${cookOpenRid}/${stepIdx}/${subIdx}`);
-    if (!up) return;
-    writeSubstep({ mediaUrl: up.url, mediaType: up.type });
-    renderCookStep();
+    const origText = btn?.textContent;
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Uploading…'; }
+      const up = await uploadToStorage(file, `substep/${cookOpenRid}/${stepIdx}/${subIdx}`);
+      console.log('[cook] substep media upload result:', up);
+      if (!up) { alert('Upload returned no URL — check Storage rules / network.'); return; }
+      writeSubstep({ mediaUrl: up.url, mediaType: up.type });
+      renderCookStep();
+    } catch (e) {
+      console.error('[cook] substep media upload threw', e);
+      alert('Upload failed: ' + (e?.message || e));
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
   };
   body.querySelector('[data-act="ss-media-upload"]')?.addEventListener('click', handleUpload);
   body.querySelector('[data-act="ss-media-replace"]')?.addEventListener('click', handleUpload);
@@ -3736,17 +3751,32 @@ function wireCookStepEdits(body, step){
       renderCookStep();
     });
   });
-  // Step media.
+  // Step media. Visible Uploading… state so the user isn't left wondering
+  // what happened after picking a file; any error surfaces in an alert.
   body.querySelectorAll('[data-act="media-upload"], [data-act="media-replace"]').forEach(el => {
-    el.addEventListener('click', async () => {
+    el.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
       const file = await pickFile('image/*,video/*');
+      console.log('[cook] step media file picked:', file && { name:file.name, type:file.type, size:file.size });
       if (!file) return;
-      const up = await uploadToStorage(file, `step-media/${cookOpenRid}/${cookIdx}`);
-      if (!up) return;
-      cookSteps[cookIdx].mediaUrl = up.url;
-      cookSteps[cookIdx].mediaType = up.type;
-      commitCookSteps(cookOpenRid, cookSteps);
-      renderCookStep();
+      const origText = el.textContent;
+      try {
+        el.disabled = true;
+        el.textContent = '⏳ Uploading…';
+        const up = await uploadToStorage(file, `step-media/${cookOpenRid}/${cookIdx}`);
+        console.log('[cook] step media upload result:', up);
+        if (!up) { alert('Upload returned no URL — check Storage rules / network.'); return; }
+        cookSteps[cookIdx].mediaUrl = up.url;
+        cookSteps[cookIdx].mediaType = up.type;
+        commitCookSteps(cookOpenRid, cookSteps);
+        renderCookStep();
+      } catch (e) {
+        console.error('[cook] step media upload threw', e);
+        alert('Upload failed: ' + (e?.message || e));
+        el.disabled = false;
+        el.textContent = origText;
+      }
     });
   });
   body.querySelector('[data-act="media-open"]')?.addEventListener('click', () => {
