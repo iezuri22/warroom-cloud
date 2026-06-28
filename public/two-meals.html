@@ -1702,23 +1702,97 @@ function subscribeRecipes(){
 
 function subscribeRecipeMeta(){
   onSnapshot(recipeMetaCol, (snap) => {
+    // Track whether the OPEN recipe's meta actually changed in this snapshot
+    // — most snapshots are noise from other recipes and shouldn't trigger
+    // a destructive re-render of the cook walkthrough.
+    let openRecipeChanged = false;
     snap.docChanges().forEach(ch => {
       if (ch.type === 'removed') recipeMeta.delete(ch.doc.id);
       else recipeMeta.set(ch.doc.id, ch.doc.data() || {});
+      if (cookOpenRid && ch.doc.id === cookOpenRid) openRecipeChanged = true;
     });
     renderAll();
-    // Re-render the open Cook walkthrough so edits made elsewhere (Goals
-    // canvas, another tab) appear live.
-    if (document.getElementById('cookBg')?.classList.contains('open') && cookOpenRid) {
-      // Pull fresh cookSteps from the just-updated meta.
-      const meta = recipeMeta.get(cookOpenRid);
-      if (meta && Array.isArray(meta.cookSteps)) {
-        cookSteps = meta.cookSteps;
-        cookRich = true;
-      }
-      renderCookStep();
+    // Only touch the open cook view when (a) it's actually open, (b) the
+    // current recipe's meta changed in this snapshot, AND (c) we don't have
+    // a local save in flight. (c) is the critical guard: when our own
+    // debounced setDoc echoes back, our optimistic local cookSteps is
+    // strictly newer than the snapshot, so adopting it would revert the
+    // user's in-progress edits and reshape the flat list under them.
+    if (!openRecipeChanged) return;
+    if (!document.getElementById('cookBg')?.classList.contains('open')) return;
+    if (!cookOpenRid) return;
+    if (_pendingSaves.has(cookOpenRid)) {
+      console.log('[meta] skipping snapshot adoption — local save pending');
+      return;
     }
+    const meta = recipeMeta.get(cookOpenRid);
+    if (!meta || !Array.isArray(meta.cookSteps)) return;
+    // Also skip if remote cookSteps is structurally identical — avoids a
+    // re-render flicker on writes we initiated ourselves between debounces.
+    if (cookStepsEqual(cookSteps, meta.cookSteps)) return;
+    // Preserve the user's logical location across the data-shape change.
+    // Track (kind, stepIdx, subIdx) rather than raw flat-index position.
+    const prevLoc = currentCookLocation();
+    cookSteps = meta.cookSteps;
+    cookRich = true;
+    cookFlatIdx = findFlatIdxForLocation(prevLoc);
+    renderCookStep();
   }, (err) => console.warn('[meta] snapshot err', err));
+}
+// Shallow-compare two cookSteps arrays — same length, same per-step text,
+// same media, same ingredient + substep counts. Doesn't have to be perfect;
+// it just has to catch the common "we just saved exactly this" case.
+function cookStepsEqual(a, b){
+  if (!Array.isArray(a) || !Array.isArray(b)) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const sa = a[i] || {}, sb = b[i] || {};
+    if ((sa.text || '') !== (sb.text || '')) return false;
+    if ((sa.mediaUrl || '') !== (sb.mediaUrl || '')) return false;
+    if ((sa.tip || '') !== (sb.tip || '')) return false;
+    const ai = Array.isArray(sa.stepIngredients) ? sa.stepIngredients : [];
+    const bi = Array.isArray(sb.stepIngredients) ? sb.stepIngredients : [];
+    if (ai.length !== bi.length) return false;
+    for (let j = 0; j < ai.length; j++) {
+      if ((ai[j]?.name || ai[j]?.text || '') !== (bi[j]?.name || bi[j]?.text || '')) return false;
+      if ((ai[j]?.amount || '') !== (bi[j]?.amount || '')) return false;
+    }
+    const ass = Array.isArray(sa.substeps) ? sa.substeps : [];
+    const bss = Array.isArray(sb.substeps) ? sb.substeps : [];
+    if (ass.length !== bss.length) return false;
+    for (let j = 0; j < ass.length; j++) {
+      if ((ass[j]?.text || '') !== (bss[j]?.text || '')) return false;
+    }
+  }
+  return true;
+}
+// The user's current semantic position — used so a data-shape change
+// (delete/add/reorder) doesn't snap them to a different page.
+function currentCookLocation(){
+  const flat = flattenCookSteps();
+  const cur = flat[cookFlatIdx];
+  if (!cur) return { kind: 'main', stepIdx: 0, subIdx: 0 };
+  return { kind: cur.kind, stepIdx: cur.stepIdx, subIdx: cur.subIdx || 0 };
+}
+function findFlatIdxForLocation(loc){
+  if (!loc) return 0;
+  const flat = flattenCookSteps();
+  // Try exact match first.
+  for (let i = 0; i < flat.length; i++) {
+    const f = flat[i];
+    if (f.kind === loc.kind && f.stepIdx === loc.stepIdx && (f.subIdx || 0) === (loc.subIdx || 0)) return i;
+  }
+  // Fall back to the parent main step if the exact substep is gone.
+  if (loc.kind === 'sub') {
+    for (let i = 0; i < flat.length; i++) {
+      if (flat[i].kind === 'main' && flat[i].stepIdx === loc.stepIdx) return i;
+    }
+  }
+  // Or the closest remaining step at the same index.
+  for (let i = 0; i < flat.length; i++) {
+    if (flat[i].kind === 'main' && flat[i].stepIdx >= loc.stepIdx) return i;
+  }
+  return Math.min(Math.max(0, cookFlatIdx), Math.max(0, flat.length - 1));
 }
 
 // ---------- File picker + storage upload ----------
@@ -3766,42 +3840,75 @@ function wireCookStepEdits(body, step){
   // first so the user can pick from what's already established.
   const addBtn = body.querySelector('[data-act="ing-add"]');
   if (addBtn) addBtn.onclick = () => openStepIngPicker();
-  // Ingredient row handlers.
+  // Ingredient row handlers. We pin BOTH the step index and the ingredient's
+  // identity (name + initial slot) at bind time, so a concurrent snapshot
+  // adoption or a parallel edit can't corrupt the wrong row. resolveIngIdx
+  // re-scans the current array for the captured identity — if it's gone (or
+  // moved), we no-op instead of mutating someone else's data.
+  const stepAtBind = cookIdx;
   body.querySelectorAll('[data-ing-i]').forEach(row => {
-    const i = +row.dataset.ingI;
+    const initialIdx = +row.dataset.ingI;
+    const initialName = (cookSteps[stepAtBind]?.stepIngredients?.[initialIdx]?.name || '').toLowerCase();
+    const resolveIngIdx = () => {
+      const arr = cookSteps[stepAtBind]?.stepIngredients;
+      if (!Array.isArray(arr)) return -1;
+      // First: same slot still holds same-named ingredient → fast path.
+      if ((arr[initialIdx]?.name || '').toLowerCase() === initialName) return initialIdx;
+      // Otherwise: find by name (handles snapshot reshape).
+      if (initialName) {
+        for (let k = 0; k < arr.length; k++) {
+          if ((arr[k]?.name || '').toLowerCase() === initialName) return k;
+        }
+      }
+      return -1;
+    };
     row.querySelector('[data-act="ing-name"]')?.addEventListener('blur', e => {
       const newName = e.target.value.trim();
-      if (newName === cookSteps[cookIdx].stepIngredients[i].name) return;
-      cookSteps[cookIdx].stepIngredients[i].name = newName;
-      // If the new name matches the library, adopt its photo.
-      if (!cookSteps[cookIdx].stepIngredients[i].imageUrl) {
+      const i = resolveIngIdx();
+      if (i < 0) return;
+      const ing = cookSteps[stepAtBind].stepIngredients[i];
+      if (newName === ing.name) return;
+      ing.name = newName;
+      if (!ing.imageUrl) {
         const libImg = libImageFor(newName);
-        if (libImg) cookSteps[cookIdx].stepIngredients[i].imageUrl = libImg;
+        if (libImg) ing.imageUrl = libImg;
       }
       commitCookSteps(cookOpenRid, cookSteps);
     });
     row.querySelector('[data-act="ing-amount"]')?.addEventListener('blur', e => {
       const a = e.target.value.trim();
-      if (a === cookSteps[cookIdx].stepIngredients[i].amount) return;
-      cookSteps[cookIdx].stepIngredients[i].amount = a;
+      const i = resolveIngIdx();
+      if (i < 0) return;
+      const ing = cookSteps[stepAtBind].stepIngredients[i];
+      if (a === ing.amount) return;
+      ing.amount = a;
       commitCookSteps(cookOpenRid, cookSteps);
     });
     row.querySelector('[data-act="ing-del"]')?.addEventListener('click', () => {
-      cookSteps[cookIdx].stepIngredients.splice(i, 1);
+      const i = resolveIngIdx();
+      if (i < 0) { renderCookStep(); return; }
+      cookSteps[stepAtBind].stepIngredients.splice(i, 1);
       commitCookSteps(cookOpenRid, cookSteps);
       renderCookStep();
     });
     row.querySelector('[data-act="ing-photo"]')?.addEventListener('click', async () => {
+      const i = resolveIngIdx();
+      if (i < 0) return;
       const file = await pickFile('image/*');
       if (!file) return;
-      const ing = cookSteps[cookIdx].stepIngredients[i];
+      const ing = cookSteps[stepAtBind].stepIngredients[i];
       const up = await uploadToStorage(file, `step-ing/${cookOpenRid}/${ing.name || 'ing'}`);
       if (!up) return;
-      ing.imageUrl = up.url;
-      // Save BOTH on this step AND in the master library so all recipes using
-      // this ingredient name pick it up next time.
+      // Re-resolve AFTER the await — array may have changed during the
+      // upload round-trip.
+      const j = resolveIngIdx();
+      if (j < 0) return;
+      const live = cookSteps[stepAtBind].stepIngredients[j];
+      live.imageUrl = up.url;
+      // Save BOTH on this step AND in the master library so all recipes
+      // using this ingredient name pick it up next time.
       commitCookSteps(cookOpenRid, cookSteps);
-      if (ing.name) setLibraryImage(ing.name, up.url);
+      if (live.name) setLibraryImage(live.name, up.url);
       renderCookStep();
     });
   });
@@ -3850,19 +3957,28 @@ function wireCookStepEdits(body, step){
     commitCookSteps(cookOpenRid, cookSteps);
     renderCookStep();
   });
-  // Insert a new step right after this one and jump to it.
+  // Insert a new step right after this one and jump to it. Re-derive
+  // cookFlatIdx so we land on the new main step regardless of where
+  // substeps shifted the flat positions.
   body.querySelector('[data-act="step-insert-after"]')?.addEventListener('click', () => {
-    cookSteps.splice(cookIdx + 1, 0, { text: '', mediaUrl: null, mediaType: null, stepIngredients: [] });
+    const insertAt = cookIdx + 1;
+    cookSteps.splice(insertAt, 0, { text: '', mediaUrl: null, mediaType: null, stepIngredients: [], tip: '', substeps: [] });
     commitCookSteps(cookOpenRid, cookSteps);
-    cookIdx++;
+    cookIdx = insertAt;
+    cookFlatIdx = findFlatIdxForLocation({ kind: 'main', stepIdx: insertAt, subIdx: 0 });
     renderCookStep();
   });
-  // Delete the current step (with confirm).
+  // Delete the current step (with confirm). Jump to the previous step
+  // instead of clamping forward, so deleting step 5 keeps you near where
+  // you were rather than silently sliding into step 6's content.
   body.querySelector('[data-act="step-delete"]')?.addEventListener('click', () => {
     if (!confirm('Delete this step?')) return;
-    cookSteps.splice(cookIdx, 1);
-    if (cookIdx >= cookSteps.length) cookIdx = Math.max(0, cookSteps.length - 1);
+    const wasAt = cookIdx;
+    cookSteps.splice(wasAt, 1);
+    const newStepIdx = Math.max(0, Math.min(wasAt, cookSteps.length - 1));
+    cookIdx = newStepIdx;
     commitCookSteps(cookOpenRid, cookSteps);
+    cookFlatIdx = findFlatIdxForLocation({ kind: 'main', stepIdx: newStepIdx, subIdx: 0 });
     renderCookStep();
   });
 }
