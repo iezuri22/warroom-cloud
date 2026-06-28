@@ -922,6 +922,61 @@ function pacingFor(section){
   if (remaining <= 0) return null;
   return { perDay: Math.ceil(remaining / days), unit: remaining === 1 ? 'lecture' : 'lectures', remaining, days };
 }
+// In-page two-button dialog for the "allow today as deadline?" decision.
+// Replaces window.confirm() because the native confirm consumes the
+// transient user-activation token in Chrome/Safari — meaning the
+// subsequent input.showPicker() silently failed to open the calendar
+// after the user clicked OK or Cancel. With this dialog the button click
+// itself dispatches the callback inside a fresh user-activation frame,
+// so showPicker fires successfully.
+//
+// The semantic is swapped vs. the old confirm:
+//   PRIMARY (OK / Enter)         → tomorrow earliest (safe default)
+//   SECONDARY (Cancel / Esc)     → today allowed
+// Callback receives (allowToday: boolean). Closing the modal without a
+// choice is treated as cancel (no callback).
+function openTodayChoiceDialog(cb){
+  // Remove any previous instance so rapid re-opens don't stack.
+  document.querySelectorAll('.today-choice-bg').forEach(n => n.remove());
+  const bg = document.createElement('div');
+  bg.className = 'today-choice-bg';
+  bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:99999;backdrop-filter:blur(2px)';
+  bg.innerHTML = `
+    <div role="dialog" aria-modal="true" aria-labelledby="tcdTitle"
+         style="background:#1d1d20;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:22px 24px;max-width:440px;width:92vw;color:#e8e8ea;font:inherit;box-shadow:0 24px 60px rgba(0,0,0,.5)">
+      <div id="tcdTitle" style="font-size:16px;font-weight:700;margin-bottom:8px">Set a deadline</div>
+      <div style="font-size:13.5px;color:#a0a0a8;line-height:1.55;margin-bottom:18px">
+        Should <b style="color:#e8e8ea">today</b> be allowed as a deadline option?<br>
+        A same-day deadline starts overdue the moment it's missed — most of the time you'll want to start with tomorrow.
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+        <button type="button" data-tcd="today"
+                style="background:transparent;border:1px solid rgba(255,255,255,.18);color:#e8e8ea;padding:9px 16px;border-radius:8px;font:inherit;font-size:13px;cursor:pointer">
+          Allow today
+        </button>
+        <button type="button" data-tcd="tomorrow" autofocus
+                style="background:#3b82f6;border:none;color:#fff;padding:9px 18px;border-radius:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer">
+          Tomorrow earliest (recommended)
+        </button>
+      </div>
+    </div>`;
+  const close = () => { try { bg.remove(); } catch {} document.removeEventListener('keydown', onKey, true); };
+  const choose = (allow) => { close(); try { cb(allow); } catch (e) { console.error('[tcd] cb', e); } };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Enter') { e.preventDefault(); choose(false); }
+  };
+  // Buttons MUST dispatch the callback synchronously within the click
+  // handler — that's what preserves user activation for showPicker.
+  bg.querySelector('[data-tcd="today"]').addEventListener('click', () => choose(true));
+  bg.querySelector('[data-tcd="tomorrow"]').addEventListener('click', () => choose(false));
+  // Backdrop click = cancel (no callback).
+  bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(bg);
+  // Focus the primary button so Enter commits the safe default.
+  setTimeout(() => bg.querySelector('[data-tcd="tomorrow"]')?.focus(), 0);
+}
 function setToast(msg, kind){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1799,32 +1854,26 @@ function wireEvents(){
         }
         const input = sectionEl.querySelector('.st-deadline-input');
         if (!input) return;
-        // Ask whether today should be a valid pick for this deadline. Default
-        // is no — same-day deadlines start overdue immediately. The user
-        // occasionally wants to allow today for a same-day commit, so let
-        // them opt in via a confirm. The decision drives the input's `min`,
-        // which both the native picker and the apply-deadline guard read.
-        const allowToday = confirm(
-          'Allow TODAY as a deadline option?\n\n' +
-          'OK = today is allowed (same-day deadline, starts overdue immediately if missed).\n' +
-          'Cancel = tomorrow is the earliest pick (recommended).'
-        );
-        input.min = allowToday ? todayISO() : tomorrowISO();
-        // Multi-strategy picker open:
-        //   1. showPicker() — Chrome, Edge, Safari 16+, Firefox 101+.
-        //   2. focus() — opens the picker on most modern desktop browsers
-        //      and on iOS Safari for type=date inputs.
-        //   3. click() — last resort.
-        let opened = false;
-        if (typeof input.showPicker === 'function') {
-          try { input.showPicker(); opened = true; } catch {}
-        }
-        if (!opened) {
-          try { input.focus(); opened = true; } catch {}
-        }
-        if (!opened) {
-          try { input.click(); } catch {}
-        }
+        // Use an in-page dialog (not window.confirm) so user activation
+        // survives into showPicker(). Native confirm() consumes the
+        // transient activation token in Chrome/Safari, which is why the
+        // picker silently failed to open after the user clicked OK / Cancel.
+        openTodayChoiceDialog((allowToday) => {
+          input.min = allowToday ? todayISO() : tomorrowISO();
+          // Multi-strategy picker open. Runs in the SAME click handler
+          // dispatched by the dialog button, so transient activation is
+          // still live for showPicker.
+          let opened = false;
+          if (typeof input.showPicker === 'function') {
+            try { input.showPicker(); opened = true; } catch {}
+          }
+          if (!opened) {
+            try { input.focus(); opened = true; } catch {}
+          }
+          if (!opened) {
+            try { input.click(); } catch {}
+          }
+        });
       });
       sectionEl.querySelector('[data-action="apply-deadline"]')?.addEventListener('change', (e) => {
         const v = (e.target.value || '').trim();
