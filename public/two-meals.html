@@ -1096,7 +1096,7 @@
 <div class="modal-bg" id="ingPickBg" style="z-index:250">
   <div class="modal-card" style="max-width:520px">
     <div class="modal-head">
-      <h2>Add ingredient for this step</h2>
+      <h2 id="ingPickH">Add ingredient for this step</h2>
       <span class="spacer"></span>
       <button class="tb-btn" id="ingPickClose">Cancel</button>
     </div>
@@ -1828,16 +1828,28 @@ function pickFile(accept){
   });
 }
 // Returns the public download URL after upload, or null on failure.
+// Wraps the Firebase upload in a 60s timeout so a silent network/auth hang
+// surfaces as a real error instead of leaving the user staring at
+// "⏳ Uploading…" forever. Logs every stage so DevTools shows where it died.
 async function uploadToStorage(file, pathPrefix){
   if (!file) return null;
   if (file.size > 50 * 1024 * 1024) { alert('File must be under 50 MB'); return null; }
   const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
   const path = `${pathPrefix}-${Date.now()}${ext}`;
+  console.log('[meals] upload start →', path, '(' + file.size + ' bytes, ' + (file.type || 'unknown') + ')');
   const ref = storageRef(storage, path);
+  const isVideo = (file.type || '').startsWith('video/');
+  const timeoutMs = 60000;
+  const upload = uploadBytes(ref, file, { contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg') });
+  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error(
+    'Upload timed out after ' + (timeoutMs/1000) + 's. The request never completed — usually a Firebase Storage rules block (unauth write) or a network problem. Check the DevTools Network tab for a 403/blocked request on storage.googleapis.com.'
+  )), timeoutMs));
   try {
-    const isVideo = (file.type || '').startsWith('video/');
-    await uploadBytes(ref, file, { contentType: file.type || (isVideo ? 'video/mp4' : 'image/jpeg') });
-    return { url: await getDownloadURL(ref), type: isVideo ? 'video' : 'image' };
+    await Promise.race([upload, timeout]);
+    console.log('[meals] upload complete, fetching download URL');
+    const url = await getDownloadURL(ref);
+    console.log('[meals] upload URL →', url);
+    return { url, type: isVideo ? 'video' : 'image' };
   } catch (e) {
     console.error('[meals] upload failed', e);
     alert('Upload failed: ' + (e?.message || 'check Storage rules'));
@@ -3164,8 +3176,15 @@ function getCookSubstep(stepIdx, subIdx){
   const step = cookSteps[stepIdx];
   if (!step || !Array.isArray(step.substeps)) return null;
   const ss = step.substeps[subIdx];
-  if (typeof ss === 'string') return { text: ss, mediaUrl: null, mediaType: null };
-  return ss || null;
+  if (typeof ss === 'string') return { text: ss, mediaUrl: null, mediaType: null, stepIngredients: [] };
+  if (!ss) return null;
+  // Normalize: stepIngredients is the same shape main steps use.
+  return {
+    text: ss.text || '',
+    mediaUrl: ss.mediaUrl || null,
+    mediaType: ss.mediaType || null,
+    stepIngredients: Array.isArray(ss.stepIngredients) ? ss.stepIngredients : []
+  };
 }
 
 function openCook(rid){
@@ -3353,6 +3372,7 @@ function renderCookStep(){
     const ssText = ssRaw.text || '';
     const ssMediaUrl = ssRaw.mediaUrl || null;
     const ssMediaType = ssRaw.mediaType || null;
+    const ssIngs = Array.isArray(ssRaw.stepIngredients) ? ssRaw.stepIngredients : [];
     const parentText = (cookSteps[cur.stepIdx]?.text || '').slice(0, 80);
     const ssLabel = `Step ${cur.stepIdx + 1}${ssLetter(cur.subIdx)}`;
     // Same horizontal photo banner treatment as the main step.
@@ -3372,6 +3392,23 @@ function renderCookStep(){
     } else {
       ssMediaHtml = `<button type="button" class="cs-photo-add" data-act="ss-media-upload">📷 Add photo / video</button>`;
     }
+    // Substeps now carry their own ingredient list — same UI as main steps.
+    // Each card has data-ss-ing-i so the substep handler can re-resolve
+    // by name like the main-step ingredient handler.
+    const ssIngsGridHtml = ssIngs.length ? `
+      <div class="cs-ings-grid">${ssIngs.map((ing, i) => {
+        const img = ing.imageUrl || libImageFor(ing.name || ing.text || '');
+        return `<div class="cs-ing-card" data-ss-ing-i="${i}">
+          <div class="thumb" data-act="ss-ing-photo" title="Click to upload a photo for this ingredient"
+               ${img ? `style="background-image:url('${attr(img)}')"` : ''}>
+            ${img ? '' : '🥄'}
+          </div>
+          <input type="text" class="ing-name" data-act="ss-ing-name" value="${attr(ing.name || ing.text || '')}" placeholder="Ingredient">
+          <input type="text" class="ing-amount" data-act="ss-ing-amount" value="${attr(ing.amount || '')}" placeholder="amount">
+          <button class="del" data-act="ss-ing-del" title="Remove">✕ Remove</button>
+        </div>`;
+      }).join('')}</div>` : '';
+    const ssIngsHead = ssIngs.length ? 'Ingredients for this sub-step' : 'Ingredients for this sub-step';
     body.innerHTML = tocHtml + `
       <div class="cook-step cs-sub">
         <div class="cs-sub-crumb">
@@ -3384,6 +3421,12 @@ function renderCookStep(){
              data-placeholder="What needs to happen in this sub-step…"
              style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 14px;border:1px dashed transparent">${esc(ssText)}</div>
         ${ssMediaHtml}
+        <div class="cs-ings-full" style="margin-top:18px">
+          <div class="cs-ings-head">${ssIngsHead}</div>
+          ${ssIngsGridHtml}
+          ${ssIngs.length ? '' : '<div class="cs-empty" style="padding:10px 0">No ingredients linked to this sub-step yet.</div>'}
+          <button class="cs-add-step-ing-subtle" data-act="ss-ing-add">+ Add ingredient for this sub-step</button>
+        </div>
         <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
           <button class="tb-btn" data-act="ss-delete" style="color:#f87171" title="Delete this sub-step">🗑 Delete sub-step</button>
         </div>
@@ -3450,15 +3493,35 @@ function renderCookStep(){
   const ingsEmptyHtml = (!curated.length && !auto.length) ? `<div class="cs-empty" style="padding:10px 0">No ingredients linked to this step yet.</div>` : '';
 
   // Top navigation strip — Prev / position / Next sit ABOVE the step card.
+  // When the current step has substeps, the Next button walks INTO the
+  // substeps by default (subA → subB → next step). For users who'd rather
+  // skip the substep detail and jump to the next main step, we render an
+  // extra "Skip substeps →" button right next to Next.
+  const hasSubsteps = step.substeps.length > 0;
+  const flatIdxOfNextMain = (() => {
+    for (let k = cookFlatIdx + 1; k < flat.length; k++) {
+      if (flat[k].kind === 'main') return k;
+    }
+    return -1;
+  })();
+  const skipBtnHtml = hasSubsteps && flatIdxOfNextMain > 0 ? `
+    <button class="tb-btn" id="cookSkipSubs"
+            style="font-size:12px"
+            title="Jump straight to Step ${cookIdx + 2}, skipping the sub-steps">
+      Skip sub-steps →
+    </button>` : '';
   const navHtml = `
     <div class="cook-nav cook-nav-top">
       <button class="tb-btn" id="cookPrev" ${cookFlatIdx === 0 ? 'disabled' : ''}>← Previous</button>
       <span class="cn-pos">${cookFlatIdx + 1} / ${flat.length}</span>
-      <button class="tb-btn primary" id="cookNext"
-              style="background:var(--accent);color:#fff;border-color:transparent"
-              ${cookFlatIdx >= flat.length - 1 ? 'disabled' : ''}>
-        ${cookFlatIdx >= flat.length - 1 ? 'Done' : 'Next →'}
-      </button>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${skipBtnHtml}
+        <button class="tb-btn primary" id="cookNext"
+                style="background:var(--accent);color:#fff;border-color:transparent"
+                ${cookFlatIdx >= flat.length - 1 ? 'disabled' : ''}>
+          ${cookFlatIdx >= flat.length - 1 ? 'Done' : (hasSubsteps ? 'Next sub-step →' : 'Next →')}
+        </button>
+      </div>
     </div>`;
 
   // Order of importance while cooking:
@@ -3509,6 +3572,8 @@ function renderCookStep(){
 }
 
 // TOC chip clicks + Prev/Next navigation (shared by main + sub pages).
+// Optional Skip Sub-steps button jumps to the next MAIN step in the flat
+// list, bypassing all the current step's substeps.
 function wireCookTocAndNav(body, flat){
   body.querySelectorAll('[data-toc]').forEach(b => b.addEventListener('click', () => {
     cookFlatIdx = parseInt(b.getAttribute('data-toc'), 10);
@@ -3516,6 +3581,12 @@ function wireCookTocAndNav(body, flat){
   }));
   document.getElementById('cookPrev').onclick = () => { if (cookFlatIdx > 0) { cookFlatIdx--; renderCookStep(); } };
   document.getElementById('cookNext').onclick = () => { if (cookFlatIdx < flat.length - 1) { cookFlatIdx++; renderCookStep(); } };
+  const skipBtn = document.getElementById('cookSkipSubs');
+  if (skipBtn) skipBtn.onclick = () => {
+    for (let k = cookFlatIdx + 1; k < flat.length; k++) {
+      if (flat[k].kind === 'main') { cookFlatIdx = k; renderCookStep(); return; }
+    }
+  };
 }
 
 // Sub-step PAGE edit handlers (when you're on the sub-step's own page).
@@ -3584,6 +3655,98 @@ function wireSubstepPageEdits(body, stepIdx, subIdx){
   body.querySelector('[data-act="ss-media-open"]')?.addEventListener('click', () => {
     const ss = getCookSubstep(stepIdx, subIdx);
     if (ss?.mediaUrl) window.open(ss.mediaUrl, '_blank', 'noopener');
+  });
+  // ----- Sub-step ingredients -----
+  // The substep gets its own stepIngredients[] independent of the parent
+  // main step's. UI mirrors main step ingredient cards. Same identity-pinned
+  // resolution pattern so concurrent snapshot adoption can't corrupt rows.
+  const getSsIngs = () => {
+    const ss = cookSteps[stepIdx].substeps[subIdx];
+    if (!ss || typeof ss === 'string') return [];
+    if (!Array.isArray(ss.stepIngredients)) ss.stepIngredients = [];
+    return ss.stepIngredients;
+  };
+  // "+ Add ingredient for this sub-step" — opens the existing step
+  // ingredient picker, but routes the chosen item into the substep array
+  // instead of the main step.
+  body.querySelector('[data-act="ss-ing-add"]')?.addEventListener('click', () => {
+    openStepIngPicker({
+      targetLabel: `Step ${stepIdx + 1}${String.fromCharCode(97 + subIdx)}`,
+      onPick: (chosen) => {
+        const arr = getSsIngs();
+        arr.push({
+          name: cleanIngredientName(chosen.text || chosen.name || ''),
+          amount: chosen.amount || '',
+          imageUrl: chosen.imageUrl || null
+        });
+        // Re-pack the substep so the new array is committed.
+        writeSubstep({ stepIngredients: arr });
+        renderCookStep();
+      }
+    });
+  });
+  body.querySelectorAll('[data-ss-ing-i]').forEach(row => {
+    const initialIdx = +row.dataset.ssIngI;
+    const arrAtBind = getSsIngs();
+    const initialName = (arrAtBind[initialIdx]?.name || '').toLowerCase();
+    const resolveIdx = () => {
+      const arr = getSsIngs();
+      if (!arr.length) return -1;
+      if ((arr[initialIdx]?.name || '').toLowerCase() === initialName) return initialIdx;
+      if (initialName) {
+        for (let k = 0; k < arr.length; k++) {
+          if ((arr[k]?.name || '').toLowerCase() === initialName) return k;
+        }
+      }
+      return -1;
+    };
+    row.querySelector('[data-act="ss-ing-name"]')?.addEventListener('blur', e => {
+      const newName = e.target.value.trim();
+      const i = resolveIdx();
+      if (i < 0) return;
+      const arr = getSsIngs();
+      if (newName === arr[i].name) return;
+      arr[i].name = newName;
+      if (!arr[i].imageUrl) {
+        const libImg = libImageFor(newName);
+        if (libImg) arr[i].imageUrl = libImg;
+      }
+      writeSubstep({ stepIngredients: arr });
+    });
+    row.querySelector('[data-act="ss-ing-amount"]')?.addEventListener('blur', e => {
+      const a = e.target.value.trim();
+      const i = resolveIdx();
+      if (i < 0) return;
+      const arr = getSsIngs();
+      if (a === arr[i].amount) return;
+      arr[i].amount = a;
+      writeSubstep({ stepIngredients: arr });
+    });
+    row.querySelector('[data-act="ss-ing-del"]')?.addEventListener('click', () => {
+      const i = resolveIdx();
+      if (i < 0) { renderCookStep(); return; }
+      const arr = getSsIngs();
+      arr.splice(i, 1);
+      writeSubstep({ stepIngredients: arr });
+      renderCookStep();
+    });
+    row.querySelector('[data-act="ss-ing-photo"]')?.addEventListener('click', async () => {
+      const i = resolveIdx();
+      if (i < 0) return;
+      const file = await pickFile('image/*');
+      if (!file) return;
+      const arr = getSsIngs();
+      const ing = arr[i];
+      const up = await uploadToStorage(file, `step-ing/${cookOpenRid}/ss-${ing.name || 'ing'}`);
+      if (!up) return;
+      const j = resolveIdx();
+      if (j < 0) return;
+      const live = getSsIngs()[j];
+      live.imageUrl = up.url;
+      writeSubstep({ stepIngredients: getSsIngs() });
+      if (live.name) setLibraryImage(live.name, up.url);
+      renderCookStep();
+    });
   });
 }
 
@@ -3668,15 +3831,34 @@ function toggleSlotIngsPopover(rid, slotIdx){
 // what's already established), then any library matches by search, then a
 // "+ Custom" tail. Tapping an item adds it to the current step's ingredients.
 let _ingPickQuery = '';
-function openStepIngPicker(){
+// Routing the picker: by default it adds to the current main step's
+// stepIngredients. Pass { onPick: fn(chosen) } to redirect (e.g. into a
+// substep's own ingredient list). Pass { targetLabel } to swap the modal
+// title from "Add ingredient for this step" to something more specific.
+let _ingPickOnPick = null;
+let _ingPickTargetLabel = '';
+function openStepIngPicker(opts){
   _ingPickQuery = '';
+  _ingPickOnPick = (opts && typeof opts.onPick === 'function') ? opts.onPick : null;
+  _ingPickTargetLabel = (opts && opts.targetLabel) || '';
   const inp = document.getElementById('ingPickSearch');
   inp.value = '';
+  // Reflect the target in the modal title if supported.
+  const h = document.getElementById('ingPickH');
+  if (h) h.textContent = _ingPickTargetLabel
+    ? `Add ingredient for ${_ingPickTargetLabel}`
+    : 'Add ingredient for this step';
   renderStepIngPicker();
   document.getElementById('ingPickBg').classList.add('open');
   setTimeout(() => inp.focus(), 30);
 }
-function closeStepIngPicker(){ document.getElementById('ingPickBg').classList.remove('open'); }
+function closeStepIngPicker(){
+  document.getElementById('ingPickBg').classList.remove('open');
+  // Drop any pending onPick so a later openStepIngPicker() without opts
+  // can't accidentally fire the previous target's callback.
+  _ingPickOnPick = null;
+  _ingPickTargetLabel = '';
+}
 function renderStepIngPicker(){
   const body = document.getElementById('ingPickBody');
   const q = _ingPickQuery.trim().toLowerCase();
@@ -3749,10 +3931,18 @@ function renderStepIngPicker(){
     name = cleanIngredientName(name);
     // Fall back to the library if the picked row didn't carry an image.
     if (!imageUrl) imageUrl = libImageFor(name);
+    closeStepIngPicker();
+    // If a custom onPick route is set (substep ingredients), let it handle
+    // the commit. Otherwise default to the open main step.
+    if (_ingPickOnPick) {
+      const cb = _ingPickOnPick;
+      _ingPickOnPick = null;
+      cb({ name, text: name, amount: '', imageUrl });
+      return;
+    }
     cookSteps[cookIdx].stepIngredients = cookSteps[cookIdx].stepIngredients || [];
     cookSteps[cookIdx].stepIngredients.push({ name, amount: '', imageUrl });
     commitCookSteps(cookOpenRid, cookSteps);
-    closeStepIngPicker();
     renderCookStep();
   }));
 }
