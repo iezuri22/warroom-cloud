@@ -1408,6 +1408,10 @@ function normalizeIngredientName(text){
 //   4. Longest libname CONTAINED IN the query — "diced red onion" → "red onion"
 //      then "onion" (so a step ingredient with quantity/prep adjectives still
 //      finds the underlying ingredient).
+//   5. Recipe-ingredient fallback — scan every EZ recipe's ingredients for an
+//      item whose normalized name matches (exact, then contains-either-way).
+//      This saves "Olive Oil" / "Cumin" / "Smoked Paprika" cases where the
+//      library doesn't have an entry but plenty of recipes do, with imageUrl.
 // Returns null only when nothing has an image at all.
 function libImageFor(text){
   if (!text) return null;
@@ -1453,7 +1457,32 @@ function libImageFor(text){
     if (after  && !/\s|-|_/.test(after))  continue;
     if (!best4 || name.length > best4.name.length) best4 = { name, url: e.imageUrl };
   }
-  return best4 ? best4.url : null;
+  if (best4) return best4.url;
+  // 5. Recipe-ingredient fallback. The picker is showing photos for these
+  // recipe-bound items, so we know imageUrl lives on r.ingredients[].
+  // Try exact-normalized first across all recipes, then contains-either-way.
+  if (Array.isArray(ezRecipes) && ezRecipes.length) {
+    let exactHit = null;
+    let containsHit = null;
+    for (const r of ezRecipes) {
+      const ings = Array.isArray(r?.ingredients) ? r.ingredients : [];
+      for (const it of ings) {
+        const url = it?.imageUrl;
+        if (!url) continue;
+        const txt = (typeof it === 'string') ? it : (it.text || it.name || '');
+        const nk = normalizeIngredientName(txt);
+        if (!nk) continue;
+        if (nk === k) { exactHit = url; break; }
+        if (!containsHit && (nk.includes(k) || k.includes(nk)) && Math.min(nk.length, k.length) >= 3) {
+          containsHit = url;
+        }
+      }
+      if (exactHit) break;
+    }
+    if (exactHit) return exactHit;
+    if (containsHit) return containsHit;
+  }
+  return null;
 }
 function encodeIngredientKey(k){
   return encodeURIComponent(k).replace(/\./g, '%2E').replace(/%/g, '_');
