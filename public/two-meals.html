@@ -1835,7 +1835,18 @@ async function uploadToStorage(file, pathPrefix){
   if (!file) return null;
   if (file.size > 50 * 1024 * 1024) { alert('File must be under 50 MB'); return null; }
   const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
-  const path = `${pathPrefix}-${Date.now()}${ext}`;
+  // Flatten the caller's prefix into one segment under step-media/. The
+  // deployed Firebase Storage rules only grant unauthenticated writes to
+  // step-media/{filename} — paths like substep/x/y/z or step-ing/x/y were
+  // silently blocked, which is exactly what the 60s timeout was hitting.
+  // Goals canvas uses step-media/{flat} for the same reason.
+  const safePrefix = String(pathPrefix || '')
+    .replace(/^step-media\//, '')
+    .replace(/[\/\\]/g, '-')
+    .replace(/[^a-z0-9._-]/gi, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 180) || 'upload';
+  const path = `step-media/${safePrefix}-${Date.now()}${ext}`;
   console.log('[meals] upload start →', path, '(' + file.size + ' bytes, ' + (file.type || 'unknown') + ')');
   const ref = storageRef(storage, path);
   const isVideo = (file.type || '').startsWith('video/');
