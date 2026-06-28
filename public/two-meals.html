@@ -1722,12 +1722,34 @@ function subscribeRecipeMeta(){
 }
 
 // ---------- File picker + storage upload ----------
+// Some browsers (notably Safari) silently drop the file picker when the
+// <input> isn't attached to the DOM. Append it off-screen, listen for
+// both change AND cancel, then clean up. Also resolve on focus-return
+// with no file, so awaiters always unblock instead of hanging forever.
 function pickFile(accept){
   return new Promise(resolve => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept || 'image/*,video/*';
-    input.onchange = () => resolve(input.files?.[0] || null);
+    input.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0';
+    let done = false;
+    const finish = (file) => {
+      if (done) return;
+      done = true;
+      console.log('[pickFile] resolved with:', file ? { name:file.name, type:file.type, size:file.size } : null);
+      try { input.remove(); } catch {}
+      window.removeEventListener('focus', onFocus);
+      resolve(file);
+    };
+    input.onchange = () => finish(input.files?.[0] || null);
+    input.oncancel = () => finish(null);
+    // Fallback: if the user closes the picker without selecting (no onchange
+    // fires on some browsers), resolve null when focus comes back. Delay so
+    // change fires first when it's going to.
+    const onFocus = () => setTimeout(() => { if (!done) finish(null); }, 500);
+    window.addEventListener('focus', onFocus);
+    document.body.appendChild(input);
+    console.log('[pickFile] opening file picker (accept=' + input.accept + ')');
     input.click();
   });
 }
@@ -3783,34 +3805,40 @@ function wireCookStepEdits(body, step){
       renderCookStep();
     });
   });
-  // Step media. Visible Uploading… state so the user isn't left wondering
-  // what happened after picking a file; any error surfaces in an alert.
-  body.querySelectorAll('[data-act="media-upload"], [data-act="media-replace"]').forEach(el => {
-    el.addEventListener('click', async (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const file = await pickFile('image/*,video/*');
-      console.log('[cook] step media file picked:', file && { name:file.name, type:file.type, size:file.size });
-      if (!file) return;
-      const origText = el.textContent;
-      try {
-        el.disabled = true;
-        el.textContent = '⏳ Uploading…';
-        const up = await uploadToStorage(file, `step-media/${cookOpenRid}/${cookIdx}`);
-        console.log('[cook] step media upload result:', up);
-        if (!up) { alert('Upload returned no URL — check Storage rules / network.'); return; }
-        cookSteps[cookIdx].mediaUrl = up.url;
-        cookSteps[cookIdx].mediaType = up.type;
-        commitCookSteps(cookOpenRid, cookSteps);
-        renderCookStep();
-      } catch (e) {
-        console.error('[cook] step media upload threw', e);
-        alert('Upload failed: ' + (e?.message || e));
-        el.disabled = false;
-        el.textContent = origText;
-      }
-    });
-  });
+  // Step media. Event delegation on the body so we don't rely on node
+  // identity matching — any descendant carrying data-act=media-upload
+  // or media-replace will trigger the upload. Replaces the previous
+  // handler each render to avoid stacking listeners on the persistent
+  // cookBody element.
+  if (body.__cookMediaHandler) body.removeEventListener('click', body.__cookMediaHandler);
+  const mediaUploadHandler = async (ev) => {
+    const trigger = ev.target.closest('[data-act="media-upload"], [data-act="media-replace"]');
+    if (!trigger || !body.contains(trigger)) return;
+    console.log('[cook] media upload click fired on', trigger);
+    ev.preventDefault();
+    ev.stopPropagation();
+    const origText = trigger.textContent;
+    const file = await pickFile('image/*,video/*');
+    if (!file) { console.log('[cook] media upload: no file selected'); return; }
+    try {
+      trigger.disabled = true;
+      trigger.textContent = '⏳ Uploading…';
+      const up = await uploadToStorage(file, `step-media/${cookOpenRid}/${cookIdx}`);
+      console.log('[cook] step media upload result:', up);
+      if (!up) { alert('Upload returned no URL — check Storage rules / network.'); trigger.disabled = false; trigger.textContent = origText; return; }
+      cookSteps[cookIdx].mediaUrl = up.url;
+      cookSteps[cookIdx].mediaType = up.type;
+      commitCookSteps(cookOpenRid, cookSteps);
+      renderCookStep();
+    } catch (e) {
+      console.error('[cook] step media upload threw', e);
+      alert('Upload failed: ' + (e?.message || e));
+      trigger.disabled = false;
+      trigger.textContent = origText;
+    }
+  };
+  body.__cookMediaHandler = mediaUploadHandler;
+  body.addEventListener('click', mediaUploadHandler);
   body.querySelector('[data-act="media-open"]')?.addEventListener('click', () => {
     const url = cookSteps[cookIdx]?.mediaUrl;
     if (url) window.open(url, '_blank', 'noopener');
