@@ -366,7 +366,7 @@
   .pcard .pchip-mini{ font-size:9px;padding:1px 6px;border-radius:99px;background:rgba(74,222,128,.16);color:#86efac;font-weight:700 }
 
   /* Cook walkthrough — mirrors goals-canvas "Let's Cook" styling */
-  #cookBg .modal-card{ max-width:820px } /* narrower than the picker, like Goals */
+  #cookBg .modal-card{ max-width:min(1200px, 92vw) }
   #cookH .cook-recipe-sub{ font-size:13px;color:var(--muted);margin-left:6px;font-weight:500 }
   /* Per-step layout — content on the left, bigger photo block on the right. */
   .cook-step .cs-row{
@@ -454,6 +454,53 @@
     display:flex; gap:8px; justify-content:space-between; align-items:center;
     margin:0 0 12px;
   }
+
+  /* Subtle inline tip line that sits above the step number. Tap to edit.
+     Just an italic line with the 💡 — no amber bar, no padding box. */
+  .cs-top-tip{
+    font-size:13.5px; color:var(--w70); font-style:italic;
+    margin:0 0 10px; padding:4px 8px; border-radius:6px;
+    outline:none; border:1px dashed transparent; transition:.15s;
+    line-height:1.4;
+  }
+  .cs-top-tip:hover{ border-color:var(--line2); cursor:text }
+  .cs-top-tip:focus{ background:var(--w04); border-color:var(--accent); border-style:solid }
+  .cs-top-tip[contenteditable]:empty::before{
+    content:'💡 Add a tip (optional)…';
+    color:var(--w55); font-style:italic;
+  }
+  .cs-top-tip[contenteditable]:not(:empty)::before{
+    content:'💡 '; font-style:normal;
+  }
+
+  /* Step photo as a full-width horizontal banner — no side column, no
+     'Snap a photo or short video…' wall of text. */
+  .cs-photo-banner{
+    width:100%; margin:14px 0; border-radius:10px; overflow:hidden;
+    background:var(--w05); position:relative;
+    border:1px solid var(--line);
+  }
+  .cs-photo-banner img, .cs-photo-banner video{
+    width:100%; display:block; max-height:320px; object-fit:cover; cursor:pointer;
+  }
+  .cs-photo-banner .cs-photo-actions{
+    position:absolute; top:8px; right:8px; display:flex; gap:6px;
+  }
+  .cs-photo-banner .cs-photo-actions button{
+    background:rgba(0,0,0,.55); border:none; color:#fff; font:inherit;
+    font-size:11px; padding:5px 9px; border-radius:6px; cursor:pointer;
+    backdrop-filter:blur(6px);
+  }
+  .cs-photo-banner .cs-photo-actions button:hover{ background:rgba(0,0,0,.75) }
+  .cs-photo-banner .cs-photo-actions button.danger:hover{ color:#fca5a5 }
+  /* Empty state — single subtle button, no description block. */
+  .cs-photo-add{
+    display:inline-flex; gap:6px; align-items:center;
+    margin:10px 0; padding:7px 12px; border-radius:7px;
+    background:transparent; border:1px dashed var(--line2); color:var(--muted);
+    font:inherit; font-size:12px; font-weight:600; cursor:pointer;
+  }
+  .cs-photo-add:hover{ color:var(--ink); border-color:var(--accent) }
   /* Bottom row: media block + tip side-by-side at the bottom of the step.
      Less important than ingredients (which sit right under the step text),
      so they go below the ingredients grid. */
@@ -3106,44 +3153,27 @@ function renderCookStep(){
            </div>`
         : `<div class="cs-empty">No ingredients linked to this step yet.</div>`);
 
-  // Per-step media block — clickable upload affordance when empty, view+replace when set.
+  // Step photo as a full-width banner. When empty: a single subtle button.
+  // No wall of "Snap a photo or short video…" text anymore.
   let mediaHtml = '';
   if (step.mediaUrl) {
     const thumb = step.mediaType === 'video'
-      ? `<video src="${attr(step.mediaUrl)}" muted playsinline preload="metadata"></video>`
-      : `<img src="${attr(step.mediaUrl)}" alt="" loading="lazy">`;
+      ? `<video src="${attr(step.mediaUrl)}" muted playsinline preload="metadata" data-act="media-open"></video>`
+      : `<img src="${attr(step.mediaUrl)}" alt="" loading="lazy" data-act="media-open">`;
     mediaHtml = `
-      <div class="cs-media-block">
-        <div class="cs-media-thumb" data-act="media-open">${thumb}</div>
-        <div class="cs-media-info">
-          <h5>Your shot of this step</h5>
-          <p>Tap the thumb to view full size, or use the buttons below.</p>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="tb-btn" data-act="media-replace">↻ Replace</button>
-            <button class="tb-btn" data-act="media-remove" style="color:#f87171">Remove</button>
-          </div>
+      <div class="cs-photo-banner">
+        ${thumb}
+        <div class="cs-photo-actions">
+          <button data-act="media-replace">↻ Replace</button>
+          <button class="danger" data-act="media-remove">✕ Remove</button>
         </div>
       </div>`;
   } else {
-    mediaHtml = `
-      <div class="cs-media-block">
-        <div class="cs-media-thumb" data-act="media-upload" style="cursor:pointer">
-          📷<br><span style="font-size:11px">Tap to add a photo or video</span>
-        </div>
-        <div class="cs-media-info">
-          <h5>Your shot of this step</h5>
-          <p>Snap a photo or short video while you cook. It saves to this step so future-you has the visual reference.</p>
-          <button class="tb-btn" data-act="media-upload" style="margin-top:8px">⬆ Upload photo / video</button>
-        </div>
-      </div>`;
+    mediaHtml = `<button class="cs-photo-add" data-act="media-upload">📷 Add photo / video</button>`;
   }
 
-  // 💡 Tip block — always present, editable on click, shows placeholder when empty.
-  const tipHtml = `
-    <div class="cs-tip-wrap">
-      <div class="cs-tip-label">💡 Tip</div>
-      <div class="cs-tip-text" data-act="tip-text" contenteditable="plaintext-only">${esc(step.tip)}</div>
-    </div>`;
+  // Subtle top-tip line — contenteditable in place, no big amber block.
+  const tipHtml = `<div class="cs-top-tip" data-act="tip-text" contenteditable="plaintext-only">${esc(step.tip)}</div>`;
 
   // Sub-steps — nested mini-cards under the main step. Each one is its own
   // editable text + optional photo. Lettered a/b/c so they look like an
@@ -3196,34 +3226,22 @@ function renderCookStep(){
     const ssMediaType = ssRaw.mediaType || null;
     const parentText = (cookSteps[cur.stepIdx]?.text || '').slice(0, 80);
     const ssLabel = `Step ${cur.stepIdx + 1}${ssLetter(cur.subIdx)}`;
+    // Same horizontal photo banner treatment as the main step.
     let ssMediaHtml = '';
     if (ssMediaUrl) {
       const thumb = ssMediaType === 'video'
-        ? `<video src="${attr(ssMediaUrl)}" muted playsinline preload="metadata"></video>`
-        : `<img src="${attr(ssMediaUrl)}" alt="" loading="lazy">`;
+        ? `<video src="${attr(ssMediaUrl)}" muted playsinline preload="metadata" data-act="ss-media-open"></video>`
+        : `<img src="${attr(ssMediaUrl)}" alt="" loading="lazy" data-act="ss-media-open">`;
       ssMediaHtml = `
-        <div class="cs-media-block">
-          <div class="cs-media-thumb" data-act="ss-media-open">${thumb}</div>
-          <div class="cs-media-info">
-            <h5>Your shot of this sub-step</h5>
-            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-              <button class="tb-btn" data-act="ss-media-replace">↻ Replace</button>
-              <button class="tb-btn" data-act="ss-media-clear" style="color:#f87171">Remove</button>
-            </div>
+        <div class="cs-photo-banner">
+          ${thumb}
+          <div class="cs-photo-actions">
+            <button data-act="ss-media-replace">↻ Replace</button>
+            <button class="danger" data-act="ss-media-clear">✕ Remove</button>
           </div>
         </div>`;
     } else {
-      ssMediaHtml = `
-        <div class="cs-media-block">
-          <div class="cs-media-thumb" data-act="ss-media-upload" style="cursor:pointer">
-            📷<br><span style="font-size:11px">Tap to add a photo or video</span>
-          </div>
-          <div class="cs-media-info">
-            <h5>Your shot of this sub-step</h5>
-            <p>Optional — capture this exact piece of the assembly.</p>
-            <button class="tb-btn" data-act="ss-media-upload" style="margin-top:8px">⬆ Upload photo / video</button>
-          </div>
-        </div>`;
+      ssMediaHtml = `<button class="cs-photo-add" data-act="ss-media-upload">📷 Add photo / video</button>`;
     }
     body.innerHTML = tocHtml + `
       <div class="cook-step cs-sub">
@@ -3235,10 +3253,8 @@ function renderCookStep(){
         <div class="cs-num">${ssLabel} of Step ${cur.stepIdx + 1}</div>
         <div class="cs-text" data-act="ss-text-big" contenteditable="plaintext-only"
              data-placeholder="What needs to happen in this sub-step…"
-             style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 18px;border:1px dashed transparent">${esc(ssText)}</div>
-        <div class="cs-bottom-row" style="grid-template-columns:1fr">
-          <div>${ssMediaHtml}</div>
-        </div>
+             style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 14px;border:1px dashed transparent">${esc(ssText)}</div>
+        ${ssMediaHtml}
         <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
           <button class="tb-btn" data-act="ss-delete" style="color:#f87171" title="Delete this sub-step">🗑 Delete sub-step</button>
         </div>
@@ -3323,12 +3339,21 @@ function renderCookStep(){
   //   4. The tip — sometimes
   // So step text is full-width at the top, ingredients are full-width
   // directly below it, then photo + tip share a bottom row.
+  // New order, top to bottom:
+  //   1. Subtle 💡 tip line (editable in place)
+  //   2. Step header + big text
+  //   3. Full-width photo banner (or subtle Add button when empty)
+  //   4. Substeps preview + subtle Add sub-step
+  //   5. Ingredients grid (full width)
+  //   6. Actions row
   body.innerHTML = tocHtml + navHtml + `
     <div class="cook-step">
+      ${tipHtml}
       <div class="cs-num">Step ${cookIdx + 1} of ${total}</div>
       <div class="cs-text" data-act="step-text" contenteditable="plaintext-only"
            data-placeholder="Click to add this step's instructions…"
-           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 18px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+           style="outline:none;border-radius:6px;padding:6px 8px;margin:-7px -9px 14px;border:1px dashed transparent;transition:.15s">${esc(step.text)}</div>
+      ${mediaHtml}
       ${substepsPreview}
       <button class="cs-add-substep-subtle" data-act="ss-add">+ Add sub-step</button>
       <div class="cs-ings-full">
@@ -3337,10 +3362,6 @@ function renderCookStep(){
         ${autoGridHtml}
         ${ingsEmptyHtml}
         <button class="cs-add-step-ing-subtle" data-act="ing-add">+ Add ingredient for this step</button>
-      </div>
-      <div class="cs-bottom-row">
-        <div>${mediaHtml}</div>
-        <div>${tipHtml}</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button class="tb-btn" data-act="step-insert-after" title="Insert a new step after this one">+ Step after</button>
