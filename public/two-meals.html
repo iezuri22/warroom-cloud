@@ -1159,6 +1159,8 @@ import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-storage.js';
+import { getAuth, signInAnonymously, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js';
 
 // Same Firebase project as the rest of War Room. storageBucket added so
 // per-step photo uploads from Cook walkthrough work without bouncing to
@@ -1172,6 +1174,26 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const storage = getStorage(app);
+// Storage rules on this project require auth.uid != null to allow writes.
+// Without this the upload requests hang or 403, which is exactly what was
+// surfacing as the "Upload timed out after 60s" / "Upload returned no URL"
+// alerts. Anonymous auth gives the request a valid Firebase token without
+// asking the user to sign in.
+const auth = getAuth(app);
+let _firebaseAuthReady = false;
+const _firebaseAuthReadyPromise = new Promise(resolve => {
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      _firebaseAuthReady = true;
+      console.log('[meals] firebase auth ready, uid =', user.uid, user.isAnonymous ? '(anonymous)' : '');
+      resolve(user);
+    }
+  });
+});
+signInAnonymously(auth).catch(e => {
+  console.error('[meals] anonymous sign-in failed', e);
+  alert('Anonymous sign-in for photo uploads failed: ' + (e?.message || e) + '\n\nIf this keeps happening, Anonymous Auth needs to be enabled in the Firebase Console under Authentication → Sign-in method.');
+});
 
 const mealWeeksCol     = collection(db, 'goals_canvas_meal_weeks');
 const recipeMetaCol    = collection(db, 'goals_canvas_recipe_meta');
@@ -1834,6 +1856,22 @@ function pickFile(accept){
 async function uploadToStorage(file, pathPrefix){
   if (!file) return null;
   if (file.size > 50 * 1024 * 1024) { alert('File must be under 50 MB'); return null; }
+  // Wait for anonymous auth to land — Storage rules need auth.uid != null.
+  // First-load tab may be a few hundred ms behind; bail loudly after 10s
+  // instead of letting the upload try unauthenticated and hang.
+  if (!_firebaseAuthReady) {
+    console.log('[meals] waiting on Firebase auth before upload…');
+    try {
+      await Promise.race([
+        _firebaseAuthReadyPromise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Auth never completed (10s) — Anonymous sign-in may not be enabled on the Firebase project.')), 10000))
+      ]);
+    } catch (e) {
+      console.error('[meals] auth wait failed', e);
+      alert(e.message || 'Could not authenticate the upload.');
+      return null;
+    }
+  }
   const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
   // Flatten the caller's prefix into one segment under step-media/. The
   // deployed Firebase Storage rules only grant unauthenticated writes to
