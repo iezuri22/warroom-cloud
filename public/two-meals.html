@@ -1336,18 +1336,39 @@ function scheduleSaveCookSteps(rid, steps){
 }
 
 // ---------- Week helpers ----------
+// Sun–Sat weeks (US calendar). Key = YYYY-MM-DD of the Sunday that STARTS
+// the week. We compute everything in LOCAL time so the user's calendar day
+// aligns with the system's idea of "today" — using UTC here was making the
+// display drift a day for users in negative timezones (e.g. CDT users saw
+// Mon Jun 22 UTC → Sun Jun 21 local).
+//
+// Backwards compat: the old format was "YYYY-WNN" (ISO Mon-Sun week
+// number). weekDateRange accepts both, so existing mealWeeks docs keep
+// displaying their original range under Past weeks.
 function isoWeekKey(d){
   d = new Date(d || Date.now());
-  d.setUTCHours(0,0,0,0);
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+  d.setHours(0, 0, 0, 0);
+  const dow = d.getDay(); // 0 = Sun, 6 = Sat
+  d.setDate(d.getDate() - dow); // step back to the Sunday that starts this week
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 function weekDateRange(key){
-  const m = /^(\d{4})-W(\d{1,2})$/.exec(key || '');
-  if (!m) return '';
-  const year = +m[1], week = +m[2];
+  // New format: YYYY-MM-DD (Sunday). Render Sun → Sat in local time.
+  const newM = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+  if (newM) {
+    const sun = new Date(+newM[1], +newM[2] - 1, +newM[3]);
+    const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
+    const fmt = d => d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+    return `${fmt(sun)} – ${fmt(sat)}`;
+  }
+  // Legacy ISO week format: keep formatting Mon → Sun, but force UTC
+  // formatting so the old display doesn't shift back a day in local TZ.
+  const oldM = /^(\d{4})-W(\d{1,2})$/.exec(key || '');
+  if (!oldM) return '';
+  const year = +oldM[1], week = +oldM[2];
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const jan4Day = jan4.getUTCDay() || 7;
   const week1Mon = new Date(jan4);
@@ -1356,7 +1377,7 @@ function weekDateRange(key){
   mon.setUTCDate(week1Mon.getUTCDate() + (week - 1) * 7);
   const sun = new Date(mon);
   sun.setUTCDate(mon.getUTCDate() + 6);
-  const fmt = d => d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+  const fmt = d => d.toLocaleDateString(undefined, { month:'short', day:'numeric', timeZone: 'UTC' });
   return `${fmt(mon)} – ${fmt(sun)}`;
 }
 
