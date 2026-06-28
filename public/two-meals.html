@@ -1181,19 +1181,36 @@ const storage = getStorage(app);
 // asking the user to sign in.
 const auth = getAuth(app);
 let _firebaseAuthReady = false;
-const _firebaseAuthReadyPromise = new Promise(resolve => {
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      _firebaseAuthReady = true;
-      console.log('[meals] firebase auth ready, uid =', user.uid, user.isAnonymous ? '(anonymous)' : '');
-      resolve(user);
+let _firebaseAuthAttempted = false;
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    _firebaseAuthReady = true;
+    console.log('[meals] firebase auth ready, uid =', user.uid, user.isAnonymous ? '(anonymous)' : '');
+  }
+});
+// Lazy + retry-able sign-in. The initial attempt fires at module init,
+// but each upload also calls this — so when the user enables Anonymous
+// Auth in the Firebase Console, the very next upload succeeds without
+// requiring a page reload.
+async function ensureFirebaseAuth(){
+  if (_firebaseAuthReady) return true;
+  try {
+    _firebaseAuthAttempted = true;
+    await signInAnonymously(auth);
+    // onAuthStateChanged will flip the flag; wait briefly for it.
+    for (let i = 0; i < 30; i++) {
+      if (_firebaseAuthReady) return true;
+      await new Promise(r => setTimeout(r, 100));
     }
-  });
-});
-signInAnonymously(auth).catch(e => {
-  console.error('[meals] anonymous sign-in failed', e);
-  alert('Anonymous sign-in for photo uploads failed: ' + (e?.message || e) + '\n\nIf this keeps happening, Anonymous Auth needs to be enabled in the Firebase Console under Authentication → Sign-in method.');
-});
+    return _firebaseAuthReady;
+  } catch (e) {
+    console.error('[meals] anonymous sign-in failed', e);
+    return false;
+  }
+}
+// Fire and forget the initial attempt — silent failure is fine here
+// because uploads will retry via ensureFirebaseAuth().
+ensureFirebaseAuth();
 
 const mealWeeksCol     = collection(db, 'goals_canvas_meal_weeks');
 const recipeMetaCol    = collection(db, 'goals_canvas_recipe_meta');
@@ -1856,21 +1873,20 @@ function pickFile(accept){
 async function uploadToStorage(file, pathPrefix){
   if (!file) return null;
   if (file.size > 50 * 1024 * 1024) { alert('File must be under 50 MB'); return null; }
-  // Wait for anonymous auth to land — Storage rules need auth.uid != null.
-  // First-load tab may be a few hundred ms behind; bail loudly after 10s
-  // instead of letting the upload try unauthenticated and hang.
-  if (!_firebaseAuthReady) {
-    console.log('[meals] waiting on Firebase auth before upload…');
-    try {
-      await Promise.race([
-        _firebaseAuthReadyPromise,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('Auth never completed (10s) — Anonymous sign-in may not be enabled on the Firebase project.')), 10000))
-      ]);
-    } catch (e) {
-      console.error('[meals] auth wait failed', e);
-      alert(e.message || 'Could not authenticate the upload.');
-      return null;
-    }
+  // Storage rules need auth.uid != null. Try to sign in anonymously here
+  // (retries each upload, so enabling Anonymous Auth in the Firebase
+  // Console will fix subsequent attempts without a page reload).
+  const ok = await ensureFirebaseAuth();
+  if (!ok) {
+    alert(
+      'Photo upload needs Anonymous Auth enabled on the Firebase project.\n\n' +
+      'To fix (one-time, ~30 seconds):\n' +
+      '  1. Open https://console.firebase.google.com/project/tv-todos/authentication/providers\n' +
+      '  2. Find "Anonymous" in the list of providers\n' +
+      '  3. Click it, toggle Enable on, Save\n' +
+      '  4. Come back here and click upload again — no reload needed.'
+    );
+    return null;
   }
   const ext = (file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.jpg'])[0];
   // Flatten the caller's prefix into one segment under step-media/. The
