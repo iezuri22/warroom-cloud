@@ -12,7 +12,7 @@
 <style>
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent }
 :root {
-  --bg:#050507; --surface:#15151B; --surface-2:#0E0E13; --surface-3:#1E1E26;
+  --bg:#0A0A0D; --surface:#14141A; --surface-2:#101015; --surface-3:#1C1C24;
   --border:rgba(255,255,255,.10); --border-2:rgba(255,255,255,.20);
   --text:#FFFFFF; --text-mid:rgba(255,255,255,.78); --text-dim:rgba(255,255,255,.55); --text-fade:rgba(255,255,255,.36);
   --accent:#FF8A3D; --accent-bg:rgba(255,138,61,.18);
@@ -2748,7 +2748,32 @@ body { display:flex; flex-direction:column; position:relative }
     if (eb) eb.textContent = isOvertime ? `Overtime — keep going` : 'Sprint in progress';
     // We deliberately do NOT auto-finish at remainingMs <= 0 anymore. The user
     // hits Done when they actually finish, however far over they went.
+
+    // Race mode: feed the parent (personal-todos) a once-a-second tick so its
+    // minimized "sprint running" pill can show a live countdown.
+    if (_raceTickCfg.on && window.parent && window.parent !== window) {
+      const secLeft = isOvertime ? -overtimeSecs : Math.ceil(remaining);
+      if (secLeft !== _raceTickLastSec) {
+        _raceTickLastSec = secLeft;
+        try {
+          window.parent.postMessage({
+            type: 'warroom:race-tick',
+            slot: _raceTickCfg.slot,
+            remainingSec: secLeft,
+            overtime: isOvertime,
+            task: currentTask || ''
+          }, '*');
+        } catch {}
+      }
+    }
   }
+  const _raceTickCfg = (() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return { on: q.get('race') === '1', slot: parseInt(q.get('slot') || '1', 10) || 1 };
+    } catch { return { on: false, slot: 1 }; }
+  })();
+  let _raceTickLastSec = null;
 
   // ============ SOURCE COMPLETION ============
   // When a sprint linked to a real task is completed, mark the source done so
