@@ -1363,11 +1363,11 @@
   /* Inline picker dropped below the add row */
   .f5b-existing-picker {
     margin: 6px 8px 10px 44px;
-    background: rgba(16,16,22,.98);
-    border: 1px solid rgba(255,138,61,.18);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
-    box-shadow: 0 8px 28px rgba(0,0,0,.4);
+    box-shadow: var(--shadow-float);
   }
   .f5b-existing-head {
     display: flex; gap: 8px; align-items: center;
@@ -1722,7 +1722,62 @@
     color: rgba(33,30,25,.52);
   }
   .planned-section.due .planned-section-head h3 { color: var(--accent) }
-  .planned-section.ecm .planned-section-head h3 { color: var(--blue) }
+  /* ECM inbox entry — a quiet card-button, same language as the meals/learning banners */
+  .planned-ecm-inbox {
+    display: flex; align-items: center; gap: 14px;
+    width: 100%; text-align: left;
+    padding: 13px 16px; margin-top: 4px;
+    background: var(--surface); border: none;
+    box-shadow: var(--shadow-card); border-radius: var(--radius);
+    font-family: inherit; cursor: pointer;
+    transition: background .15s;
+  }
+  .planned-ecm-inbox:hover { background: rgba(59,111,212,.05) }
+  .planned-ecm-inbox .pei-icon { font-size: 20px; flex: 0 0 auto }
+  .planned-ecm-inbox .pei-main { flex: 1; min-width: 0 }
+  .planned-ecm-inbox .pei-head {
+    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--blue); font-weight: 700; margin-bottom: 3px;
+  }
+  .planned-ecm-inbox .pei-line { display: block; font-size: 14px; font-weight: 500; color: var(--ink) }
+  .planned-ecm-inbox .pei-go {
+    flex-shrink: 0; font-size: 11px; padding: 6px 12px;
+    background: rgba(59,111,212,.10); border-radius: 99px;
+    color: var(--blue); font-weight: 600;
+  }
+  /* ECM inbox modal rows */
+  .ecm-inbox-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 14px; margin-bottom: 8px;
+    background: var(--surface); border-radius: 14px;
+    box-shadow: var(--shadow-card);
+  }
+  .ecm-inbox-row .eir-main { flex: 1 1 240px; min-width: 0 }
+  .ecm-inbox-row .eir-text { font-size: 14.5px; font-weight: 600; color: var(--ink); line-height: 1.4 }
+  .ecm-inbox-row .eir-notes { margin-top: 3px; font-size: 11.5px; color: var(--ink-dim); line-height: 1.45 }
+  .ecm-inbox-row .eir-controls { display: inline-flex; gap: 8px; align-items: center; flex-shrink: 0 }
+  .ecm-inbox-row .eir-date {
+    padding: 7px 10px; border-radius: 10px;
+    background: var(--fill); border: 1px solid var(--border-strong);
+    color: var(--ink-mid); font-family: inherit; font-size: 12.5px; font-weight: 600;
+    outline: none;
+  }
+  .ecm-inbox-row .eir-plan {
+    padding: 8px 16px; border-radius: 99px;
+    background: var(--accent-soft); border: none; color: var(--accent);
+    font-family: inherit; font-size: 12.5px; font-weight: 800;
+    cursor: pointer; transition: background .12s;
+  }
+  .ecm-inbox-row .eir-plan:hover { background: rgba(240,126,40,.22) }
+  /* Pinned badges */
+  .focus5-pin-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-right: 8px; padding: 2px 9px; border-radius: 99px;
+    font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    background: var(--accent-soft); color: var(--accent);
+    vertical-align: middle;
+  }
+  .f5b-pin { flex-shrink: 0; font-size: 13px; width: 18px; text-align: center }
   .planned-section-head .ct {
     font-size: 10.5px; font-weight: 800;
     padding: 2px 8px; border-radius: 99px;
@@ -5518,6 +5573,20 @@
     <div class="pof-foot">
       <button class="f5dump-adv" id="f5DumpAdvanced" type="button" title="Recurring, reminders, jobs — the full add form">Advanced add…</button>
       <button class="f5dump-go" id="f5DumpDone" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ECM inbox — review assigned items, optionally date them, move to Planned -->
+<div class="priority-overflow-backdrop" id="ecmInboxBackdrop" aria-hidden="true">
+  <div class="priority-overflow" role="dialog" aria-modal="true" aria-labelledby="ecmInboxTitle">
+    <div class="pof-head">
+      <div class="pof-title" id="ecmInboxTitle">ECM — assigned to me</div>
+      <div class="pof-sub" id="ecmInboxSub"></div>
+    </div>
+    <div class="pof-body" id="ecmInboxBody"></div>
+    <div class="pof-foot">
+      <button class="pof-cancel" id="ecmInboxClose" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -9834,7 +9903,24 @@ const VOICE = {
       if (_orderChanged) { try { saveFocus5(); } catch {} }
     } catch {}
   }
+  // ---- Pinned tasks (planned items whose date arrived) ----
+  // Pinned = auto-promoted on its due day; locked to the top of its list
+  // until completed or deleted. Enforced at the single persist point so no
+  // mutation path (drag, arrows, bulk move, cascade) can dislodge it.
+  function _isPinnedTask(id){
+    const t = todos.find(x => x.id === id);
+    return !!(t && t.pinnedUntilDone && !t.done);
+  }
+  function _enforcePinnedTop(){
+    (focus5State.lists || []).forEach(l => {
+      if (l.routine) return;
+      const ids = l.taskIds || [];
+      if (!ids.some(_isPinnedTask)) return;
+      l.taskIds = [...ids.filter(_isPinnedTask), ...ids.filter(id => !_isPinnedTask(id))];
+    });
+  }
   function saveFocus5(){
+    try { _enforcePinnedTop(); } catch {}
     try { localStorage.setItem(FOCUS5_KEY, JSON.stringify(focus5State)); } catch {}
   }
   // When a task is added to a priority list, its ID lives in focus5State
@@ -10007,6 +10093,7 @@ const VOICE = {
     });
   }
   function focus5MoveUp(taskId){
+    if (_isPinnedTask(taskId)) return; // pinned = locked until done/deleted
     const list = focus5ActiveList(); if (!list) return;
     const idx = focus5IndexForInstanceId(list, taskId);
     if (idx <= 0) return;
@@ -10015,6 +10102,7 @@ const VOICE = {
     list.taskIds = arr; saveFocus5(); render();
   }
   function focus5MoveDown(taskId){
+    if (_isPinnedTask(taskId)) return; // pinned = locked until done/deleted
     const list = focus5ActiveList(); if (!list) return;
     const idx = focus5IndexForInstanceId(list, taskId);
     if (idx < 0 || idx >= list.taskIds.length - 1) return;
@@ -11041,7 +11129,7 @@ const VOICE = {
     // selected ids in the order they currently appear.
     const ordered = [];
     _f5BoardLists().forEach(l => (l.taskIds || []).forEach(id => {
-      if (_f5BoardSelected.has(String(id))) ordered.push(id);
+      if (_f5BoardSelected.has(String(id)) && !_isPinnedTask(id)) ordered.push(id);
     }));
     ordered.forEach(id => _f5BoardInsert(id, target, null));
     _f5BoardSelected.clear();
@@ -11154,18 +11242,20 @@ const VOICE = {
   }
   function _f5BoardRow(l, rawId, idx){
     const t = resolveFocus5TaskId(rawId);
+    const pinned = !!(t && t.pinnedUntilDone && !t.done);
     const row = document.createElement('div');
     const selected = _f5BoardSelected.has(String(rawId));
-    row.className = `f5b-row ${t && t.done ? 'done' : ''} ${_f5BoardSelectMode ? 'sel-mode' : ''} ${selected ? 'selected' : ''}`;
+    row.className = `f5b-row ${t && t.done ? 'done' : ''} ${_f5BoardSelectMode ? 'sel-mode' : ''} ${selected ? 'selected' : ''} ${pinned ? 'pinned' : ''}`;
     row.dataset.taskId = rawId;
+    const pinBadge = `<span class="f5b-pin" title="Due today — locked to the top until completed or deleted">📌</span>`;
     row.innerHTML = `
-      ${_f5BoardSelectMode ? `
+      ${_f5BoardSelectMode ? (pinned ? pinBadge : `
       <button type="button" class="f5b-selbox ${selected ? 'on' : ''}" aria-label="${selected ? 'Deselect' : 'Select'}">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-      </button>` : `
-      <span class="f5b-grip" draggable="true" title="Drag to move — within or between lists">
+      </button>`) : `
+      ${pinned ? pinBadge : `<span class="f5b-grip" draggable="true" title="Drag to move — within or between lists">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="5" r="1.6"/><circle cx="16" cy="5" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/><circle cx="8" cy="19" r="1.6"/><circle cx="16" cy="19" r="1.6"/></svg>
-      </span>
+      </span>`}
       <button type="button" class="f5b-circle" title="${t && t.done ? 'Mark not done' : 'Mark done'}">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`}
@@ -11176,12 +11266,14 @@ const VOICE = {
         <button type="button" class="dt ${t && (t.details || '').trim() ? 'has' : ''}" title="${t && (t.details || '').trim() ? 'View / edit details' : 'Add details'}" ${t ? '' : 'disabled'}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         </button>
+        ${pinned ? '' : `
         <button type="button" class="mv-up" title="Move up — past the top jumps to the previous list">↑</button>
         <button type="button" class="mv-dn" title="Move down — past the bottom jumps to the next list">↓</button>
-        <button type="button" class="rm" title="Remove from priorities (the task itself is kept)">×</button>
+        <button type="button" class="rm" title="Remove from priorities (the task itself is kept)">×</button>`}
       </span>`}
     `;
     if (_f5BoardSelectMode) {
+      if (pinned) return row; // not selectable — locked in place
       const toggleSel = (e) => {
         e.preventDefault(); e.stopPropagation();
         const key = String(rawId);
@@ -11221,11 +11313,12 @@ const VOICE = {
     const li = lists.findIndex(x => x.id === l.id);
     const up = row.querySelector('.mv-up');
     const dn = row.querySelector('.mv-dn');
-    if (idx === 0 && li <= 0) up.disabled = true;
-    if (idx === l.taskIds.length - 1 && li >= lists.length - 1) dn.disabled = true;
-    up.addEventListener('click', () => _f5BoardMove(rawId, l.id, -1));
-    dn.addEventListener('click', () => _f5BoardMove(rawId, l.id, +1));
-    row.querySelector('.rm').addEventListener('click', () => {
+    if (up && idx === 0 && li <= 0) up.disabled = true;
+    if (dn && idx === l.taskIds.length - 1 && li >= lists.length - 1) dn.disabled = true;
+    if (up) up.addEventListener('click', () => _f5BoardMove(rawId, l.id, -1));
+    if (dn) dn.addEventListener('click', () => _f5BoardMove(rawId, l.id, +1));
+    const rmBtn = row.querySelector('.rm');
+    if (rmBtn) rmBtn.addEventListener('click', () => {
       // Re-resolve the list at click time — render() reloads focus5State from
       // localStorage, so the closure's list object can be stale.
       const cur = focus5State.lists.find(x => x.id === l.id);
@@ -11268,20 +11361,22 @@ const VOICE = {
       inp.focus();
     });
     const grip = row.querySelector('.f5b-grip');
-    grip.addEventListener('dragstart', (e) => {
-      _f5BoardDrag = { taskId: rawId, fromListId: l.id };
-      row.classList.add('dragging');
-      try {
-        e.dataTransfer.setData('text/plain', rawId);
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setDragImage(row, 20, 16);
-      } catch {}
-    });
-    grip.addEventListener('dragend', () => {
-      _f5BoardDrag = null;
-      row.classList.remove('dragging');
-      document.querySelectorAll('#f5DumpBoard .drop-before').forEach(r => r.classList.remove('drop-before'));
-    });
+    if (grip) {
+      grip.addEventListener('dragstart', (e) => {
+        _f5BoardDrag = { taskId: rawId, fromListId: l.id };
+        row.classList.add('dragging');
+        try {
+          e.dataTransfer.setData('text/plain', rawId);
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setDragImage(row, 20, 16);
+        } catch {}
+      });
+      grip.addEventListener('dragend', () => {
+        _f5BoardDrag = null;
+        row.classList.remove('dragging');
+        document.querySelectorAll('#f5DumpBoard .drop-before').forEach(r => r.classList.remove('drop-before'));
+      });
+    }
     return row;
   }
   // Collapsible details editor rendered directly under a board row. Saves on
@@ -11611,6 +11706,9 @@ const VOICE = {
   // cascade reshuffle (the count just shows orange past 5). Dupes across
   // lists are removed first; priorityAt stamps like the cascade does.
   function _f5BoardInsert(taskId, list, index){
+    // Pinned tasks are locked in place: allow the INITIAL placement (not in
+    // any list yet — the auto-promote), block everything after.
+    if (_isPinnedTask(taskId) && focus5State.lists.some(x => (x.taskIds || []).includes(taskId))) return;
     focus5State.lists.forEach(x => {
       const at = x.taskIds.indexOf(taskId);
       if (at >= 0) x.taskIds.splice(at, 1);
@@ -11643,6 +11741,7 @@ const VOICE = {
     });
   }
   function _f5BoardMove(taskId, listId, dir){
+    if (_isPinnedTask(taskId)) return; // pinned = locked until done/deleted
     const lists = _f5BoardLists();
     const li = lists.findIndex(x => x.id === listId);
     if (li < 0) return;
@@ -11780,33 +11879,63 @@ const VOICE = {
     const monday = _mondayKeyFor(base);
     const weekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 6 * 86400000));
     const nextWeekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 13 * 86400000));
-    // Buckets: due (today/overdue) → ecm (assigned from ECM) → tomorrow →
-    // week → next → later → someday. Items already on a Focus 5 list are
-    // excluded entirely — they're being worked, not planned.
+    // Buckets: due (today/overdue) → tomorrow → week → next → later → someday.
+    // 'ecm' is the INBOX: undated, not-yet-reviewed ECM assignments. They stay
+    // out of the main groups until accepted ("moved to Planned") from the ECM
+    // review modal — accepting sets ecmAccepted (and optionally a date).
+    // Items already on a Focus 5 list are excluded entirely.
     const b = { due: [], ecm: [], tomorrow: [], week: [], next: [], later: [], someday: [] };
     _plannedCache.filter(p => !p.done && !_inAnyFocus5List(p.id)).forEach(p => {
       const d = typeof p.plannedFor === 'string' ? p.plannedFor : '';
-      if (d && d <= tk) { b.due.push(p); return; } // due beats everything, even ECM
-      if (p.smartsheetRowId) { b.ecm.push(p); return; }
+      if (p.smartsheetRowId && !d && !p.ecmAccepted) { b.ecm.push(p); return; }
       if (!d) { b.someday.push(p); return; }
-      if (d === tomorrow) b.tomorrow.push(p);
+      if (d <= tk) b.due.push(p);
+      else if (d === tomorrow) b.tomorrow.push(p);
       else if (d <= weekEnd) b.week.push(p);
       else if (d <= nextWeekEnd) b.next.push(p);
       else b.later.push(p);
     });
-    // Sort dated buckets by plannedFor ascending; someday by createdAt newest
-    // first; ecm dated-first then newest.
+    // Sort dated buckets by plannedFor ascending; someday + ecm inbox by
+    // createdAt newest first.
     ['due','tomorrow','week','next','later'].forEach(k => {
       b[k].sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || ''));
     });
     b.someday.sort((a, c) => (c.createdAt || '').localeCompare(a.createdAt || ''));
-    b.ecm.sort((a, c) => {
-      const ad = a.plannedFor || '', cd = c.plannedFor || '';
-      if (!!ad !== !!cd) return ad ? -1 : 1;
-      if (ad && cd && ad !== cd) return ad.localeCompare(cd);
-      return (c.createdAt || '').localeCompare(a.createdAt || '');
-    });
+    b.ecm.sort((a, c) => (c.createdAt || '').localeCompare(a.createdAt || ''));
     return b;
+  }
+  // ---- Auto-promotion: a dated planned item lands at the TOP of First
+  // Priority on its day, pinned there until completed or deleted. This
+  // replaces the "knock" for dated items — the task simply shows up.
+  let _autoPromoteBusy = false;
+  async function autoPromotePlannedDue(){
+    if (_autoPromoteBusy) return;
+    _autoPromoteBusy = true;
+    try {
+      const tk = todayKey();
+      const due = _plannedCache
+        .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor.length > 0
+          && p.plannedFor <= tk && !_inAnyFocus5List(p.id))
+        .sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || ''));
+      const first = (typeof getPriorityLists === 'function' ? getPriorityLists() : [])[0];
+      if (!first || !due.length) return;
+      // Reverse so the earliest-due ends up at the very top after unshifts.
+      for (const p of due.slice().reverse()) {
+        try {
+          const t = todos.find(x => x.id === p.id);
+          if (t) t.pinnedUntilDone = true;
+          p.pinnedUntilDone = true;
+          cascadeAddTaskToList(p.id, first.id, 'top');
+          await updateDoc(doc(db, 'tv_todos', p.id), { pinnedUntilDone: true });
+        } catch (e) { console.warn('auto-promote failed', p.id, e); }
+      }
+      try { await ensureFocus5TasksLoaded(); } catch {}
+      // Re-stamp the local flag post-fetch (the fetched doc may predate the
+      // updateDoc), then persist so the pinned-top order is enforced.
+      due.forEach(p => { const t = todos.find(x => x.id === p.id); if (t) t.pinnedUntilDone = true; });
+      saveFocus5();
+      try { render(); } catch {}
+    } finally { _autoPromoteBusy = false; }
   }
   function _plannedRelLabel(dateStr){
     try {
@@ -12038,13 +12167,28 @@ const VOICE = {
     const b = plannedBuckets();
     const SECTIONS = [
       ['due', 'Needs action', 'due'],
-      ['ecm', 'ECM — assigned to me', 'ecm'],
       ['tomorrow', 'Tomorrow', ''],
       ['week', 'This week', ''],
       ['next', 'Next week', ''],
       ['later', 'Later', ''],
       ['someday', 'Someday', 'someday']
     ];
+    // ECM inbox — assigned items wait behind a review button instead of
+    // flooding the list. Review → set a date (optional) → move to Planned.
+    if (b.ecm.length) {
+      const inboxBtn = document.createElement('button');
+      inboxBtn.type = 'button';
+      inboxBtn.className = 'planned-ecm-inbox';
+      inboxBtn.innerHTML = `
+        <span class="pei-icon">📥</span>
+        <span class="pei-main">
+          <span class="pei-head">ECM — assigned to me</span>
+          <span class="pei-line">${b.ecm.length} waiting to be planned</span>
+        </span>
+        <span class="pei-go">Review →</span>`;
+      inboxBtn.addEventListener('click', openEcmInbox);
+      groups.appendChild(inboxBtn);
+    }
     let any = false;
     SECTIONS.forEach(([key, label, cls]) => {
       const items = b[key];
@@ -12088,6 +12232,70 @@ const VOICE = {
     });
     view.appendChild(wrap);
   }
+  // ---- ECM inbox modal ----
+  // Assigned-from-ECM items wait here until reviewed. "Plan" accepts the
+  // item into the Planned buckets — with a date it schedules (and will
+  // auto-promote + pin on its day); without one it lands in Someday.
+  function openEcmInbox(){
+    renderEcmInbox();
+    const bd = document.getElementById('ecmInboxBackdrop');
+    if (bd) { bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
+  }
+  function closeEcmInbox(){
+    const bd = document.getElementById('ecmInboxBackdrop');
+    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+  }
+  function renderEcmInbox(){
+    const body = document.getElementById('ecmInboxBody');
+    if (!body) return;
+    const items = plannedBuckets().ecm;
+    const sub = document.getElementById('ecmInboxSub');
+    if (sub) sub.textContent = items.length
+      ? `${items.length} item${items.length === 1 ? '' : 's'} assigned to you. Pick a day (optional), then Plan.`
+      : 'All reviewed.';
+    body.innerHTML = '';
+    if (!items.length) {
+      body.innerHTML = `<div class="planned-empty">Nothing waiting — every ECM assignment has been planned.</div>`;
+      return;
+    }
+    items.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'ecm-inbox-row';
+      row.innerHTML = `
+        <div class="eir-main">
+          <div class="eir-text">${escHtml(p.text || '')}</div>
+          ${(p.details || '').trim() ? `<div class="eir-notes">${escHtml((p.details || '').trim().slice(0, 140))}${(p.details || '').trim().length > 140 ? '…' : ''}</div>` : ''}
+        </div>
+        <div class="eir-controls">
+          <input type="date" class="eir-date" min="${todayKey()}" title="Optional — when should this land?">
+          <button type="button" class="eir-plan">Plan</button>
+        </div>`;
+      const dateInp = row.querySelector('.eir-date');
+      row.querySelector('.eir-plan').addEventListener('click', async () => {
+        const ds = dateInp.value || '';
+        try {
+          const patch = { ecmAccepted: true };
+          if (ds) { patch.plannedFor = ds; patch.date = ds; }
+          await updateDoc(doc(db, 'tv_todos', p.id), patch);
+          Object.assign(p, patch);
+          const t = todos.find(x => x.id === p.id);
+          if (t) Object.assign(t, patch);
+        } catch (e) { console.warn('ecm inbox accept failed', e); }
+        // Date today/past → it's due: promote + pin right away.
+        if (ds && ds <= todayKey()) { try { await autoPromotePlannedDue(); } catch {} }
+        renderEcmInbox();
+        try { render(); } catch {}
+      });
+      body.appendChild(row);
+    });
+  }
+  (function wireEcmInbox(){
+    const bd = document.getElementById('ecmInboxBackdrop');
+    if (!bd) return;
+    const closeBtn = document.getElementById('ecmInboxClose');
+    if (closeBtn) closeBtn.addEventListener('click', closeEcmInbox);
+    bd.addEventListener('click', (e) => { if (e.target === bd) closeEcmInbox(); });
+  })();
   // ---- Daily knock ----
   function maybeShowPlannedPrompt(){
     try {
@@ -12491,18 +12699,19 @@ const VOICE = {
     // last list in the strip.
     const activeListIdx = focus5State.lists.findIndex(l => l.id === focus5State.activeListId);
     const canPushNext = editing && activeListIdx >= 0 && activeListIdx < focus5State.lists.length - 1;
+    const _pinLock = (todo.pinnedUntilDone && !todo.done) ? 'disabled title="Pinned — locked until completed or deleted"' : '';
     const editControlsHTML = editing ? `
       <div class="focus5-edit-controls">
-        <button class="focus5-edit-btn" data-act="up" type="button" aria-label="Move up" ${taskNumber <= 1 ? 'disabled' : ''}>
+        <button class="focus5-edit-btn" data-act="up" type="button" aria-label="Move up" ${_pinLock || (taskNumber <= 1 ? 'disabled' : '')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
         </button>
-        <button class="focus5-edit-btn" data-act="down" type="button" aria-label="Move down" ${taskNumber >= (totalCount || 5) ? 'disabled' : ''}>
+        <button class="focus5-edit-btn" data-act="down" type="button" aria-label="Move down" ${_pinLock || (taskNumber >= (totalCount || 5) ? 'disabled' : '')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        ${canPushNext ? `<button class="focus5-edit-btn push-next" data-act="push-next" type="button" aria-label="Push to next priority list" title="Push to next priority list">
+        ${canPushNext ? `<button class="focus5-edit-btn push-next" data-act="push-next" type="button" aria-label="Push to next priority list" ${_pinLock} title="Push to next priority list">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
         </button>` : ''}
-        <button class="focus5-edit-btn danger" data-act="remove" type="button" aria-label="Remove from list">
+        <button class="focus5-edit-btn danger" data-act="remove" type="button" aria-label="Remove from list" ${_pinLock}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -12526,13 +12735,19 @@ const VOICE = {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           Details
         </button>
+        ${todo.pinnedUntilDone && !todo.done ? `
+        <!-- Pinned: no Skip (no reschedule/remove) — done or delete only. -->
+        <button class="focus5-btn delete" data-act="hard-delete" type="button" title="Delete this task entirely">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          Delete
+        </button>` : `
         <!-- Skip opens the modal that handles Reschedule (pick a date),
              Remove (drop from priorities, keep task), and Delete (kill
              task entirely). All three actions live there. -->
         <button class="focus5-btn skip" data-act="skip" type="button" title="Reschedule, remove from priorities, or delete">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
           Skip…
-        </button>
+        </button>`}
       </div>
     ` : '';
     // Project picker row — hidden until user taps the project chip. Tap a chip
@@ -12552,6 +12767,9 @@ const VOICE = {
     // it in editing — the list-level routine flag conveys it already.
     const recurBadge = (!editing && todo.fromTemplate)
       ? `<span class="focus5-recur-badge" title="Auto-binds to today's instance every day">↻ Routine</span>`
+      : '';
+    const pinBadge = (todo.pinnedUntilDone && !todo.done)
+      ? `<span class="focus5-pin-badge" title="Due today — locked to the top until completed or deleted">📌 Due</span>`
       : '';
     // Collapsible details — closed by default so the card stays compact.
     const detailsHTML = (!isDone && !editing) ? `
@@ -12574,7 +12792,7 @@ const VOICE = {
     card.innerHTML = `
       ${rowCheckHTML}
       <div class="focus5-card-num">${editing ? '' : (numLabel + ' · ')}#${taskNumber}${recurBadge}</div>
-      <div class="focus5-card-text">${escHtml(todo.text || '')}</div>
+      <div class="focus5-card-text">${pinBadge}${escHtml(todo.text || '')}</div>
       ${chevronHTML}
       ${standardActions}
       ${projectsRowHTML}
@@ -12605,6 +12823,12 @@ const VOICE = {
       const doneBtn = card.querySelector('[data-act="done"]');
       const raceBtn = card.querySelector('[data-act="race"]');
       const skipBtn = card.querySelector('[data-act="skip"]');
+      const hardDelBtn = card.querySelector('[data-act="hard-delete"]');
+      if (hardDelBtn) hardDelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!confirm(`Delete “${todo.text || ''}” entirely? This can't be undone.`)) return;
+        removeTodo(todo.id);
+      });
       const projectBtn = card.querySelector('[data-act="project"]');
       const upBtn = card.querySelector('[data-act="up"]');
       const downBtn = card.querySelector('[data-act="down"]');
@@ -15091,9 +15315,15 @@ const VOICE = {
       setTimeout(() => { try { drainEcmPriorityPushes(); } catch {} }, 1500);
       // Same drain for the Goals canvas push queue.
       setTimeout(() => { try { drainGoalsPriorityPushes(); } catch {} }, 1700);
-      // Load the planned ledger, then knock if anything is due today.
+      // Load the planned ledger, auto-promote anything due (top of First
+      // Priority, pinned), then knock for whatever's left.
       setTimeout(() => {
-        try { loadPlannedTodos(true).then(() => { try { render(); maybeShowPlannedPrompt(); } catch {} }); } catch {}
+        try {
+          loadPlannedTodos(true).then(async () => {
+            try { await autoPromotePlannedDue(); } catch {}
+            try { render(); maybeShowPlannedPrompt(); } catch {}
+          });
+        } catch {}
       }, 2200);
       // One-time migration: with the Personal page now strictly the
       // priority page, any pending todo that isn't in a Focus 5 list and
@@ -15154,9 +15384,9 @@ const VOICE = {
       if (document.visibilityState === 'visible') {
         try { maybeShowPriorityConfirm(); } catch {}
         try { maybeShowGoalReminder(); } catch {}
-        // New day while the tab sat in the background → the planned knock
-        // re-arms (its day-key throttle resets at midnight).
-        try { loadPlannedTodos().then(() => { try { maybeShowPlannedPrompt(); } catch {} }); } catch {}
+        // New day while the tab sat in the background → auto-promote newly
+        // due items, then the knock re-arms for the rest.
+        try { loadPlannedTodos().then(async () => { try { await autoPromotePlannedDue(); } catch {} try { maybeShowPlannedPrompt(); } catch {} }); } catch {}
       }
     });
   })();
