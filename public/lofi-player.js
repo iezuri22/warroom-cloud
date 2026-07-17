@@ -43,23 +43,38 @@
   function saveMusicState(){ try { localStorage.setItem(MUSIC_KEY, JSON.stringify(musicState)); } catch {} }
 
   // ---- CSS — explicit colors so it renders identically on any host page,
-  // independent of the host's CSS variables. Matches sprint.html's music-bar
-  // visual exactly. ----
+  // independent of the host's CSS variables. Theme-aware: hosts that declare
+  // color-scheme:light (the Soft Light pages) get the light palette; sprint
+  // and other dark hosts keep the original dark look. ----
+  const WR_LIGHT = /light/i.test((() => { try { return getComputedStyle(document.documentElement).colorScheme || ''; } catch { return ''; } })());
+  const P = WR_LIGHT ? {
+    wrapBg: 'rgba(246,245,241,.88)', barBg: '#FFFFFF', barBgPlaying: 'rgba(240,126,40,.07)',
+    line: 'rgba(33,30,25,.10)', line2: 'rgba(33,30,25,.20)',
+    ink: '#211E19', inkMid: 'rgba(33,30,25,.78)', inkDim: 'rgba(33,30,25,.40)',
+    accent: '#F07E28', accentSoft: 'rgba(240,126,40,.14)', onAccent: '#FFF7EF',
+    field: 'rgba(33,30,25,.05)'
+  } : {
+    wrapBg: 'rgba(5,5,7,.85)', barBg: '#0E0E13', barBgPlaying: 'rgba(255,138,61,.10)',
+    line: 'rgba(255,255,255,.10)', line2: 'rgba(255,255,255,.20)',
+    ink: '#fff', inkMid: 'rgba(255,255,255,.78)', inkDim: 'rgba(255,255,255,.36)',
+    accent: '#FF8A3D', accentSoft: 'rgba(255,138,61,.18)', onAccent: '#050507',
+    field: '#15151B'
+  };
   const style = document.createElement('style');
   style.textContent = `
     .wr-music-wrap {
       position: sticky; top: 0; z-index: 50;
       padding: 8px 14px 0;
-      background: rgba(5,5,7,.85); backdrop-filter: blur(14px);
+      background: ${P.wrapBg}; backdrop-filter: blur(14px);
     }
     .wr-music-bar {
       display:flex; align-items:center; gap:10px;
       padding:8px 14px; flex-shrink:0;
-      background:#0E0E13; border:1px solid rgba(255,255,255,.10); border-radius:12px;
+      background:${P.barBg}; border:1px solid ${P.line}; border-radius:12px;
     }
     .wr-music-bar.playing {
-      border-color:rgba(255,138,61,.5);
-      background:linear-gradient(135deg, rgba(255,138,61,.10), #0E0E13);
+      border-color:${P.accent}80;
+      background:${P.barBgPlaying};
     }
     .wr-music-eq {
       display:inline-flex; align-items:flex-end; gap:2px; height:14px; flex-shrink:0;
@@ -67,7 +82,7 @@
     }
     .wr-music-bar.playing .wr-music-eq { opacity:1 }
     .wr-music-eq span {
-      width:3px; background:#FF8A3D; border-radius:2px; height:30%;
+      width:3px; background:${P.accent}; border-radius:2px; height:30%;
       animation:wrEqBounce .9s ease-in-out infinite;
     }
     .wr-music-eq span:nth-child(2) { animation-delay:.18s; height:60% }
@@ -76,55 +91,55 @@
     @keyframes wrEqBounce { 0%,100% { transform:scaleY(.4) } 50% { transform:scaleY(1) } }
     .wr-music-label {
       font-size:10.5px; font-weight:900; letter-spacing:1.6px; text-transform:uppercase;
-      color:rgba(255,255,255,.36); flex-shrink:0;
+      color:${P.inkDim}; flex-shrink:0;
     }
     .wr-music-vibes {
       display:flex; gap:5px; flex-wrap:wrap; flex:1; min-width:0;
     }
     .wr-vibe-chip {
-      background:transparent; border:1px solid rgba(255,255,255,.10); border-radius:99px;
+      background:transparent; border:1px solid ${P.line}; border-radius:99px;
       padding:5px 11px; cursor:pointer; font-family:inherit; font-size:11px; font-weight:800;
-      letter-spacing:.4px; color:rgba(255,255,255,.78); transition:all .12s; white-space:nowrap;
+      letter-spacing:.4px; color:${P.inkMid}; transition:all .12s; white-space:nowrap;
     }
-    .wr-vibe-chip:hover { color:#fff; border-color:rgba(255,255,255,.20) }
+    .wr-vibe-chip:hover { color:${P.ink}; border-color:${P.line2} }
     .wr-vibe-chip.active {
-      background:rgba(255,138,61,.18); border-color:#FF8A3D; color:#FF8A3D;
+      background:${P.accentSoft}; border-color:${P.accent}; color:${P.accent};
     }
     .wr-music-actions { display:flex; gap:6px; flex-shrink:0 }
     .wr-music-actions button {
-      background:#15151B; border:1px solid rgba(255,255,255,.10); border-radius:8px;
-      width:28px; height:28px; cursor:pointer; color:rgba(255,255,255,.78);
+      background:${P.field}; border:1px solid ${P.line}; border-radius:8px;
+      width:28px; height:28px; cursor:pointer; color:${P.inkMid};
       display:inline-flex; align-items:center; justify-content:center; transition:all .12s;
     }
-    .wr-music-actions button:hover { color:#fff; border-color:rgba(255,255,255,.20) }
+    .wr-music-actions button:hover { color:${P.ink}; border-color:${P.line2} }
     .wr-music-actions button.active {
-      color:#FF8A3D; border-color:#FF8A3D; background:rgba(255,138,61,.18);
+      color:${P.accent}; border-color:${P.accent}; background:${P.accentSoft};
     }
     .wr-music-custom {
       display:none; gap:8px; align-items:center;
       margin-top:6px; padding:8px 12px;
-      background:#0E0E13; border:1px solid rgba(255,255,255,.10); border-radius:10px;
+      background:${P.barBg}; border:1px solid ${P.line}; border-radius:10px;
     }
     .wr-music-custom.show { display:flex }
     .wr-music-custom label {
       font-size:10px; font-weight:900; letter-spacing:1.4px; text-transform:uppercase;
-      color:rgba(255,255,255,.36); flex-shrink:0;
+      color:${P.inkDim}; flex-shrink:0;
     }
     .wr-music-custom input {
       flex:1; min-width:0;
-      background:#15151B; border:1px solid rgba(255,255,255,.10);
+      background:${P.field}; border:1px solid ${P.line};
       border-radius:8px; padding:8px 12px; font-family:inherit; font-size:13px;
-      color:#fff; outline:none;
+      color:${P.ink}; outline:none;
     }
-    .wr-music-custom input:focus { border-color:#FF8A3D }
+    .wr-music-custom input:focus { border-color:${P.accent} }
     .wr-music-custom button {
-      background:#FF8A3D; color:#050507; border:none; border-radius:8px;
+      background:${P.accent}; color:${P.onAccent}; border:none; border-radius:8px;
       padding:8px 14px; font-family:inherit; font-size:11.5px; font-weight:900;
       letter-spacing:.6px; text-transform:uppercase; cursor:pointer; transition:opacity .12s;
     }
     .wr-music-custom button:hover { opacity:.9 }
     .wr-music-custom button.clear {
-      background:transparent; border:1px solid rgba(255,255,255,.20); color:rgba(255,255,255,.78);
+      background:transparent; border:1px solid ${P.line2}; color:${P.inkMid};
     }
     .wr-music-custom button.clear:hover { color:#f87171; border-color:#f87171; opacity:1 }
     @media (max-width:560px) {
