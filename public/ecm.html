@@ -3371,38 +3371,61 @@
     transition: all .12s;
   }
   .rsp-icon:hover { color: var(--ink); border-color: var(--w25) }
-  .rsp-body { flex: 1; overflow-y: auto; padding: 16px 18px 24px; --ctl-h: 38px }
-  .rsp-body .hard-toggle { width: 38px; height: 38px }
-  .rsp-body .internal-toggle { height: 38px }
+  .rsp-body { flex: 1; overflow-y: auto; padding: 14px 16px 24px; --ctl-h: 30px }
+  .rsp-body .hard-toggle { width: 30px; height: 30px; background: transparent; border-color: transparent }
+  .rsp-body .hard-toggle:hover { border-color: rgba(248,113,113,.45) }
+  .rsp-body .hard-toggle.on { background: rgba(248,113,113,.10); border-color: rgba(248,113,113,.4) }
   .rsp-drawer-host { border: none; background: transparent; padding: 0; margin: 0 }
   .rsp-drawer-host .drawer { display: flex; margin-top: 0; gap: 13px }
-  /* Minimal panel treatment: bigger type, crisp document chrome — plain
-     surfaces with hairline borders (same language as the grid), no gray
-     fills, no duplicate controls. */
+  /* Details-sheet treatment: values read as plain text — no boxes at rest.
+     The control chrome (soft fill, border) only appears on hover/focus, so
+     the panel scans like a document instead of a wall of form fields. */
   .rsp-title { font-size: 14.5px }
   .rsp-body .input, .rsp-body .textarea, .rsp-body .select {
-    font-size: 14px;
+    font-size: 13.5px; font-weight: 600;
+    color: var(--w90);
     background: transparent;
-    border-color: var(--w10);
-    padding: 8px 11px;
+    border-color: transparent;
+    padding: 4px 8px;
+    border-radius: 7px;
+    transition: background .12s, border-color .12s;
   }
-  .rsp-body .select { background-position: right 10px center }
   .rsp-body .input:hover, .rsp-body .textarea:hover, .rsp-body .select:hover {
-    border-color: var(--w22);
+    background: var(--w04);
   }
   .rsp-body .input:focus, .rsp-body .textarea:focus, .rsp-body .select:focus {
-    border-color: rgba(74,158,255,.55);
+    background: var(--w03);
+    border-color: rgba(74,158,255,.45);
   }
-  .rsp-body .field .lbl { font-size: 10.5px; color: var(--w40); font-weight: 800 }
-  .rsp-body .field-row { gap: 11px }
-  .rsp-body .internal-toggle { border-color: var(--w10); background: transparent; font-size: 13px }
-  .rsp-body .internal-toggle:hover { border-color: var(--w22) }
-  .rsp-body .drawer-action-btn, .rsp-body .row-ack-btn { font-size: 12px }
-  .rsp-body .sub-row { font-size: 13.5px; border-color: transparent; background: var(--w03) }
-  .rsp-body .sub-add input { font-size: 13.5px; border-color: var(--w10); background: transparent }
-  .rsp-body .sub-add input:focus { border-color: rgba(167,139,250,.5) }
-  .rsp-body .sub-title { font-size: 13.5px }
-  .rsp-body .textarea { min-height: 56px }
+  /* Task name doubles as the editable heading. */
+  .rsp-body .input[data-field="Task Name"] { font-size: 15px; font-weight: 800 }
+  /* Description shows everything — the textarea autosizes (JS) and never
+     scrolls internally. */
+  .rsp-body .textarea {
+    min-height: 0; overflow: hidden; resize: none;
+    line-height: 1.55; font-weight: 500;
+  }
+  .rsp-body .select { background-position: right 8px center; padding-right: 28px }
+  /* Keep the missing-ticket alarm visible despite the borderless base. */
+  .rsp-body .ticket-input.is-missing {
+    border-color: rgba(248,113,113,.55);
+    background: rgba(248,113,113,.06);
+  }
+  .rsp-body .field { gap: 1px }
+  .rsp-body .field .lbl { font-size: 9.5px; color: var(--w35); font-weight: 800; padding-left: 8px }
+  .rsp-body .field-row { gap: 6px 10px }
+  .rsp-body .drawer { gap: 10px }
+  .rsp-body .internal-toggle {
+    border-color: transparent; background: transparent;
+    font-size: 12.5px; padding: 4px 8px;
+  }
+  .rsp-body .internal-toggle:hover { background: var(--w04); border-color: transparent }
+  .rsp-body .drawer-action-btn, .rsp-body .row-ack-btn { font-size: 11.5px }
+  .rsp-body .sub-row { font-size: 13px; border-color: transparent; background: var(--w03); padding: 5px 8px }
+  .rsp-body .sub-add input { font-size: 13px; border-color: transparent; background: transparent; padding: 4px 8px }
+  .rsp-body .sub-add input:hover { background: var(--w04) }
+  .rsp-body .sub-add input:focus { border-color: rgba(167,139,250,.5); background: var(--w03) }
+  .rsp-body .sub-title { font-size: 13px }
   /* The panel header already has Smartsheet + close — the drawer's own foot
      buttons are noise here. Keep only the "Saved to Smartsheets" status. */
   .rsp-body .drawer-foot .ss-link,
@@ -6555,6 +6578,16 @@ function _syncRowPanel(){
   panel.querySelector('[data-rsp-close]').addEventListener('click', () => setExpanded(r.id));
   const host = panel.querySelector('.rsp-drawer-host');
   _wireDrawer(host, r, () => setExpanded(r.id));
+  // Textareas (description / outcome) show their whole content — autosize to
+  // fit and re-grow on typing. The outcome one lives in a <details>, so it
+  // also re-measures when that section is opened.
+  const growTA = (t) => { t.style.height = 'auto'; t.style.height = (t.scrollHeight + 2) + 'px'; };
+  panel.querySelectorAll('.rsp-body textarea').forEach(t => {
+    t.addEventListener('input', () => growTA(t));
+    growTA(t);
+  });
+  panel.querySelectorAll('.rsp-body details').forEach(d =>
+    d.addEventListener('toggle', () => d.querySelectorAll('textarea').forEach(growTA)));
   document.body.classList.add('has-row-panel');
 }
 // Escape closes the panel — but only when no modal is sitting on top of it.
