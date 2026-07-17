@@ -3230,7 +3230,7 @@
   .ddl-scroll { border-radius: 10px; border: 1px solid var(--w10); overflow: hidden }
   .ddl-table {
     width: 100%; border-collapse: collapse;
-    font-size: 12.5px;
+    font-size: 13px;
     /* Fixed layout + per-column widths + ellipsis on the Task cell = no
        horizontal scrolling on any screen size. */
     table-layout: fixed;
@@ -3256,7 +3256,13 @@
   .ddl-row.overdue td:first-child { box-shadow: inset 3px 0 0 var(--red) }
   .ddl-row.today td:first-child { box-shadow: inset 3px 0 0 var(--amber) }
   .ddl-row.closed td { opacity: .5 }
-  .ddl-status { white-space: nowrap; font-size: 11px; font-weight: 700; color: var(--w60) }
+  .ddl-status {
+    white-space: nowrap; font-size: 11.5px; font-weight: 700; color: var(--w60);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .tt-check-td { text-align: center }
+  .ack-act-td { white-space: nowrap; text-align: right; overflow: hidden }
+  .ack-act-td .row-ack-btn { margin-left: 6px }
   .ddl-status .st-dot {
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     margin-right: 7px; vertical-align: middle;
@@ -3365,9 +3371,39 @@
     transition: all .12s;
   }
   .rsp-icon:hover { color: var(--ink); border-color: var(--w25) }
-  .rsp-body { flex: 1; overflow-y: auto; padding: 14px 16px 20px }
+  .rsp-body { flex: 1; overflow-y: auto; padding: 16px 18px 24px; --ctl-h: 38px }
+  .rsp-body .hard-toggle { width: 38px; height: 38px }
+  .rsp-body .internal-toggle { height: 38px }
   .rsp-drawer-host { border: none; background: transparent; padding: 0; margin: 0 }
-  .rsp-drawer-host .drawer { display: flex; margin-top: 0 }
+  .rsp-drawer-host .drawer { display: flex; margin-top: 0; gap: 13px }
+  /* Minimal panel treatment: bigger type, quieter chrome. Fields read as
+     soft fills with no border until you interact with them. */
+  .rsp-title { font-size: 14.5px }
+  .rsp-body .input, .rsp-body .textarea, .rsp-body .select {
+    font-size: 14px;
+    background: var(--w04);
+    border-color: transparent;
+    padding: 8px 11px;
+  }
+  .rsp-body .select { background-position: right 10px center }
+  .rsp-body .input:hover, .rsp-body .textarea:hover, .rsp-body .select:hover {
+    border-color: var(--w14);
+  }
+  .rsp-body .input:focus, .rsp-body .textarea:focus, .rsp-body .select:focus {
+    border-color: rgba(74,158,255,.55);
+    background: var(--w06);
+  }
+  .rsp-body .field .lbl { font-size: 10.5px; color: var(--w40); font-weight: 800 }
+  .rsp-body .field-row { gap: 11px }
+  .rsp-body .internal-toggle { border-color: transparent; background: var(--w04); font-size: 13px; height: 36px }
+  .rsp-body .internal-toggle:hover { border-color: var(--w14) }
+  .rsp-body .drawer-action-btn, .rsp-body .row-ack-btn { font-size: 12px }
+  .rsp-body .field-collapsible summary { font-size: 12px }
+  .rsp-body .sub-row { font-size: 13.5px; border-color: transparent }
+  .rsp-body .sub-add input { font-size: 13.5px; border-color: transparent; background: var(--w04) }
+  .rsp-body .sub-add input:focus { border-color: rgba(167,139,250,.5) }
+  .rsp-body .sub-title { font-size: 13.5px }
+  .rsp-body .textarea { min-height: 60px }
 
   /* ===== Hard deadlines ================================================== */
   .due-hard-wrap { display: flex; gap: 6px; align-items: center }
@@ -5824,6 +5860,7 @@ function renderTaskScopeStrip(){
       const v = b.getAttribute('data-task-scope');
       if (!TASKS_SCOPES.has(v) || v === currentView) return;
       try { _clearStickyEditedOnViewSwitch(); } catch {}
+      expandedId = null;
       saveTaskScope(v);
       currentView = v;
       if (v === 'support') _supportChip = 'open';
@@ -6161,7 +6198,7 @@ function _drawerHTML(r){
           <div class="field">
             <span class="lbl">Ack ${ack ? ' (acked)' : ''}</span>
             ${ack ? `
-              <div style="display:inline-flex;align-items:center;gap:8px;height:33px;padding:0 12px;border-radius:9px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:var(--green);font-size:11.5px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
+              <div style="display:inline-flex;align-items:center;gap:8px;height:var(--ctl-h,33px);padding:0 12px;border-radius:9px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);color:var(--green);font-size:11.5px;font-weight:700;white-space:nowrap" title="Acked by ${escHtml(ack.ackedBy || '')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}">
                 <span>✓ ${escHtml(ack.ackedBy || 'Acked')}${ack.ackedAt ? ' · ' + escHtml(timeAgo(ack.ackedAt)) : ''}</span>
                 <button type="button" data-unack="${escHtml(String(r.id))}" style="padding:3px 9px;border-radius:99px;border:1px solid var(--w18);background:transparent;color:var(--w60);font:inherit;font-size:10px;font-weight:800;letter-spacing:.5px;cursor:pointer">UN-ACK</button>
               </div>
@@ -6177,7 +6214,7 @@ function _drawerHTML(r){
                     return sorted.map(n => `<option value="${escHtml(n)}" ${n === (r.owner || '') ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
                   })()}
                 </select>
-                <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:33px">Ack</button>
+                <button type="button" class="row-ack-btn" data-ack-with="${escHtml(String(r.id))}" style="height:var(--ctl-h,33px)">Ack</button>
               </div>
             `}
           </div>
@@ -6188,7 +6225,7 @@ function _drawerHTML(r){
           <div class="field field-compact">
             <span class="lbl">Actions</span>
             <div class="drawer-actions-menu-wrap" style="position:relative;display:inline-block">
-              <button type="button" class="drawer-action-btn" data-actions-menu="${escHtml(String(r.id))}" style="height:33px">
+              <button type="button" class="drawer-action-btn" data-actions-menu="${escHtml(String(r.id))}" style="height:var(--ctl-h,33px)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                 Actions
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-left:2px"><polyline points="6 9 12 15 18 9"/></svg>
@@ -6452,7 +6489,7 @@ function _wireDrawer(row, r, onCollapse){
 // slide-in panel on the right (full-width sheet on phones), so the grid
 // never jumps around. Driven entirely by expandedId: clicking another row
 // swaps the panel, clicking the same row / ✕ / Escape closes it.
-const PANEL_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines']);
+const PANEL_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines', 'support', 'notif', 'starred']);
 function _syncRowPanel(){
   const existing = document.getElementById('rowSidePanel');
   const r = (PANEL_VIEWS.has(currentView) && expandedId != null)
@@ -8227,7 +8264,6 @@ function _renderPrioLinkResults(){
 // program and data are right"). This page is the team-wide queue of tasks
 // nobody has claimed yet, plus an audit trail of what's been acknowledged.
 let _ackTab = 'needs'; // 'needs' | 'done' | 'del'
-let _ackExpandedId = null;
 function renderAcknowledge(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
@@ -8276,122 +8312,73 @@ function renderAcknowledge(){
     _wireAckToggle(list);
     return;
   }
-  // Helper to build one row's HTML — pulled out so both grouped (needs) and
-  // flat (done/del) layouts can reuse it.
-  const buildAckRow = (r) => {
-    const expanded = _ackExpandedId != null && String(_ackExpandedId) === String(r.id);
+  // Grid layout — same boxed table as the Task scopes. The last column
+  // carries each sub-tab's primary action; everything else (star, delete,
+  // field fixes) lives in the side panel.
+  const buildAckTR = (r, i) => {
     const a = acks[r.id];
     const pcol = programColor(r.program);
-    const programHTML = r.program
-      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
-      : '';
-    const typeHTML = r.requestType
-      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
-      : '';
-    const ticketHTML = r.ticket
-      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
-      : '';
-    const createdHTML = r.createdDate
-      ? `<span class="wk-created" title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')}">${escHtml(fmtAbsoluteDate(r.createdDate))}${timeAgo(r.createdDate) ? ' · ' + escHtml(timeAgo(r.createdDate)) : ''}</span>`
-      : '';
-    const ownerHTML = r.owner
-      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
-      : '';
     const isChecked = selectedAckIds.has(r.id);
-    const starBtn = starBtnHTML(r);
-    const trashBtn = `<button type="button" class="ack-del-btn" data-del-mark="${escHtml(String(r.id))}" title="Mark for deletion — checks the deletion box in Smartsheets"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`;
-    const actionHTML = _ackTab === 'del'
-      ? `<span class="ack-del-flag">Marked for deletion</span>
-         ${r.permalink ? `<a class="row-ack-btn del-ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets to delete it — it disappears from War Room on the next refresh" onclick="event.stopPropagation()">Delete in Smartsheets ↗</a>` : ''}
-         <button type="button" class="row-ack-btn unack" data-del-restore="${escHtml(String(r.id))}">Restore</button>`
+    const cls = ['ddl-row', i % 2 ? 'even' : '', isExpandedRow(r.id) ? 'expanded' : ''].filter(Boolean).join(' ');
+    const actionTD = _ackTab === 'del'
+      ? `<td class="ack-act-td">
+           ${r.permalink ? `<a class="row-ack-btn del-ss-link" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open this row in Smartsheets to delete it — it disappears from War Room on the next refresh" onclick="event.stopPropagation()">Delete ↗</a>` : ''}
+           <button type="button" class="row-ack-btn unack" data-del-restore="${escHtml(String(r.id))}">Restore</button>
+         </td>`
       : _ackTab === 'done'
-      ? `<span class="ack-done-info" title="Acknowledged by ${escHtml((a && a.ackedBy) || '')}">✓ ${escHtml((a && a.ackedBy) || 'Claimed')}${a && a.ackedAt ? ' · ' + escHtml(timeAgo(a.ackedAt) || '') : ''}</span>
-         ${starBtn}
-         ${trashBtn}
-         <button type="button" class="row-ack-btn unack" data-ack-undo="${escHtml(String(r.id))}">Un-ack</button>`
-      : `${starBtn}
-         ${trashBtn}
-         <button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>`;
+      ? `<td class="ack-act-td">
+           <span class="ack-done-info" title="Acknowledged by ${escHtml((a && a.ackedBy) || '')}">✓ ${escHtml(ownerFirstName((a && a.ackedBy) || '') || 'Claimed')}${a && a.ackedAt ? ' · ' + escHtml(timeAgo(a.ackedAt) || '') : ''}</span>
+           <button type="button" class="row-ack-btn unack" data-ack-undo="${escHtml(String(r.id))}">Un-ack</button>
+         </td>`
+      : `<td class="ack-act-td">
+           <button type="button" class="row-ack-btn" data-ack-now="${escHtml(String(r.id))}">Acknowledge</button>
+         </td>`;
     return `
-      <div class="row ${expanded ? 'expanded' : ''}" data-ack-row="${escHtml(String(r.id))}">
-        <div class="row-line">
-          ${_ackTab !== 'needs' ? '' : `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk acknowledge"></span>`}
-          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
-          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
-          <span class="wk-row-side">
-            ${typeHTML}
-            ${programHTML}
-            ${ticketHTML}
-            ${createdHTML}
-            ${ownerHTML}
-            ${actionHTML}
-          </span>
-        </div>
-        ${expanded ? _drawerHTML(r) : ''}
-      </div>`;
+      <tr class="${cls}" data-id="${escHtml(String(r.id))}" data-ack-row="${escHtml(String(r.id))}">
+        ${_ackTab === 'needs' ? `<td class="tt-check-td"><span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk acknowledge"></span></td>` : ''}
+        <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+        <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
+        <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+        <td class="tt-created-td c-ticket"><span title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')}">${escHtml(fmtAbsoluteDate(r.createdDate) || '—')}</span></td>
+        <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+        ${actionTD}
+      </tr>`;
   };
-  // For the Needs (Review) tab, group by createdDate-day so the user can
-  // scan today's intake, then yesterday's, etc. Other tabs (done/del) stay
-  // flat since their relevant timestamp is the ack/deletion time, not
-  // createdDate.
-  let bodyHTML = '';
-  if (_ackTab === 'needs') {
-    const groups = new Map();
-    visible.forEach(r => {
-      const k = (r.createdDate || '').slice(0, 10) || 'unknown';
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(r);
-    });
-    const today = new Date().toISOString().slice(0, 10);
-    const yest  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    function dayLabel(k){
-      if (k === 'unknown') return 'No created date';
-      if (k === today) return 'Today';
-      if (k === yest)  return 'Yesterday';
-      try {
-        const d = new Date(k + 'T12:00:00');
-        const daysAgo = Math.floor((Date.now() - d.getTime()) / 86400000);
-        const abs = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-        return `${abs}${daysAgo > 1 && daysAgo < 14 ? ' · ' + daysAgo + ' days ago' : ''}`;
-      } catch { return k; }
-    }
-    // Map iteration preserves insertion order — but `visible` was already
-    // sorted by createdDate desc above, so groups land newest-day first.
-    const sectionsHTML = [];
-    for (const [k, items] of groups) {
-      sectionsHTML.push(`<div class="ack-day">
-        <div class="ack-day-head"><span>${dayLabel(k)}</span><span class="ct">${items.length}</span></div>
-        ${items.map(buildAckRow).join('')}
-      </div>`);
-    }
-    bodyHTML = sectionsHTML.join('');
-  } else {
-    bodyHTML = visible.map(buildAckRow).join('');
-  }
-  list.innerHTML = toggleHTML + bodyHTML;
+  const actionHead = _ackTab === 'del' ? 'Smartsheet' : _ackTab === 'done' ? 'Claimed by' : '';
+  list.innerHTML = toggleHTML + `
+    <div class="ddl-wrap">
+      <div class="ddl-scroll">
+        <table class="ddl-table">
+          <thead><tr>
+            ${_ackTab === 'needs' ? '<th style="width:30px"></th>' : ''}
+            <th class="c-status" style="width:92px">Status</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-ticket" style="width:78px">Created</th>
+            <th class="c-owner" style="width:86px">Owner</th>
+            <th style="width:${_ackTab === 'needs' ? '112px' : '168px'}">${actionHead}</th>
+          </tr></thead>
+          <tbody>${visible.map(buildAckTR).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
   _wireAckToggle(list);
-  list.querySelectorAll('[data-ack-row]').forEach(rowEl => {
-    const id = rowEl.getAttribute('data-ack-row');
-    rowEl.addEventListener('click', (e) => {
-      if (e.target.closest('.drawer')) return;
-      if (e.target.closest('[data-check]')) {
+  list.querySelectorAll('[data-ack-row]').forEach(tr => {
+    const id = tr.getAttribute('data-ack-row');
+    tr.addEventListener('click', (e) => {
+      const check = e.target.closest('[data-check]');
+      if (check) {
         e.stopPropagation();
-        const rid = rows.find(x => String(x.id) === String(id));
-        if (!rid) return;
-        if (selectedAckIds.has(rid.id)) selectedAckIds.delete(rid.id);
-        else selectedAckIds.add(rid.id);
+        const rr = rows.find(x => String(x.id) === String(id));
+        if (!rr) return;
+        if (selectedAckIds.has(rr.id)) selectedAckIds.delete(rr.id);
+        else selectedAckIds.add(rr.id);
         renderBulkBar();
         render();
         return;
       }
-      if (e.target.closest('input, button, a, select, textarea')) return;
-      _ackExpandedId = (_ackExpandedId != null && String(_ackExpandedId) === String(id)) ? null : String(id);
-      render();
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      setExpanded(id);
     });
-    if (_ackExpandedId != null && String(_ackExpandedId) === String(id)) {
-      const r = rows.find(x => String(x.id) === String(id));
-      if (r) _wireDrawer(rowEl, r, () => { _ackExpandedId = null; render(); });
-    }
   });
   list.querySelectorAll('[data-ack-now]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -8416,20 +8403,16 @@ function _wireAckToggle(root){
   root.querySelectorAll('[data-ack-tab]').forEach(b => {
     b.addEventListener('click', () => {
       _ackTab = b.getAttribute('data-ack-tab') || 'needs';
-      _ackExpandedId = null;
       render();
     });
   });
 }
 
 // ----- Starred view -----
-// Team-shared bookmarks, most recently starred first. Rows expand to the
-// full drawer; the ★ button unstars (live snapshot drops it from the list).
-let _starExpandedId = null;
-// Tech Support tab: which state chip is active + which row is open.
+// Team-shared bookmarks, most recently starred first (side panel for edits).
+// Tech Support tab: which state chip is active.
 // 'open' is the default chip — it shows everything except resolved.
 let _supportChip = 'open';
-let _supportExpandedId = null;
 function updateStarredCount(){
   const el = document.getElementById('starredCount');
   if (!el) return;
@@ -9271,70 +9254,48 @@ function renderStarred(){
     list.innerHTML = `<div class="empty">Nothing starred${filterOwner || filterSearch ? ' in this view' : ' yet'}. Tap the <strong>★</strong> on any task — on any tab — to keep it here for quick reference.</div>`;
     return;
   }
-  list.innerHTML = pool.map(r => {
-    const expanded = _starExpandedId != null && String(_starExpandedId) === String(r.id);
-    const closed = _rowClosed(r);
+  // Grid layout — star note rides in the Task cell; edits/unstar in the panel.
+  const bodyRows = pool.map((r, i) => {
     const pcol = programColor(r.program);
-    const programHTML = r.program
-      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
-      : '';
-    const typeHTML = r.requestType
-      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
-      : '';
-    const ticketHTML = r.ticket
-      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
-      : '';
-    const starInfo = (stars[String(r.id)] || {}).starredAt;
-    const starredWhen = starInfo
-      ? `<span class="wk-created" title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '')}</span>`
-      : '';
-    const ownerHTML = r.owner
-      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
-      : '';
-    const ssLink = r.permalink
-      ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
-      : '';
     const starMeta = stars[String(r.id)] || {};
-    const noteHtml = starMeta.note
-      ? `<div class="star-note" title="Star note">📝 ${escHtml(starMeta.note)}</div>`
+    const noteBits = [
+      starMeta.note ? `“${starMeta.note}”` : '',
+      (Array.isArray(starMeta.mentions) && starMeta.mentions.length) ? starMeta.mentions.map(m => '@' + m).join(' ') : ''
+    ].filter(Boolean).join(' · ');
+    const noteFlag = noteBits
+      ? `<span class="tt-flags" title="${escHtml(noteBits)}">📝</span>`
       : '';
-    const mentionsHtml = (Array.isArray(starMeta.mentions) && starMeta.mentions.length)
-      ? `<div class="star-mentions">${starMeta.mentions.map(m => `<span class="star-mention">@${escHtml(m)}</span>`).join('')}</div>`
-      : '';
+    const cls = ['ddl-row', i % 2 ? 'even' : '', _rowClosed(r) ? 'closed' : '', isExpandedRow(r.id) ? 'expanded' : ''].filter(Boolean).join(' ');
+    const starInfo = starMeta.starredAt;
     return `
-      <div class="row ${expanded ? 'expanded' : ''} ${closed ? 'is-closed-star' : ''}" data-star-row="${escHtml(String(r.id))}">
-        <div class="row-line">
-          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
-          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
-          <span class="wk-row-side">
-            ${r.deletion ? `<span class="row-missing" title="Marked for deletion in Smartsheets">DELETION</span>` : ''}
-            ${typeHTML}
-            ${programHTML}
-            ${ticketHTML}
-            ${starredWhen}
-            ${ownerHTML}
-            <span class="wk-quick">
-              ${starBtnHTML(r)}
-              ${ssLink}
-            </span>
-          </span>
-        </div>
-        ${(noteHtml || mentionsHtml) ? `<div class="star-meta-row">${noteHtml}${mentionsHtml}</div>` : ''}
-        ${expanded ? _drawerHTML(r) : ''}
-      </div>`;
+      <tr class="${cls}" data-id="${escHtml(String(r.id))}" data-star-row="${escHtml(String(r.id))}">
+        <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+        <td class="ddl-task"><span class="tt-taskcell"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span>${noteFlag}${r.deletion ? '<span class="sub-del-badge" title="Marked for deletion in Smartsheets">DEL</span>' : ''}</span></td>
+        <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+        <td class="tt-created-td c-ticket"><span title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '—')}</span></td>
+        <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+      </tr>`;
   }).join('');
-  list.querySelectorAll('[data-star-row]').forEach(rowEl => {
-    const id = rowEl.getAttribute('data-star-row');
-    rowEl.addEventListener('click', (e) => {
-      if (e.target.closest('.drawer')) return;
-      if (e.target.closest('input, button, a, select, textarea')) return;
-      _starExpandedId = (_starExpandedId != null && String(_starExpandedId) === String(id)) ? null : String(id);
-      render();
+  list.innerHTML = `
+    <div class="ddl-wrap">
+      <div class="ddl-scroll">
+        <table class="ddl-table">
+          <thead><tr>
+            <th class="c-status" style="width:92px">Status</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-ticket" style="width:96px">Starred</th>
+            <th class="c-owner" style="width:86px">Owner</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  list.querySelectorAll('[data-star-row]').forEach(tr => {
+    const id = tr.getAttribute('data-star-row');
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      setExpanded(id);
     });
-    if (_starExpandedId != null && String(_starExpandedId) === String(id)) {
-      const r = rows.find(x => String(x.id) === String(id));
-      if (r) _wireDrawer(rowEl, r, () => { _starExpandedId = null; render(); });
-    }
   });
 }
 
@@ -9398,65 +9359,51 @@ function renderSupport(){
     _wireSupportChips(list);
     return;
   }
-  // Row rendering — mirrors the Starred view's compact row, with the state
-  // pill on the right and an aging-halo class on the row itself.
-  list.innerHTML = chipHTML + visible.map(r => {
-    const expanded = _supportExpandedId != null && String(_supportExpandedId) === String(r.id);
-    const closed = _rowClosed(r);
+  // Same spreadsheet grid as the Task scopes — one row per ticket, the
+  // support STATE as the leading column, aging in its own column, and the
+  // side panel for edits (state changes live under the panel's Actions).
+  const SUP_STATE_DOT = { unresponded: 'var(--red)', responded: 'var(--amber)', closing: 'var(--pink)', resolved: 'var(--green)' };
+  const bodyRows = visible.map((r, i) => {
     const st = effectiveSupportState(r);
     const ageDays = supportStateAgeDays(r);
     const ageCls = supportAgingClass(r);
     const pcol = programColor(r.program);
-    const programHTML = r.program
-      ? `<span class="row-program" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}">${escHtml(r.program)}</span>`
-      : '';
-    const ticketHTML = r.ticket
-      ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
-      : '';
-    const ownerHTML = r.owner
-      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
-      : '';
-    const ssLink = r.permalink
-      ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
-      : '';
-    const statePill = `<span class="sup-state" data-state="${st}">${escHtml(SUPPORT_STATE_LABEL[st])}</span>`;
-    const agePill = (ageDays != null && st !== 'resolved' && ageCls)
-      ? `<span class="sup-age-pill ${ageCls === 'sup-age-amber' ? 'amber' : ''}" title="Days since this state was set">${ageDays}d</span>`
-      : '';
+    const ageHTML = (ageDays != null && st !== 'resolved')
+      ? `<span class="ddl-left ${ageCls === 'sup-age-red' ? 'overdue' : (ageCls === 'sup-age-amber' ? 'today' : '')}" title="Days since this state was set">${ageDays}d</span>`
+      : '<span style="color:var(--w35)">—</span>';
+    const cls = ['ddl-row', i % 2 ? 'even' : '', isExpandedRow(r.id) ? 'expanded' : ''].filter(Boolean).join(' ');
     return `
-      <div class="row ${expanded ? 'expanded' : ''} ${ageCls} ${closed ? 'is-closed-star' : ''}" data-support-row="${escHtml(String(r.id))}">
-        <div class="row-line">
-          <span class="row-status ${statusClass(r.status)}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>
-          <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
-          <span class="wk-row-side">
-            ${statePill}
-            ${agePill}
-            ${programHTML}
-            ${ticketHTML}
-            ${ownerHTML}
-            <span class="wk-quick">
-              ${starBtnHTML(r)}
-              ${ssLink}
-            </span>
-          </span>
-        </div>
-        ${expanded ? _drawerHTML(r) : ''}
-      </div>`;
+      <tr class="${cls}" data-id="${escHtml(String(r.id))}" data-support-row="${escHtml(String(r.id))}">
+        <td class="ddl-status c-status"><span class="st-dot" style="background:${SUP_STATE_DOT[st] || 'var(--w40)'}"></span><span class="st-lbl">${escHtml(SUPPORT_STATE_LABEL[st])}</span></td>
+        <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
+        <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+        <td>${ageHTML}</td>
+        <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
+        <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+      </tr>`;
   }).join('');
+  list.innerHTML = chipHTML + `
+    <div class="ddl-wrap">
+      <div class="ddl-scroll">
+        <table class="ddl-table">
+          <thead><tr>
+            <th class="c-status" style="width:168px">State</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program</th>
+            <th style="width:58px">Age</th>
+            <th class="c-ticket" style="width:80px">Ticket</th>
+            <th class="c-owner" style="width:86px">Owner</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+    </div>`;
   _wireSupportChips(list);
-  // Row expand wiring — same dance as renderStarred.
-  list.querySelectorAll('[data-support-row]').forEach(rowEl => {
-    const id = rowEl.getAttribute('data-support-row');
-    rowEl.addEventListener('click', (e) => {
-      if (e.target.closest('.drawer')) return;
-      if (e.target.closest('input, button, a, select, textarea')) return;
-      _supportExpandedId = (_supportExpandedId != null && String(_supportExpandedId) === String(id)) ? null : String(id);
-      render();
+  list.querySelectorAll('[data-support-row]').forEach(tr => {
+    const id = tr.getAttribute('data-support-row');
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      setExpanded(id);
     });
-    if (_supportExpandedId != null && String(_supportExpandedId) === String(id)) {
-      const r = rows.find(x => String(x.id) === String(id));
-      if (r) _wireDrawer(rowEl, r, () => { _supportExpandedId = null; render(); });
-    }
   });
 }
 function _wireSupportChips(listEl){
@@ -10200,8 +10147,10 @@ document.querySelectorAll('.view-tab').forEach(b => {
     if (v === 'tasks-umbrella') v = loadTaskScope();
     if (v === currentView) return;
     // Switching views drops any sticky-edited row pins from the previous
-    // view so the new tab's filter applies cleanly.
+    // view so the new tab's filter applies cleanly, and closes the side
+    // panel (its row may not exist in the next view's pool).
     try { _clearStickyEditedOnViewSwitch(); } catch {}
+    expandedId = null;
     currentView = v;
     syncViewTabActive();
     document.body.classList.toggle('view-ack', currentView === 'ack');
