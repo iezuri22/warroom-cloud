@@ -72,17 +72,24 @@
     padding:18px 24px 80px 240px;
     max-width:1400px; margin:0 auto;
   }
+  /* Browse toggle chip — mobile only; desktop keeps the fixed sidebar. */
+  #sbBrowseBtn{ display:none }
   @media (max-width:760px){
-    /* On mobile, drop the sidebar into the flow as a horizontal chip rail
-       at the top. */
+    /* Collapsible drawer: hidden off-canvas until the Browse chip opens it. */
     #sidebar{
-      position:static; width:auto; left:auto; top:auto; bottom:auto;
-      margin:12px 14px 0;
+      left:0; top:0; bottom:0; width:min(300px, 82vw);
+      margin:0; border-radius:0 16px 16px 0;
+      z-index:620; transform:translateX(-105%);
+      transition:transform .22s ease;
+      padding:14px 12px calc(14px + env(safe-area-inset-bottom));
     }
-    #sidebar .sb-list{ display:flex; flex-direction:row; overflow-x:auto; padding-bottom:6px }
-    #sidebar .sb-item{ white-space:nowrap }
-    #sidebar .sb-sep{ display:none }
-    #sidebar .sb-foot{ display:none }
+    body.sb-open #sidebar{ transform:translateX(0); box-shadow:0 12px 40px rgba(33,30,25,.28) }
+    #sbBackdrop{
+      position:fixed; inset:0; z-index:610; background:rgba(28,25,20,.35);
+      opacity:0; pointer-events:none; transition:opacity .18s;
+    }
+    body.sb-open #sbBackdrop{ opacity:1; pointer-events:auto }
+    #sbBrowseBtn{ display:inline-flex }
     #main{ padding-left:24px }
   }
   #sidebar .sb-list{ display:flex; flex-direction:column; gap:3px }
@@ -893,6 +900,10 @@
 <body>
 
 <div id="topbar">
+  <button class="tb-btn" id="sbBrowseBtn" aria-label="Browse lists" aria-expanded="false">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    Browse
+  </button>
   <h1>🎯 Two Meals</h1>
   <span class="week" id="topbarWeek"></span>
   <span class="spacer"></span>
@@ -902,11 +913,37 @@
 </div>
 
 <div id="main">
+  <div id="sbBackdrop"></div>
   <aside id="sidebar">
     <div class="sb-head">Browse</div>
     <div class="sb-list" id="sbList"></div>
     <button class="sb-foot" id="sbAddBtn">+ Manage categories</button>
   </aside>
+  <script>
+  // Mobile browse drawer — toggle chip in the topbar, backdrop tap or list
+  // selection closes it. Listener sits on #sidebar so it survives the
+  // renderSidebar() rebuilds of #sbList. Desktop never opens it (chip hidden).
+  (function(){
+    var btn = document.getElementById('sbBrowseBtn');
+    var bd = document.getElementById('sbBackdrop');
+    var sb = document.getElementById('sidebar');
+    function setOpen(on){
+      document.body.classList.toggle('sb-open', on);
+      if (btn) btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+    if (btn) btn.addEventListener('click', function(){
+      setOpen(!document.body.classList.contains('sb-open'));
+    });
+    if (bd) bd.addEventListener('click', function(){ setOpen(false); });
+    if (sb) sb.addEventListener('click', function(e){
+      var it = e.target && e.target.closest ? e.target.closest('.sb-item') : null;
+      if (it) setOpen(false);
+    });
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') setOpen(false);
+    });
+  })();
+  </script>
   <div id="content">
     <div class="hint" id="contentHint">Two meals. Just two. Could be breakfast, lunch, or dinner — pick what you'll actually commit to this week. Stop scrolling, start cooking.</div>
     <div class="ez-banner" id="ezBanner" hidden>
