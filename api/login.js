@@ -1,6 +1,12 @@
-import { issueCookie } from './_auth.js';
+import { issueCookie, clearCookie } from './_auth.js';
 
 export default async function handler(req, res) {
+  // DELETE = logout (absorbed from the former api/logout.js so the function
+  // count stays under Vercel Hobby's 12-function cap).
+  if (req.method === 'DELETE') {
+    clearCookie(res);
+    return res.status(200).json({ ok: true });
+  }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { password } = req.body || {};

@@ -431,7 +431,9 @@
 
   // Expose manual logout for UI
   window.warroomLogout = async function() {
-    await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+    // Logout lives on the login endpoint as DELETE (api/logout.js was folded
+    // in to stay under Vercel's function cap).
+    await fetch('/api/login', { method: 'DELETE', credentials: 'same-origin' });
     window.location.href = '/login.html';
   };
 
