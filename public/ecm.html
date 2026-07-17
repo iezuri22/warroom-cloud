@@ -3227,10 +3227,13 @@
     cursor: pointer; transition: all .12s;
   }
   .ddl-closed-toggle:hover { color: var(--ink); border-color: var(--w25) }
-  .ddl-scroll { overflow-x: auto; border-radius: 10px; border: 1px solid var(--w10) }
+  .ddl-scroll { border-radius: 10px; border: 1px solid var(--w10); overflow: hidden }
   .ddl-table {
     width: 100%; border-collapse: collapse;
-    font-size: 12.5px; min-width: 640px;
+    font-size: 12.5px;
+    /* Fixed layout + per-column widths + ellipsis on the Task cell = no
+       horizontal scrolling on any screen size. */
+    table-layout: fixed;
     background: var(--bg-elev);
   }
   .ddl-table thead th {
@@ -3258,7 +3261,12 @@
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     margin-right: 7px; vertical-align: middle;
   }
-  .ddl-task { font-weight: 700; color: var(--w95); min-width: 220px }
+  .ddl-task { font-weight: 700; color: var(--w95); overflow: hidden }
+  .tt-title {
+    display: block; min-width: 0; flex: 1 1 auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tt-taskcell { display: flex; align-items: center; gap: 6px; min-width: 0 }
   .ddl-owner, .ddl-due, .ddl-ticket { white-space: nowrap; font-variant-numeric: tabular-nums }
   .ddl-left { white-space: nowrap; font-weight: 800; font-variant-numeric: tabular-nums }
   .ddl-left.overdue { color: var(--red) }
@@ -3280,6 +3288,86 @@
   }
   .ddl-drawer-host { border: none; background: transparent; padding: 0; margin: 0 }
   .ddl-drawer-host .drawer { display: flex; margin-top: 10px }
+
+  /* ===== Task table (spreadsheet layout for the Task scopes) ============= */
+  .tt-table thead th[data-th-sort] { cursor: pointer; user-select: none }
+  .tt-table thead th[data-th-sort]:hover { background: #274a85 }
+  html.light .tt-table thead th[data-th-sort]:hover { background: #24449c }
+  .tt-flags {
+    display: inline-flex; align-items: center; gap: 5px;
+    flex-shrink: 0;
+  }
+  .tt-prog {
+    background: transparent; border: none; padding: 0;
+    font-family: inherit; font-size: 12px; font-weight: 800;
+    letter-spacing: .2px; cursor: pointer;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tt-prog:hover { text-decoration: underline }
+  .tt-owner-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .tt-due-td, .tt-prog-td { white-space: nowrap; overflow: hidden }
+  /* State accents as left cell insets — same language as the Deadlines rows */
+  .tt-row.is-internal td:first-child { box-shadow: inset 3px 0 0 rgba(244,114,182,.55) }
+  .tt-row.is-acked:not(.is-internal) td:first-child { box-shadow: inset 3px 0 0 rgba(74,222,128,.45) }
+  .ddl-row.row-jump-flash td { animation: ecmRowFlash 1.4s ease-out 1 }
+  /* Selected-row tint while its side panel is open */
+  .ddl-row.expanded td { background: rgba(107,168,255,.10) }
+
+  /* Responsive column shedding — the grid never scrolls sideways; lower-
+     priority columns drop out as the screen narrows. */
+  @media (max-width: 760px) {
+    .ddl-table .c-ticket { display: none }
+    .tt-owner-name { display: none }
+    .ddl-table th.c-owner { width: 40px !important; font-size: 0 }
+  }
+  @media (max-width: 500px) {
+    .ddl-table .c-prog { display: none }
+    .ddl-table .st-lbl { display: none }
+    .ddl-table th.c-status { width: 34px !important; font-size: 0 }
+    .ddl-table thead th, .ddl-table tbody td { padding-left: 8px; padding-right: 8px }
+  }
+
+  /* ===== Row side panel ================================================== */
+  .row-side-panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(480px, 100vw);
+    z-index: 400;
+    background: var(--bg-elev);
+    border-left: 1px solid var(--w14);
+    box-shadow: -20px 0 60px rgba(0,0,0,.45);
+    display: flex; flex-direction: column;
+    animation: rspSlideIn .16s ease-out;
+  }
+  @keyframes rspSlideIn {
+    from { transform: translateX(24px); opacity: .4 }
+    to   { transform: translateX(0); opacity: 1 }
+  }
+  .rsp-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--w08);
+    flex-shrink: 0;
+  }
+  .rsp-title {
+    flex: 1; min-width: 0;
+    font-size: 13.5px; font-weight: 800; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .rsp-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+    background: transparent; border: 1px solid var(--w10);
+    color: var(--w55); cursor: pointer; text-decoration: none;
+    font-size: 12px;
+    transition: all .12s;
+  }
+  .rsp-icon:hover { color: var(--ink); border-color: var(--w25) }
+  .rsp-body { flex: 1; overflow-y: auto; padding: 14px 16px 20px }
+  .rsp-drawer-host { border: none; background: transparent; padding: 0; margin: 0 }
+  .rsp-drawer-host .drawer { display: flex; margin-top: 0 }
 
   /* ===== Hard deadlines ================================================== */
   .due-hard-wrap { display: flex; gap: 6px; align-items: center }
@@ -5465,7 +5553,7 @@ function jumpToRow(rowId){
   expandedId = id;
   render();
   setTimeout(() => {
-    const row = document.querySelector(`.row[data-id="${id}"], .dr-card[data-id="${id}"]`);
+    const row = document.querySelector(`[data-task-row="${id}"], [data-ddl-row="${id}"], .dr-card[data-id="${id}"]`);
     if (row) {
       row.scrollIntoView({ behavior: 'smooth', block: 'center' });
       // Flash highlight so the user can see exactly where they landed.
@@ -6123,7 +6211,7 @@ function _drawerHTML(r){
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   Mark complete
                 </button>` : ''}
-                ${currentView !== 'all' && canPushToMyDay() && !isClosedStatus ? `
+                ${canPushToMyDay() && !isClosedStatus ? `
                 <button type="button" class="drawer-action-btn push" data-push-myday="${escHtml(String(r.id))}" title="Adds this task to the top of your Personal priority list" style="justify-content:flex-start;width:100%">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                   Push to my priorities
@@ -6359,6 +6447,55 @@ function _wireDrawer(row, r, onCollapse){
     }));
 }
 
+// ---- Row side panel ----
+// Table views don't expand rows in place any more — the drawer opens in a
+// slide-in panel on the right (full-width sheet on phones), so the grid
+// never jumps around. Driven entirely by expandedId: clicking another row
+// swaps the panel, clicking the same row / ✕ / Escape closes it.
+const PANEL_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines']);
+function _syncRowPanel(){
+  const existing = document.getElementById('rowSidePanel');
+  const r = (PANEL_VIEWS.has(currentView) && expandedId != null)
+    ? rows.find(x => String(x.id) === String(expandedId))
+    : null;
+  if (!r) {
+    if (existing) existing.remove();
+    document.body.classList.remove('has-row-panel');
+    return;
+  }
+  let panel = existing;
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'rowSidePanel';
+    panel.className = 'row-side-panel';
+    document.body.appendChild(panel);
+  }
+  const ssLink = r.permalink
+    ? `<a class="rsp-icon" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+    : '';
+  panel.innerHTML = `
+    <div class="rsp-head">
+      <span class="rsp-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '(untitled)')}</span>
+      ${starBtnHTML(r)}
+      ${ssLink}
+      <button type="button" class="rsp-icon rsp-close" data-rsp-close title="Close (Esc)">✕</button>
+    </div>
+    <div class="rsp-body">
+      <div class="row expanded rsp-drawer-host" data-id="${escHtml(String(r.id))}">${_drawerHTML(r)}</div>
+    </div>`;
+  panel.querySelector('[data-rsp-close]').addEventListener('click', () => setExpanded(r.id));
+  const host = panel.querySelector('.rsp-drawer-host');
+  _wireDrawer(host, r, () => setExpanded(r.id));
+  document.body.classList.add('has-row-panel');
+}
+// Escape closes the panel — but only when no modal is sitting on top of it.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('rowSidePanel')) return;
+  if (document.querySelector('.star-modal-bg') || document.querySelector('.lr-backdrop.show')) return;
+  if (expandedId != null) setExpanded(expandedId);
+});
+
 // True when render was called while user was editing a drawer field. The
 // blur handler in _wireDrawer triggers a deferred render after pushField
 // finishes so the UI catches up without losing the active edit.
@@ -6382,6 +6519,7 @@ function render(){
   renderTaskScopeStrip();
   renderStatusBar();
   renderDayFocus();
+  _syncRowPanel();
   updateNeedsAckDot();
   renderBulkBar();
   updateNeedsNotifDot();
@@ -6438,15 +6576,18 @@ function render(){
     list.innerHTML = `<div class="empty">No rows match. <strong>Try clearing filters.</strong></div>`;
     return;
   }
-  list.innerHTML = '';
-  pool.forEach(r => {
-    const row = document.createElement('div');
-    row.className = `row ${isExpandedRow(r.id) ? 'expanded' : ''}`;
-    row.dataset.id = r.id;
-    // Single-line layout matching the Weekly view: status · title · meta
-    // cluster on the right · quick actions. The drawer still opens below.
-    const sCls = statusClass(r.status);
-    const statusHTML = `<span class="row-status ${sCls}">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span>`;
+  // ===== Spreadsheet-style task table =====
+  // Boxed-grid layout matching the Deadlines view (the clean "Excel"
+  // document look the team standardized on). Every card-era interaction is
+  // preserved: click a row to expand the shared drawer (colspan row),
+  // checkbox bulk-select, program click-to-filter, quick actions, linked
+  // badge. Column headers with data-th-sort drive the same sortBy/sortDir
+  // state as the topbar dropdown.
+  const sortArrow = k => sortBy === k ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
+  const bodyRows = pool.map((r, i) => {
+    const trClasses = ['ddl-row', 'tt-row'];
+    if (i % 2) trClasses.push('even');
+    if (isExpandedRow(r.id)) trClasses.push('expanded');
     const isClosedStatus = r.status === 'Completed' || r.status === 'Not feasible - close ticket';
     const rowInternal = isInternalRow(r);
     const missingIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
@@ -6456,11 +6597,10 @@ function render(){
       ? `<span class="row-ticket">#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>`
       : (rowInternal ? '' : `<span class="row-missing" title="No ticket number">${missingIcon}Missing</span>`);
     const pcol = programColor(r.program);
+    // Program reads as colored text (no pill) — cleaner in a grid; still a
+    // click-to-filter button.
     const programHTML = r.program
-      ? `<button type="button" class="row-program wk-prog-tag" data-all-prog="${escHtml(r.program)}" style="background:${pcol.bg};border-color:${pcol.bd};color:${pcol.fg}" title="Filter to ${escHtml(r.program)}">${escHtml(r.program)}</button>`
-      : '';
-    const typeHTML = r.requestType
-      ? `<span class="dr-type ${/report/i.test(r.requestType) ? 'report' : ''}">${escHtml(r.requestType)}</span>`
+      ? `<button type="button" class="tt-prog" data-all-prog="${escHtml(r.program)}" style="color:${pcol.fg}" title="Filter to ${escHtml(r.program)}">${escHtml(r.program)}</button>`
       : '';
     // One date badge: closed rows show the completion (or red MISSING),
     // open rows show the due-date pill with escalating urgency colors.
@@ -6483,45 +6623,33 @@ function render(){
       const hard = isHardRow(r);
       const cls = (days < 0 ? 'overdue' : (days <= 2 ? 'soon' : '')) + (hard ? ' hard' : '');
       const flagIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`;
-      return `<span class="row-sub-due ${cls}" title="${hard ? 'HARD deadline — Notion email reminders active · ' : ''}Due ${escHtml(fmtAbsoluteDate(r.dueDate) || r.dueDate)}">${hard ? HARD_LOCK_ICON : flagIcon}${escHtml(fmtAbsoluteDate(r.dueDate))} · ${escHtml(_wkRelLabel(d))}</span>`;
+      // Compact relative label — the exact date lives in the tooltip and the
+      // side panel, so the cell never overflows its column.
+      const rel = days < 0 ? `${Math.abs(days)}d late` : days === 0 ? 'today' : days === 1 ? 'tmrw' : `in ${days}d`;
+      return `<span class="row-sub-due ${cls}" title="${hard ? 'HARD deadline — Notion email reminders active · ' : ''}Due ${escHtml(fmtAbsoluteDate(r.dueDate) || r.dueDate)}">${hard ? HARD_LOCK_ICON : flagIcon}${escHtml(rel)}</span>`;
     })();
     // Ack state for this row
     const ack = acks[r.id];
-    if (ack) row.classList.add('is-acked');
+    if (ack) trClasses.push('is-acked');
     const isInternal = !!internalFlags[r.id];
-    if (isInternal) row.classList.add('is-internal');
+    if (isInternal) trClasses.push('is-internal');
     const internalBadgeHTML = isInternal
       ? `<span class="row-internal-badge" title="Internal only — not customer-facing"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Internal</span>`
       : '';
     const deletionBadgeHTML = r.deletion
       ? `<span class="row-missing" title="Marked for deletion in Smartsheets">DELETION</span>`
       : '';
-    const isChecked = selectedAckIds.has(r.id);
-    const checkboxHTML = `<span class="row-check ${isChecked ? 'checked' : ''}" data-check="${escHtml(String(r.id))}" title="Select for bulk ack"></span>`;
-    // Created date — compact, muted; fresh items (≤2 days) flip amber so
-    // today's incoming work still pops.
-    const createdHTML = (() => {
-      if (!r.createdDate) return '';
-      const abs = fmtAbsoluteDate(r.createdDate);
-      const rel = timeAgo(r.createdDate);
-      const ageDays = (() => {
-        try {
-          const t = new Date(r.createdDate).getTime();
-          if (!t) return 999;
-          return (Date.now() - t) / 86400000;
-        } catch { return 999; }
-      })();
-      const calIcon = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
-      return `<span class="wk-created${ageDays <= 2 ? ' fresh' : ''}" title="Created ${escHtml(abs || r.createdDate)}${rel ? ' · ' + escHtml(rel) : ''}">${calIcon}${escHtml(abs)}</span>`;
-    })();
+    // (Created / Type / bulk-check / per-row quick actions dropped from the
+    // grid — fewer columns means no horizontal scroll. Everything they did
+    // lives in the side panel now.)
     // Weekly-priority dots — tooltip carries the titles.
     const rowPrios = prioritiesForRow(r.id);
     const prioDots = rowPrios.length
       ? `<span class="wk-prio-dots" title="${escHtml(rowPrios.map(p => p.title).join(' · '))}">${rowPrios.map(p => `<span class="pd" style="background:${prioColorVar(p)}"></span>`).join('')}</span>`
       : '';
     const ownerHTML = r.owner
-      ? `<span class="wk-owner" style="background:${ownerColor(r.owner)}" title="${escHtml(r.owner)}">${escHtml(ownerInitials(r.owner))}</span>`
-      : '';
+      ? `<span title="${escHtml(r.owner)}"><span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span><span class="tt-owner-name">${escHtml(ownerFirstName(r.owner))}</span></span>`
+      : '<span style="color:var(--w35)">—</span>';
     // Subitem badge — done/total across manual + nested-row children.
     // Clicking the row expands the drawer where the panel lives.
     const _subs = subsForParent(r.id);
@@ -6550,67 +6678,52 @@ function render(){
           ${peerIds.length}
         </button>`
       : '';
-    const quickHTML = `
-      <span class="wk-quick">
-        ${starBtnHTML(r)}
-        ${!isClosedStatus ? `<button type="button" class="q-done" data-row-done="${escHtml(String(r.id))}" title="Mark complete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>` : ''}
-        ${!isClosedStatus && canPushToMyDay() ? `<button type="button" class="q-push" data-row-push="${escHtml(String(r.id))}" title="Push to my Personal priorities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>` : ''}
-        ${r.permalink ? `<a href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
-      </span>`;
-    row.innerHTML = `
-      <div class="row-line">
-        ${checkboxHTML}
-        ${statusHTML}
-        <span class="row-text" title="${escHtml(r.task)}">${escHtml(r.task)}</span>
-        <span class="wk-row-side">
-          ${deletionBadgeHTML}
-          ${internalBadgeHTML}
-          ${subBadgeHTML}
-          ${idleHTML}
-          ${linkedHTML}
-          ${prioDots}
-          ${typeHTML}
-          ${programHTML}
-          ${ticketHTML}
-          ${createdHTML}
-          ${dateBadgeHTML}
-          ${ownerHTML}
-          ${quickHTML}
-        </span>
+    const flagsHTML = [deletionBadgeHTML, internalBadgeHTML, subBadgeHTML, idleHTML, linkedHTML, prioDots]
+      .filter(Boolean).join('');
+    return `
+      <tr class="${trClasses.join(' ')}" data-id="${escHtml(String(r.id))}" data-task-row="${escHtml(String(r.id))}">
+        <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+        <td class="ddl-task"><span class="tt-taskcell"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span>${flagsHTML ? `<span class="tt-flags">${flagsHTML}</span>` : ''}</span></td>
+        <td class="tt-prog-td c-prog">${programHTML}</td>
+        <td class="ddl-ticket c-ticket">${ticketHTML}</td>
+        <td class="tt-due-td">${dateBadgeHTML}</td>
+        <td class="ddl-owner c-owner">${ownerHTML}</td>
+      </tr>`;
+  }).join('');
+  list.innerHTML = `
+    <div class="ddl-wrap tt-wrap">
+      <div class="ddl-scroll">
+        <table class="ddl-table tt-table">
+          <thead><tr>
+            <th class="c-status" style="width:92px" data-th-sort="status" title="Sort by status">Status${sortArrow('status')}</th>
+            <th data-th-sort="name" title="Sort by task name">Task${sortArrow('name')}</th>
+            <th class="c-prog" style="width:100px">Program</th>
+            <th class="c-ticket" style="width:80px" data-th-sort="ticket" title="Sort by ticket #">Ticket${sortArrow('ticket')}</th>
+            <th style="width:112px">Due / Done</th>
+            <th class="c-owner" style="width:86px">Owner</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
       </div>
-${_drawerHTML(r)}
-    `;
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.drawer')) return; // clicks inside the drawer don't toggle
-      // Checkbox: toggle selection without expanding
-      if (e.target.closest('[data-check]')) {
-        e.stopPropagation();
-        if (selectedAckIds.has(r.id)) selectedAckIds.delete(r.id);
-        else selectedAckIds.add(r.id);
-        renderBulkBar();
-        render();
-        return;
-      }
-      // Inline ack button on the row head (only shown in ack view)
-      if (e.target.closest('[data-ack]')) {
-        e.stopPropagation();
-        handleAck(r.id);
-        return;
-      }
-      // Quick actions on the row line
-      if (e.target.closest('[data-row-done]')) {
-        e.stopPropagation();
-        openCompleteRowModal(r.id);
-        return;
-      }
-      const pushBtn = e.target.closest('[data-row-push]');
-      if (pushBtn) {
-        e.stopPropagation();
-        pushBtn.disabled = true;
-        pushRowToMyDay(r.id).finally(() => { pushBtn.disabled = false; });
-        return;
-      }
-      // Program tag → set the All-view program filter (synced with topbar)
+    </div>`;
+  // Column-header sorting — same state as the topbar Sort dropdown.
+  list.querySelectorAll('[data-th-sort]').forEach(th => th.addEventListener('click', () => {
+    const k = th.getAttribute('data-th-sort');
+    if (sortBy === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    else { sortBy = k; sortDir = 'asc'; }
+    try {
+      localStorage.setItem('ecm-sort-by', sortBy);
+      localStorage.setItem('ecm-sort-dir', sortDir);
+    } catch {}
+    syncSortUI();
+    render();
+  }));
+  list.querySelectorAll('[data-task-row]').forEach(tr => {
+    const rid = tr.getAttribute('data-task-row');
+    const r = pool.find(x => String(x.id) === String(rid));
+    if (!r) return;
+    tr.addEventListener('click', (e) => {
+      // Program cell → set the All-view program filter (synced with topbar)
       const progBtn = e.target.closest('[data-all-prog]');
       if (progBtn) {
         e.stopPropagation();
@@ -6628,10 +6741,9 @@ ${_drawerHTML(r)}
         openLinkedRowsModal(linkedBtn.getAttribute('data-linked'));
         return;
       }
+      if (e.target.closest('button, a, input, select, textarea')) return;
       setExpanded(r.id);
     });
-    if (isExpandedRow(r.id)) _wireDrawer(row, r, () => setExpanded(r.id));
-    list.appendChild(row);
   });
 }
 
@@ -9040,7 +9152,6 @@ function exportVisitsPdf(scope){
 // spreadsheet-style table: overdue first, then soonest due, closed tucked
 // behind a toggle. Rows expand into the shared drawer for edits.
 let _ddlShowClosed = false;
-let _ddlExpandedId = null;
 function updateDeadlinesCount(){
   const el = document.getElementById('deadlinesCount');
   if (!el) return;
@@ -9099,42 +9210,34 @@ function renderDeadlines(){
     const isClosed = _rowClosed(r);
     const rowCls = [
       i % 2 ? 'even' : '',
-      isClosed ? 'closed' : (days != null && days < 0 ? 'overdue' : (days === 0 ? 'today' : ''))
+      isClosed ? 'closed' : (days != null && days < 0 ? 'overdue' : (days === 0 ? 'today' : '')),
+      isExpandedRow(r.id) ? 'expanded' : ''
     ].filter(Boolean).join(' ');
     const pc = programColor(r.program);
-    const expanded = _ddlExpandedId != null && String(_ddlExpandedId) === String(r.id);
-    const drawerTr = expanded ? `
-      <tr class="ddl-drawer-tr"><td colspan="8">
-        <div class="row expanded ddl-drawer-host" data-id="${escHtml(String(r.id))}">${_drawerHTML(r)}</div>
-      </td></tr>` : '';
     return `
-      <tr class="ddl-row ${rowCls} ${expanded ? 'expanded' : ''}" data-ddl-row="${escHtml(String(r.id))}">
-        <td class="ddl-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span>${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</td>
-        <td class="ddl-task">${escHtml(r.task || '')}</td>
-        <td class="ddl-prog"><span style="color:${pc.fg};font-weight:700">${escHtml(r.program || '')}</span></td>
-        <td class="ddl-owner">${escHtml(ownerFirstName(r.owner) || '—')}</td>
+      <tr class="ddl-row ${rowCls}" data-id="${escHtml(String(r.id))}" data-ddl-row="${escHtml(String(r.id))}">
+        <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+        <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span></td>
+        <td class="ddl-prog c-prog"><span style="color:${pc.fg};font-weight:700">${escHtml(r.program || '')}</span></td>
         <td class="ddl-due">${escHtml(fmtAbsoluteDate(r.dueDate) || '—')}</td>
         ${leftCell(r)}
-        <td class="ddl-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
-        <td class="ddl-tools">
-          <button type="button" class="ddl-tool" data-ddl-unlock="${escHtml(String(r.id))}" title="Remove the hard-deadline lock — reminders stop">${HARD_LOCK_ICON}</button>
-          ${r.permalink ? `<a class="ddl-tool" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
-        </td>
-      </tr>${drawerTr}`;
+        <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+      </tr>`;
   }).join('');
   list.innerHTML = `
     <div class="ddl-wrap">
       <div class="ddl-head-row">
         <span class="ddl-title">Hard deadline commitments</span>
-        <span class="ddl-sub">Overdue first · reminders go out at 3d, 1d, day-of, and daily while late</span>
+        <span class="ddl-sub">Overdue first · reminders go out at 3d, 1d, day-of, and daily while late · click a row to edit or unlock</span>
         ${closed.length ? `<button type="button" class="ddl-closed-toggle" id="ddlClosedToggle">${_ddlShowClosed ? 'Hide' : 'Show'} ${closed.length} completed</button>` : ''}
       </div>
       <div class="ddl-scroll">
         <table class="ddl-table">
           <thead><tr>
-            <th style="width:90px">Status</th><th>Task</th><th style="width:110px">Program</th>
-            <th style="width:80px">Owner</th><th style="width:80px">Due</th><th style="width:76px">Left</th>
-            <th style="width:80px">Ticket</th><th style="width:64px"></th>
+            <th class="c-status" style="width:92px">Status</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program</th>
+            <th style="width:78px">Due</th><th style="width:74px">Left</th>
+            <th class="c-owner" style="width:86px">Owner</th>
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
@@ -9142,23 +9245,13 @@ function renderDeadlines(){
     </div>`;
   const closedToggle = list.querySelector('#ddlClosedToggle');
   if (closedToggle) closedToggle.addEventListener('click', () => { _ddlShowClosed = !_ddlShowClosed; render(); });
-  list.querySelectorAll('[data-ddl-unlock]').forEach(b => b.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleHardDeadline(b.getAttribute('data-ddl-unlock'));
-  }));
   list.querySelectorAll('[data-ddl-row]').forEach(tr => {
     const id = tr.getAttribute('data-ddl-row');
     tr.addEventListener('click', (e) => {
       if (e.target.closest('button, a, input, select, textarea')) return;
-      _ddlExpandedId = (_ddlExpandedId != null && String(_ddlExpandedId) === String(id)) ? null : String(id);
-      render();
+      setExpanded(id);
     });
   });
-  const host = list.querySelector('.ddl-drawer-host');
-  if (host) {
-    const r = rows.find(x => String(x.id) === String(_ddlExpandedId));
-    if (r) _wireDrawer(host, r, () => { _ddlExpandedId = null; render(); });
-  }
 }
 
 function renderStarred(){
