@@ -3376,34 +3376,66 @@
   .rsp-body .internal-toggle { height: 38px }
   .rsp-drawer-host { border: none; background: transparent; padding: 0; margin: 0 }
   .rsp-drawer-host .drawer { display: flex; margin-top: 0; gap: 13px }
-  /* Minimal panel treatment: bigger type, quieter chrome. Fields read as
-     soft fills with no border until you interact with them. */
+  /* Minimal panel treatment: bigger type, crisp document chrome — plain
+     surfaces with hairline borders (same language as the grid), no gray
+     fills, no duplicate controls. */
   .rsp-title { font-size: 14.5px }
   .rsp-body .input, .rsp-body .textarea, .rsp-body .select {
     font-size: 14px;
-    background: var(--w04);
-    border-color: transparent;
+    background: transparent;
+    border-color: var(--w10);
     padding: 8px 11px;
   }
   .rsp-body .select { background-position: right 10px center }
   .rsp-body .input:hover, .rsp-body .textarea:hover, .rsp-body .select:hover {
-    border-color: var(--w14);
+    border-color: var(--w22);
   }
   .rsp-body .input:focus, .rsp-body .textarea:focus, .rsp-body .select:focus {
     border-color: rgba(74,158,255,.55);
-    background: var(--w06);
   }
   .rsp-body .field .lbl { font-size: 10.5px; color: var(--w40); font-weight: 800 }
   .rsp-body .field-row { gap: 11px }
-  .rsp-body .internal-toggle { border-color: transparent; background: var(--w04); font-size: 13px; height: 36px }
-  .rsp-body .internal-toggle:hover { border-color: var(--w14) }
+  .rsp-body .internal-toggle { border-color: var(--w10); background: transparent; font-size: 13px }
+  .rsp-body .internal-toggle:hover { border-color: var(--w22) }
   .rsp-body .drawer-action-btn, .rsp-body .row-ack-btn { font-size: 12px }
-  .rsp-body .field-collapsible summary { font-size: 12px }
-  .rsp-body .sub-row { font-size: 13.5px; border-color: transparent }
-  .rsp-body .sub-add input { font-size: 13.5px; border-color: transparent; background: var(--w04) }
+  .rsp-body .sub-row { font-size: 13.5px; border-color: transparent; background: var(--w03) }
+  .rsp-body .sub-add input { font-size: 13.5px; border-color: var(--w10); background: transparent }
   .rsp-body .sub-add input:focus { border-color: rgba(167,139,250,.5) }
   .rsp-body .sub-title { font-size: 13.5px }
-  .rsp-body .textarea { min-height: 60px }
+  .rsp-body .textarea { min-height: 56px }
+  /* The panel header already has Smartsheet + close — the drawer's own foot
+     buttons are noise here. Keep only the "Saved to Smartsheets" status. */
+  .rsp-body .drawer-foot .ss-link,
+  .rsp-body .drawer-foot button[data-collapse] { display: none }
+  .rsp-body .drawer-foot { margin-top: 0; justify-content: flex-start }
+  /* Outcome + subitem controls: quiet text until hovered */
+  .rsp-body .field-collapsible > summary {
+    background: transparent; border-color: transparent;
+    padding: 4px 2px; font-size: 11.5px;
+  }
+  .rsp-body .field-collapsible > summary:hover { color: var(--ink) }
+  .rsp-body .field-collapsible[open] > summary { border-color: transparent }
+  .rsp-body .sub-mini-btn { background: transparent; border-color: transparent; color: var(--w50) }
+  .rsp-body .sub-mini-btn:hover { border-color: rgba(167,139,250,.45); background: transparent; color: var(--ink) }
+  .rsp-body .sub-panel { border-top-color: var(--w06) }
+
+  /* Dev/Reports pipeline sections */
+  .dev-stage { margin-bottom: 20px }
+  .dev-stage-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 2px 8px;
+  }
+  .dev-stage-head h3 {
+    margin: 0;
+    font-size: 12px; font-weight: 900; letter-spacing: 1.1px;
+    text-transform: uppercase; color: var(--w85);
+  }
+  .dev-stage-head .ct {
+    font-size: 11px; font-weight: 800;
+    padding: 1px 8px; border-radius: 99px;
+    background: var(--w06); color: var(--w60);
+  }
+  .dev-stage-head .hint { font-size: 11px; font-weight: 600; color: var(--w40) }
 
   /* ===== Hard deadlines ================================================== */
   .due-hard-wrap { display: flex; gap: 6px; align-items: center }
@@ -6533,6 +6565,23 @@ document.addEventListener('keydown', (e) => {
   if (expandedId != null) setExpanded(expandedId);
 });
 
+// ---- Age column (shared by every grid view) ----
+// Days since the row was created. Quiet under two weeks, amber at 14d,
+// red at 30d — closed rows stay muted since their age no longer matters.
+function _ageDays(r){
+  const t = Date.parse(r.createdDate || '');
+  if (!t) return null;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+function _ageCellTD(r){
+  const d = _ageDays(r);
+  if (d == null) return '<td class="ddl-left c-age" style="color:var(--w35);font-weight:600">—</td>';
+  const cls = _rowClosed(r) ? '' : (d >= 30 ? 'overdue' : d >= 14 ? 'today' : '');
+  const style = (!cls || _rowClosed(r)) ? ' style="color:var(--w50);font-weight:600"' : '';
+  return `<td class="ddl-left c-age ${cls}"${style} title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')} · ${d} day${d === 1 ? '' : 's'} ago">${d}d</td>`;
+}
+const AGE_TH = '<th class="c-age" style="width:56px">Age</th>';
+
 // True when render was called while user was editing a drawer field. The
 // blur handler in _wireDrawer triggers a deferred render after pushField
 // finishes so the UI catches up without losing the active edit.
@@ -6621,7 +6670,7 @@ function render(){
   // badge. Column headers with data-th-sort drive the same sortBy/sortDir
   // state as the topbar dropdown.
   const sortArrow = k => sortBy === k ? (sortDir === 'desc' ? ' ▾' : ' ▴') : '';
-  const bodyRows = pool.map((r, i) => {
+  const buildTaskTR = (r, i) => {
     const trClasses = ['ddl-row', 'tt-row'];
     if (i % 2) trClasses.push('even');
     if (isExpandedRow(r.id)) trClasses.push('expanded');
@@ -6723,12 +6772,12 @@ function render(){
         <td class="ddl-task"><span class="tt-taskcell"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span>${flagsHTML ? `<span class="tt-flags">${flagsHTML}</span>` : ''}</span></td>
         <td class="tt-prog-td c-prog">${programHTML}</td>
         <td class="ddl-ticket c-ticket">${ticketHTML}</td>
+        ${_ageCellTD(r)}
         <td class="tt-due-td">${dateBadgeHTML}</td>
         <td class="ddl-owner c-owner">${ownerHTML}</td>
       </tr>`;
-  }).join('');
-  list.innerHTML = `
-    <div class="ddl-wrap tt-wrap">
+  };
+  const tableFor = (items) => `
       <div class="ddl-scroll">
         <table class="ddl-table tt-table">
           <thead><tr>
@@ -6736,13 +6785,44 @@ function render(){
             <th data-th-sort="name" title="Sort by task name">Task${sortArrow('name')}</th>
             <th class="c-prog" style="width:100px">Program</th>
             <th class="c-ticket" style="width:80px" data-th-sort="ticket" title="Sort by ticket #">Ticket${sortArrow('ticket')}</th>
+            ${AGE_TH}
             <th style="width:112px">Due / Done</th>
             <th class="c-owner" style="width:86px">Owner</th>
           </tr></thead>
-          <tbody>${bodyRows}</tbody>
+          <tbody>${items.map(buildTaskTR).join('')}</tbody>
         </table>
-      </div>
-    </div>`;
+      </div>`;
+  let gridHTML;
+  if (currentView === 'dev') {
+    // Dedicated Dev/Reports pipeline — sectioned by where each item sits in
+    // the dev flow. Last stop: verify in prod, then mark Completed to close.
+    const DEV_STAGES = [
+      ['Open', ['Requested', 'To-Do', 'In Progress', 'Pending IR'], 'not yet with dev'],
+      ['Ticket Sent', ['Ticket Sent'], 'waiting on dev to pick up'],
+      ['Discussed with Dev', ['Discussed with Dev'], 'in dev\'s hands'],
+      ['Verified on PRE / UAT', ['Verified on PRE', 'Verified on UAT'], 'verify in prod next → mark Completed to close'],
+      ['Completed', ['Completed'], 'verified in prod & closed'],
+      ['Parked', ['On Hold', 'Waitlisted', 'Further discussion', 'Not feasible - close ticket'], '']
+    ];
+    const staged = new Set(DEV_STAGES.flatMap(s => s[1]));
+    const sections = DEV_STAGES.map(([label, statuses, hint]) => ({
+      label, hint, items: pool.filter(r => statuses.includes(r.status))
+    }));
+    const leftovers = pool.filter(r => !staged.has(r.status));
+    if (leftovers.length) sections.push({ label: 'Other', hint: '', items: leftovers });
+    gridHTML = sections.filter(s => s.items.length).map(s => `
+      <div class="dev-stage">
+        <div class="dev-stage-head">
+          <h3>${escHtml(s.label)}</h3>
+          <span class="ct">${s.items.length}</span>
+          ${s.hint ? `<span class="hint">${escHtml(s.hint)}</span>` : ''}
+        </div>
+        ${tableFor(s.items)}
+      </div>`).join('');
+  } else {
+    gridHTML = tableFor(pool);
+  }
+  list.innerHTML = `<div class="ddl-wrap tt-wrap">${gridHTML}</div>`;
   // Column-header sorting — same state as the topbar Sort dropdown.
   list.querySelectorAll('[data-th-sort]').forEach(th => th.addEventListener('click', () => {
     const k = th.getAttribute('data-th-sort');
@@ -8339,7 +8419,7 @@ function renderAcknowledge(){
         <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
         <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
         <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
-        <td class="tt-created-td c-ticket"><span title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')}">${escHtml(fmtAbsoluteDate(r.createdDate) || '—')}</span></td>
+        ${_ageCellTD(r)}
         <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
         ${actionTD}
       </tr>`;
@@ -8353,7 +8433,7 @@ function renderAcknowledge(){
             ${_ackTab === 'needs' ? '<th style="width:30px"></th>' : ''}
             <th class="c-status" style="width:92px">Status</th><th>Task</th>
             <th class="c-prog" style="width:104px">Program</th>
-            <th class="c-ticket" style="width:78px">Created</th>
+            ${AGE_TH}
             <th class="c-owner" style="width:86px">Owner</th>
             <th style="width:${_ackTab === 'needs' ? '112px' : '168px'}">${actionHead}</th>
           </tr></thead>
@@ -9202,6 +9282,7 @@ function renderDeadlines(){
         <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
         <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span></td>
         <td class="ddl-prog c-prog"><span style="color:${pc.fg};font-weight:700">${escHtml(r.program || '')}</span></td>
+        ${_ageCellTD(r)}
         <td class="ddl-due">${escHtml(fmtAbsoluteDate(r.dueDate) || '—')}</td>
         ${leftCell(r)}
         <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
@@ -9219,6 +9300,7 @@ function renderDeadlines(){
           <thead><tr>
             <th class="c-status" style="width:92px">Status</th><th>Task</th>
             <th class="c-prog" style="width:104px">Program</th>
+            ${AGE_TH}
             <th style="width:78px">Due</th><th style="width:74px">Left</th>
             <th class="c-owner" style="width:86px">Owner</th>
           </tr></thead>
@@ -9272,6 +9354,7 @@ function renderStarred(){
         <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
         <td class="ddl-task"><span class="tt-taskcell"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span>${noteFlag}${r.deletion ? '<span class="sub-del-badge" title="Marked for deletion in Smartsheets">DEL</span>' : ''}</span></td>
         <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+        ${_ageCellTD(r)}
         <td class="tt-created-td c-ticket"><span title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '—')}</span></td>
         <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
       </tr>`;
@@ -9283,6 +9366,7 @@ function renderStarred(){
           <thead><tr>
             <th class="c-status" style="width:92px">Status</th><th>Task</th>
             <th class="c-prog" style="width:104px">Program</th>
+            ${AGE_TH}
             <th class="c-ticket" style="width:96px">Starred</th>
             <th class="c-owner" style="width:86px">Owner</th>
           </tr></thead>
