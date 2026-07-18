@@ -3442,6 +3442,48 @@
   .rsp-body .sub-mini-btn:hover { border-color: rgba(167,139,250,.45); background: transparent; color: var(--ink) }
   .rsp-body .sub-panel { border-top-color: var(--w06) }
 
+  /* Column-filter funnels (Excel autofilter) */
+  .th-filter {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; margin-left: 5px;
+    border-radius: 4px; vertical-align: middle;
+    background: transparent; border: none;
+    color: rgba(255,255,255,.45); cursor: pointer;
+    transition: color .12s, background .12s;
+  }
+  .th-filter:hover { color: #fff; background: rgba(255,255,255,.14) }
+  .th-filter.on { color: #FFD166 }
+  .col-filter-pop {
+    position: fixed; z-index: 500;
+    width: 232px; max-height: 60vh;
+    display: flex; flex-direction: column;
+    background: var(--bg-elev);
+    border: 1px solid var(--w14);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.45);
+    overflow: hidden;
+  }
+  .cfp-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--w08);
+    font-size: 10.5px; font-weight: 900; letter-spacing: .8px;
+    text-transform: uppercase; color: var(--w55);
+  }
+  .cfp-clear {
+    background: transparent; border: 1px solid var(--w12);
+    border-radius: 99px; padding: 2px 10px;
+    color: var(--w60); font-family: inherit;
+    font-size: 10px; font-weight: 800; cursor: pointer;
+    transition: all .12s;
+  }
+  .cfp-clear:hover:not(:disabled) { color: var(--ink); border-color: var(--w25) }
+  .cfp-clear:disabled { opacity: .35; cursor: default }
+  .cfp-list {
+    overflow-y: auto; padding: 5px;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+
   /* Dev/Reports pipeline sections */
   .dev-stage { margin-bottom: 20px }
   .dev-stage-head {
@@ -5764,6 +5806,8 @@ function applyFilters(){
   if (TASKS_SCOPES.has(currentView)) {
     pool = _applyDayFocus(pool);
   }
+  // Excel-style column filters (funnel on Status / Program / Owner headers).
+  pool = _applyColFilters(pool);
   // Type scope per tab — applied unconditionally so the tabs stay strict:
   //   - 'all'      (Non-Dev/Non-Report) → exclude dev/report rows
   //   - 'dev'      (Dev/Reports)        → INCLUDE ONLY dev/report rows
@@ -6598,6 +6642,104 @@ document.addEventListener('keydown', (e) => {
   if (expandedId != null) setExpanded(expandedId);
 });
 
+// ---- Excel-style column filters ----
+// A funnel on the Status / Program / Owner headers opens a checkbox popover
+// of that column's values (multi-select, with counts). Empty set = no
+// filter. Applied across every grid view; survives view switches like an
+// Excel autofilter, resets on reload.
+const _colFilters = { status: new Set(), program: new Set(), owner: new Set() };
+const _COL_KEY = { status: r => r.status || '', program: r => r.program || '', owner: r => r.owner || '' };
+function _applyColFilters(pool){
+  let p = pool;
+  for (const kind of ['status', 'program', 'owner']) {
+    const sel = _colFilters[kind];
+    if (sel.size) p = p.filter(r => sel.has(_COL_KEY[kind](r)));
+  }
+  return p;
+}
+const _FUNNEL_ICON = `<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`;
+function _thFilterBtn(kind){
+  const on = _colFilters[kind].size > 0;
+  return `<button type="button" class="th-filter ${on ? 'on' : ''}" data-col-filter="${kind}" title="Filter this column">${_FUNNEL_ICON}</button>`;
+}
+let _colFilterPop = null;
+function closeColFilterPop(){
+  if (_colFilterPop) { try { _colFilterPop.remove(); } catch {} _colFilterPop = null; }
+}
+function openColFilterPop(kind, anchor){
+  if (_colFilterPop && _colFilterPop.dataset.kind === kind) { closeColFilterPop(); return; }
+  closeColFilterPop();
+  // Value universe + counts from every real row, so the list is stable no
+  // matter which view the funnel was opened from.
+  const base = rows.filter(r => (r.task || '').trim() && !isSubRow(r));
+  const counts = new Map();
+  base.forEach(r => {
+    const v = _COL_KEY[kind](r);
+    counts.set(v, (counts.get(v) || 0) + 1);
+  });
+  _colFilters[kind].forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
+  let opts = [...counts.entries()];
+  if (kind === 'status') {
+    const order = SS_STATUSES.reduce((m, s, i) => (m[s] = i, m), {});
+    opts.sort((a, b) => (order[a[0]] ?? 999) - (order[b[0]] ?? 999));
+  } else {
+    opts.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }
+  const pop = document.createElement('div');
+  pop.className = 'col-filter-pop';
+  pop.dataset.kind = kind;
+  const rect = anchor.getBoundingClientRect();
+  pop.style.top = `${Math.round(rect.bottom + 6)}px`;
+  pop.style.left = `${Math.round(Math.max(8, Math.min(rect.left - 8, window.innerWidth - 248)))}px`;
+  const rebuild = () => {
+    const sel = _colFilters[kind];
+    pop.innerHTML = `
+      <div class="cfp-head">
+        <span>Filter · ${kind === 'status' ? 'Status' : kind === 'program' ? 'Program' : 'Owner'}</span>
+        <button type="button" class="cfp-clear" data-cfp-clear ${sel.size ? '' : 'disabled'}>Clear</button>
+      </div>
+      <div class="cfp-list">
+        ${opts.map(([v, n]) => `
+          <button type="button" class="wk-fd-opt ${sel.has(v) ? 'on' : ''}" data-cfp-val="${escHtml(v)}">
+            <span class="box">${sel.has(v) ? '✓' : ''}</span>
+            <span class="t">${v ? escHtml(v) : '(blank)'}</span>
+            <span class="n">${n}</span>
+          </button>`).join('')}
+      </div>`;
+    pop.querySelectorAll('[data-cfp-val]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const v = b.getAttribute('data-cfp-val');
+      if (sel.has(v)) sel.delete(v); else sel.add(v);
+      rebuild();
+      render();
+    }));
+    pop.querySelector('[data-cfp-clear]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      sel.clear();
+      rebuild();
+      render();
+    });
+  };
+  rebuild();
+  document.body.appendChild(pop);
+  _colFilterPop = pop;
+}
+// One delegated listener covers every grid's funnel buttons (capture phase so
+// the th's own sort handler never fires for funnel clicks).
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-col-filter]');
+  if (b) {
+    e.stopPropagation();
+    e.preventDefault();
+    openColFilterPop(b.getAttribute('data-col-filter'), b);
+    return;
+  }
+  if (_colFilterPop && !e.target.closest('.col-filter-pop')) closeColFilterPop();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && _colFilterPop) closeColFilterPop();
+});
+
 // ---- Age column (shared by every grid view) ----
 // Days since the row was created. Quiet under two weeks, amber at 14d,
 // red at 30d — closed rows stay muted since their age no longer matters.
@@ -6814,13 +6956,13 @@ function render(){
       <div class="ddl-scroll">
         <table class="ddl-table tt-table">
           <thead><tr>
-            <th class="c-status" style="width:92px" data-th-sort="status" title="Sort by status">Status${sortArrow('status')}</th>
+            <th class="c-status" style="width:92px" data-th-sort="status" title="Sort by status">Status${sortArrow('status')}${_thFilterBtn('status')}</th>
             <th data-th-sort="name" title="Sort by task name">Task${sortArrow('name')}</th>
-            <th class="c-prog" style="width:100px">Program</th>
+            <th class="c-prog" style="width:100px">Program${_thFilterBtn('program')}</th>
             <th class="c-ticket" style="width:80px" data-th-sort="ticket" title="Sort by ticket #">Ticket${sortArrow('ticket')}</th>
             ${AGE_TH}
             <th style="width:112px">Due / Done</th>
-            <th class="c-owner" style="width:86px">Owner</th>
+            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${items.map(buildTaskTR).join('')}</tbody>
         </table>
@@ -8381,6 +8523,7 @@ function renderAcknowledge(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   let pool = rows.filter(r => (r.task || '').trim() && !_rowClosed(r) && !isSubRow(r));
+  pool = _applyColFilters(pool);
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
@@ -8389,7 +8532,7 @@ function renderAcknowledge(){
   const needs = pool.filter(needsAck);
   const done = pool.filter(r => !needsAck(r) && !r.deletion);
   // Deletion pile spans open AND closed rows — anything with the box checked.
-  let delPool = rows.filter(r => (r.task || '').trim() && r.deletion);
+  let delPool = _applyColFilters(rows.filter(r => (r.task || '').trim() && r.deletion));
   if (filterOwner) delPool = delPool.filter(r => r.owner === filterOwner);
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
@@ -8464,10 +8607,10 @@ function renderAcknowledge(){
         <table class="ddl-table">
           <thead><tr>
             ${_ackTab === 'needs' ? '<th style="width:30px"></th>' : ''}
-            <th class="c-status" style="width:92px">Status</th><th>Task</th>
-            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-status" style="width:92px">Status${_thFilterBtn('status')}</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
             ${AGE_TH}
-            <th class="c-owner" style="width:86px">Owner</th>
+            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
             <th style="width:${_ackTab === 'needs' ? '112px' : '168px'}">${actionHead}</th>
           </tr></thead>
           <tbody>${visible.map(buildAckTR).join('')}</tbody>
@@ -9263,6 +9406,7 @@ function renderDeadlines(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   let pool = rows.filter(r => (r.task || '').trim() && isHardRow(r));
+  pool = _applyColFilters(pool);
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
   if (filterSearch) {
@@ -9331,11 +9475,11 @@ function renderDeadlines(){
       <div class="ddl-scroll">
         <table class="ddl-table">
           <thead><tr>
-            <th class="c-status" style="width:92px">Status</th><th>Task</th>
-            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-status" style="width:92px">Status${_thFilterBtn('status')}</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
             ${AGE_TH}
             <th style="width:78px">Due</th><th style="width:74px">Left</th>
-            <th class="c-owner" style="width:86px">Owner</th>
+            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
@@ -9355,7 +9499,7 @@ function renderDeadlines(){
 function renderStarred(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
-  let pool = rows.filter(r => (r.task || '').trim() && stars[String(r.id)]);
+  let pool = _applyColFilters(rows.filter(r => (r.task || '').trim() && stars[String(r.id)]));
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterSearch) {
     const q = filterSearch.toLowerCase();
@@ -9397,11 +9541,11 @@ function renderStarred(){
       <div class="ddl-scroll">
         <table class="ddl-table">
           <thead><tr>
-            <th class="c-status" style="width:92px">Status</th><th>Task</th>
-            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-status" style="width:92px">Status${_thFilterBtn('status')}</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
             ${AGE_TH}
             <th class="c-ticket" style="width:96px">Starred</th>
-            <th class="c-owner" style="width:86px">Owner</th>
+            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
@@ -9427,6 +9571,7 @@ function renderSupport(){
   // Pool: every tech-support row, respecting owner/program/search filters.
   let pool = rows.filter(r => (r.task || '').trim() && !r.deletion && !isSubRow(r) && isSupportRow(r));
   pool = _applyDayFocus(pool);
+  pool = _applyColFilters(pool);
   if (filterOwner)   pool = pool.filter(r => r.owner === filterOwner);
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
   if (filterSearch) {
@@ -9505,10 +9650,10 @@ function renderSupport(){
         <table class="ddl-table">
           <thead><tr>
             <th class="c-status" style="width:168px">State</th><th>Task</th>
-            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
             <th style="width:58px">Age</th>
             <th class="c-ticket" style="width:80px">Ticket</th>
-            <th class="c-owner" style="width:86px">Owner</th>
+            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
