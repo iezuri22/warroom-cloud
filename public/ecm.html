@@ -3583,6 +3583,65 @@
     outline: none;
   }
   .prog-prio-add input:focus { border-color: rgba(74,158,255,.45) }
+  /* Unified priority items (manual priorities + starred tasks) */
+  .prog-prio-item { padding: 4px 0; border-bottom: 1px solid var(--w06) }
+  .prog-prio-item:last-child { border-bottom: none }
+  .prog-prio-row.star { cursor: pointer; border-radius: 7px; padding: 4px 6px; margin: 0 -6px }
+  .prog-prio-row.star:hover { background: var(--w04) }
+  .prog-prio-row .pd.star {
+    width: auto; height: auto; background: none !important;
+    color: var(--amber); font-size: 12px; line-height: 1;
+  }
+  .prog-prio-row .t.done { text-decoration: line-through; color: var(--w45) }
+  .prog-prio-tools { display: inline-flex; gap: 2px; margin-left: auto; flex-shrink: 0 }
+  .prog-prio-row:hover .prog-prio-tools { opacity: 1 }
+  .prog-prio-tools { opacity: .35; transition: opacity .12s }
+  .prog-prio-tools button {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--w55); font-family: inherit; font-size: 11px; font-weight: 700;
+    padding: 2px 6px; border-radius: 6px;
+  }
+  .prog-prio-tools button:hover { color: var(--ink); background: var(--w08) }
+  .prog-prio-tools button.danger:hover { color: var(--red); background: rgba(248,113,113,.12) }
+  .prog-linked-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px 0 4px 16px }
+  .prog-linked-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    max-width: 100%;
+    padding: 3px 9px; border-radius: 99px;
+    background: var(--w04); border: 1px solid var(--w08);
+    color: var(--w70);
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all .12s;
+  }
+  .prog-linked-chip:hover { color: var(--ink); border-color: var(--w20) }
+  .prog-linked-chip.done { opacity: .5; text-decoration: line-through }
+  .prog-linked-chip .st-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0 }
+  .prog-linked-chip span:not(.st-dot) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  /* All-programs overview cards */
+  .prog-chip.all-chip { font-weight: 900 }
+  .prog-chip.all-chip.active { background: rgba(74,158,255,.16); border-color: rgba(74,158,255,.42); color: var(--blue) }
+  .prog-ov-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px;
+  }
+  .prog-ov-card {
+    background: var(--bg-elev); border: 1px solid var(--w10);
+    border-radius: 12px; padding: 14px 16px 12px;
+  }
+  .prog-ov-head {
+    display: flex; align-items: baseline; gap: 10px;
+    padding-bottom: 8px; margin-bottom: 8px;
+    border-bottom: 2px solid var(--w10);
+  }
+  .prog-ov-name {
+    background: transparent; border: none; cursor: pointer;
+    font-family: inherit; font-size: 16px; font-weight: 900; letter-spacing: -.01em;
+    padding: 0; flex: 1; text-align: left;
+  }
+  .prog-ov-name:hover { text-decoration: underline }
+  .prog-ov-stats { font-size: 11.5px; color: var(--w55); font-weight: 600; white-space: nowrap }
+  .prog-ov-stats strong { color: var(--w90); font-weight: 800 }
+  .prog-ov-stats .hardstat { display: inline-flex; align-items: center; gap: 3px; color: var(--red); font-weight: 800 }
+  .prog-ov-card .prog-prio-tools { display: none }
   /* Print: the sheet becomes the whole page — chrome, chips, and any open
      side panel drop out. Theme is flipped to light in JS before printing. */
   @media print {
@@ -3674,9 +3733,11 @@
          pill's badge via updateTasksTabBadge(). -->
     <span id="devReportsCount" style="display:none"></span>
     <span id="allRowsCount" style="display:none"></span>
-    <button type="button" class="view-tab" data-view="weekly">
-      This Week
-      <span class="view-tab-ct" id="weeklyCount"></span>
+    <!-- This Week + Starred folded into the Programs hub. Counters kept as
+         hidden spans so the existing update functions stay no-op-safe. -->
+    <span id="weeklyCount" style="display:none"></span>
+    <button type="button" class="view-tab" data-view="programs">
+      Programs
     </button>
     <button type="button" class="view-tab" data-view="deadlines">
       🔒 Deadlines
@@ -3685,9 +3746,6 @@
     <button type="button" class="view-tab" data-view="notif">
       Review
       <span class="view-tab-ct" id="ackTabCount"></span>
-    </button>
-    <button type="button" class="view-tab" data-view="programs">
-      Programs
     </button>
     <!-- Overflow menu — the occasional-use views live here so the tab strip
          stays scannable. Menu items keep their original badge element IDs so
@@ -3698,11 +3756,8 @@
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;vertical-align:middle"><polyline points="6 9 12 15 18 9"/></svg>
         <span class="more-dot" id="moreTabDot"></span>
       </button>
+      <span id="starredCount" style="display:none"></span>
       <div class="more-menu" id="moreMenu" hidden>
-        <button type="button" class="view-tab more-item" data-view="starred">
-          ★ Starred
-          <span class="view-tab-ct" id="starredCount"></span>
-        </button>
         <button type="button" class="view-tab more-item" data-view="activity">
           Activity
           <span class="view-tab-ct" id="activityCount"></span>
@@ -4256,9 +4311,9 @@ function subscribePriorities(){
     priorities = next;
     try {
       updateWeeklyCount();
-      if (typeof render === 'function' && currentView === 'weekly') render();
-      // Priority chips also show on All-view rows
-      else if (typeof render === 'function' && rows.length && currentView === 'all') render();
+      // Re-render anywhere priorities are visible: the Programs hub, and the
+      // priority dots on All-view rows.
+      if (typeof render === 'function' && (currentView === 'programs' || (rows.length && currentView === 'all'))) render();
     } catch {}
   }, err => console.error('priorities snapshot error', err));
 }
@@ -9558,13 +9613,104 @@ const PROG_STAGES = [
   ['Parked', ['On Hold', 'Waitlisted', 'Further discussion', 'Not feasible - close ticket'], ''],
   ['Completed', ['Completed'], '']
 ];
+// Priorities under a program = manual weekly priorities tagged/linked to it,
+// PLUS starred tasks in that program (a star is a lightweight "this matters"
+// flag, so the Programs hub surfaces them as priorities too).
+function _progManualPrios(program){
+  return activePriorities().filter(p => _prioPrograms(p).has(program));
+}
+function _progStarredRows(program){
+  return rows.filter(r => (r.task || '').trim() && !isSubRow(r) && !r.deletion &&
+    r.program === program && stars[String(r.id)]);
+}
+// The unified priorities list for one program. compact=true drops the edit
+// controls (used on the all-programs overview cards).
+function _progPrioListHTML(program, compact){
+  const manual = _progManualPrios(program);
+  const starred = _progStarredRows(program);
+  if (!manual.length && !starred.length) {
+    return '<div class="prog-quiet">Nothing prioritized yet — add one below or star a task.</div>';
+  }
+  const manualHTML = manual.map(p => {
+    const linked = (Array.isArray(p.rowIds) ? p.rowIds : [])
+      .map(id => rows.find(r => String(r.id) === String(id))).filter(Boolean);
+    const done = linked.filter(_rowClosed).length;
+    const chips = linked.map(r => `
+      <button type="button" class="prog-linked-chip ${_rowClosed(r) ? 'done' : ''}" data-prog-jump="${escHtml(String(r.id))}" title="${escHtml(r.task || '')}${r.owner ? ' · ' + escHtml(r.owner) : ''}">
+        <span class="st-dot" style="background:${statusDotVar(r.status)}"></span>${escHtml(r.task || '')}
+      </button>`).join('');
+    return `
+      <div class="prog-prio-item">
+        <div class="prog-prio-row">
+          <span class="pd" style="background:${prioColorVar(p)}"></span>
+          <span class="t">${escHtml(p.title)}</span>
+          ${linked.length ? `<span class="n">${done}/${linked.length}</span>` : ''}
+          ${compact ? '' : `<span class="prog-prio-tools">
+            <button type="button" data-prio-link="${escHtml(p._id)}" title="Link tasks to this priority">+ tasks</button>
+            <button type="button" data-prio-archive="${escHtml(p._id)}" title="Mark done — archives it">✓</button>
+            <button type="button" class="danger" data-prio-delete="${escHtml(p._id)}" title="Delete priority">×</button>
+          </span>`}
+        </div>
+        ${chips ? `<div class="prog-linked-chips">${chips}</div>` : ''}
+      </div>`;
+  }).join('');
+  const starHTML = starred.map(r => `
+    <div class="prog-prio-item">
+      <div class="prog-prio-row star" data-prog-star-open="${escHtml(String(r.id))}">
+        <span class="pd star" title="Starred">★</span>
+        <span class="st-dot" style="background:${statusDotVar(r.status)}"></span>
+        <span class="t ${_rowClosed(r) ? 'done' : ''}">${escHtml(r.task || '')}</span>
+        ${r.owner ? `<span class="n">${escHtml(ownerFirstName(r.owner))}</span>` : ''}
+        ${compact ? '' : `<span class="prog-prio-tools"><button type="button" data-prog-star-edit="${escHtml(String(r.id))}" title="Edit note / unstar">edit</button></span>`}
+      </div>
+    </div>`).join('');
+  return manualHTML + starHTML;
+}
+function _wireProgramShared(list){
+  list.querySelectorAll('[data-prog-pick]').forEach(b => b.addEventListener('click', () => {
+    _progSel = b.getAttribute('data-prog-pick') || '';
+    try { localStorage.setItem('ecm-prog-page', _progSel); } catch {}
+    expandedId = null;
+    render();
+  }));
+  list.querySelectorAll('[data-prog-row], [data-prog-jump]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (el.matches('[data-prog-row]') && e.target.closest('button, a, input, select, textarea')) return;
+      e.stopPropagation();
+      setExpanded(el.getAttribute('data-prog-row') || el.getAttribute('data-prog-jump'));
+    });
+  });
+  list.querySelectorAll('[data-prog-star-open]').forEach(row => row.addEventListener('click', (e) => {
+    if (e.target.closest('[data-prog-star-edit]')) return;
+    setExpanded(row.getAttribute('data-prog-star-open'));
+  }));
+  list.querySelectorAll('[data-prog-star-edit]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation(); openStarModal(b.getAttribute('data-prog-star-edit'));
+  }));
+  list.querySelectorAll('[data-prio-link]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation(); openPrioLinkPicker(b.getAttribute('data-prio-link'));
+  }));
+  list.querySelectorAll('[data-prio-archive]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    updatePriority(b.getAttribute('data-prio-archive'), { archived: true, archivedAt: new Date().toISOString() });
+    toast('Priority archived — nice.', 'ok');
+  }));
+  list.querySelectorAll('[data-prio-delete]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = b.getAttribute('data-prio-delete');
+    const p = priorities.find(x => x._id === id);
+    if (!confirm(`Delete priority "${p ? p.title : ''}"? Linked tasks stay on the sheet.`)) return;
+    deletePriority(id);
+  }));
+}
 function renderPrograms(){
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   const named = rows.filter(r => (r.task || '').trim() && !isSubRow(r) && !r.deletion);
   const progs = allPrograms();
   const openCount = p => named.filter(r => r.program === p && !_rowClosed(r)).length;
-  if (!_progSel || !progs.includes(_progSel)) {
+  const totalOpen = named.filter(r => !_rowClosed(r)).length;
+  if (_progSel !== '__all__' && (!_progSel || !progs.includes(_progSel))) {
     const f = _dayFocusTodayCfg();
     _progSel = f.programs.find(p => progs.includes(p))
       || progs.slice().sort((a, b) => openCount(b) - openCount(a))[0] || '';
@@ -9573,13 +9719,38 @@ function renderPrograms(){
     list.innerHTML = '<div class="empty">No programs found on the sheet yet.</div>';
     return;
   }
-  const chipsHTML = progs.map(p => {
+  const chipsHTML = `
+    <button type="button" class="prog-chip all-chip ${_progSel === '__all__' ? 'active' : ''}" data-prog-pick="__all__">All programs<span class="ct">${totalOpen}</span></button>
+    ` + progs.map(p => {
     const c = programColor(p);
     const active = p === _progSel;
     const n = openCount(p);
     return `<button type="button" class="prog-chip ${active ? 'active' : ''} ${n === 0 ? 'quiet' : ''}" data-prog-pick="${escHtml(p)}"
       style="${active ? `background:${c.bg};border-color:${c.bd};color:${c.fg}` : ''}">${escHtml(p)}<span class="ct">${n}</span></button>`;
   }).join('');
+  // ---- All-programs overview ----
+  if (_progSel === '__all__') {
+    const cards = progs
+      .map(p => ({ p, open: openCount(p), prios: _progManualPrios(p).length + _progStarredRows(p).length }))
+      .filter(x => x.open || x.prios)
+      .sort((a, b) => b.open - a.open);
+    if (metaEl) metaEl.textContent = `${cards.length} active programs · ${totalOpen} open`;
+    const cardsHTML = cards.map(({ p, open }) => {
+      const c = programColor(p);
+      const hardN = named.filter(r => r.program === p && !_rowClosed(r) && isHardRow(r)).length;
+      return `
+        <div class="prog-ov-card">
+          <div class="prog-ov-head" style="border-bottom-color:${c.bd}">
+            <button type="button" class="prog-ov-name" data-prog-pick="${escHtml(p)}" style="color:${c.fg}" title="Open ${escHtml(p)} page">${escHtml(p)} →</button>
+            <span class="prog-ov-stats"><strong>${open}</strong> open${hardN ? ` · <span class="hardstat">${HARD_LOCK_ICON}${hardN}</span>` : ''}</span>
+          </div>
+          ${_progPrioListHTML(p, true)}
+        </div>`;
+    }).join('') || '<div class="empty">No programs with open work.</div>';
+    list.innerHTML = `<div class="ddl-wrap prog-wrap"><div class="prog-chips">${chipsHTML}</div><div class="prog-ov-grid">${cardsHTML}</div></div>`;
+    _wireProgramShared(list);
+    return;
+  }
   const pool = named.filter(r => r.program === _progSel);
   const open = pool.filter(r => !_rowClosed(r));
   const hard = open.filter(isHardRow);
@@ -9590,19 +9761,9 @@ function renderPrograms(){
   const completed = pool.filter(_rowClosed);
   if (metaEl) metaEl.textContent = `${_progSel} · ${open.length} open · ${completed.length} completed`;
   const c = programColor(_progSel);
-  // Priorities that belong to this program (own tag or linked tasks).
-  const prios = activePriorities().filter(p => _prioPrograms(p).has(_progSel));
-  const priosHTML = prios.length ? prios.map(p => {
-    const linked = (Array.isArray(p.rowIds) ? p.rowIds : [])
-      .map(id => rows.find(r => String(r.id) === String(id))).filter(Boolean);
-    const done = linked.filter(_rowClosed).length;
-    return `
-      <div class="prog-prio-row">
-        <span class="pd" style="background:${prioColorVar(p)}"></span>
-        <span class="t">${escHtml(p.title)}</span>
-        ${linked.length ? `<span class="n">${done}/${linked.length} done</span>` : ''}
-      </div>`;
-  }).join('') : '<div class="prog-quiet">No active priorities for this program.</div>';
+  // Unified priorities: manual priorities (with their linked tasks) + starred
+  // tasks in this program.
+  const priosHTML = _progPrioListHTML(_progSel, false);
   const note = programNotes[_progSel] || {};
   const noteMeta = note.updatedAt
     ? `Last edit ${escHtml(timeAgo(note.updatedAt) || '')}${note.updatedBy ? ' by ' + escHtml(note.updatedBy) : ''}`
@@ -9693,20 +9854,8 @@ function renderPrograms(){
         ${stagesHTML}
       </div>
     </div>`;
-  // Wiring.
-  list.querySelectorAll('[data-prog-pick]').forEach(b => b.addEventListener('click', () => {
-    _progSel = b.getAttribute('data-prog-pick') || '';
-    try { localStorage.setItem('ecm-prog-page', _progSel); } catch {}
-    expandedId = null;
-    render();
-  }));
-  list.querySelectorAll('[data-prog-row]').forEach(tr => {
-    const id = tr.getAttribute('data-prog-row');
-    tr.addEventListener('click', (e) => {
-      if (e.target.closest('button, a, input, select, textarea')) return;
-      setExpanded(id);
-    });
-  });
+  // Wiring — chips, priority controls, starred + linked-task jumps.
+  _wireProgramShared(list);
   const ta = list.querySelector('#progNotesTa');
   if (ta) {
     const grow = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
@@ -9727,7 +9876,7 @@ function renderPrograms(){
     const v = (prioInput && prioInput.value || '').trim();
     if (!v) return;
     prioInput.value = '';
-    try { await addPriority(v, _progSel); toast('Priority added — it also shows on This Week.', 'ok'); }
+    try { await addPriority(v, _progSel); toast('Priority added.', 'ok'); }
     catch (e) { console.error(e); toast("Couldn't save the priority.", 'err'); }
   };
   if (prioAdd) prioAdd.addEventListener('click', doAddPrio);
@@ -10795,7 +10944,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
 // other tabs get .active by exact data-view match (the legacy behavior).
 // The More trigger lights up (and takes the inner view's name) when one of
 // its menu views is current.
-const MORE_VIEWS = { starred: '★ Starred', activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
+const MORE_VIEWS = { activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
 function syncViewTabActive(){
   document.querySelectorAll('.view-tab').forEach(x => {
     if (!x.dataset.view) return; // More trigger handled below
@@ -10833,7 +10982,7 @@ function syncViewTabActive(){
 function updateMoreDot(){
   const dot = document.getElementById('moreTabDot');
   if (!dot) return;
-  const any = ['starredCount', 'activityCount', 'visitsCount', 'transcriptsCount'].some(id => {
+  const any = ['activityCount', 'visitsCount', 'transcriptsCount'].some(id => {
     const el = document.getElementById(id);
     return el && el.textContent.trim();
   });
