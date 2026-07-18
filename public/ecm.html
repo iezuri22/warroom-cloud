@@ -3514,6 +3514,33 @@
   }
   .dev-stage-head .hint { font-size: 11px; font-weight: 600; color: var(--w40) }
 
+  /* ===== Print month picker ============================================= */
+  .pp-modal { max-width: 440px }
+  .pp-top { display: flex; gap: 6px; margin-bottom: 6px }
+  .pp-years { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px }
+  .pp-year { padding: 8px 0; border-bottom: 1px solid var(--w06) }
+  .pp-year:last-child { border-bottom: none }
+  .pp-year-head {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 900; color: var(--ink); cursor: pointer;
+  }
+  .pp-year-head input { accent-color: var(--blue); width: 15px; height: 15px }
+  .pp-months { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px }
+  .pp-month {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 8px;
+    background: var(--w03); border: 1px solid var(--w08);
+    font-size: 12px; font-weight: 700; color: var(--w75); cursor: pointer;
+    transition: all .12s;
+  }
+  .pp-month:hover { border-color: var(--w20) }
+  .pp-month input { accent-color: var(--blue); width: 14px; height: 14px; margin: 0 }
+  .pp-month .n {
+    font-size: 10px; font-weight: 800; color: var(--w45);
+    padding: 0 5px; border-radius: 99px; background: var(--w06);
+  }
+  .pp-count { font-size: 11.5px; font-weight: 700; color: var(--w55) }
+
   /* ===== Programs page =================================================== */
   .prog-chips {
     display: flex; flex-wrap: wrap; gap: 6px;
@@ -9271,7 +9298,7 @@ function renderVisits(){
   // Wire interactions
   document.getElementById('vmOpenBtn')?.addEventListener('click', () => openVisitModal());
   document.getElementById('vmOptionsBtn')?.addEventListener('click', () => openOptionsModal());
-  document.getElementById('vmExportBtn')?.addEventListener('click', () => exportVisitsPdf(visitFilterProgram || 'all'));
+  document.getElementById('vmExportBtn')?.addEventListener('click', () => openPrintPicker());
   document.getElementById('visitProgramSelect')?.addEventListener('change', (e) => {
     visitFilterProgram = e.target.value; renderVisits();
   });
@@ -9633,12 +9660,13 @@ function renderTranscriptCard(b){
 }
 
 // PDF export — opens a print-styled view in a new tab; user does Cmd+P.
-function exportVisitsPdf(scope){
+function exportVisitsPdf(scope, months){
   const params = new URLSearchParams();
   params.set('print', '1');
   if (scope && scope !== 'all') params.set('program', scope);
   if (visitSearch) params.set('q', visitSearch);
-  if (visitFilterMonth) params.set('month', visitFilterMonth);
+  // months = array of 'YYYY-MM' to include; omitted/empty = all.
+  if (Array.isArray(months) && months.length) params.set('months', months.join(','));
   window.open(location.pathname + '?' + params.toString(), '_blank');
 }
 // "June 2026" from a 'YYYY-MM' or 'YYYY-MM-DD' key.
@@ -9647,6 +9675,102 @@ function monthLabel(key){
   if (!y || !m) return key;
   const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   return `${months[m - 1]} ${y}`;
+}
+const _MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Print-picker: choose which months/years to include, then export.
+function openPrintPicker(){
+  const program = visitFilterProgram || '';
+  const pool = visits.filter(v => !program || v.program === program);
+  const months = [...new Set(pool.map(v => String(v.date || '').slice(0, 7)).filter(Boolean))].sort().reverse();
+  if (!months.length) { toast('No dated visits to print yet.', 'err'); return; }
+  const monthCount = m => pool.filter(v => String(v.date || '').startsWith(m)).length;
+  // Group by year (already newest-first).
+  const byYear = [];
+  const yIdx = new Map();
+  months.forEach(m => {
+    const y = m.slice(0, 4);
+    if (!yIdx.has(y)) { yIdx.set(y, byYear.length); byYear.push({ y, ms: [] }); }
+    byYear[yIdx.get(y)].ms.push(m);
+  });
+  // Default selection: the active month filter, else everything.
+  const sel = new Set(visitFilterMonth ? [visitFilterMonth] : months);
+  const wrap = document.createElement('div');
+  wrap.className = 'star-modal-bg';
+  wrap.innerHTML = `
+    <div class="star-modal pp-modal" role="dialog" aria-modal="true">
+      <div class="sm-head">
+        <span class="sm-title">Print visit log</span>
+        <button class="sm-x" data-sm-close title="Close">✕</button>
+      </div>
+      <div class="dfc-hint">Choose which months to include${program ? ` for <strong>${esc(program)}</strong>` : ''}. Newest first; the PDF stays grouped by month.</div>
+      <div class="pp-top">
+        <button type="button" class="sub-mini-btn" data-pp-all>Select all</button>
+        <button type="button" class="sub-mini-btn" data-pp-none>Clear</button>
+      </div>
+      <div class="pp-years">
+        ${byYear.map(({ y, ms }) => `
+          <div class="pp-year">
+            <label class="pp-year-head"><input type="checkbox" data-pp-yearcb="${y}"><span>${y}</span></label>
+            <div class="pp-months">
+              ${ms.map(m => `<label class="pp-month"><input type="checkbox" data-pp-month="${m}" ${sel.has(m) ? 'checked' : ''}><span class="mn">${_MONTHS_SHORT[parseInt(m.slice(5, 7), 10) - 1]}</span><span class="n">${monthCount(m)}</span></label>`).join('')}
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="sm-actions">
+        <span class="pp-count" data-pp-count></span>
+        <span class="sm-sp"></span>
+        <button class="sm-btn ghost" data-sm-close>Cancel</button>
+        <button class="sm-btn primary" data-pp-go>Generate PDF</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { try { wrap.remove(); } catch {} };
+  wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+  wrap.querySelectorAll('[data-sm-close]').forEach(b => b.addEventListener('click', close));
+  const syncYearBoxes = () => {
+    byYear.forEach(({ y, ms }) => {
+      const cb = wrap.querySelector(`[data-pp-yearcb="${y}"]`);
+      if (!cb) return;
+      const on = ms.filter(m => sel.has(m)).length;
+      cb.checked = on === ms.length;
+      cb.indeterminate = on > 0 && on < ms.length;
+    });
+    const cnt = wrap.querySelector('[data-pp-count]');
+    const visits = [...sel].reduce((s, m) => s + monthCount(m), 0);
+    if (cnt) cnt.textContent = `${sel.size} month${sel.size === 1 ? '' : 's'} · ${visits} visit${visits === 1 ? '' : 's'}`;
+  };
+  wrap.querySelectorAll('[data-pp-month]').forEach(cb => cb.addEventListener('change', () => {
+    const m = cb.getAttribute('data-pp-month');
+    if (cb.checked) sel.add(m); else sel.delete(m);
+    syncYearBoxes();
+  }));
+  wrap.querySelectorAll('[data-pp-yearcb]').forEach(cb => cb.addEventListener('change', () => {
+    const y = cb.getAttribute('data-pp-yearcb');
+    const ms = (byYear.find(x => x.y === y) || {}).ms || [];
+    ms.forEach(m => { if (cb.checked) sel.add(m); else sel.delete(m); });
+    wrap.querySelectorAll('[data-pp-month]').forEach(mb => {
+      if (mb.getAttribute('data-pp-month').startsWith(y)) mb.checked = cb.checked;
+    });
+    syncYearBoxes();
+  }));
+  wrap.querySelector('[data-pp-all]').addEventListener('click', () => {
+    months.forEach(m => sel.add(m));
+    wrap.querySelectorAll('[data-pp-month]').forEach(mb => mb.checked = true);
+    syncYearBoxes();
+  });
+  wrap.querySelector('[data-pp-none]').addEventListener('click', () => {
+    sel.clear();
+    wrap.querySelectorAll('[data-pp-month]').forEach(mb => mb.checked = false);
+    syncYearBoxes();
+  });
+  wrap.querySelector('[data-pp-go]').addEventListener('click', () => {
+    if (!sel.size) { toast('Pick at least one month.', 'err'); return; }
+    // All selected → omit the list so the PDF header reads as the full range.
+    const chosen = sel.size === months.length ? [] : [...sel].sort().reverse();
+    close();
+    exportVisitsPdf(program || 'all', chosen);
+  });
+  syncYearBoxes();
 }
 
 // ============= Programs view =============
@@ -11125,7 +11249,8 @@ subscribeTranscriptBacklog();
   document.body.classList.add('print-mode');
   const program = (p.get('program') || '').trim();
   const q       = (p.get('q') || '').trim().toLowerCase();
-  const month   = (p.get('month') || '').trim();
+  // months = comma list of 'YYYY-MM'; legacy singular ?month= still honored.
+  const months  = (p.get('months') || p.get('month') || '').split(',').map(s => s.trim()).filter(Boolean);
   // Wait for visits to load via the subscription, then render.
   let printed = false;
   const tryPrint = () => {
@@ -11135,7 +11260,7 @@ subscribeTranscriptBacklog();
       return;
     }
     printed = true;
-    renderPrintLayout(program, q, month);
+    renderPrintLayout(program, q, months);
     // Give the layout a beat to settle (fonts, sizing), then print.
     setTimeout(() => { try { window.print(); } catch {} }, 350);
   };
@@ -11143,10 +11268,11 @@ subscribeTranscriptBacklog();
   tryPrint();
 })();
 
-function renderPrintLayout(program, q, month){
+function renderPrintLayout(program, q, months){
+  const monthSet = Array.isArray(months) ? months : (months ? [months] : []);
   const filtered = visits
     .filter(v => !program || v.program === program)
-    .filter(v => !month || String(v.date || '').startsWith(month))
+    .filter(v => !monthSet.length || monthSet.includes(String(v.date || '').slice(0, 7)))
     .filter(v => {
       if (!q) return true;
       return (v.topic || '').toLowerCase().includes(q) ||
@@ -11185,7 +11311,7 @@ function renderPrintLayout(program, q, month){
         <h1 class="print-title">In-Person Visit Log</h1>
         <div class="print-meta">
           ${dateFrom ? `<span>${esc(dateFrom)} — ${esc(dateTo)}</span>` : ''}
-          ${month ? `<span>${esc(monthLabel(month))}</span>` : ''}
+          ${monthSet.length === 1 ? `<span>${esc(monthLabel(monthSet[0]))}</span>` : (monthSet.length > 1 ? `<span>${monthSet.length} months</span>` : '')}
           <span>Generated ${new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}</span>
         </div>
         <div class="print-stats">
