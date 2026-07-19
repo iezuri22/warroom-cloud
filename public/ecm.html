@@ -3341,11 +3341,13 @@
      priority columns drop out as the screen narrows. */
   @media (max-width: 760px) {
     .ddl-table .c-ticket { display: none }
+    .ddl-table .c-age { display: none }
     .tt-owner-name { display: none }
     .ddl-table th.c-owner { width: 40px !important; font-size: 0 }
   }
   @media (max-width: 500px) {
     .ddl-table .c-prog { display: none }
+    .ddl-table .c-sage { display: none }
     .ddl-table .st-lbl { display: none }
     .ddl-table th.c-status { width: 34px !important; font-size: 0 }
     .ddl-table thead th, .ddl-table tbody td { padding-left: 8px; padding-right: 8px }
@@ -3819,8 +3821,37 @@
   .picker-table thead th { position: sticky; top: 0; z-index: 1 }
   .picker-table .ddl-row { cursor: pointer }
   .picker-table .ddl-row.picked td { background: rgba(74,222,128,.10) }
+  .picker-table .ddl-row.expanded td { background: rgba(107,168,255,.10) }
   .pick-check { color: var(--green); font-weight: 900; flex-shrink: 0 }
   .picker-empty { padding: 22px; text-align: center; color: var(--w45); font-size: 12.5px }
+  /* Expand caret + commit button + preview detail row */
+  .pick-caret-td { text-align: center; padding-left: 6px !important; padding-right: 0 !important }
+  .pick-caret {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--w45); font-size: 11px; line-height: 1;
+    padding: 3px; border-radius: 5px; transition: transform .12s, color .12s;
+  }
+  .pick-caret:hover { color: var(--ink) }
+  .pick-caret.open { transform: rotate(90deg); color: var(--blue) }
+  .pick-act-td { text-align: right; padding-right: 10px !important }
+  .pick-commit {
+    padding: 4px 12px; border-radius: 99px;
+    background: rgba(74,158,255,.16); border: 1px solid rgba(74,158,255,.4);
+    color: var(--blue);
+    font-family: inherit; font-size: 11.5px; font-weight: 800; cursor: pointer;
+    transition: all .12s; white-space: nowrap;
+  }
+  .pick-commit:hover { background: rgba(74,158,255,.28); color: var(--ink) }
+  .pick-detail-tr td { padding: 0 12px 12px 32px !important; background: rgba(107,168,255,.05) }
+  .pick-detail { padding-top: 2px }
+  .pick-detail-title { font-size: 14px; font-weight: 800; color: var(--ink); line-height: 1.35 }
+  .pick-detail-meta { font-size: 11px; font-weight: 700; color: var(--w50); margin: 3px 0 6px }
+  .pick-detail-desc {
+    font-size: 12.5px; color: var(--w70); line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 160px; overflow-y: auto;
+  }
+  .pick-detail-desc.empty { color: var(--w35); font-style: italic }
   /* Note-mention picker uses the same table, no extra scroll wrapper */
   .notes-task-results { margin-top: 6px }
 
@@ -4993,29 +5024,49 @@ function _offerDeletionMark(childId){
     setRowDeletion(childId, true);
   }
 }
-// Shared Excel-style task-picker table. Rows carry data-pick-row; caller
-// wires clicks. selectedIds (optional) draws a ✓ + picked tint.
-function _pickerTableHTML(pool, selectedIds){
+// Shared Excel-style task-picker table. A leading caret expands a row to
+// preview the full task title + description before committing; the trailing
+// button (commitLabel) is the actual select action. opts.expandedId marks
+// the open preview; opts.selectedIds draws a ✓.
+function _pickerTableHTML(pool, opts){
+  opts = opts || {};
+  const commitLabel = opts.commitLabel || 'Select';
+  const expandedId = opts.expandedId;
+  const selectedIds = opts.selectedIds;
   if (!pool.length) return `<div class="picker-empty">No matching tasks.</div>`;
   return `
     <div class="picker-scroll">
       <table class="ddl-table picker-table">
         <thead><tr>
-          <th class="c-status" style="width:88px">Status</th><th>Task</th>
-          <th class="c-prog" style="width:96px">Program</th>
-          <th class="c-ticket" style="width:72px">Ticket</th>
-          <th class="c-owner" style="width:78px">Owner</th>
+          <th style="width:26px"></th>
+          <th class="c-status" style="width:84px">Status</th><th>Task</th>
+          <th class="c-prog" style="width:90px">Program</th>
+          <th class="c-ticket" style="width:64px">Ticket</th>
+          <th class="c-owner" style="width:70px">Owner</th>
+          <th style="width:80px"></th>
         </tr></thead>
         <tbody>${pool.map((r, i) => {
           const picked = selectedIds && selectedIds.has(String(r.id));
-          return `
-          <tr class="ddl-row ${i % 2 ? 'even' : ''} ${_rowClosed(r) ? 'closed' : ''} ${picked ? 'picked' : ''}" data-pick-row="${escHtml(String(r.id))}">
+          const ex = expandedId != null && String(expandedId) === String(r.id);
+          const rowHTML = `
+          <tr class="ddl-row ${i % 2 ? 'even' : ''} ${_rowClosed(r) ? 'closed' : ''} ${picked ? 'picked' : ''} ${ex ? 'expanded' : ''}" data-pick-row="${escHtml(String(r.id))}">
+            <td class="pick-caret-td"><button type="button" class="pick-caret ${ex ? 'open' : ''}" data-pick-expand="${escHtml(String(r.id))}" title="Preview full task">▸</button></td>
             <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
             <td class="ddl-task"><span class="tt-taskcell">${picked ? '<span class="pick-check">✓</span>' : ''}<span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>${r.deletion ? '<span class="sub-del-badge">DEL</span>' : ''}</span></td>
             <td class="tt-prog-td c-prog"><span style="color:${programColor(r.program).fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
             <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
             <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+            <td class="pick-act-td"><button type="button" class="pick-commit" data-pick-commit="${escHtml(String(r.id))}">${escHtml(commitLabel)}</button></td>
           </tr>`;
+          const detailHTML = ex ? `
+          <tr class="pick-detail-tr"><td colspan="7">
+            <div class="pick-detail">
+              <div class="pick-detail-title">${escHtml(r.task || '(untitled)')}</div>
+              <div class="pick-detail-meta">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '')}${r.program ? ' · ' + escHtml(r.program) : ''}${r.ticket ? ' · #' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}${r.owner ? ' · ' + escHtml(r.owner) : ''}</div>
+              ${r.details ? `<div class="pick-detail-desc">${escHtml(r.details)}</div>` : '<div class="pick-detail-desc empty">No description.</div>'}
+            </div>
+          </td></tr>` : '';
+          return rowHTML + detailHTML;
         }).join('')}</tbody>
       </table>
     </div>`;
@@ -5051,6 +5102,8 @@ function openSubitemPicker(mode, rowId){
   // Default the program filter to the item's own program.
   let pickProg = self.program || '';
   let pickSearch = '';
+  let pickExpanded = null;
+  const commitLabel = mode === 'attach-child' ? 'Attach' : 'Nest here';
   wrap.innerHTML = `
     <div class="star-modal sub-pick-modal" role="dialog" aria-modal="true">
       <div class="sm-head">
@@ -5092,15 +5145,15 @@ function openSubitemPicker(mode, rowId){
     // Open before closed, then alphabetical (program already scoped).
     pool.sort((a, b) => (_rowClosed(a) - _rowClosed(b)) || (a.task || '').localeCompare(b.task || ''));
     const capped = pool.slice(0, 200);
-    resultsEl.innerHTML = _pickerTableHTML(capped);
+    resultsEl.innerHTML = _pickerTableHTML(capped, { commitLabel, expandedId: pickExpanded });
     if (statusEl) statusEl.textContent = `${pool.length} task${pool.length === 1 ? '' : 's'}${pool.length > capped.length ? ` · showing ${capped.length}` : ''}`;
-    resultsEl.querySelectorAll('[data-pick-row]').forEach(b => b.addEventListener('click', async () => {
-      const pickedId = b.getAttribute('data-pick-row');
+    const doCommit = async (pickedId) => {
       if (mode === 'attach-child') {
         const ok = await attachRowAsSubitem(pickedId, rid);
         if (ok) {
           toast('Attached as a subitem.', 'ok');
           _offerDeletionMark(pickedId);
+          pickExpanded = null;
           renderResults(); // stay open — attach more
         }
       } else {
@@ -5113,6 +5166,13 @@ function openSubitemPicker(mode, rowId){
           render();
         }
       }
+    };
+    resultsEl.querySelectorAll('[data-pick-row]').forEach(tr => tr.addEventListener('click', (e) => {
+      const commit = e.target.closest('[data-pick-commit]');
+      if (commit) { e.stopPropagation(); doCommit(commit.getAttribute('data-pick-commit')); return; }
+      const id = tr.getAttribute('data-pick-row');
+      pickExpanded = (pickExpanded != null && String(pickExpanded) === String(id)) ? null : id;
+      renderResults();
     }));
   };
   searchInp.addEventListener('input', () => { pickSearch = searchInp.value; renderResults(); });
@@ -7115,6 +7175,54 @@ function _ageFilterPass(r){
   if (!filterAge) return true;
   const d = _ageDays(r);
   return d != null && d >= parseInt(filterAge, 10);
+}
+
+// ===== Status history (Firestore: ecm_status_log) =====
+// One doc per row records when it entered its CURRENT status (`since`) plus a
+// short trail of prior statuses. That lets us show "days in this status" that
+// survives status changes — otherwise we'd only have Smartsheet's single
+// modifiedAt. Best-effort: rows changed outside War Room fall back to
+// modifiedAt/createdDate.
+const statusLogCol = collection(db, 'ecm_status_log');
+let statusLog = {};
+let statusLogUnsub = null;
+function subscribeStatusLog(){
+  if (statusLogUnsub) try { statusLogUnsub(); } catch {}
+  statusLogUnsub = onSnapshot(statusLogCol, snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data() || {}; });
+    statusLog = next;
+    try { if (typeof render === 'function' && rows.length && (currentView === 'programs' || TASKS_SCOPES.has(currentView))) render(); } catch {}
+  }, err => console.error('status log snapshot error', err));
+}
+async function recordStatusChange(rowId, newStatus){
+  const rid = String(rowId);
+  const prev = statusLog[rid];
+  if (prev && prev.status === newStatus) return; // no real change
+  const nowIso = new Date().toISOString();
+  const history = Array.isArray(prev && prev.history) ? prev.history.slice(-19) : [];
+  if (prev && prev.status) history.push({ status: prev.status, from: prev.since || '', to: nowIso });
+  const payload = { rowId: rid, status: newStatus, since: nowIso, history };
+  statusLog[rid] = payload; // optimistic
+  try { await setDoc(doc(db, 'ecm_status_log', rid), payload); }
+  catch (e) { console.warn('status log write failed', e); }
+}
+// Days the row has sat in its current status. Uses the log's `since` when it
+// matches the live status, else falls back to modifiedAt/createdDate.
+function _statusAgeDays(r){
+  const log = statusLog[String(r.id)];
+  const base = (log && log.status === r.status && log.since) ? log.since : (r.modifiedAt || r.createdDate);
+  const t = Date.parse(base);
+  if (!t) return null;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+const SAGE_TH = '<th class="c-sage" style="width:64px" title="Days in the current status">In&nbsp;status</th>';
+function _sageCellTD(r){
+  const d = _statusAgeDays(r);
+  if (d == null) return '<td class="ddl-left c-sage" style="color:var(--w35);font-weight:600">—</td>';
+  const stale = !_rowClosed(r) && (d >= 21 ? 'overdue' : d >= 10 ? 'today' : '');
+  const style = stale ? '' : ' style="color:var(--w50);font-weight:600"';
+  return `<td class="ddl-left c-sage ${stale || ''}"${style} title="In “${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}” for ${d} day${d === 1 ? '' : 's'}">${d}d</td>`;
 }
 
 // True when render was called while user was editing a drawer field. The
@@ -10019,6 +10127,7 @@ function _toggleNotesTaskPick(list, ta){
   // Default the program filter to the program whose notes we're editing.
   let npProg = _progSel && _progSel !== '__all__' ? _progSel : '';
   let npSearch = '';
+  let npExpanded = null;
   pick.innerHTML = `
     ${_pickerBarHTML(npProg, npSearch)}
     <div class="notes-task-results" id="notesTaskResults"></div>`;
@@ -10031,10 +10140,18 @@ function _toggleNotesTaskPick(list, ta){
     if (npProg) pool = pool.filter(r => r.program === npProg);
     if (q) pool = pool.filter(r => (r.task || '').toLowerCase().includes(q) || String(r.ticket || '').includes(q));
     pool.sort((a, b) => (_rowClosed(a) - _rowClosed(b)) || (a.task || '').localeCompare(b.task || ''));
-    results.innerHTML = _pickerTableHTML(pool.slice(0, 120));
-    results.querySelectorAll('[data-pick-row]').forEach(b => b.addEventListener('click', () => {
-      _insertAtCursor(ta, `⟦task:${b.getAttribute('data-pick-row')}⟧`);
-      pick.setAttribute('hidden', '');
+    results.innerHTML = _pickerTableHTML(pool.slice(0, 120), { commitLabel: 'Mention', expandedId: npExpanded });
+    results.querySelectorAll('[data-pick-row]').forEach(tr => tr.addEventListener('click', (e) => {
+      const commit = e.target.closest('[data-pick-commit]');
+      if (commit) {
+        e.stopPropagation();
+        _insertAtCursor(ta, `⟦task:${commit.getAttribute('data-pick-commit')}⟧`);
+        pick.setAttribute('hidden', '');
+        return;
+      }
+      const id = tr.getAttribute('data-pick-row');
+      npExpanded = (npExpanded != null && String(npExpanded) === String(id)) ? null : id;
+      renderRes();
     }));
   };
   search.addEventListener('input', () => { npSearch = search.value; renderRes(); });
@@ -10266,6 +10383,7 @@ function renderPrograms(){
           <th class="c-status" style="width:100px">Status ${_thFilterBtn('status')}</th><th>Task</th>
           <th class="c-ticket" style="width:80px">Ticket</th>
           ${AGE_TH}
+          ${SAGE_TH}
           <th style="width:112px">Due / Done</th>
           <th class="c-owner" style="width:96px">Owner ${_thFilterBtn('owner')}</th>
         </tr></thead>
@@ -10283,6 +10401,7 @@ function renderPrograms(){
             <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
             <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
             ${_ageCellTD(r)}
+            ${_sageCellTD(r)}
             <td class="tt-due-td">${dueHTML}</td>
             <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
           </tr>`;
@@ -11066,7 +11185,7 @@ async function pushField(r, fieldTitle, value, rowEl){
     })[fieldTitle];
     const _activityPrev = _activityKey ? (r[_activityKey] ?? '') : '';
     // Mirror local
-    if (fieldTitle === 'Status') r.status = value;
+    if (fieldTitle === 'Status') { r.status = value; try { recordStatusChange(r.id, value); } catch {} }
     if (fieldTitle === 'Ticket #') r.ticket = value;
     if (fieldTitle === 'Details') r.details = value;
     if (fieldTitle === 'Outcome Details') r.outcome = value;
@@ -11226,7 +11345,7 @@ async function ssPushFields(r, fields){
       completionDate: r.completionDate, dueDate: r.dueDate
     };
     for (const [title, raw] of Object.entries(fields)) {
-      if (title === 'Status') r.status = raw;
+      if (title === 'Status') { r.status = raw; try { recordStatusChange(r.id, raw); } catch {} }
       else if (title === 'Ticket #') r.ticket = raw;
       else if (title === 'Details') r.details = raw;
       else if (title === 'Outcome Details') r.outcome = raw;
@@ -11560,6 +11679,7 @@ subscribeStars();
 subscribeSubitems();
 subscribeDayFocus();
 subscribeDeadlines();
+subscribeStatusLog();
 subscribeProgramNotes();
 subscribeSupportStates();
 subscribeVisits();
