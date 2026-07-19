@@ -3727,6 +3727,25 @@
   /* All-programs overview cards */
   .prog-chip.all-chip { font-weight: 900 }
   .prog-chip.all-chip.active { background: rgba(74,158,255,.16); border-color: rgba(74,158,255,.42); color: var(--blue) }
+  /* Day-focus "Today" chip + markers on today's dedicated programs */
+  .prog-chip.today-chip { font-weight: 900; color: var(--amber, #FFC15A); border-color: rgba(255,193,90,.32) }
+  .prog-chip.today-chip.active { background: rgba(255,193,90,.16); border-color: rgba(255,193,90,.5); color: var(--amber, #FFC15A) }
+  .prog-chip.is-today { border-color: rgba(255,193,90,.4) }
+  .prog-chip .today-star { color: var(--amber, #FFC15A); font-size: 10px; line-height: 1 }
+  .prog-today-note {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+    margin: -4px 2px 14px; padding: 9px 13px;
+    background: rgba(255,193,90,.08); border: 1px solid rgba(255,193,90,.22);
+    border-radius: 11px; font-size: 12px;
+  }
+  .prog-today-note .ptn-lead { font-weight: 900; letter-spacing: .3px; color: var(--amber, #FFC15A) }
+  .prog-today-note .ptn-body { color: var(--w70); font-weight: 600 }
+  .prog-today-note .ptn-edit {
+    margin-left: auto; background: transparent; border: 1px solid var(--w15);
+    border-radius: 99px; padding: 3px 12px; color: var(--w70);
+    font-family: inherit; font-size: 11px; font-weight: 800; cursor: pointer; transition: all .12s;
+  }
+  .prog-today-note .ptn-edit:hover { color: var(--ink); border-color: var(--w30) }
   .prog-ov-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px;
   }
@@ -4889,6 +4908,16 @@ function _applyDayFocus(pool){
   }
   const set = new Set(f.programs);
   return pool.filter(r => set.has(r.program) || keepOpen(r));
+}
+// Programs surfaced by the Programs-page "Today" chip: today's dedicated set on
+// a program day, or the programs holding flagged (starred / priority-linked)
+// work on a review day.
+function _todayFocusPrograms(){
+  const all = allPrograms();
+  const f = _dayFocusTodayCfg();
+  if (f.programs.length) return all.filter(p => f.programs.includes(p));
+  if (f.review) return all.filter(p => _progStarredRows(p).length || _progManualPrios(p).length);
+  return [];
 }
 
 // ---- Day-focus banner ----
@@ -10485,7 +10514,11 @@ function renderPrograms(){
   const progs = allPrograms();
   const openCount = p => named.filter(r => r.program === p && !_rowClosed(r)).length;
   const totalOpen = named.filter(r => !_rowClosed(r)).length;
-  if (_progSel !== '__all__' && (!_progSel || !progs.includes(_progSel))) {
+  // "Today" only makes sense when today actually has a dedication — otherwise
+  // fall back to the all-programs overview so the user isn't stuck on an empty
+  // scope whose chip isn't even shown.
+  if (_progSel === '__today__' && !_dayFocusHasContent()) _progSel = '__all__';
+  if (_progSel !== '__all__' && _progSel !== '__today__' && (!_progSel || !progs.includes(_progSel))) {
     const f = _dayFocusTodayCfg();
     _progSel = f.programs.find(p => progs.includes(p))
       || progs.slice().sort((a, b) => openCount(b) - openCount(a))[0] || '';
@@ -10494,22 +10527,47 @@ function renderPrograms(){
     list.innerHTML = '<div class="empty">No programs found on the sheet yet.</div>';
     return;
   }
+  // Day-focus incorporation: a "★ Today" chip (overview of just today's
+  // dedicated programs) + a star marker on today's program chips. Single-
+  // program selection is untouched — every chip still drills into its program.
+  const dayLbl = DAY_LABELS[DAY_KEYS[new Date().getDay()]];
+  const focusCfg = _dayFocusTodayCfg();
+  const todayProgs = _todayFocusPrograms();
+  const todayStarSet = new Set(focusCfg.programs.length ? todayProgs : []); // star chips on program days only
+  const todayChip = _dayFocusHasContent()
+    ? `<button type="button" class="prog-chip today-chip ${_progSel === '__today__' ? 'active' : ''}" data-prog-pick="__today__" title="Today's focus — ${escHtml(dayLbl)}">★ Today<span class="ct">${todayProgs.length}</span></button>`
+    : '';
   const chipsHTML = `
     <button type="button" class="prog-chip all-chip ${_progSel === '__all__' ? 'active' : ''}" data-prog-pick="__all__">All programs<span class="ct">${totalOpen}</span></button>
+    ${todayChip}
     ` + progs.map(p => {
     const c = programColor(p);
     const active = p === _progSel;
     const n = openCount(p);
-    return `<button type="button" class="prog-chip ${active ? 'active' : ''} ${n === 0 ? 'quiet' : ''}" data-prog-pick="${escHtml(p)}"
-      style="${active ? `background:${c.bg};border-color:${c.bd};color:${c.fg}` : ''}">${escHtml(p)}<span class="ct">${n}</span></button>`;
+    const isToday = todayStarSet.has(p);
+    return `<button type="button" class="prog-chip ${active ? 'active' : ''} ${n === 0 ? 'quiet' : ''} ${isToday ? 'is-today' : ''}" data-prog-pick="${escHtml(p)}"
+      style="${active ? `background:${c.bg};border-color:${c.bd};color:${c.fg}` : ''}"${isToday ? ' title="Today\'s focus program"' : ''}>${isToday ? '<span class="today-star">★</span>' : ''}${escHtml(p)}<span class="ct">${n}</span></button>`;
   }).join('');
-  // ---- All-programs overview ----
-  if (_progSel === '__all__') {
-    const cards = progs
+  // ---- Overview grids: All programs, or just Today's focus ----
+  if (_progSel === '__all__' || _progSel === '__today__') {
+    const focusMode = _progSel === '__today__';
+    const ovProgs = focusMode ? todayProgs : progs;
+    const cards = ovProgs
       .map(p => ({ p, open: openCount(p), prios: _progManualPrios(p).length + _progStarredRows(p).length }))
       .filter(x => x.open || x.prios)
       .sort((a, b) => b.open - a.open);
-    if (metaEl) metaEl.textContent = `${cards.length} active programs · ${totalOpen} open`;
+    if (metaEl) metaEl.textContent = focusMode
+      ? `Today · ${dayLbl} · ${cards.length} program${cards.length === 1 ? '' : 's'}`
+      : `${cards.length} active programs · ${totalOpen} open`;
+    const noteHTML = focusMode
+      ? `<div class="prog-today-note">
+           <span class="ptn-lead">★ Today · ${escHtml(dayLbl)}</span>
+           <span class="ptn-body">${focusCfg.review
+             ? 'Review day — programs with starred or priority-linked work.'
+             : (focusCfg.programs.length ? 'Dedicated to ' + focusCfg.programs.map(escHtml).join(' · ') : 'Nothing dedicated to today yet.')}</span>
+           <button type="button" class="ptn-edit" data-df-config>Edit week</button>
+         </div>`
+      : '';
     const cardsHTML = cards.map(({ p, open }) => {
       const c = programColor(p);
       const hardN = named.filter(r => r.program === p && !_rowClosed(r) && isHardRow(r)).length;
@@ -10521,9 +10579,12 @@ function renderPrograms(){
           </div>
           ${_progPrioListHTML(p, true)}
         </div>`;
-    }).join('') || '<div class="empty">No programs with open work.</div>';
-    list.innerHTML = `<div class="ddl-wrap prog-wrap"><div class="prog-chips">${chipsHTML}</div><div class="prog-ov-grid">${cardsHTML}</div></div>`;
+    }).join('') || (focusMode
+      ? `<div class="empty">${focusCfg.review ? 'No flagged work to review today.' : 'No open work in today’s focus programs.'} <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`
+      : '<div class="empty">No programs with open work.</div>');
+    list.innerHTML = `<div class="ddl-wrap prog-wrap"><div class="prog-chips">${chipsHTML}</div>${noteHTML}<div class="prog-ov-grid">${cardsHTML}</div></div>`;
     _wireProgramShared(list);
+    list.querySelectorAll('[data-df-config]').forEach(b => b.addEventListener('click', openDayFocusConfig));
     return;
   }
   let pool = named.filter(r => r.program === _progSel && _ageFilterPass(r) && _dueFilterPass(r) && _sageFilterPass(r));
