@@ -10514,10 +10514,6 @@ function renderPrograms(){
   const progs = allPrograms();
   const openCount = p => named.filter(r => r.program === p && !_rowClosed(r)).length;
   const totalOpen = named.filter(r => !_rowClosed(r)).length;
-  // "Today" only makes sense when today actually has a dedication — otherwise
-  // fall back to the all-programs overview so the user isn't stuck on an empty
-  // scope whose chip isn't even shown.
-  if (_progSel === '__today__' && !_dayFocusHasContent()) _progSel = '__all__';
   if (_progSel !== '__all__' && _progSel !== '__today__' && (!_progSel || !progs.includes(_progSel))) {
     const f = _dayFocusTodayCfg();
     _progSel = f.programs.find(p => progs.includes(p))
@@ -10534,9 +10530,9 @@ function renderPrograms(){
   const focusCfg = _dayFocusTodayCfg();
   const todayProgs = _todayFocusPrograms();
   const todayStarSet = new Set(focusCfg.programs.length ? todayProgs : []); // star chips on program days only
-  const todayChip = _dayFocusHasContent()
-    ? `<button type="button" class="prog-chip today-chip ${_progSel === '__today__' ? 'active' : ''}" data-prog-pick="__today__" title="Today's focus — ${escHtml(dayLbl)}">★ Today<span class="ct">${todayProgs.length}</span></button>`
-    : '';
+  // Always show the "★ Today" chip so it's discoverable every day — on a day
+  // with no dedication it opens a "set it up" state rather than vanishing.
+  const todayChip = `<button type="button" class="prog-chip today-chip ${_progSel === '__today__' ? 'active' : ''}" data-prog-pick="__today__" title="Today's focus — ${escHtml(dayLbl)}">★ Today${_dayFocusHasContent() ? `<span class="ct">${todayProgs.length}</span>` : ''}</button>`;
   const chipsHTML = `
     <button type="button" class="prog-chip all-chip ${_progSel === '__all__' ? 'active' : ''}" data-prog-pick="__all__">All programs<span class="ct">${totalOpen}</span></button>
     ${todayChip}
@@ -10580,7 +10576,11 @@ function renderPrograms(){
           ${_progPrioListHTML(p, true)}
         </div>`;
     }).join('') || (focusMode
-      ? `<div class="empty">${focusCfg.review ? 'No flagged work to review today.' : 'No open work in today’s focus programs.'} <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`
+      ? `<div class="empty">${
+          focusCfg.review ? 'No flagged work to review today.'
+          : focusCfg.programs.length ? 'No open work in today’s focus programs.'
+          : `Nothing is dedicated to ${escHtml(dayLbl)} yet — set up the week.`
+        } <button type="button" class="ddl-closed-toggle" data-df-config>Edit week</button> <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`
       : '<div class="empty">No programs with open work.</div>');
     list.innerHTML = `<div class="ddl-wrap prog-wrap"><div class="prog-chips">${chipsHTML}</div>${noteHTML}<div class="prog-ov-grid">${cardsHTML}</div></div>`;
     _wireProgramShared(list);
