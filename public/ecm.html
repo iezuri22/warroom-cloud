@@ -3660,23 +3660,7 @@
     margin-top: 6px; padding: 8px; border-radius: 9px;
     background: var(--bg-elev); border: 1px solid var(--w12);
   }
-  .notes-task-pick input {
-    width: 100%; box-sizing: border-box; padding: 6px 10px; border-radius: 7px;
-    background: var(--w04); border: 1px solid var(--w10); color: var(--ink);
-    font-family: inherit; font-size: 12.5px; font-weight: 600; outline: none;
-  }
-  .notes-task-pick input:focus { border-color: rgba(74,158,255,.45) }
-  .notes-task-results { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; max-height: 220px; overflow-y: auto }
-  .notes-task-res {
-    display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
-    padding: 6px 8px; border-radius: 7px;
-    background: transparent; border: none; cursor: pointer;
-    font-family: inherit; font-size: 12.5px; color: var(--w85);
-  }
-  .notes-task-res:hover { background: var(--w05) }
-  .notes-task-res .st-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0 }
-  .notes-task-res .nt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600 }
-  .notes-task-res .nt-n { font-size: 11px; font-weight: 800; color: var(--blue); flex-shrink: 0 }
+  .notes-task-pick .picker-bar { margin-top: 0 }
   .prog-prio-row {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 2px;
@@ -3799,13 +3783,40 @@
     flex-shrink: 0;
   }
 
-  .sub-pick-modal { max-width: 640px }
-  .sub-pick-results {
-    display: flex; flex-direction: column; gap: 3px;
-    max-height: 46vh; overflow: auto;
-    margin-top: 10px;
-  }
+  .sub-pick-modal { max-width: 660px }
+  .sub-pick-results { margin-top: 10px }
   .sub-pick-status { font-size: 11px; color: var(--w45); font-weight: 700 }
+  /* Shared Excel-style task picker (subitem modal + note mentions) */
+  .picker-bar { display: flex; gap: 8px; margin-top: 8px }
+  .picker-search {
+    flex: 1; min-width: 0; padding: 7px 11px; border-radius: 9px;
+    background: var(--w04); border: 1px solid var(--w10); color: var(--ink);
+    font-family: inherit; font-size: 13px; font-weight: 600; outline: none;
+  }
+  .picker-search:focus { border-color: rgba(74,158,255,.5) }
+  .picker-prog {
+    flex: 0 0 auto; padding: 7px 28px 7px 11px; border-radius: 9px;
+    background: var(--w04); border: 1px solid var(--w10); color: var(--w85);
+    font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; outline: none;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='rgba(128,131,141,0.9)' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  .picker-prog:hover { border-color: var(--w22) }
+  .picker-prog option { background: var(--bg-elev) }
+  .picker-scroll {
+    margin-top: 8px;
+    max-height: 44vh; overflow-y: auto;
+    border: 1px solid var(--w10); border-radius: 10px;
+  }
+  .picker-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; background: var(--bg-elev) }
+  .picker-table thead th { position: sticky; top: 0; z-index: 1 }
+  .picker-table .ddl-row { cursor: pointer }
+  .picker-table .ddl-row.picked td { background: rgba(74,222,128,.10) }
+  .pick-check { color: var(--green); font-weight: 900; flex-shrink: 0 }
+  .picker-empty { padding: 22px; text-align: center; color: var(--w45); font-size: 12.5px }
+  /* Note-mention picker uses the same table, no extra scroll wrapper */
+  .notes-task-results { margin-top: 6px }
 
 </style>
 </head>
@@ -4976,6 +4987,45 @@ function _offerDeletionMark(childId){
     setRowDeletion(childId, true);
   }
 }
+// Shared Excel-style task-picker table. Rows carry data-pick-row; caller
+// wires clicks. selectedIds (optional) draws a ✓ + picked tint.
+function _pickerTableHTML(pool, selectedIds){
+  if (!pool.length) return `<div class="picker-empty">No matching tasks.</div>`;
+  return `
+    <div class="picker-scroll">
+      <table class="ddl-table picker-table">
+        <thead><tr>
+          <th class="c-status" style="width:88px">Status</th><th>Task</th>
+          <th class="c-prog" style="width:96px">Program</th>
+          <th class="c-ticket" style="width:72px">Ticket</th>
+          <th class="c-owner" style="width:78px">Owner</th>
+        </tr></thead>
+        <tbody>${pool.map((r, i) => {
+          const picked = selectedIds && selectedIds.has(String(r.id));
+          return `
+          <tr class="ddl-row ${i % 2 ? 'even' : ''} ${_rowClosed(r) ? 'closed' : ''} ${picked ? 'picked' : ''}" data-pick-row="${escHtml(String(r.id))}">
+            <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+            <td class="ddl-task"><span class="tt-taskcell">${picked ? '<span class="pick-check">✓</span>' : ''}<span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>${r.deletion ? '<span class="sub-del-badge">DEL</span>' : ''}</span></td>
+            <td class="tt-prog-td c-prog"><span style="color:${programColor(r.program).fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+            <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
+            <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+// Program + search filter bar shared by the pickers. Defaults the program
+// dropdown to `curProg`.
+function _pickerBarHTML(curProg, curSearch){
+  return `
+    <div class="picker-bar">
+      <input type="text" class="picker-search" data-pick-search placeholder="Search task or ticket…" value="${escHtml(curSearch || '')}" autocomplete="off">
+      <select class="picker-prog" data-pick-prog title="Filter by program">
+        <option value="">All programs</option>
+        ${allPrograms().map(p => `<option value="${escHtml(p)}" ${p === curProg ? 'selected' : ''}>${escHtml(p)}</option>`).join('')}
+      </select>
+    </div>`;
+}
 function openSubitemPicker(mode, rowId){
   const rid = String(rowId);
   const self = rows.find(x => String(x.id) === rid);
@@ -4992,6 +5042,9 @@ function openSubitemPicker(mode, rowId){
   const sub = mode === 'attach-child'
     ? `Picked items nest under “${escHtml(self.task || '')}”. You'll get the option to mark each one for deletion in Smartsheets.`
     : `Pick the parent item — “${escHtml(self.task || '')}” will nest under it.`;
+  // Default the program filter to the item's own program.
+  let pickProg = self.program || '';
+  let pickSearch = '';
   wrap.innerHTML = `
     <div class="star-modal sub-pick-modal" role="dialog" aria-modal="true">
       <div class="sm-head">
@@ -4999,7 +5052,7 @@ function openSubitemPicker(mode, rowId){
         <button class="sm-x" data-sm-close title="Close">✕</button>
       </div>
       <div class="dfc-hint">${sub}</div>
-      <input type="text" class="plk-search" data-subpick-search placeholder="Search tasks…" autocomplete="off">
+      ${_pickerBarHTML(pickProg, pickSearch)}
       <div class="sub-pick-results" data-subpick-results></div>
       <div class="sm-actions">
         <span class="sub-pick-status" data-subpick-status></span>
@@ -5011,11 +5064,12 @@ function openSubitemPicker(mode, rowId){
   const closeModal = () => { try { wrap.remove(); } catch {} render(); };
   wrap.addEventListener('click', (e) => { if (e.target === wrap) closeModal(); });
   wrap.querySelectorAll('[data-sm-close]').forEach(b => b.addEventListener('click', closeModal));
-  const searchInp = wrap.querySelector('[data-subpick-search]');
+  const searchInp = wrap.querySelector('[data-pick-search]');
+  const progSel = wrap.querySelector('[data-pick-prog]');
   const resultsEl = wrap.querySelector('[data-subpick-results]');
   const statusEl = wrap.querySelector('[data-subpick-status]');
   const renderResults = () => {
-    const q = (searchInp.value || '').toLowerCase();
+    const q = (pickSearch || '').toLowerCase();
     let pool = rows.filter(r => (r.task || '').trim() && String(r.id) !== rid);
     // One-level rule: children can't already be subitems; parents can't be.
     if (mode === 'attach-child') {
@@ -5023,37 +5077,19 @@ function openSubitemPicker(mode, rowId){
     } else {
       pool = pool.filter(r => !isSubRow(r));
     }
+    if (pickProg) pool = pool.filter(r => r.program === pickProg);
     if (q) {
       pool = pool.filter(r =>
         (r.task || '').toLowerCase().includes(q) ||
-        String(r.ticket || '').toLowerCase().includes(q) ||
-        (r.program || '').toLowerCase().includes(q));
+        String(r.ticket || '').toLowerCase().includes(q));
     }
-    // Same program first (duplicates usually share one), open before closed,
-    // then alphabetical.
-    const sprog = self.program || '';
-    pool.sort((a, b) =>
-      (_rowClosed(a) - _rowClosed(b)) ||
-      (sprog ? ((b.program === sprog ? 1 : 0) - (a.program === sprog ? 1 : 0)) : 0) ||
-      (a.task || '').localeCompare(b.task || ''));
-    const capped = pool.slice(0, 60);
-    resultsEl.innerHTML = capped.map(r => {
-      const pc = programColor(r.program);
-      return `
-      <button type="button" class="plk-row" data-subpick-row="${escHtml(String(r.id))}">
-        <span class="st-dot" style="background:${statusDotVar(r.status)}"></span>
-        <span class="plk-task">${escHtml(r.task || '')}</span>
-        <span class="plk-meta">
-          ${r.deletion ? '<span class="sub-del-badge">DEL</span>' : ''}
-          ${r.program ? `<span style="color:${pc.fg}">${escHtml(r.program)}</span>` : ''}
-          ${r.ticket ? `<span>#${escHtml(String(r.ticket).replace(/\.0$/, ''))}</span>` : ''}
-          ${r.owner ? `<span>${escHtml(ownerFirstName(r.owner))}</span>` : ''}
-        </span>
-      </button>`;
-    }).join('') || `<div class="manual-link-empty" style="padding:14px;color:var(--w45);font-size:12px">No matching tasks.</div>`;
-    if (statusEl) statusEl.textContent = pool.length > capped.length ? `Showing ${capped.length} of ${pool.length}` : '';
-    resultsEl.querySelectorAll('[data-subpick-row]').forEach(b => b.addEventListener('click', async () => {
-      const pickedId = b.getAttribute('data-subpick-row');
+    // Open before closed, then alphabetical (program already scoped).
+    pool.sort((a, b) => (_rowClosed(a) - _rowClosed(b)) || (a.task || '').localeCompare(b.task || ''));
+    const capped = pool.slice(0, 200);
+    resultsEl.innerHTML = _pickerTableHTML(capped);
+    if (statusEl) statusEl.textContent = `${pool.length} task${pool.length === 1 ? '' : 's'}${pool.length > capped.length ? ` · showing ${capped.length}` : ''}`;
+    resultsEl.querySelectorAll('[data-pick-row]').forEach(b => b.addEventListener('click', async () => {
+      const pickedId = b.getAttribute('data-pick-row');
       if (mode === 'attach-child') {
         const ok = await attachRowAsSubitem(pickedId, rid);
         if (ok) {
@@ -5073,8 +5109,9 @@ function openSubitemPicker(mode, rowId){
       }
     }));
   };
-  searchInp.addEventListener('input', renderResults);
+  searchInp.addEventListener('input', () => { pickSearch = searchInp.value; renderResults(); });
   searchInp.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  progSel.addEventListener('change', () => { pickProg = progSel.value; renderResults(); });
   renderResults();
   setTimeout(() => searchInp.focus(), 50);
 }
@@ -9872,14 +9909,18 @@ function openPrintPicker(){
 // priorities, then every task grouped by pipeline stage. Print/PDF gives a
 // clean handout for program meetings.
 let _progSel = (function(){ try { return localStorage.getItem('ecm-prog-page') || ''; } catch { return ''; } })();
+// Verified on PRE/UAT leads — those are the closest-to-done items, so they
+// surface above the Open backlog. Completed sits last (auto-hidden).
 const PROG_STAGES = [
+  ['Verified on PRE / UAT', ['Verified on PRE', 'Verified on UAT'], 'verify in prod → mark Completed'],
   ['Open', ['Requested', 'To-Do', 'In Progress', 'Pending IR'], ''],
   ['Ticket Sent', ['Ticket Sent'], ''],
   ['Discussed with Dev', ['Discussed with Dev'], ''],
-  ['Verified on PRE / UAT', ['Verified on PRE', 'Verified on UAT'], 'verify in prod → mark Completed'],
   ['Parked', ['On Hold', 'Waitlisted', 'Further discussion', 'Not feasible - close ticket'], ''],
   ['Completed', ['Completed'], '']
 ];
+// Completed is hidden on the Programs page until the user asks for it.
+let _progShowCompleted = false;
 // ---- Program notes rich rendering ----
 // Notes are stored as plain text with a few inline tokens:
 //   ⟦task:ROWID⟧   → compact task chip (ticket # or short title, links to it)
@@ -9969,23 +10010,30 @@ function _toggleNotesTaskPick(list, ta){
   if (!pick) return;
   if (!pick.hasAttribute('hidden')) { pick.setAttribute('hidden', ''); return; }
   pick.removeAttribute('hidden');
-  const search = list.querySelector('#notesTaskSearch');
-  const results = list.querySelector('#notesTaskResults');
+  // Default the program filter to the program whose notes we're editing.
+  let npProg = _progSel && _progSel !== '__all__' ? _progSel : '';
+  let npSearch = '';
+  pick.innerHTML = `
+    ${_pickerBarHTML(npProg, npSearch)}
+    <div class="notes-task-results" id="notesTaskResults"></div>`;
+  const search = pick.querySelector('[data-pick-search]');
+  const progSel = pick.querySelector('[data-pick-prog]');
+  const results = pick.querySelector('#notesTaskResults');
   const renderRes = () => {
-    const q = (search.value || '').toLowerCase();
+    const q = (npSearch || '').toLowerCase();
     let pool = rows.filter(r => (r.task || '').trim() && !isSubRow(r));
+    if (npProg) pool = pool.filter(r => r.program === npProg);
     if (q) pool = pool.filter(r => (r.task || '').toLowerCase().includes(q) || String(r.ticket || '').includes(q));
-    pool.sort((a, b) => ((b.program === _progSel) - (a.program === _progSel)) || (a.task || '').localeCompare(b.task || ''));
-    results.innerHTML = pool.slice(0, 8).map(r =>
-      `<button type="button" class="notes-task-res" data-note-pick="${esc(String(r.id))}"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="nt-t">${esc(r.task || '')}</span>${r.ticket ? `<span class="nt-n">#${esc(String(r.ticket).replace(/\.0$/, ''))}</span>` : ''}</button>`
-    ).join('') || '<div class="prog-quiet" style="padding:6px 8px">No matching task.</div>';
-    results.querySelectorAll('[data-note-pick]').forEach(b => b.addEventListener('click', () => {
-      _insertAtCursor(ta, `⟦task:${b.getAttribute('data-note-pick')}⟧`);
+    pool.sort((a, b) => (_rowClosed(a) - _rowClosed(b)) || (a.task || '').localeCompare(b.task || ''));
+    results.innerHTML = _pickerTableHTML(pool.slice(0, 120));
+    results.querySelectorAll('[data-pick-row]').forEach(b => b.addEventListener('click', () => {
+      _insertAtCursor(ta, `⟦task:${b.getAttribute('data-pick-row')}⟧`);
       pick.setAttribute('hidden', '');
     }));
   };
-  search.value = ''; renderRes();
-  search.oninput = renderRes;
+  search.addEventListener('input', () => { npSearch = search.value; renderRes(); });
+  progSel.addEventListener('change', () => { npProg = progSel.value; renderRes(); });
+  renderRes();
   setTimeout(() => search.focus(), 30);
 }
 function _wireProgramNotes(list){
@@ -10181,7 +10229,13 @@ function renderPrograms(){
     _wireProgramShared(list);
     return;
   }
-  const pool = named.filter(r => r.program === _progSel && _ageFilterPass(r));
+  let pool = named.filter(r => r.program === _progSel && _ageFilterPass(r));
+  // Column filters (Status / Owner) work here just like the task page. The
+  // program dimension is skipped — the page is already one program.
+  ['status', 'owner'].forEach(k => {
+    const sel = _colFilters[k];
+    if (sel.size) pool = pool.filter(r => sel.has(_COL_KEY[k](r)));
+  });
   const open = pool.filter(r => !_rowClosed(r));
   const hard = open.filter(isHardRow);
   const overdueHard = hard.filter(r => {
@@ -10203,11 +10257,11 @@ function renderPrograms(){
     <div class="ddl-scroll">
       <table class="ddl-table prog-table">
         <thead><tr>
-          <th class="c-status" style="width:92px">Status</th><th>Task</th>
+          <th class="c-status" style="width:100px">Status ${_thFilterBtn('status')}</th><th>Task</th>
           <th class="c-ticket" style="width:80px">Ticket</th>
           ${AGE_TH}
           <th style="width:112px">Due / Done</th>
-          <th class="c-owner" style="width:86px">Owner</th>
+          <th class="c-owner" style="width:96px">Owner ${_thFilterBtn('owner')}</th>
         </tr></thead>
         <tbody>${items.map((r, i) => {
           const isClosedStatus = _rowClosed(r);
@@ -10229,8 +10283,10 @@ function renderPrograms(){
         }).join('')}</tbody>
       </table>
     </div>`;
-  const COMPLETED_CAP = 12;
+  const COMPLETED_CAP = 50;
   const stagesHTML = PROG_STAGES.map(([label, statuses, hint]) => {
+    // Completed is auto-hidden — only render it when the user opts in.
+    if (label === 'Completed' && !_progShowCompleted) return '';
     let items = pool.filter(r => statuses.includes(r.status));
     if (!items.length) return '';
     let capNote = '';
@@ -10252,7 +10308,7 @@ function renderPrograms(){
         </div>
         ${stageTable(items)}
       </div>`;
-  }).join('') || '<div class="prog-quiet" style="padding:20px 0">No tasks for this program yet.</div>';
+  }).join('') || '<div class="prog-quiet" style="padding:20px 0">No open tasks for this program.</div>';
   list.innerHTML = `
     <div class="ddl-wrap prog-wrap">
       <div class="prog-chips">${chipsHTML}</div>
@@ -10264,6 +10320,7 @@ function renderPrograms(){
             ${hard.length ? `<span class="hardstat">${HARD_LOCK_ICON} <strong>${hard.length}</strong> hard deadline${hard.length === 1 ? '' : 's'}${overdueHard.length ? ` · <em>${overdueHard.length} overdue</em>` : ''}</span>` : ''}
             <span><strong>${completed.length}</strong> completed</span>
           </div>
+          ${completed.length ? `<button type="button" class="ddl-closed-toggle" id="progToggleDone">${_progShowCompleted ? 'Hide' : 'Show'} completed</button>` : ''}
           <button type="button" class="ddl-closed-toggle" id="progPrint" title="Print or save this page as a PDF handout">Print / PDF</button>
         </div>
         <div class="prog-two-col">
@@ -10279,10 +10336,7 @@ function renderPrograms(){
                 <button type="button" class="note-tool" data-note-ins="since" title="Count up from a start date">⏱ Since</button>
               </div>
               <textarea class="prog-notes-ta" id="progNotesTa" placeholder="Team notes for ${escHtml(_progSel)} — context, blockers, client asks…">${escHtml(note.text || '')}</textarea>
-              <div class="notes-task-pick" id="notesTaskPick" hidden>
-                <input type="text" id="notesTaskSearch" placeholder="Search a task to mention…" autocomplete="off">
-                <div id="notesTaskResults" class="notes-task-results"></div>
-              </div>
+              <div class="notes-task-pick" id="notesTaskPick" hidden></div>
             ` : `
               <div class="prog-notes-view collapsed" id="progNotesView">${renderProgramNotesHTML(note.text || '')}</div>
               <button type="button" class="prog-notes-more" id="progNotesMore" hidden>Show more</button>
@@ -10315,6 +10369,8 @@ function renderPrograms(){
   };
   if (prioAdd) prioAdd.addEventListener('click', doAddPrio);
   if (prioInput) prioInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAddPrio(); } });
+  const doneToggle = list.querySelector('#progToggleDone');
+  if (doneToggle) doneToggle.addEventListener('click', () => { _progShowCompleted = !_progShowCompleted; render(); });
   const printBtn = list.querySelector('#progPrint');
   if (printBtn) printBtn.addEventListener('click', () => {
     // Print in light theme regardless of the on-screen theme, then restore.
