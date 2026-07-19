@@ -3795,7 +3795,7 @@
   .sub-pick-results { margin-top: 10px }
   .sub-pick-status { font-size: 11px; color: var(--w45); font-weight: 700 }
   /* Shared Excel-style task picker (subitem modal + note mentions) */
-  .picker-bar { display: flex; gap: 8px; margin-top: 8px }
+  .picker-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px }
   .picker-search {
     flex: 1; min-width: 0; padding: 7px 11px; border-radius: 9px;
     background: var(--w04); border: 1px solid var(--w10); color: var(--ink);
@@ -3812,6 +3812,14 @@
   }
   .picker-prog:hover { border-color: var(--w22) }
   .picker-prog option { background: var(--bg-elev) }
+  .picker-donetog {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 11px; border-radius: 9px; cursor: pointer; user-select: none;
+    background: var(--w04); border: 1px solid var(--w10); color: var(--w70);
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+  }
+  .picker-donetog:hover { border-color: var(--w22); color: var(--w85) }
+  .picker-donetog input { accent-color: var(--blue, #4a9eff); cursor: pointer; margin: 0 }
   .picker-scroll {
     margin-top: 8px;
     max-height: 44vh; overflow-y: auto;
@@ -3958,6 +3966,14 @@
       <option value="30">30+ days old</option>
       <option value="60">60+ days old</option>
       <option value="90">90+ days old</option>
+    </select>
+    <select class="owner-pick" id="dueSelect" title="Filter by due date / done">
+      <option value="">Any due / done</option>
+      <option value="overdue">Overdue</option>
+      <option value="soon">Due in 7 days</option>
+      <option value="dated">Has due date</option>
+      <option value="undated">No due date</option>
+      <option value="done">Completed</option>
     </select>
     <select class="owner-pick" id="sortSelect" title="Sort by">
       <option value="name">Sort: Name</option>
@@ -5073,7 +5089,7 @@ function _pickerTableHTML(pool, opts){
 }
 // Program + search filter bar shared by the pickers. Defaults the program
 // dropdown to `curProg`.
-function _pickerBarHTML(curProg, curSearch){
+function _pickerBarHTML(curProg, curSearch, showDone){
   return `
     <div class="picker-bar">
       <input type="text" class="picker-search" data-pick-search placeholder="Search task or ticket…" value="${escHtml(curSearch || '')}" autocomplete="off">
@@ -5081,6 +5097,9 @@ function _pickerBarHTML(curProg, curSearch){
         <option value="">All programs</option>
         ${allPrograms().map(p => `<option value="${escHtml(p)}" ${p === curProg ? 'selected' : ''}>${escHtml(p)}</option>`).join('')}
       </select>
+      <label class="picker-donetog" title="Completed tasks are hidden by default">
+        <input type="checkbox" data-pick-showdone ${showDone ? 'checked' : ''}> Show completed
+      </label>
     </div>`;
 }
 function openSubitemPicker(mode, rowId){
@@ -5103,6 +5122,7 @@ function openSubitemPicker(mode, rowId){
   let pickProg = self.program || '';
   let pickSearch = '';
   let pickExpanded = null;
+  let pickShowDone = false;   // completed tasks hidden until the toggle is on
   const commitLabel = mode === 'attach-child' ? 'Attach' : 'Nest here';
   wrap.innerHTML = `
     <div class="star-modal sub-pick-modal" role="dialog" aria-modal="true">
@@ -5111,7 +5131,7 @@ function openSubitemPicker(mode, rowId){
         <button class="sm-x" data-sm-close title="Close">✕</button>
       </div>
       <div class="dfc-hint">${sub}</div>
-      ${_pickerBarHTML(pickProg, pickSearch)}
+      ${_pickerBarHTML(pickProg, pickSearch, pickShowDone)}
       <div class="sub-pick-results" data-subpick-results></div>
       <div class="sm-actions">
         <span class="sub-pick-status" data-subpick-status></span>
@@ -5137,6 +5157,8 @@ function openSubitemPicker(mode, rowId){
       pool = pool.filter(r => !isSubRow(r));
     }
     if (pickProg) pool = pool.filter(r => r.program === pickProg);
+    // Completed tasks are hidden unless the "Show completed" toggle is on.
+    if (!pickShowDone) pool = pool.filter(r => !_rowClosed(r));
     if (q) {
       pool = pool.filter(r =>
         (r.task || '').toLowerCase().includes(q) ||
@@ -5175,9 +5197,11 @@ function openSubitemPicker(mode, rowId){
       renderResults();
     }));
   };
+  const doneTog = wrap.querySelector('[data-pick-showdone]');
   searchInp.addEventListener('input', () => { pickSearch = searchInp.value; renderResults(); });
   searchInp.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
   progSel.addEventListener('change', () => { pickProg = progSel.value; renderResults(); });
+  if (doneTog) doneTog.addEventListener('change', () => { pickShowDone = doneTog.checked; renderResults(); });
   renderResults();
   setTimeout(() => searchInp.focus(), 50);
 }
@@ -5768,6 +5792,7 @@ let filterSearch = '';
 let filterOwner = '';
 let filterProgram = '';
 let filterAge = '';   // '' = any, else min days since created ('7'|'14'|'30'|'60'|'90')
+let filterDue = '';   // '' = any, else 'overdue'|'soon'|'dated'|'undated'|'done'
 let sortBy = (function(){ try { return localStorage.getItem('ecm-sort-by') || 'name'; } catch { return 'name'; } })();
 let sortDir = (function(){ try { return localStorage.getItem('ecm-sort-dir') || 'asc'; } catch { return 'asc'; } })();
 let expandedId = null;
@@ -5818,6 +5843,17 @@ function cellValue(row, colId){
 // Resolve the deadline column regardless of which common title it carries.
 function ecmDueCol(){
   return columns['Due Date'] || columns['Deadline'] || columns['Target Date'] || null;
+}
+// Resolve the created-date column. Prefer Smartsheet's auto-populated system
+// column (systemColumnType CREATED_DATE) so age works no matter what the
+// column is titled, then fall back to the common manual titles. Without this
+// the age filter silently breaks when the sheet's column isn't named exactly
+// "Created Date" (rows get a null age → any age selection empties the list).
+function ecmCreatedCol(){
+  const cols = Object.values(columns);
+  return cols.find(c => c && c.systemColumnType === 'CREATED_DATE')
+    || columns['Created Date'] || columns['Created'] || columns['Create Date']
+    || columns['Date Created'] || columns['Created (Date)'] || null;
 }
 // Create the Due Date column on the sheet (used by the Weekly-view banner
 // when the sheet doesn't have one yet). DATE type, parked next to the other
@@ -5931,7 +5967,7 @@ async function loadSheet(){
     const colOutcome = columns['Outcome Details'];
     const colSubType = columns['Sub-Type'];
     const colRequestType = columns['Request Type'];
-    const colCreated = columns['Created Date'];
+    const colCreated = ecmCreatedCol();
     const colCompletion = columns['Completion Date'];
     const colInternal = columns['Internal Only'];
     const colDeletion = columns['Marked for Deletion'];
@@ -6214,7 +6250,10 @@ function applyFilters(){
   }
   if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
   if (filterProgram) pool = pool.filter(r => r.program === filterProgram);
-  if (filterStatus !== 'all') {
+  // The due/done filter's "Completed" slice is an explicit request for closed
+  // rows — the page defaults to the "Open" status filter, so honor "Done" over
+  // that (otherwise Open cancels it out and the grid comes back empty).
+  if (filterStatus !== 'all' && filterDue !== 'done') {
     if (filterStatus === '__open__') {
       // "Open" = active in-flight work. Excludes Completed/Not feasible AND
       // the parked statuses (Hold, Waitlisted, Further discussion) so the
@@ -7035,8 +7074,9 @@ function _applyColFilters(pool){
     const sel = _colFilters[kind];
     if (sel.size) p = p.filter(r => sel.has(_COL_KEY[kind](r)));
   }
-  // Global age filter rides along here so every grid view honors it.
+  // Global age + due/done filters ride along here so every grid view honors them.
   if (filterAge) p = p.filter(r => _ageFilterPass(r) || String(r.id) === String(expandedId));
+  if (filterDue) p = p.filter(r => _dueFilterPass(r) || String(r.id) === String(expandedId));
   return p;
 }
 const _FUNNEL_ICON = `<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`;
@@ -7156,8 +7196,17 @@ async function saveProgramNote(program, text){
 // ---- Age column (shared by every grid view) ----
 // Days since the row was created. Quiet under two weeks, amber at 14d,
 // red at 30d — closed rows stay muted since their age no longer matters.
+// The date age is measured from. Prefer the real created date; fall back to
+// the row's last-modified stamp so a sheet without a populated Created Date
+// column still yields a usable age (otherwise every age filter empties the
+// grid — the exact "can't filter by age" bug).
+function _ageAnchorISO(r){
+  return (r.createdDate && Date.parse(r.createdDate)) ? r.createdDate
+       : ((r.modifiedAt && Date.parse(r.modifiedAt)) ? r.modifiedAt : '');
+}
 function _ageDays(r){
-  const t = Date.parse(r.createdDate || '');
+  const iso = _ageAnchorISO(r);
+  const t = iso ? Date.parse(iso) : 0;
   if (!t) return null;
   return Math.floor((Date.now() - t) / 86400000);
 }
@@ -7166,7 +7215,10 @@ function _ageCellTD(r){
   if (d == null) return '<td class="ddl-left c-age" style="color:var(--w35);font-weight:600">—</td>';
   const cls = _rowClosed(r) ? '' : (d >= 30 ? 'overdue' : d >= 14 ? 'today' : '');
   const style = (!cls || _rowClosed(r)) ? ' style="color:var(--w50);font-weight:600"' : '';
-  return `<td class="ddl-left c-age ${cls}"${style} title="Created ${escHtml(fmtAbsoluteDate(r.createdDate) || '')} · ${d} day${d === 1 ? '' : 's'} ago">${d}d</td>`;
+  // Tooltip names the actual anchor so a modified-date fallback isn't confusing.
+  const usedCreated = r.createdDate && Date.parse(r.createdDate);
+  const anchorLbl = usedCreated ? 'Created' : 'Last updated';
+  return `<td class="ddl-left c-age ${cls}"${style} title="${anchorLbl} ${escHtml(fmtAbsoluteDate(_ageAnchorISO(r)) || '')} · ${d} day${d === 1 ? '' : 's'} ago">${d}d</td>`;
 }
 const AGE_TH = '<th class="c-age" style="width:56px">Age</th>';
 // Global "filter by age" gate — keeps rows at least N days old (by created
@@ -7175,6 +7227,25 @@ function _ageFilterPass(r){
   if (!filterAge) return true;
   const d = _ageDays(r);
   return d != null && d >= parseInt(filterAge, 10);
+}
+// Global "filter by due / done" gate — slices rows by their Due Date / done
+// state. Applied alongside the age filter across every task grid + Programs.
+//   overdue = open & past due · soon = open & due within 7 days
+//   dated   = open & has a due date · undated = open & no due date
+//   done    = completed / closed rows
+function _dueFilterPass(r){
+  if (!filterDue) return true;
+  const closed = _rowClosed(r);
+  if (filterDue === 'done') return closed;
+  if (closed) return false;            // remaining buckets are about open due-dates
+  const d = _parseDateOnly(r.dueDate);
+  if (filterDue === 'undated') return !d;
+  if (!d) return false;
+  if (filterDue === 'dated') return true;
+  const days = _wkDaysFromToday(d);
+  if (filterDue === 'overdue') return days < 0;
+  if (filterDue === 'soon') return days >= 0 && days <= 7;
+  return true;
 }
 
 // ===== Status history (Firestore: ecm_status_log) =====
@@ -7439,7 +7510,7 @@ function render(){
             <th class="c-prog" style="width:100px">Program${_thFilterBtn('program')}</th>
             <th class="c-ticket" style="width:80px" data-th-sort="ticket" title="Sort by ticket #">Ticket${sortArrow('ticket')}</th>
             ${AGE_TH}
-            <th style="width:112px">Due / Done</th>
+            <th style="width:112px">Due Date</th>
             <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${items.map(buildTaskTR).join('')}</tbody>
@@ -10128,16 +10199,20 @@ function _toggleNotesTaskPick(list, ta){
   let npProg = _progSel && _progSel !== '__all__' ? _progSel : '';
   let npSearch = '';
   let npExpanded = null;
+  let npShowDone = false;   // completed tasks hidden until the toggle is on
   pick.innerHTML = `
-    ${_pickerBarHTML(npProg, npSearch)}
+    ${_pickerBarHTML(npProg, npSearch, npShowDone)}
     <div class="notes-task-results" id="notesTaskResults"></div>`;
   const search = pick.querySelector('[data-pick-search]');
   const progSel = pick.querySelector('[data-pick-prog]');
+  const doneTog = pick.querySelector('[data-pick-showdone]');
   const results = pick.querySelector('#notesTaskResults');
   const renderRes = () => {
     const q = (npSearch || '').toLowerCase();
     let pool = rows.filter(r => (r.task || '').trim() && !isSubRow(r));
     if (npProg) pool = pool.filter(r => r.program === npProg);
+    // Completed tasks are hidden unless the "Show completed" toggle is on.
+    if (!npShowDone) pool = pool.filter(r => !_rowClosed(r));
     if (q) pool = pool.filter(r => (r.task || '').toLowerCase().includes(q) || String(r.ticket || '').includes(q));
     pool.sort((a, b) => (_rowClosed(a) - _rowClosed(b)) || (a.task || '').localeCompare(b.task || ''));
     results.innerHTML = _pickerTableHTML(pool.slice(0, 120), { commitLabel: 'Mention', expandedId: npExpanded });
@@ -10156,6 +10231,7 @@ function _toggleNotesTaskPick(list, ta){
   };
   search.addEventListener('input', () => { npSearch = search.value; renderRes(); });
   progSel.addEventListener('change', () => { npProg = progSel.value; renderRes(); });
+  if (doneTog) doneTog.addEventListener('change', () => { npShowDone = doneTog.checked; renderRes(); });
   renderRes();
   setTimeout(() => search.focus(), 30);
 }
@@ -10352,7 +10428,7 @@ function renderPrograms(){
     _wireProgramShared(list);
     return;
   }
-  let pool = named.filter(r => r.program === _progSel && _ageFilterPass(r));
+  let pool = named.filter(r => r.program === _progSel && _ageFilterPass(r) && _dueFilterPass(r));
   // Column filters (Status / Owner) work here just like the task page. The
   // program dimension is skipped — the page is already one program.
   ['status', 'owner'].forEach(k => {
@@ -10384,7 +10460,7 @@ function renderPrograms(){
           <th class="c-ticket" style="width:80px">Ticket</th>
           ${AGE_TH}
           ${SAGE_TH}
-          <th style="width:112px">Due / Done</th>
+          <th style="width:112px">Due Date</th>
           <th class="c-owner" style="width:96px">Owner ${_thFilterBtn('owner')}</th>
         </tr></thead>
         <tbody>${items.map((r, i) => {
@@ -10409,9 +10485,12 @@ function renderPrograms(){
       </table>
     </div>`;
   const COMPLETED_CAP = 50;
+  // Filtering by "Done" is an explicit request to see completed work, so the
+  // usually-hidden Completed stage is forced open for that filter.
+  const _showCompletedStage = _progShowCompleted || filterDue === 'done';
   const stagesHTML = PROG_STAGES.map(([label, statuses, hint]) => {
     // Completed is auto-hidden — only render it when the user opts in.
-    if (label === 'Completed' && !_progShowCompleted) return '';
+    if (label === 'Completed' && !_showCompletedStage) return '';
     let items = pool.filter(r => statuses.includes(r.status));
     if (!items.length) return '';
     let capNote = '';
@@ -11447,6 +11526,10 @@ document.getElementById('programSelect').addEventListener('change', (e) => {
 });
 document.getElementById('ageSelect')?.addEventListener('change', (e) => {
   filterAge = e.target.value || '';
+  render();
+});
+document.getElementById('dueSelect')?.addEventListener('change', (e) => {
+  filterDue = e.target.value || '';
   render();
 });
 // Sort controls
