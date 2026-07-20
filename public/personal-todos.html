@@ -2519,6 +2519,38 @@
     color: var(--accent); border-color: rgba(255,138,61,.4);
     background: rgba(255,138,61,.06);
   }
+  /* Phone: the whole list strip is ONE row — no wrap, no sideways scroll.
+     The priority tabs share the width equally and their labels shrink to fit
+     (First→1st, Second→2nd, Morning→AM; Planned/Completed show icon+count).
+     The active tab's reorder arrows and the add-tab's word are hidden. */
+  @media (max-width: 640px) {
+    .focus5-strip {
+      flex-wrap: nowrap;
+      overflow: hidden;
+      gap: 4px;
+      padding: 0 0 6px;
+      align-items: stretch;
+    }
+    .focus5-tab {
+      flex: 1 1 0; min-width: 0; justify-content: center;
+      padding: 8px 5px; font-size: 12.5px; gap: 4px; max-width: none;
+    }
+    .focus5-tab .name { max-width: none; overflow: visible }
+    .focus5-tab .nm-full { display: none }
+    .focus5-tab .nm-short { display: inline }
+    .focus5-tab .ct { font-size: 10px; padding: 1px 4px; }
+    .focus5-tab.planned-pill .name,
+    .focus5-tab.completed-pill .name { display: none; }
+    /* Reorder arrows are desktop-only — they eat too much width on a phone. */
+    .focus5-tab-mv { display: none; }
+    .focus5-add-tab { flex: 0 0 auto; padding: 8px 11px; }
+    .focus5-add-tab .fa-label { display: none; }
+    /* The progress bar + count + Edit row is redundant on phones — the tab
+       badges (1st 0/1, etc.) already show each list's stats. Hide the whole row. */
+    .focus5-progress { display: none; }
+    /* More room under the last row so the add-line + FAB never overlap it. */
+    .focus5-view { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+  }
   /* List-level controls in edit mode (rename/delete this list, reorder lists) */
   .focus5-list-tools {
     display: none;
@@ -9841,6 +9873,19 @@ const VOICE = {
     const stripped = n.replace(/\s+(priority|routine)\s*$/i, '').trim();
     return stripped || n;
   }
+  // Ultra-short label for the phone strip so every list fits one row without
+  // scrolling: ordinals for the priority tiers, AM/PM for routines, and a
+  // clipped first word for custom lists.
+  function shortTabLabel(name){
+    const l = String(name || '').trim().toLowerCase();
+    if (/^first\b/.test(l))       return '1st';
+    if (/^second\b/.test(l))      return '2nd';
+    if (/^third\b/.test(l))       return '3rd';
+    if (/^fourth\b/.test(l))      return '4th';
+    if (/morning/.test(l))        return 'AM';
+    if (/night|evening/.test(l))  return 'PM';
+    return (shortListName(name).split(/\s+/)[0] || '').slice(0, 4);
+  }
   function loadFocus5(){
     try {
       const raw = localStorage.getItem(FOCUS5_KEY);
@@ -12409,7 +12454,7 @@ const VOICE = {
       const ctHTML = total > 0
         ? `<span class="ct">${lDone}/${total}</span>`
         : '';
-      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name">${escHtml(shortListName(l.name))}</span>${ctHTML}${reorderHTML}`;
+      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name"><span class="nm-full">${escHtml(shortListName(l.name))}</span><span class="nm-short">${escHtml(shortTabLabel(l.name))}</span></span>${ctHTML}${reorderHTML}`;
       tab.addEventListener('click', (e) => {
         const mv = e.target && e.target.closest && e.target.closest('[data-mv]');
         if (mv) {
@@ -12446,7 +12491,7 @@ const VOICE = {
     addTab.className = 'focus5-add-tab';
     addTab.innerHTML = `
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      New list`;
+      <span class="fa-label">New list</span>`;
     addTab.addEventListener('click', () => openFocus5Picker(null));
     strip.appendChild(addTab);
     view.appendChild(strip);
@@ -13382,10 +13427,12 @@ const VOICE = {
   // Default lists seeded once for new users. First/Second/Third are the
   // priority chain (cascade rules apply). Morning Routine is a separate
   // routine list — sits alongside the priorities but isn't in the cascade.
+  // Two priority tiers is enough (First + Second) — Third was dropped by
+  // request. _migrateDropThird() folds any existing Third list into Second so
+  // no tasks are lost, and records it as seeded so it's never re-added.
   const PRIORITY_DEFAULTS = [
     { name: 'First Priority',  routine: null,      color: 'var(--accent)' },
     { name: 'Second Priority', routine: null,      color: '#A78BFA' },
-    { name: 'Third Priority',  routine: null,      color: '#6BA8FF' },
     { name: 'Morning Routine', routine: 'morning', color: '#FFB84D' }
   ];
   // Migration: rename legacy priority list names from the old scheme
@@ -13435,6 +13482,47 @@ const VOICE = {
     }
     try { localStorage.setItem(MIG_KEY, '1'); } catch {}
   }
+  // One-time: fold a legacy "Third Priority" list into "Second Priority"
+  // (tasks preserved) and drop it — two tiers is enough. Records "third
+  // priority" as already-seeded so the seeder never re-adds it. Mirrors the
+  // merge+remove shape of _migratePriorityListNames.
+  function _migrateDropThird(){
+    const MIG_KEY = 'personal-priority-drop-third-v1';
+    try { if (localStorage.getItem(MIG_KEY) === '1') return; } catch {}
+    if (!Array.isArray(focus5State.lists)) return;
+    const norm = s => (s || '').trim().toLowerCase();
+    const third = focus5State.lists.find(l => norm(l.name) === 'third priority');
+    let changed = false;
+    if (third) {
+      const second = focus5State.lists.find(l => norm(l.name) === 'second priority');
+      const thirdTasks = Array.isArray(third.taskIds) ? third.taskIds : [];
+      if (thirdTasks.length && second) {
+        thirdTasks.forEach(id => { if (!second.taskIds.includes(id)) second.taskIds.push(id); });
+      }
+      // Only drop Third once its tasks have a home (folded into Second) or it's
+      // empty. If there's no Second AND it still holds tasks, leave it alone.
+      if (second || !thirdTasks.length) {
+        const wasActive = focus5State.activeListId === third.id;
+        focus5State.lists = focus5State.lists.filter(l => l !== third);
+        if (wasActive) {
+          focus5State.activeListId = (second && second.id)
+            || (focus5State.lists[0] && focus5State.lists[0].id) || null;
+        }
+        changed = true;
+      }
+    }
+    // Never re-seed Third again, even if it wasn't present now.
+    try {
+      const key = 'personal-focus-5-seeded-defaults';
+      let arr = [];
+      try { arr = JSON.parse(localStorage.getItem(key) || '[]'); } catch {}
+      if (!Array.isArray(arr)) arr = [];
+      if (!arr.some(s => norm(s) === 'third priority')) arr.push('Third Priority');
+      localStorage.setItem(key, JSON.stringify(arr));
+    } catch {}
+    if (changed) saveFocus5();
+    try { localStorage.setItem(MIG_KEY, '1'); } catch {}
+  }
   // Seed defaults ONCE per device. After seeding, user is free to rename
   // / delete / reorder — we won't re-seed.
   //
@@ -13450,6 +13538,8 @@ const VOICE = {
     // Always run the name migration first so old defaults get renamed
     // BEFORE the seed function decides what's missing.
     try { _migratePriorityListNames(); } catch {}
+    // Then fold away the retired Third Priority tier.
+    try { _migrateDropThird(); } catch {}
     // Per-default seeded tracking. Each default name is recorded once it's
     // been seeded (or once we noticed the user already has it). Means:
     //   - If we ADD a new default to PRIORITY_DEFAULTS in code, devices that

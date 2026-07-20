@@ -144,6 +144,17 @@
     .wr-music-custom button.clear:hover { color:#f87171; border-color:#f87171; opacity:1 }
     @media (max-width:560px) {
       .wr-music-custom label { display:none }
+      /* Stay a single compact bar on phones instead of ballooning into a
+         multi-row block: the genre chips scroll sideways in one line. */
+      .wr-music-wrap { padding:6px 10px 0 }
+      .wr-music-bar { gap:8px; padding:7px 10px }
+      .wr-music-label { display:none }
+      .wr-music-vibes {
+        flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none;
+        -webkit-overflow-scrolling:touch; padding-bottom:1px;
+      }
+      .wr-music-vibes::-webkit-scrollbar { display:none }
+      .wr-vibe-chip { flex:0 0 auto }
     }
     .wr-music-audio-frame {
       position:fixed; left:-9999px; top:0; width:320px; height:180px;

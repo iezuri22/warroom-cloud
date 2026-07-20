@@ -954,6 +954,8 @@
     transition: all .15s;
   }
   .view-tab:hover { color: var(--ink) }
+  /* Full labels on desktop; the short forms only appear on phones. */
+  .view-tab .vt-short { display: none }
   .view-tab.active {
     background: rgba(74,158,255,.18);
     color: var(--ink);
@@ -1078,6 +1080,7 @@
   .task-scope-chip.active { background:rgba(74,158,255,.18); border-color:rgba(74,158,255,.4); color:var(--ink) }
   .task-scope-chip .ct { font-size:11px; opacity:.7 }
   .task-scope-chip.active .ct { opacity:1 }
+  .task-scope-chip .ts-short { display:none }  /* full labels on desktop */
 
   /* Tech Support chips — sits above the row list, one chip per state. */
   .sup-chip-strip {
@@ -2137,9 +2140,38 @@
     .ss-link { width: 100%; justify-content: center; margin-right: 0 }
     .drawer-foot { flex-direction: column; align-items: stretch; gap: 8px; }
     .drawer-foot button[data-collapse] { width: 100% }
-    /* View toggle + filter chips: tighter on mobile */
-    .view-toggle { width: 100% }
-    .view-tab { flex: 1; text-align: center }
+    /* Primary ECM nav: all 5 tabs share one row equally — no wrap, no scroll.
+       Long labels shrink on phones (Programs→Progs, Deadlines→🔒 Due,
+       Review→Rev) via the .vt-full / .vt-short swap. */
+    .view-toggle {
+      display: flex; width: 100%; overflow: hidden;
+      flex-wrap: nowrap; gap: 2px;
+    }
+    .view-tab, .more-tab-wrap { flex: 1 1 0; min-width: 0 }
+    .view-tab {
+      text-align: center; white-space: nowrap; justify-content: center;
+      padding: 8px 3px;
+    }
+    .more-tab-wrap { display: flex }
+    .more-tab-wrap .more-tab { flex: 1 1 0; width: 100%; justify-content: center }
+    .view-tab .vt-full { display: none }
+    .view-tab .vt-short { display: inline }
+    /* Scope chips share one row equally with shortened labels (All · 🛠 Support
+       · Dev · Non-Dev) — no wrap, no scroll. */
+    .task-scope-strip { flex-wrap: nowrap; overflow: hidden; gap: 5px }
+    .task-scope-chip {
+      flex: 1 1 0; min-width: 0; justify-content: center; padding: 7px 5px;
+      white-space: nowrap; font-size: 11.5px;
+    }
+    .task-scope-chip .ts-full { display: none }
+    .task-scope-chip .ts-short { display: inline }
+    /* Support-state chips keep scrolling (their count varies). */
+    .sup-chip-strip {
+      flex-wrap: nowrap; overflow-x: auto;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    .sup-chip-strip::-webkit-scrollbar { display: none }
+    .sup-chip { flex-shrink: 0 }
     .status-bar { padding-bottom: 2px }
     /* Topbar actions wrap cleanly */
     .topbar-row { flex-wrap: wrap; gap: 8px }
@@ -3042,8 +3074,21 @@
     transition: all .15s; flex-shrink: 0;
   }
   .df-gear:hover { color: var(--ink); border-color: var(--w22) }
+  .df-btn-short { display: none }  /* full toggle label on desktop */
   @media (max-width: 700px) {
     .day-focus-bar { margin: 8px 16px }
+  }
+  @media (max-width: 640px) {
+    /* Compact the "Dedicated to" banner so it stops eating vertical space:
+       tighter padding, no right-push spacer (chips + button flow inline), and
+       a much shorter toggle label. */
+    .day-focus-bar { margin: 6px 12px; padding: 6px 10px; gap: 5px 7px; }
+    .df-day { font-size: 11px; gap: 5px; }
+    .df-sp { display: none; }
+    .df-btn { padding: 4px 11px; font-size: 10.5px; }
+    .df-btn-full { display: none; }
+    .df-btn-short { display: inline; }
+    .df-gear { width: 26px; height: 26px; }
   }
 
   /* Day-focus config modal */
@@ -3354,6 +3399,16 @@
     .ddl-table .st-lbl { display: none }
     .ddl-table th.c-status { width: 34px !important; font-size: 0 }
     .ddl-table thead th, .ddl-table tbody td { padding-left: 8px; padding-right: 8px }
+  }
+  /* Roomier rows + larger titles on phones so the task table reads like an
+     app list with real tap targets rather than a shrunken spreadsheet. The
+     navy header stays (the wanted "Excel" identity) but is a touch shorter. */
+  @media (max-width: 640px) {
+    .ddl-table tbody td { padding-top: 11px; padding-bottom: 11px }
+    /* Smaller task title so more of the name fits before it truncates. */
+    .ddl-table .tt-title { font-size: 13px }
+    .ddl-table thead th { padding-top: 9px; padding-bottom: 9px; font-size: 9.5px }
+    .ddl-wrap { padding: 4px 12px 90px }
   }
 
   /* ===== Row side panel ================================================== */
@@ -3927,14 +3982,14 @@
          hidden spans so the existing update functions stay no-op-safe. -->
     <span id="weeklyCount" style="display:none"></span>
     <button type="button" class="view-tab" data-view="programs">
-      Programs
+      <span class="vt-full">Programs</span><span class="vt-short">Progs</span>
     </button>
     <button type="button" class="view-tab" data-view="deadlines">
-      🔒 Deadlines
+      🔒<span class="vt-full"> Deadlines</span><span class="vt-short"> Due</span>
       <span class="view-tab-ct" id="deadlinesCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="notif">
-      Review
+      <span class="vt-full">Review</span><span class="vt-short">Rev</span>
       <span class="view-tab-ct" id="ackTabCount"></span>
     </button>
     <!-- Overflow menu — the occasional-use views live here so the tab strip
@@ -4954,7 +5009,7 @@ function renderDayFocus(){
     ${bodyHTML}
     <span class="df-sp"></span>
     <button type="button" class="df-btn ${engaged ? 'on' : ''}" data-df-toggle title="${engaged ? 'Drop today’s focus and show every item' : 'Focus the list on today’s dedication'}">
-      ${engaged ? 'Focused — show everything' : 'Focus today'}
+      <span class="df-btn-full">${engaged ? 'Focused — show everything' : 'Focus today'}</span><span class="df-btn-short">${engaged ? 'Show all' : 'Focus'}</span>
     </button>
     <button type="button" class="df-gear" data-df-config title="Configure which programs each day is dedicated to">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -6395,14 +6450,14 @@ function renderTaskScopeStrip(){
   const cDev      = open.filter(r => !isSupportRow(r) && isDevOrReportRow(r)).length;
   const cNonDev   = open.filter(r => !isSupportRow(r) && !isDevOrReportRow(r)).length;
   const chips = [
-    { v: 'allrows', label: 'All',                ct: cAll },
-    { v: 'support', label: '🛠 Tech Support',    ct: cSupport },
-    { v: 'dev',     label: 'Dev/Report',         ct: cDev },
-    { v: 'all',     label: 'Non-Dev/Reporting',  ct: cNonDev },
+    { v: 'allrows', label: 'All',                short: 'All',        ct: cAll },
+    { v: 'support', label: '🛠 Tech Support',    short: 'Support',    ct: cSupport },
+    { v: 'dev',     label: 'Dev/Report',         short: 'Dev',        ct: cDev },
+    { v: 'all',     label: 'Non-Dev/Reporting',  short: 'Non-Dev',    ct: cNonDev },
   ];
   strip.innerHTML = chips.map(c => `
     <button type="button" class="task-scope-chip ${currentView === c.v ? 'active' : ''}" data-task-scope="${c.v}">
-      ${c.label}<span class="ct">${c.ct}</span>
+      <span class="ts-full">${c.label}</span><span class="ts-short">${c.short}</span><span class="ct">${c.ct}</span>
     </button>
   `).join('');
   strip.querySelectorAll('[data-task-scope]').forEach(b => {

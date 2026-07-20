@@ -169,6 +169,32 @@
   }
   .tq-row .tq-focus:hover{background:rgba(255,138,61,.28);color:#fed7aa}
 
+  /* ===== Phone layout — this page had no mobile styles, so it read as a
+     squeezed desktop. Tighten spacing, shrink the queue rows, and let long
+     runs of same-course lectures drop their repeated subtitle. ===== */
+  @media (max-width: 640px) {
+    #main{ padding:14px 12px 96px }
+    #topbar h1{ font-size:19px }
+    #todayQueue{ border-radius:14px; margin-bottom:16px }
+    #todayQueue .tq-head{ padding:12px 14px; font-size:11.5px }
+    #todayQueue .tq-list{ padding:4px 6px 8px }
+    .tq-row{ gap:11px; padding:9px 8px }
+    .tq-row .tq-title{ font-size:14.5px }
+    .tq-row .tq-meta{ font-size:11px }
+    /* Consecutive lectures from the same course hide the repeated subtitle so
+       the queue reads as a grouped list, not a wall of identical lines. */
+    .tq-row.tq-samecourse .tq-meta{ display:none }
+    .tq-row.tq-samecourse .tq-title{ font-weight:600 }
+    .tq-row .tq-focus{ padding:6px 10px; font-size:10px }
+    .course{ border-radius:12px; margin-bottom:14px }
+    .course-head{ padding:14px 14px; gap:12px }
+    .course-head .ch-title{ font-size:16px }
+    .course-head .ch-meta{ font-size:11.5px; gap:10px 12px }
+    .course-head .ch-tools{ gap:4px }
+    .ch-icon-btn{ width:32px; height:32px }
+    .group-label{ margin:14px 4px 6px }
+  }
+
   /* "Keep going?" modal */
   #kgModalBd{
     position:fixed;inset:0;background:rgba(28,25,20,.45);backdrop-filter:blur(4px);
@@ -1187,6 +1213,14 @@ function todaysQueue(){
   return out;
 }
 
+// Raw (unescaped) subtitle for a queue item — used to detect consecutive
+// rows from the same course/section so the repeated line can be hidden.
+function _tqMeta(it){
+  if (!it) return null;
+  return it.kind === 'lecture'
+    ? `${it.course.title} · ${it.section.title}`
+    : `${it.course.title} · book`;
+}
 function renderTodayQueue(){
   const el = document.getElementById('todayQueue');
   if (!el) return;
@@ -1207,8 +1241,9 @@ function renderTodayQueue(){
           // list displays (Lecture 70, not Lecture 1 of Section 7).
           const customTitle = it.sub.title && !/^Lecture \d+/.test(it.sub.title);
           const lectureTitle = customTitle ? it.sub.title : ('Lecture ' + it.runningNum);
+          const same = idx > 0 && _tqMeta(items[idx - 1]) === _tqMeta(it);
           return `
-            <div class="tq-row ${it.sub.done ? 'done' : ''}" data-tq="${idx}">
+            <div class="tq-row ${it.sub.done ? 'done' : ''} ${same ? 'tq-samecourse' : ''}" data-tq="${idx}">
               <div class="tq-check" data-action="tq-toggle"></div>
               <div class="tq-text">
                 <div class="tq-title">${esc(lectureTitle)}</div>
@@ -1231,8 +1266,9 @@ function renderTodayQueue(){
                 ? `Page ${start} of ${esc(it.section.title)}`
                 : `Pages ${start}–${end} of ${esc(it.section.title)}`)
             : `${it.pace.perDay} ${it.pace.unit} of ${esc(it.section.title)}`;
+          const same = idx > 0 && _tqMeta(items[idx - 1]) === _tqMeta(it);
           return `
-            <div class="tq-row" data-tq="${idx}">
+            <div class="tq-row ${same ? 'tq-samecourse' : ''}" data-tq="${idx}">
               <div class="tq-check" style="visibility:hidden"></div>
               <div class="tq-text">
                 <div class="tq-title">${label}</div>
