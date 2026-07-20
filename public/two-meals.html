@@ -394,7 +394,11 @@
     border-radius:8px;color:var(--ink);font:inherit;font-size:13px;outline:none;
   }
   #pickerSearch::placeholder{ color:var(--w55) }
-  #pickerChips{ display:flex;flex-wrap:wrap;gap:6px;margin-top:10px }
+  #pickerChips{ display:flex;flex-direction:column;gap:7px;margin-top:10px }
+  .pchip-row{ display:flex;flex-wrap:wrap;gap:6px }
+  /* Primary (Chef iQ) tier gets a hairline under it so the two tiers read
+     as filter → subfilter, not one long chip soup. */
+  .pchip-row.primary{ padding-bottom:7px;border-bottom:1px dashed var(--line,rgba(33,30,25,.12)) }
   .pchip{
     padding:5px 11px;border-radius:99px;background:var(--w04);border:1px solid var(--line);
     color:var(--w70);font-size:11.5px;font-weight:700;cursor:pointer;
@@ -1359,6 +1363,7 @@ let ezRecipes = [];
 let pickingSlot = null;
 let pickerQuery = '';
 let pickerLabel = '';
+let pickerChef  = '';   // '' = all · 'chef' = Chef iQ only · 'nochef' = no Chef iQ link
 // When pickingForSide is set, the picker is selecting a side dish for
 // pickingSlot rather than replacing the main meal.
 let pickingForSide = false;
@@ -3252,6 +3257,7 @@ function openPicker(){
   document.getElementById('pickerBg').classList.add('open');
   pickerQuery = '';
   pickerLabel = '';
+  pickerChef  = '';
   document.getElementById('pickerSearch').value = '';
   renderPicker();
 }
@@ -3261,17 +3267,33 @@ function closePicker(){
   document.getElementById('pickerBg').classList.remove('open');
 }
 function renderPicker(){
-  // Chips — "⚡ Chef iQ" is a pseudo-category (recipes carrying a Chef iQ
-  // link) that leads the row; the real category labels follow.
+  // Two independent filter tiers that combine (AND):
+  //   1. Chef iQ — All / ⚡ Chef iQ / No Chef iQ (primary row)
+  //   2. Category — Breakfast, Lunch, Dinner, … (subfilter row)
   const chipsEl = document.getElementById('pickerChips');
+  const chefPass = r => pickerChef === '' ? true : (pickerChef === 'chef' ? isChefIq(r.link) : !isChefIq(r.link));
   const chefN = ezRecipes.filter(r => isChefIq(r.link)).length;
-  const chefChip = chefN
-    ? `<button type="button" class="pchip chef${pickerLabel === '__chefiq__' ? ' active' : ''}" data-l="__chefiq__">⚡ Chef iQ ${chefN}</button>`
-    : '';
-  chipsEl.innerHTML = chefChip + LABELS.map(L => {
-    const n = ezRecipes.filter(r => effectiveLabelsFor(r).includes(L)).length;
-    return `<button type="button" class="pchip${pickerLabel === L ? ' active' : ''}" data-l="${attr(L)}">${esc(L)} ${n}</button>`;
-  }).join('');
+  // Primary row only appears once any Chef iQ links exist to filter on.
+  const primaryRow = chefN ? `
+    <div class="pchip-row primary">
+      <button type="button" class="pchip chef${pickerChef === '' ? ' active' : ''}" data-chef="">All ${ezRecipes.length}</button>
+      <button type="button" class="pchip chef${pickerChef === 'chef' ? ' active' : ''}" data-chef="chef">⚡ Chef iQ ${chefN}</button>
+      <button type="button" class="pchip chef${pickerChef === 'nochef' ? ' active' : ''}" data-chef="nochef">No Chef iQ ${ezRecipes.length - chefN}</button>
+    </div>` : '';
+  // Category counts respect the active Chef iQ tier so the numbers always
+  // describe what tapping the chip would actually show.
+  const subRow = `
+    <div class="pchip-row">
+      ${LABELS.map(L => {
+        const n = ezRecipes.filter(r => chefPass(r) && effectiveLabelsFor(r).includes(L)).length;
+        return `<button type="button" class="pchip${pickerLabel === L ? ' active' : ''}" data-l="${attr(L)}">${esc(L)} ${n}</button>`;
+      }).join('')}
+    </div>`;
+  chipsEl.innerHTML = primaryRow + subRow;
+  chipsEl.querySelectorAll('[data-chef]').forEach(b => b.addEventListener('click', () => {
+    pickerChef = b.getAttribute('data-chef') || '';
+    renderPicker();
+  }));
   chipsEl.querySelectorAll('[data-l]').forEach(b => b.addEventListener('click', () => {
     const L = b.getAttribute('data-l');
     pickerLabel = (pickerLabel === L) ? '' : L;
@@ -3280,8 +3302,8 @@ function renderPicker(){
   // Grid
   const q = pickerQuery.trim().toLowerCase();
   const matches = ezRecipes.filter(r => {
-    if (pickerLabel === '__chefiq__') { if (!isChefIq(r.link)) return false; }
-    else if (pickerLabel && !effectiveLabelsFor(r).includes(pickerLabel)) return false;
+    if (!chefPass(r)) return false;
+    if (pickerLabel && !effectiveLabelsFor(r).includes(pickerLabel)) return false;
     if (!q) return true;
     const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.text || '').join(' ')).toLowerCase();
     return hay.includes(q);
