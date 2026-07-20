@@ -2691,19 +2691,28 @@
       padding: 0 0 6px;
       align-items: stretch;
     }
+    /* Natural widths, and labels NEVER shrink into "D…" slivers — the pills
+       are slimmed instead (tight padding, no redundant icons/counts) so the
+       whole strip genuinely fits the viewport. */
     .focus5-tab {
-      flex: 1 1 0; min-width: 0; justify-content: center;
-      padding: 8px 5px; font-size: 12.5px; gap: 4px; max-width: none;
+      flex: 0 0 auto; justify-content: center;
+      padding: 8px 8px; font-size: 12.5px; gap: 4px; max-width: none;
     }
-    .focus5-tab .name { max-width: none; overflow: visible }
+    .focus5-tab .name {
+      flex-shrink: 0; max-width: 64px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
     .focus5-tab .nm-full { display: none }
     .focus5-tab .nm-short { display: inline }
-    .focus5-tab .ct { font-size: 10px; padding: 1px 4px; }
+    .focus5-tab .ct { font-size: 10px; padding: 1px 4px; flex-shrink: 0 }
     .focus5-tab.planned-pill .name,
     .focus5-tab.completed-pill .name { display: none; }
+    .focus5-tab.completed-pill .ct { display: none; }
+    .focus5-tab.day-pill svg { display: none; }
+    .focus5-tab .focus5-routine-badge { display: none; }
     /* Reorder arrows are desktop-only — they eat too much width on a phone. */
     .focus5-tab-mv { display: none; }
-    .focus5-add-tab { flex: 0 0 auto; padding: 8px 11px; }
+    .focus5-add-tab { flex: 0 0 auto; padding: 8px 10px; }
     .focus5-add-tab .fa-label { display: none; }
     /* The progress bar + count + Edit row is redundant on phones — the tab
        badges (1st 0/1, etc.) already show each list's stats. Hide the whole row. */
@@ -12217,7 +12226,15 @@ const VOICE = {
     const existing = blockId ? (dayBlocksState.days[dk] || []).find(b => b.id === blockId) : null;
     const bg = document.createElement('div');
     bg.className = 'db-modal-bg';
-    const jobChips = (JOBS || []).filter(j => !j.hideFromAll).map(j => {
+    // Every project is offered (hideFromAll only hides boards from the main
+    // list view — a block can still focus on them), and ECM always gets a
+    // chip even when no board carries that label (ECM-synced tasks are
+    // matched by their smartsheetRowId, not a job id).
+    const chipDefs = (JOBS || []).map(j => ({ label: j.label, color: j.color }));
+    if (!chipDefs.some(c => /\becm\b/i.test(c.label || ''))) {
+      chipDefs.unshift({ label: 'ECM', color: '#6BA8FF' });
+    }
+    const jobChips = chipDefs.map(j => {
       const on = existing && (existing.projects || []).some(p => p.toLowerCase() === (j.label || '').toLowerCase());
       return `<button type="button" class="db-projchip ${on ? 'on' : ''}" data-proj="${escHtml(j.label)}" style="--pc:${j.color}">${escHtml(j.label)}</button>`;
     }).join('');
@@ -12300,22 +12317,40 @@ const VOICE = {
     // endless dupes ("Do dishes" ×50) and belong to the Morning Routine flow,
     // not time blocks.
     const pool = () => todos.filter(t => t && !t.done && !_isPendingReminder(t) && !t.fromTemplate);
+    // Does this task belong to a named focus area? "ECM" matches the tasks
+    // synced from the ECM page (smartsheetRowId) as well as any ECM-labeled
+    // board; everything else matches by its board label.
+    const matchesProject = (t, projLower) => {
+      const m = t.job && jobMeta(t.job);
+      const label = m ? (m.label || '').toLowerCase() : '';
+      if (projLower === 'ecm') return !!t.smartsheetRowId || label === 'ecm';
+      return label === projLower;
+    };
     const rerender = () => {
       const chipsEl = bg.querySelector('#dbpChips');
-      const jobsInPool = [...new Set(pool().map(t => t.job).filter(Boolean))];
+      const p = pool();
+      const jobsInPool = [...new Set(p.map(t => t.job).filter(Boolean))];
       const chips = [];
       if (block.projects && block.projects.length) {
         chips.push({ v: '__focus__', label: `★ ${block.projects.join(' + ')}` });
       }
       chips.push({ v: 'all', label: 'All' });
-      jobsInPool.forEach(j => { const m = jobMeta(j); if (m) chips.push({ v: j, label: m.label }); });
+      if (p.some(t => _isPlanned(t))) chips.push({ v: '__planned__', label: '📅 Planned' });
+      if (p.some(t => t.smartsheetRowId)) chips.push({ v: '__ecm__', label: 'ECM' });
+      jobsInPool.forEach(j => {
+        const m = jobMeta(j);
+        if (m && !/\becm\b/i.test(m.label || '')) chips.push({ v: j, label: m.label });
+      });
       chipsEl.innerHTML = chips.map(c => `<button type="button" class="db-projchip ${filt === c.v ? 'on' : ''}" data-f="${escHtml(c.v)}">${escHtml(c.label)}</button>`).join('');
       chipsEl.querySelectorAll('[data-f]').forEach(b => b.addEventListener('click', () => { filt = b.getAttribute('data-f'); rerender(); }));
-      const focusSet = new Set((block.projects || []).map(p => p.toLowerCase()));
-      const rows = pool().filter(t => {
+      const focusList = (block.projects || []).map(p2 => p2.toLowerCase());
+      const rows = p.filter(t => {
         if (filt === '__focus__') {
-          const m = t.job && jobMeta(t.job);
-          if (!m || !focusSet.has((m.label || '').toLowerCase())) return false;
+          if (!focusList.some(fp => matchesProject(t, fp))) return false;
+        } else if (filt === '__planned__') {
+          if (!_isPlanned(t)) return false;
+        } else if (filt === '__ecm__') {
+          if (!matchesProject(t, 'ecm')) return false;
         } else if (filt !== 'all' && t.job !== filt) return false;
         if (q && !(t.text || '').toLowerCase().includes(q)) return false;
         return true;
@@ -12325,6 +12360,8 @@ const VOICE = {
         <div class="db-p-row ${inBlock.has(String(t.id)) ? 'on' : ''}" data-id="${escHtml(String(t.id))}">
           <span class="db-check ${inBlock.has(String(t.id)) ? 'on' : ''}"></span>
           <span class="db-task-text">${escHtml(t.text || '')}</span>
+          ${_isPlanned(t) && t.plannedFor ? `<span class="db-proj">📅 ${escHtml(String(t.plannedFor).slice(5, 10))}</span>` : ''}
+          ${t.smartsheetRowId ? `<span class="db-proj" style="background:rgba(107,168,255,.14);color:#3b82f6">ECM</span>` : ''}
           ${t.job && jobMeta(t.job) ? `<span class="db-proj" style="background:${jobMeta(t.job).color}22;color:${jobMeta(t.job).color}">${escHtml(jobMeta(t.job).label)}</span>` : ''}
         </div>`).join('') : '<div class="db-m-hint" style="padding:14px 4px">No open tasks match.</div>';
       bg.querySelector('#dbpCount').textContent = `${(block.taskIds || []).length} in block`;
