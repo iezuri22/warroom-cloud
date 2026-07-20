@@ -179,6 +179,42 @@
   /* Slots */
   .slots{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px }
   @media (max-width:640px){ .slots{ grid-template-columns:1fr } }
+  /* Week pager — plan any week, not just the current one */
+  .week-pager{
+    display:flex; align-items:center; justify-content:center; gap:12px;
+    padding:2px 0 2px;
+  }
+  .wp-nav{
+    width:34px; height:34px; border-radius:10px; cursor:pointer;
+    background:var(--fill,rgba(33,30,25,.05)); border:1px solid var(--line,rgba(33,30,25,.1));
+    color:inherit; font-size:18px; font-weight:800; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .wp-nav:hover{ border-color:rgba(33,30,25,.25) }
+  .wp-label{ display:flex; align-items:center; gap:8px; min-width:0 }
+  .wp-range{ font-size:14px; font-weight:800; letter-spacing:.2px }
+  .wp-rel{
+    font-size:11px; font-weight:800; padding:3px 9px; border-radius:99px;
+    background:var(--fill,rgba(33,30,25,.06)); color:inherit; opacity:.75;
+  }
+  .wp-rel.now{ background:rgba(255,138,61,.16); color:#e2701f; opacity:1 }
+  .wp-today{
+    font-size:11px; font-weight:800; padding:3px 10px; border-radius:99px;
+    background:rgba(255,138,61,.14); border:1px solid rgba(255,138,61,.4);
+    color:#e2701f; cursor:pointer; font-family:inherit;
+  }
+  /* Chef iQ / original-recipe link-outs */
+  a.mini.link-out{ text-decoration:none; display:inline-flex; align-items:center; gap:4px }
+  .recipe-link-btn{
+    display:inline-flex; align-items:center; gap:6px;
+    margin:0 0 14px; padding:8px 14px; border-radius:10px;
+    background:rgba(255,138,61,.12); border:1px solid rgba(255,138,61,.4);
+    color:#e2701f; font-size:13px; font-weight:800; text-decoration:none;
+  }
+  .recipe-link-btn:hover{ background:rgba(255,138,61,.2) }
+  .pchip.chef{ border-color:rgba(255,138,61,.5); color:#e2701f }
+  .pchip.chef.active{ background:rgba(255,138,61,.16) }
+  .chef-badge{ margin-right:4px; font-size:12px }
   .slot{
     background:var(--w03);border:1px solid var(--line);border-radius:14px;
     overflow:hidden;display:flex;flex-direction:column;
@@ -1400,6 +1436,18 @@ function isoWeekKey(d){
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
+// The week the slot view is LOOKING AT. Defaults to the current week but the
+// pager can move it — that's how you plan future weeks. (Previously the view
+// + picker hard-coded isoWeekKey(), so meals set late in a week seemed to
+// "disappear" when Sunday rolled the key over, and planning ahead was
+// impossible.)
+let viewWeekKey = isoWeekKey();
+function shiftWeekKey(key, deltaWeeks){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+  const base = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date();
+  base.setDate(base.getDate() + deltaWeeks * 7);
+  return isoWeekKey(base);
+}
 function weekDateRange(key){
   // New format: YYYY-MM-DD (Sunday). Render Sun → Sat in local time.
   const newM = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
@@ -1465,6 +1513,24 @@ function ezTags(v){
   if (Array.isArray(v)) return v.map(x => String(x).trim()).filter(Boolean);
   return String(v).split(/[,#]/).map(x => x.trim()).filter(Boolean);
 }
+// Pull the recipe's source link out of an EZ row. Chef iQ links win no matter
+// what field they're stored under (we scan every string value), then common
+// url-ish field names. Empty string when the recipe has no link.
+function ezLink(r){
+  const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
+  try {
+    for (const v of Object.values(r)) {
+      if (isUrl(v) && /chefiq/i.test(v)) return v.trim();
+    }
+  } catch {}
+  for (const k of ['chefIqUrl', 'chefiq_url', 'chefiqUrl', 'chef_iq_url', 'sourceUrl', 'source_url',
+                   'recipeUrl', 'recipe_url', 'originalUrl', 'original_url', 'webUrl', 'web_url',
+                   'website', 'url', 'link', 'source']) {
+    if (isUrl(r[k])) return r[k].trim();
+  }
+  return '';
+}
+const isChefIq = link => /chefiq/i.test(link || '');
 // Mirror goals-canvas.html's parsers so two-meals reads the SAME EZ fields.
 // EZ stores steps under r.prepSteps / r.cookSteps (NOT r.steps), and
 // ingredients under r.ingredientsRows with separate qty/unit/name fields.
@@ -1781,7 +1847,11 @@ function subscribeMealWeeks(){
   onSnapshot(mealWeeksCol, (snap) => {
     snap.docChanges().forEach(ch => {
       if (ch.type === 'removed') mealWeeks.delete(ch.doc.id);
-      else mealWeeks.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+      else {
+        const d = { id: ch.doc.id, ...ch.doc.data() };
+        d.sides = _normSides(d.sides, Array.isArray(d.slots) ? d.slots.length : 0);
+        mealWeeks.set(ch.doc.id, d);
+      }
     });
     renderAll();
   }, (err) => console.warn('[meals] snapshot err', err));
@@ -1806,7 +1876,8 @@ function subscribeRecipes(){
         img: d.img || '',
         tags: Array.isArray(d.tags) ? d.tags : [],
         ingredients: Array.isArray(d.ingredients) ? d.ingredients : [],
-        steps: Array.isArray(d.steps) ? d.steps : []
+        steps: Array.isArray(d.steps) ? d.steps : [],
+        link: typeof d.link === 'string' ? d.link : ''
       };
       const idx = ezRecipes.findIndex(r => r.rid === id);
       if (idx >= 0) ezRecipes[idx] = next;
@@ -2070,31 +2141,48 @@ function commitCookSteps(rid, steps){
 // Get the meal-week document with normalized shape (slots length 2 minimum,
 // sides parallel array, mainsExtraVisible flag for the optional 3rd meal
 // UI).
+// Sides normalizer. In memory sides are arrays of rid-arrays, but Firestore
+// FORBIDS nested arrays — writing `sides: [[],[]]` throws "Nested arrays are
+// not supported", which is exactly why every meal save since the sides
+// feature shipped (2026-06-27) silently failed: the optimistic UI showed the
+// pick, the rejected write meant nothing persisted, and the next snapshot /
+// reload made the meal "disappear". We now persist sides as an array of
+// MAPS ({ids:[...]}) and unwrap either shape on read.
+function _normSides(v, len){
+  const arr = Array.isArray(v) ? v.slice() : [];
+  const out = arr.map(s => Array.isArray(s) ? s : (s && Array.isArray(s.ids) ? s.ids : []));
+  while (out.length < (len || 0)) out.push([]);
+  return out;
+}
 function getMealWeek(weekKey){
   const cur = mealWeeks.get(weekKey) || { weekKey };
   const slots = Array.isArray(cur.slots) ? cur.slots.slice() : [];
   while (slots.length < 2) slots.push(null);
-  const sides = Array.isArray(cur.sides) ? cur.sides.slice() : [];
-  while (sides.length < slots.length) sides.push([]);
   return {
     weekKey,
     slots,
-    sides: sides.map(s => Array.isArray(s) ? s : []),
+    sides: _normSides(cur.sides, slots.length),
     showThird: !!cur.showThird || !!slots[2]  // auto-show when filled
   };
 }
 
 async function saveMealWeek(weekKey, wk){
+  const sides = _normSides(wk.sides, wk.slots.length);
+  // Local cache keeps the friendly nested-array shape…
+  mealWeeks.set(weekKey, { weekKey, slots: wk.slots, sides, showThird: wk.showThird, updatedAt: nowISO() });
+  // …the wire payload wraps each side-list in a map (Firestore-legal).
   const payload = {
     weekKey,
     slots: wk.slots,
-    sides: wk.sides,
+    sides: sides.map(a => ({ ids: a })),
     showThird: wk.showThird,
     updatedAt: nowISO()
   };
-  mealWeeks.set(weekKey, payload);
   try { await setDoc(doc(mealWeeksCol, weekKey), payload, { merge: true }); }
-  catch (e) { console.error('[meals] save', e); }
+  catch (e) {
+    console.error('[meals] save', e);
+    alert("Couldn't save this week's meals — check your connection and try again.");
+  }
   renderAll();
 }
 
@@ -2240,8 +2328,27 @@ async function loadEz(){
         tags:  ezTags(r.tags).concat(ezTags(r.category), ezTags(r.categories), ezTags(r.mealType), ezTags(r.meal_type), ezTags(r.course), ezTags(r.type)),
         ingredients: ezIngredients(r),
         steps:       ezSteps(r),
+        link:        ezLink(r),
       }));
     console.log(`[ez] loaded ${ezRecipes.length} recipes (from ${all.length} rows)`);
+    // Write-through: persist discovered links into the Firestore mirror so the
+    // Chef iQ button + filter work even in disconnected mode (and on devices
+    // without an EZ session). Once per day per device — writes are tiny +
+    // idempotent, this just avoids re-pushing on every load.
+    try {
+      const stampKey = 'meals-links-pushed-day';
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem(stampKey) !== today) {
+        localStorage.setItem(stampKey, today);
+        let pushed = 0;
+        for (const r of ezRecipes) {
+          if (!r.link) continue;
+          setDoc(doc(recipesCol, r.rid), { link: r.link }, { merge: true }).catch(() => {});
+          pushed++;
+        }
+        if (pushed) console.log(`[ez] pushed ${pushed} recipe links to the Firestore mirror`);
+      }
+    } catch {}
     ezStatus = 'ready';
     updateEzBanner();
     renderAll();
@@ -2431,7 +2538,7 @@ function renderCategoryView(){
   });
 }
 function renderTopbar(){
-  const k = isoWeekKey();
+  const k = viewWeekKey;   // track the pager, not just the calendar
   document.getElementById('topbarWeek').textContent = '· Week of ' + weekDateRange(k);
   // Grocery is always available now — even with empty slots you can use the
   // manual-add list to build a freeform shopping list, and skipped items
@@ -2509,6 +2616,7 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
       <button class="mini primary" data-cook="${attr(rid)}">🍴 Cook</button>
       <button class="mini" data-ings="${attr(rid)}|${slotIdx}">🥬 Ingredients</button>
       <button class="mini" data-view="${attr(rid)}">📖 View</button>
+      ${merged.link ? `<a class="mini link-out" href="${attr(merged.link)}" target="_blank" rel="noopener" title="Open the original recipe">${isChefIq(merged.link) ? '⚡ Chef iQ' : '🔗 Recipe'}</a>` : ''}
       <button class="mini" data-pick="${slotIdx}">↻ Replace</button>
       <button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">✕ Clear</button>
     </div>
@@ -2518,10 +2626,27 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
   </div>`;
 }
 function renderSlots(){
-  const k = isoWeekKey();
+  const k = viewWeekKey;
+  const cur = isoWeekKey();
   const wk = getMealWeek(k);
   const el = document.getElementById('slots');
-  let html = slotHtml(wk.slots[0], 0, k, true, wk.sides[0])
+  // Week pager — spans the grid. Lets the user plan future weeks (and see the
+  // week their picks actually landed in after a Sunday rollover).
+  const rel = k === cur ? 'This week'
+    : k === shiftWeekKey(cur, 1) ? 'Next week'
+    : k === shiftWeekKey(cur, -1) ? 'Last week'
+    : '';
+  const pager = `
+    <div class="week-pager" style="grid-column:1/-1">
+      <button class="wp-nav" id="wpPrev" title="Previous week">‹</button>
+      <div class="wp-label">
+        <span class="wp-range">${esc(weekDateRange(k))}</span>
+        ${rel ? `<span class="wp-rel ${k === cur ? 'now' : ''}">${rel}</span>` : `<button class="wp-today" id="wpToday">Back to this week</button>`}
+      </div>
+      <button class="wp-nav" id="wpNext" title="Next week">›</button>
+    </div>`;
+  let html = pager
+           + slotHtml(wk.slots[0], 0, k, true, wk.sides[0])
            + slotHtml(wk.slots[1], 1, k, true, wk.sides[1]);
   if (wk.showThird) {
     html += slotHtml(wk.slots[2] || null, 2, k, true, wk.sides[2]);
@@ -2529,6 +2654,9 @@ function renderSlots(){
     html += `<button class="add-third" id="addThirdBtn">+ Add a third meal this week</button>`;
   }
   el.innerHTML = html;
+  document.getElementById('wpPrev')?.addEventListener('click', () => { viewWeekKey = shiftWeekKey(viewWeekKey, -1); renderAll(); });
+  document.getElementById('wpNext')?.addEventListener('click', () => { viewWeekKey = shiftWeekKey(viewWeekKey, 1); renderAll(); });
+  document.getElementById('wpToday')?.addEventListener('click', () => { viewWeekKey = isoWeekKey(); renderAll(); });
   // Main slot pickers
   el.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
@@ -2607,19 +2735,21 @@ async function toggleFavorite(rid){
   catch (e) { console.warn('[fav] save', e); }
   renderAll();
 }
-// Drop the recipe into the next empty slot of the CURRENT week. If both
-// mains are full and the 3rd-meal slot is hidden, expose it. If everything
-// is full, do nothing (user must clear a slot first).
+// Drop the recipe into the next empty slot of the week BEING VIEWED (the
+// pager week — so "+ Cook this week" from history also works while planning
+// next week). If both mains are full and the 3rd-meal slot is hidden,
+// expose it. If everything is full, do nothing (user must clear a slot first).
 async function reAddToCurrentWeek(rid){
-  const wk = getMealWeek(isoWeekKey());
+  const k = viewWeekKey;
+  const wk = getMealWeek(k);
   // Look for an empty main slot first (0, then 1, then 2 if showThird).
   for (let i = 0; i < (wk.showThird ? 3 : 2); i++) {
-    if (!wk.slots[i]) { await setMealSlot(isoWeekKey(), i, rid); return; }
+    if (!wk.slots[i]) { await setMealSlot(k, i, rid); return; }
   }
   // No empty main and 3rd meal hidden — auto-expose slot 2 and use it.
   if (!wk.showThird) {
-    await setShowThird(isoWeekKey(), true);
-    await setMealSlot(isoWeekKey(), 2, rid);
+    await setShowThird(k, true);
+    await setMealSlot(k, 2, rid);
     return;
   }
   alert('All three meal slots are full this week. Clear one first, or add as a side.');
@@ -2981,6 +3111,7 @@ async function disconnectEz(){
         tags: Array.isArray(r.tags) ? r.tags : [],
         ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
         steps: Array.isArray(r.steps) ? r.steps : [],
+        link: r.link || '',
         migratedAt: nowISO()
       }, { merge: true });
       written++;
@@ -3129,9 +3260,14 @@ function closePicker(){
   document.getElementById('pickerBg').classList.remove('open');
 }
 function renderPicker(){
-  // Chips
+  // Chips — "⚡ Chef iQ" is a pseudo-category (recipes carrying a Chef iQ
+  // link) that leads the row; the real category labels follow.
   const chipsEl = document.getElementById('pickerChips');
-  chipsEl.innerHTML = LABELS.map(L => {
+  const chefN = ezRecipes.filter(r => isChefIq(r.link)).length;
+  const chefChip = chefN
+    ? `<button type="button" class="pchip chef${pickerLabel === '__chefiq__' ? ' active' : ''}" data-l="__chefiq__">⚡ Chef iQ ${chefN}</button>`
+    : '';
+  chipsEl.innerHTML = chefChip + LABELS.map(L => {
     const n = ezRecipes.filter(r => effectiveLabelsFor(r).includes(L)).length;
     return `<button type="button" class="pchip${pickerLabel === L ? ' active' : ''}" data-l="${attr(L)}">${esc(L)} ${n}</button>`;
   }).join('');
@@ -3143,7 +3279,8 @@ function renderPicker(){
   // Grid
   const q = pickerQuery.trim().toLowerCase();
   const matches = ezRecipes.filter(r => {
-    if (pickerLabel && !effectiveLabelsFor(r).includes(pickerLabel)) return false;
+    if (pickerLabel === '__chefiq__') { if (!isChefIq(r.link)) return false; }
+    else if (pickerLabel && !effectiveLabelsFor(r).includes(pickerLabel)) return false;
     if (!q) return true;
     const hay = (r.title + ' ' + (r.tags || []).join(' ') + ' ' + (r.ingredients || []).map(i => i.text || '').join(' ')).toLowerCase();
     return hay.includes(q);
@@ -3170,14 +3307,16 @@ function renderPicker(){
     return `<div class="pcard" data-rid="${attr(r.rid)}">
       ${img}
       <div class="pbody">
-        <div class="ptitle">${esc(merged.title)}</div>
+        <div class="ptitle">${isChefIq(merged.link) ? '<span class="chef-badge" title="Has a Chef iQ recipe link">⚡</span>' : ''}${esc(merged.title)}</div>
         <div class="pchips">${chips}</div>
       </div>
     </div>`;
   }).join('');
   grid.querySelectorAll('[data-rid]').forEach(c => c.addEventListener('click', () => {
     const rid = c.getAttribute('data-rid');
-    const wk = isoWeekKey();
+    // Save into the week the slot view is LOOKING AT — that's what makes
+    // planning next week (or fixing a rolled-over week) actually stick.
+    const wk = viewWeekKey;
     if (pickingForSide) addMealSide(wk, pickingSlot, rid);
     else setMealSlot(wk, pickingSlot, rid);
     closePicker();
@@ -3270,6 +3409,7 @@ function openView(rid){
 
   body.innerHTML = `
     ${merged.img ? `<img src="${attr(merged.img)}" alt="" style="width:100%;max-height:300px;object-fit:cover;border-radius:10px;margin-bottom:14px">` : ''}
+    ${merged.link ? `<a class="recipe-link-btn" href="${attr(merged.link)}" target="_blank" rel="noopener">${isChefIq(merged.link) ? '⚡ Open in Chef iQ' : '🔗 Open original recipe'}</a>` : ''}
     ${chipsHtml}
     <div class="cs-num" style="margin-bottom:8px">Ingredients</div>
     <div style="margin:8px 0 18px">
@@ -4439,7 +4579,8 @@ function openGrocery(){
 }
 function renderGrocery(){
   const body = document.getElementById('grocBody');
-  const wk = mealWeeks.get(isoWeekKey()) || { slots: [], sides: [] };
+  // Grocery follows the week being viewed — you shop for the week you planned.
+  const wk = mealWeeks.get(viewWeekKey) || { slots: [], sides: [] };
   const slots = Array.isArray(wk.slots) ? wk.slots : [];
   const sides = Array.isArray(wk.sides) ? wk.sides : [];
 
