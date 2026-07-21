@@ -159,6 +159,42 @@
   .icon-btn:active { transform: scale(.94) }
   .icon-btn.syncing svg { animation: ecm-spin 1s linear infinite }
   @keyframes ecm-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+  .icon-btn[aria-expanded="true"] { color: var(--blue); background: rgba(74,158,255,.14); border-color: rgba(74,158,255,.4) }
+
+  /* Client-dashboard launcher popover */
+  .dash-pop {
+    position: fixed; z-index: 600;
+    width: 288px; max-height: 78vh; overflow-y: auto;
+    background: var(--bg-elev); border: 1px solid var(--w14);
+    border-radius: 14px; box-shadow: 0 18px 52px rgba(0,0,0,.45);
+    padding: 6px;
+  }
+  .dash-pop-head {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 10px 9px;
+    font-size: 12px; font-weight: 900; letter-spacing: .3px; color: var(--ink);
+  }
+  .dash-pop-head span {
+    font-size: 10px; font-weight: 700; letter-spacing: .4px;
+    text-transform: uppercase; color: var(--w45);
+  }
+  .dash-pop-sep { height: 1px; background: var(--w08); margin: 4px 6px 5px }
+  .dash-pop-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 8px 10px; border-radius: 9px;
+    background: transparent; border: none; cursor: pointer; text-align: left;
+    color: var(--ink); font-family: inherit;
+  }
+  .dash-pop-item:hover { background: var(--w06) }
+  .dash-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0 }
+  .dash-name { font-size: 13px; font-weight: 800; white-space: nowrap; flex-shrink: 0 }
+  .dash-sub {
+    font-size: 11px; font-weight: 600; color: var(--w45);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-left: auto; text-align: right; min-width: 0;
+  }
+  .dash-pop-item.all .dash-name { color: var(--blue) }
+  .dash-go { margin-left: auto; font-size: 11px; font-weight: 800; color: var(--blue) }
 
   /* Search */
   .search-row {
@@ -3949,6 +3985,9 @@
     <div class="title">ECM<span class="tag">Smartsheets</span></div>
     <div class="meta" id="metaCount"></div>
     <div class="topbar-actions">
+      <button class="icon-btn" id="dashLinkBtn" type="button" title="Open a client dashboard (internal view)" aria-haspopup="true" aria-expanded="false">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      </button>
       <button class="icon-btn" id="themeToggle" type="button" title="Switch light / dark theme">
         <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -11698,6 +11737,74 @@ document.addEventListener('click', (e) => {
 
 // Wire top-level controls
 document.getElementById('btnSync').addEventListener('click', loadSheet);
+
+// ===== Client-dashboard launcher =====
+// The per-program status dashboards live on GitHub Pages (ecm-dashboards).
+// This popover jumps to any one of them in the INTERNAL view (?ecm=1 — shows
+// the Notes tab + edit links), or to the all-programs index. Tokens are the
+// obfuscated per-program URL slugs from that repo's config/programs.json.
+const ECM_DASH_BASE = 'https://iezuri22.github.io/ecm-dashboards';
+const ECM_DASHBOARDS = [
+  { program: 'Workforce',       token: 'wf-a8f3-2c91', display: 'DFSS – Workforce',                       accent: '#378ADD' },
+  { program: 'Seniors',         token: 'sr-b4e7-1d05', display: 'DFSS – Senior Services',                 accent: '#1D9E75' },
+  { program: 'CSC',             token: 'cs-b9e5-3f72', display: 'DFSS – Community Service Centers',        accent: '#7F77DD' },
+  { program: 'HOP',             token: 'hp-c4a8-2d59', display: 'DFSS – Homeless Outreach & Prevention',  accent: '#D85A30' },
+  { program: 'DOH',             token: 'dh-c2a9-7e63', display: 'Department of Housing',                  accent: '#7F77DD' },
+  { program: 'LIRI',            token: 'li-a1c4-6e83', display: 'DPD – LIRI',                             accent: '#378ADD' },
+  { program: 'MOPD',            token: 'mp-d6f1-8b94', display: "Mayor's Office for People w/ Disabilities", accent: '#D85A30' },
+  { program: 'MOPD Employment', token: 'me-e3b8-4c27', display: 'MOPD – Employment',                     accent: '#BA7517' },
+  { program: 'CDPH',            token: 'cd-f7d2-9a16', display: 'Chicago Dept. of Public Health',         accent: '#1D9E75' },
+  { program: 'DOF',             token: 'df-d2f6-7b18', display: 'Department of Finance',                  accent: '#BA7517' },
+  { program: 'AS1',             token: 'as-e5b3-9c47', display: 'Cross-Program / Internal',               accent: '#888780' },
+];
+function _dashUrl(token){ return `${ECM_DASH_BASE}/d/${token}/?ecm=1`; }
+let _dashPop = null;
+function closeDashPop(){
+  if (_dashPop) { try { _dashPop.remove(); } catch {} _dashPop = null; }
+  const b = document.getElementById('dashLinkBtn');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+function openDashPop(anchor){
+  if (_dashPop) { closeDashPop(); return; }
+  const pop = document.createElement('div');
+  pop.className = 'dash-pop';
+  pop.innerHTML = `
+    <div class="dash-pop-head">Client dashboards <span>internal view · with notes</span></div>
+    <button type="button" class="dash-pop-item all" data-dash-all>
+      <span class="dash-dot" style="background:var(--blue)"></span>
+      <span class="dash-name">All programs</span>
+      <span class="dash-go">index →</span>
+    </button>
+    <div class="dash-pop-sep"></div>
+    ${ECM_DASHBOARDS.map(d => `
+      <button type="button" class="dash-pop-item" data-dash-token="${escHtml(d.token)}" title="${escHtml(d.display)}">
+        <span class="dash-dot" style="background:${d.accent}"></span>
+        <span class="dash-name">${escHtml(d.program)}</span>
+        <span class="dash-sub">${escHtml(d.display)}</span>
+      </button>`).join('')}`;
+  const rect = anchor.getBoundingClientRect();
+  pop.style.top = `${Math.round(rect.bottom + 8)}px`;
+  pop.style.right = `${Math.round(Math.max(8, window.innerWidth - rect.right))}px`;
+  document.body.appendChild(pop);
+  _dashPop = pop;
+  anchor.setAttribute('aria-expanded', 'true');
+  pop.querySelector('[data-dash-all]').addEventListener('click', () => {
+    window.open(`${ECM_DASH_BASE}/`, '_blank', 'noopener');
+    closeDashPop();
+  });
+  pop.querySelectorAll('[data-dash-token]').forEach(b => b.addEventListener('click', () => {
+    window.open(_dashUrl(b.getAttribute('data-dash-token')), '_blank', 'noopener');
+    closeDashPop();
+  }));
+}
+document.getElementById('dashLinkBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  openDashPop(e.currentTarget);
+});
+document.addEventListener('click', (e) => {
+  if (_dashPop && !e.target.closest('.dash-pop') && !e.target.closest('#dashLinkBtn')) closeDashPop();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _dashPop) closeDashPop(); });
 // Theme toggle — flips html.light, persists, and re-renders so any
 // JS-generated chrome picks up the new tokens.
 (function wireThemeToggle(){
