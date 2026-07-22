@@ -3644,6 +3644,20 @@
   .pp-count { font-size: 11.5px; font-weight: 700; color: var(--w55) }
 
   /* ===== Programs page =================================================== */
+  .prog-chips-bar {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 2px 14px;
+  }
+  .prog-chips-bar .prog-chips { flex: 1; min-width: 0; padding: 0 }
+  .prog-reorder-btn {
+    flex-shrink: 0; align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 13px; border-radius: 99px;
+    background: var(--w05); border: 1px solid var(--w15); color: var(--w70);
+    font-family: inherit; font-size: 12px; font-weight: 800; letter-spacing: .2px;
+    cursor: pointer; transition: all .12s; white-space: nowrap;
+  }
+  .prog-reorder-btn:hover { color: var(--ink); border-color: var(--w30); background: var(--w08) }
   .prog-chips {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding: 8px 2px 14px;
@@ -3879,8 +3893,12 @@
     background: var(--w03); border: 1px solid var(--w06);
     font-size: 12.5px; font-weight: 700; color: var(--w85);
   }
+  .po-row .po-grip { cursor: grab; color: var(--w35); font-size: 13px; line-height: 1; flex-shrink: 0; user-select: none; touch-action: none }
+  .po-row .po-grip:hover { color: var(--w60) }
+  .po-row.dragging { opacity: .4 }
+  .po-row.drop-target { border-color: rgba(74,158,255,.6); background: rgba(74,158,255,.08) }
   .po-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-  .po-row .n { font-size: 10.5px; color: var(--w40); font-weight: 800 }
+  .po-row .n { font-size: 10.5px; color: var(--w40); font-weight: 800; min-width: 16px; text-align: right }
   .po-row button {
     width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
     background: transparent; border: 1px solid var(--w10); color: var(--w55);
@@ -3888,6 +3906,16 @@
   }
   .po-row button:hover:not(:disabled) { color: var(--ink); border-color: var(--w25) }
   .po-row button:disabled { opacity: .25; cursor: default }
+  /* ★ Today — stacked full program sheets (mirrors the individual page) */
+  .prog-today-stack { display: flex; flex-direction: column; gap: 16px }
+  .prog-today-sheet { padding: 18px 20px 22px }
+  .prog-today-name {
+    background: transparent; border: none; cursor: pointer; padding: 0;
+    font-family: inherit; font-size: 22px; font-weight: 900; letter-spacing: -.02em;
+    text-align: left;
+  }
+  .prog-today-name .pth-arrow { opacity: .4; font-weight: 800; transition: opacity .12s }
+  .prog-today-name:hover .pth-arrow { opacity: 1 }
   /* Today overview cards — notes + open-task mini list */
   .prog-ov-sec-lbl {
     margin: 10px 0 5px;
@@ -10722,7 +10750,7 @@ function openProgOrderModal(){
         <span class="sm-title">Program order</span>
         <button class="sm-x" data-sm-close title="Close">✕</button>
       </div>
-      <div class="dfc-hint">Arrange programs the way you want them to appear — chips, filters, and overview cards all follow it.</div>
+      <div class="dfc-hint">Drag the ⠿ handle (or use ↑ / ↓) to arrange programs — chips, the filter dropdown, and every program page follow this order.</div>
       <div class="po-list" data-po-list></div>
       <div class="sm-actions">
         <button class="sm-btn ghost" data-po-reset>Reset to A–Z</button>
@@ -10732,11 +10760,21 @@ function openProgOrderModal(){
     </div>`;
   document.body.appendChild(wrap);
   const listEl = wrap.querySelector('[data-po-list]');
+  // Move an item from index `from` to index `to`, persist, repaint.
+  const moveItem = (from, to) => {
+    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
+    const [it] = order.splice(from, 1);
+    order.splice(to, 0, it);
+    _progOrderSave(order);
+    paint();
+  };
+  let dragFrom = null;
   const paint = () => {
     listEl.innerHTML = order.map((p, i) => {
       const c = programColor(p);
       return `
-      <div class="po-row">
+      <div class="po-row" draggable="true" data-po-idx="${i}">
+        <span class="po-grip" title="Drag to reorder">⠿</span>
         <span class="n">${i + 1}</span>
         <span class="t" style="color:${c.fg}">${escHtml(p)}</span>
         <button type="button" data-po-up="${i}" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
@@ -10745,12 +10783,36 @@ function openProgOrderModal(){
     }).join('');
     listEl.querySelectorAll('[data-po-up]').forEach(b => b.addEventListener('click', () => {
       const i = parseInt(b.getAttribute('data-po-up'), 10);
-      if (i > 0) { [order[i - 1], order[i]] = [order[i], order[i - 1]]; _progOrderSave(order); paint(); }
+      moveItem(i, i - 1);
     }));
     listEl.querySelectorAll('[data-po-down]').forEach(b => b.addEventListener('click', () => {
       const i = parseInt(b.getAttribute('data-po-down'), 10);
-      if (i < order.length - 1) { [order[i], order[i + 1]] = [order[i + 1], order[i]]; _progOrderSave(order); paint(); }
+      moveItem(i, i + 1);
     }));
+    // Drag-and-drop reordering (the primary, most obvious gesture).
+    listEl.querySelectorAll('[data-po-idx]').forEach(row => {
+      row.addEventListener('dragstart', (e) => {
+        dragFrom = parseInt(row.getAttribute('data-po-idx'), 10);
+        row.classList.add('dragging');
+        try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(dragFrom)); } catch {}
+      });
+      row.addEventListener('dragend', () => {
+        dragFrom = null;
+        listEl.querySelectorAll('.po-row').forEach(r => r.classList.remove('dragging', 'drop-target'));
+      });
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch {}
+        listEl.querySelectorAll('.po-row').forEach(r => r.classList.remove('drop-target'));
+        if (dragFrom != null && parseInt(row.getAttribute('data-po-idx'), 10) !== dragFrom) row.classList.add('drop-target');
+      });
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const to = parseInt(row.getAttribute('data-po-idx'), 10);
+        const from = dragFrom != null ? dragFrom : parseInt((() => { try { return e.dataTransfer.getData('text/plain'); } catch { return '-1'; } })(), 10);
+        moveItem(from, to);
+      });
+    });
   };
   paint();
   // The topbar program filter is only rebuilt on sheet loads — refresh it so
@@ -10819,6 +10881,148 @@ function _wireProgramShared(list){
     if (!confirm(`Delete priority "${p ? p.title : ''}"? Linked tasks stay on the sheet.`)) return;
     deletePriority(id);
   }));
+  // Per-program priority add — Today's stacked sheets each carry their own
+  // add row (the single-program page uses its own #progPrioInput instead).
+  const doProgAdd = async (program, input) => {
+    const v = (input && input.value || '').trim();
+    if (!v) return;
+    input.value = '';
+    try { await addPriority(v, program); toast('Priority added.', 'ok'); }
+    catch (e) { console.error(e); toast("Couldn't save the priority.", 'err'); }
+  };
+  list.querySelectorAll('[data-prog-add-prio]').forEach(b => {
+    const program = b.getAttribute('data-prog-add-prio');
+    let input = null;
+    try { input = list.querySelector(`[data-prog-add-prio-input="${CSS.escape(program)}"]`); } catch {}
+    b.addEventListener('click', () => doProgAdd(program, input));
+    if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doProgAdd(program, input); } });
+  });
+}
+// Reusable stage table for a program's tasks — the exact grid the individual
+// program page uses. `showFunnels` keeps the Status/Owner/range column filters
+// on the single-program page; Today's stacked sheets pass false for clean,
+// non-interactive headers (a per-table global funnel across many programs
+// would be confusing).
+function _progStageTableHTML(items, showFunnels){
+  const ageTh = showFunnels ? AGE_TH() : '<th class="c-age" style="width:58px">Age</th>';
+  const sageTh = showFunnels ? SAGE_TH() : '<th class="c-sage th-wrap" style="width:52px">In status</th>';
+  const dueTh = showFunnels ? DUE_TH() : '<th class="c-due th-wrap" style="width:68px">Due Date</th>';
+  const statusFun = showFunnels ? _thFilterBtn('status') : '';
+  const ownerFun = showFunnels ? _thFilterBtn('owner') : '';
+  return `
+    <div class="ddl-scroll">
+      <table class="ddl-table prog-table">
+        <thead><tr>
+          <th class="c-status" style="width:100px">Status ${statusFun}</th><th>Task</th>
+          <th class="c-ticket" style="width:80px">Ticket</th>
+          ${ageTh}
+          ${sageTh}
+          ${dueTh}
+          <th class="c-owner" style="width:96px">Owner ${ownerFun}</th>
+        </tr></thead>
+        <tbody>${items.map((r, i) => {
+          const isClosedStatus = _rowClosed(r);
+          const hardR = isHardRow(r);
+          const d = _parseDateOnly(r.dueDate);
+          const days = d ? _wkDaysFromToday(d) : null;
+          const dueHTML = isClosedStatus
+            ? (r.completionDate ? `<span class="row-sub-completed">✓ ${escHtml(fmtAbsoluteDate(r.completionDate))}</span>` : '')
+            : (d ? `<span class="row-sub-due ${(days < 0 ? 'overdue' : days <= 2 ? 'soon' : '')}${hardR ? ' hard' : ''}" title="Due ${escHtml(fmtAbsoluteDate(r.dueDate) || '')}">${hardR ? HARD_LOCK_ICON : ''}${escHtml(days < 0 ? Math.abs(days) + 'd late' : days === 0 ? 'today' : 'in ' + days + 'd')}</span>` : '');
+          return `
+          <tr class="ddl-row ${i % 2 ? 'even' : ''} ${isClosedStatus ? 'closed' : ''} ${isExpandedRow(r.id) ? 'expanded' : ''}" data-id="${escHtml(String(r.id))}" data-prog-row="${escHtml(String(r.id))}">
+            <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+            <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
+            <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
+            ${_ageCellTD(r)}
+            ${_sageCellTD(r)}
+            <td class="tt-due-td">${dueHTML}</td>
+            <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+// PROG_STAGES sections for a pool, mirroring the single-program page. Returns
+// `emptyHTML` when nothing matches.
+function _progStagesSectionsHTML(pool, { showCompleted, showFunnels, emptyHTML } = {}){
+  const COMPLETED_CAP = 50;
+  return PROG_STAGES.map(([label, statuses, hint]) => {
+    if (label === 'Completed' && !showCompleted) return '';
+    let items = pool.filter(r => statuses.includes(r.status));
+    if (!items.length) return '';
+    let capNote = '';
+    if (label === 'Completed') {
+      items = items.slice().sort((a, b) =>
+        (Date.parse(b.completionDate || b.modifiedAt || 0) || 0) - (Date.parse(a.completionDate || a.modifiedAt || 0) || 0));
+      if (items.length > COMPLETED_CAP) {
+        capNote = `<span class="hint">showing latest ${COMPLETED_CAP} of ${items.length}</span>`;
+        items = items.slice(0, COMPLETED_CAP);
+      }
+    }
+    return `
+      <div class="dev-stage">
+        <div class="dev-stage-head">
+          <h3>${escHtml(label)}</h3>
+          <span class="ct">${items.length}</span>
+          ${hint ? `<span class="hint">${escHtml(hint)}</span>` : ''}
+          ${capNote}
+        </div>
+        ${_progStageTableHTML(items, showFunnels)}
+      </div>`;
+  }).join('') || (emptyHTML || '');
+}
+// One program rendered as a full sheet for the ★ Today stack — the same
+// anatomy as the individual program page (colored header + stats, notes |
+// priorities, staged task tables). Notes are read-only here (editing lives on
+// the program's own page — one global editor can't serve many stacked sheets).
+function _todayProgramSheetHTML(program){
+  const c = programColor(program);
+  const named = rows.filter(r => (r.task || '').trim() && !isSubRow(r) && !r.deletion);
+  const pool = named.filter(r => r.program === program);
+  const openRows = pool.filter(r => !_rowClosed(r));
+  const hard = openRows.filter(isHardRow);
+  const overdueHard = hard.filter(r => { const d = _parseDateOnly(r.dueDate); return d && _wkDaysFromToday(d) < 0; });
+  const completed = pool.filter(_rowClosed);
+  const priosHTML = _progPrioListHTML(program, false);
+  const n = programNotes[program] || {};
+  const noteMeta = n.updatedAt
+    ? `Last edit ${escHtml(timeAgo(n.updatedAt) || '')}${n.updatedBy ? ' by ' + escHtml(n.updatedBy) : ''}`
+    : 'Shared with the whole team';
+  const stages = _progStagesSectionsHTML(openRows, {
+    showCompleted: false, showFunnels: false,
+    emptyHTML: '<div class="prog-quiet" style="padding:14px 2px 2px">No open tasks for this program right now.</div>'
+  });
+  return `
+    <div class="prog-sheet prog-today-sheet">
+      <div class="prog-head" style="border-bottom-color:${c.bd}">
+        <button type="button" class="prog-today-name" data-prog-pick="${escHtml(program)}" style="color:${c.fg}" title="Open the full ${escHtml(program)} page">${escHtml(program)} <span class="pth-arrow">→</span></button>
+        <div class="prog-stats">
+          <span><strong>${openRows.length}</strong> open</span>
+          ${hard.length ? `<span class="hardstat">${HARD_LOCK_ICON} <strong>${hard.length}</strong> hard deadline${hard.length === 1 ? '' : 's'}${overdueHard.length ? ` · <em>${overdueHard.length} overdue</em>` : ''}</span>` : ''}
+          ${completed.length ? `<span><strong>${completed.length}</strong> completed</span>` : ''}
+        </div>
+      </div>
+      <div class="prog-two-col">
+        <div class="prog-sec prog-notes-sec">
+          <div class="prog-sec-head">
+            <h4>Program notes</h4>
+            <button type="button" class="prog-notes-edit" data-prog-pick="${escHtml(program)}" title="Edit on the ${escHtml(program)} page">Edit →</button>
+          </div>
+          <div class="prog-notes-view collapsed" data-ov-notes>${renderProgramNotesHTML(n.text || '')}</div>
+          <button type="button" class="prog-notes-more" data-ov-notes-more hidden>Show more</button>
+          <div class="prog-quiet">${noteMeta}</div>
+        </div>
+        <div class="prog-sec">
+          <h4>Priorities</h4>
+          ${priosHTML}
+          <div class="prog-prio-add">
+            <input type="text" data-prog-add-prio-input="${escHtml(program)}" placeholder="Add a ${escHtml(program)} priority…" maxlength="120" autocomplete="off">
+            <button type="button" class="ddl-closed-toggle" data-prog-add-prio="${escHtml(program)}">Add</button>
+          </div>
+        </div>
+      </div>
+      ${stages}
+    </div>`;
 }
 function renderPrograms(){
   const list = document.getElementById('list');
@@ -10856,95 +11060,38 @@ function renderPrograms(){
     const isToday = todayStarSet.has(p);
     return `<button type="button" class="prog-chip ${active ? 'active' : ''} ${n === 0 ? 'quiet' : ''} ${isToday ? 'is-today' : ''}" data-prog-pick="${escHtml(p)}"
       style="${active ? `background:${c.bg};border-color:${c.bd};color:${c.fg}` : ''}"${isToday ? ' title="Today\'s focus program"' : ''}>${isToday ? '<span class="today-star">★</span>' : ''}${escHtml(p)}<span class="ct">${n}</span></button>`;
-  }).join('') + `
-    <button type="button" class="prog-chip order-chip" data-prog-order title="Choose the order programs appear in">⇅ Order</button>`;
-  // ---- Overview grids: All programs, or just Today's focus ----
-  if (_progSel === '__all__' || _progSel === '__today__') {
-    const focusMode = _progSel === '__today__';
-    const ovProgs = focusMode ? todayProgs : progs;
-    const cards = ovProgs
-      .map(p => ({ p, open: openCount(p), prios: _progManualPrios(p).length + _progStarredRows(p).length }))
-      // Today keeps every dedicated program on the board (its notes still
-      // matter even with zero open tasks); All hides the fully-quiet ones.
-      .filter(x => focusMode || x.open || x.prios)
-      .sort((a, b) => b.open - a.open);
-    if (metaEl) metaEl.textContent = focusMode
-      ? `Today · ${dayLbl} · ${cards.length} program${cards.length === 1 ? '' : 's'}`
-      : `${cards.length} active programs · ${totalOpen} open`;
-    const noteHTML = focusMode
-      ? `<div class="prog-today-note">
-           <span class="ptn-lead">★ Today · ${escHtml(dayLbl)}</span>
-           <span class="ptn-body">${focusCfg.review
-             ? 'Review day — programs with starred or priority-linked work.'
-             : (focusCfg.programs.length ? 'Dedicated to ' + focusCfg.programs.map(escHtml).join(' · ') : 'Nothing dedicated to today yet.')}</span>
-           <button type="button" class="ptn-edit" data-df-config>Edit week</button>
-         </div>`
-      : '';
-    // Today cards carry the full picture per program: priorities, the team
-    // note, and every open task in a tight list — All-programs cards stay
-    // priorities-only (that grid can hold a dozen programs).
-    const ovNoteBlock = (p) => {
-      const n = programNotes[p] || {};
-      if (!(n.text || '').trim()) return '';
-      return `
-        <div class="prog-ov-sec-lbl">Notes</div>
-        <div class="prog-notes-view prog-ov-notes collapsed" data-ov-notes>${renderProgramNotesHTML(n.text)}</div>
-        <button type="button" class="prog-notes-more" data-ov-notes-more hidden>Show more</button>`;
-    };
-    const ovTaskBlock = (p) => {
-      const items = named.filter(r => r.program === p && !_rowClosed(r))
-        .sort((a, b) => {
-          const da = _parseDateOnly(a.dueDate), db2 = _parseDateOnly(b.dueDate);
-          return (da ? da.getTime() : Infinity) - (db2 ? db2.getTime() : Infinity) ||
-            (a.task || '').localeCompare(b.task || '');
-        });
-      if (!items.length) return `<div class="prog-ov-sec-lbl">Open tasks</div><div class="prog-quiet">No open tasks.</div>`;
-      const CAP = 8;
-      const rowsHTML = items.slice(0, CAP).map(r => {
-        const d = _parseDateOnly(r.dueDate);
-        const days = d ? _wkDaysFromToday(d) : null;
-        const hardR = isHardRow(r);
-        const due = d
-          ? `<span class="row-sub-due ${days < 0 ? 'overdue' : days <= 2 ? 'soon' : ''}${hardR ? ' hard' : ''}" title="Due ${escHtml(fmtAbsoluteDate(r.dueDate) || '')}">${hardR ? HARD_LOCK_ICON : ''}${escHtml(days < 0 ? Math.abs(days) + 'd late' : days === 0 ? 'today' : 'in ' + days + 'd')}</span>`
-          : '';
-        return `
-          <tr class="${isExpandedRow(r.id) ? 'expanded' : ''}" data-prog-row="${escHtml(String(r.id))}" data-id="${escHtml(String(r.id))}">
-            <td class="ov-st" title="${escHtml(r.status || '')}"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span></td>
-            <td><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
-            <td class="ov-due">${due}</td>
-            <td class="ov-own" title="${escHtml(r.owner || '')}">${escHtml(ownerFirstName(r.owner) || '')}</td>
-          </tr>`;
-      }).join('');
-      return `
-        <div class="prog-ov-sec-lbl">Open tasks · ${items.length}</div>
-        <table class="prog-ov-tasks"><tbody>${rowsHTML}</tbody></table>
-        ${items.length > CAP ? `<button type="button" class="prog-ov-more" data-prog-pick="${escHtml(p)}">All ${items.length} open →</button>` : ''}`;
-    };
-    const cardsHTML = cards.map(({ p, open }) => {
-      const c = programColor(p);
-      const hardN = named.filter(r => r.program === p && !_rowClosed(r) && isHardRow(r)).length;
-      return `
-        <div class="prog-ov-card">
-          <div class="prog-ov-head" style="border-bottom-color:${c.bd}">
-            <button type="button" class="prog-ov-name" data-prog-pick="${escHtml(p)}" style="color:${c.fg}" title="Open ${escHtml(p)} page">${escHtml(p)} →</button>
-            <span class="prog-ov-stats"><strong>${open}</strong> open${hardN ? ` · <span class="hardstat">${HARD_LOCK_ICON}${hardN}</span>` : ''}</span>
-          </div>
-          ${focusMode ? `<div class="prog-ov-sec-lbl">Priorities</div>` : ''}
-          ${_progPrioListHTML(p, true)}
-          ${focusMode ? ovNoteBlock(p) + ovTaskBlock(p) : ''}
-        </div>`;
-    }).join('') || (focusMode
-      ? `<div class="empty">${
-          focusCfg.review ? 'No flagged work to review today.'
-          : focusCfg.programs.length ? 'No open work in today’s focus programs.'
-          : `Nothing is dedicated to ${escHtml(dayLbl)} yet — set up the week.`
-        } <button type="button" class="ddl-closed-toggle" data-df-config>Edit week</button> <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`
-      : '<div class="empty">No programs with open work.</div>');
-    list.innerHTML = `<div class="ddl-wrap prog-wrap"><div class="prog-chips">${chipsHTML}</div>${noteHTML}<div class="prog-ov-grid ${focusMode ? 'focus' : ''}">${cardsHTML}</div></div>`;
+  }).join('');
+  // Chips + a clearly-labeled Reorder button on the right (the old buried
+  // "⇅ Order" chip was easy to miss — this is the discoverable entry point
+  // to set the program order for chips, filters, and pages).
+  const chipsBarHTML = `
+    <div class="prog-chips-bar">
+      <div class="prog-chips">${chipsHTML}</div>
+      <button type="button" class="prog-reorder-btn" data-prog-order title="Set the order programs appear in everywhere">⇅ Reorder</button>
+    </div>`;
+  // ---- ★ Today: each dedicated program rendered as its own full sheet ----
+  // (Same anatomy as the individual program page, stacked — the user wanted
+  // Today to read like the program pages, not compact cards.)
+  if (_progSel === '__today__') {
+    if (metaEl) metaEl.textContent = `Today · ${dayLbl} · ${todayProgs.length} program${todayProgs.length === 1 ? '' : 's'}`;
+    const noteHTML = `<div class="prog-today-note">
+        <span class="ptn-lead">★ Today · ${escHtml(dayLbl)}</span>
+        <span class="ptn-body">${focusCfg.review
+          ? 'Review day — programs with starred or priority-linked work.'
+          : (focusCfg.programs.length ? 'Dedicated to ' + focusCfg.programs.map(escHtml).join(' · ') : 'Nothing dedicated to today yet.')}</span>
+        <button type="button" class="ptn-edit" data-df-config>Edit week</button>
+      </div>`;
+    const sheetsHTML = todayProgs.map(p => _todayProgramSheetHTML(p)).join('') ||
+      `<div class="empty">${
+        focusCfg.review ? 'No flagged work to review today.'
+        : focusCfg.programs.length ? 'No open work in today’s focus programs.'
+        : `Nothing is dedicated to ${escHtml(dayLbl)} yet — set up the week.`
+      } <button type="button" class="ddl-closed-toggle" data-df-config>Edit week</button> <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`;
+    list.innerHTML = `<div class="ddl-wrap prog-wrap">${chipsBarHTML}${noteHTML}<div class="prog-today-stack">${sheetsHTML}</div></div>`;
     _wireProgramShared(list);
     list.querySelectorAll('[data-df-config]').forEach(b => b.addEventListener('click', openDayFocusConfig));
-    // Today cards: note task-chips open the side panel; long notes collapse
-    // behind a per-card Show more (measure via setTimeout — rAF throttles).
+    // Note task-chips open the side panel; long notes collapse behind a
+    // per-sheet Show more (measure via setTimeout — the pane throttles rAF).
     list.querySelectorAll('[data-note-task]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation(); setExpanded(b.getAttribute('data-note-task'));
     }));
@@ -10958,6 +11105,29 @@ function renderPrograms(){
         moreBtn.textContent = ex ? 'Show less' : 'Show more';
       });
     });
+    return;
+  }
+  // ---- All programs: compact priority-only cards (this grid holds many) ----
+  if (_progSel === '__all__') {
+    const cards = progs
+      .map(p => ({ p, open: openCount(p), prios: _progManualPrios(p).length + _progStarredRows(p).length }))
+      .filter(x => x.open || x.prios)
+      .sort((a, b) => b.open - a.open);
+    if (metaEl) metaEl.textContent = `${cards.length} active programs · ${totalOpen} open`;
+    const cardsHTML = cards.map(({ p, open }) => {
+      const c = programColor(p);
+      const hardN = named.filter(r => r.program === p && !_rowClosed(r) && isHardRow(r)).length;
+      return `
+        <div class="prog-ov-card">
+          <div class="prog-ov-head" style="border-bottom-color:${c.bd}">
+            <button type="button" class="prog-ov-name" data-prog-pick="${escHtml(p)}" style="color:${c.fg}" title="Open ${escHtml(p)} page">${escHtml(p)} →</button>
+            <span class="prog-ov-stats"><strong>${open}</strong> open${hardN ? ` · <span class="hardstat">${HARD_LOCK_ICON}${hardN}</span>` : ''}</span>
+          </div>
+          ${_progPrioListHTML(p, true)}
+        </div>`;
+    }).join('') || '<div class="empty">No programs with open work.</div>';
+    list.innerHTML = `<div class="ddl-wrap prog-wrap">${chipsBarHTML}<div class="prog-ov-grid">${cardsHTML}</div></div>`;
+    _wireProgramShared(list);
     return;
   }
   let pool = named.filter(r => r.program === _progSel && _ageFilterPass(r) && _dueFilterPass(r) && _sageFilterPass(r));
@@ -10983,73 +11153,20 @@ function renderPrograms(){
   const noteMeta = note.updatedAt
     ? `Last edit ${escHtml(timeAgo(note.updatedAt) || '')}${note.updatedBy ? ' by ' + escHtml(note.updatedBy) : ''}`
     : 'Shared with the whole team';
-  // Stage sections — compact grids, no Program column (it's fixed here).
-  const stageTable = (items) => `
-    <div class="ddl-scroll">
-      <table class="ddl-table prog-table">
-        <thead><tr>
-          <th class="c-status" style="width:100px">Status ${_thFilterBtn('status')}</th><th>Task</th>
-          <th class="c-ticket" style="width:80px">Ticket</th>
-          ${AGE_TH()}
-          ${SAGE_TH()}
-          ${DUE_TH()}
-          <th class="c-owner" style="width:96px">Owner ${_thFilterBtn('owner')}</th>
-        </tr></thead>
-        <tbody>${items.map((r, i) => {
-          const isClosedStatus = _rowClosed(r);
-          const hardR = isHardRow(r);
-          const d = _parseDateOnly(r.dueDate);
-          const days = d ? _wkDaysFromToday(d) : null;
-          const dueHTML = isClosedStatus
-            ? (r.completionDate ? `<span class="row-sub-completed">✓ ${escHtml(fmtAbsoluteDate(r.completionDate))}</span>` : '')
-            : (d ? `<span class="row-sub-due ${(days < 0 ? 'overdue' : days <= 2 ? 'soon' : '')}${hardR ? ' hard' : ''}" title="Due ${escHtml(fmtAbsoluteDate(r.dueDate) || '')}">${hardR ? HARD_LOCK_ICON : ''}${escHtml(days < 0 ? Math.abs(days) + 'd late' : days === 0 ? 'today' : 'in ' + days + 'd')}</span>` : '');
-          return `
-          <tr class="ddl-row ${i % 2 ? 'even' : ''} ${isClosedStatus ? 'closed' : ''} ${isExpandedRow(r.id) ? 'expanded' : ''}" data-id="${escHtml(String(r.id))}" data-prog-row="${escHtml(String(r.id))}">
-            <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
-            <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span></td>
-            <td class="ddl-ticket c-ticket">${r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : ''}</td>
-            ${_ageCellTD(r)}
-            ${_sageCellTD(r)}
-            <td class="tt-due-td">${dueHTML}</td>
-            <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
-    </div>`;
-  const COMPLETED_CAP = 50;
   // Filtering by "Done" is an explicit request to see completed work, so the
-  // usually-hidden Completed stage is forced open for that filter.
+  // usually-hidden Completed stage is forced open for that filter. Stage
+  // sections come from the shared builder (Today's stack reuses it too).
   const _showCompletedStage = _progShowCompleted || filterDue === 'done';
-  const stagesHTML = PROG_STAGES.map(([label, statuses, hint]) => {
-    // Completed is auto-hidden — only render it when the user opts in.
-    if (label === 'Completed' && !_showCompletedStage) return '';
-    let items = pool.filter(r => statuses.includes(r.status));
-    if (!items.length) return '';
-    let capNote = '';
-    if (label === 'Completed') {
-      items = items.slice().sort((a, b) =>
-        (Date.parse(b.completionDate || b.modifiedAt || 0) || 0) - (Date.parse(a.completionDate || a.modifiedAt || 0) || 0));
-      if (items.length > COMPLETED_CAP) {
-        capNote = `<span class="hint">showing latest ${COMPLETED_CAP} of ${items.length}</span>`;
-        items = items.slice(0, COMPLETED_CAP);
-      }
-    }
-    return `
-      <div class="dev-stage">
-        <div class="dev-stage-head">
-          <h3>${escHtml(label)}</h3>
-          <span class="ct">${items.length}</span>
-          ${hint ? `<span class="hint">${escHtml(hint)}</span>` : ''}
-          ${capNote}
-        </div>
-        ${stageTable(items)}
-      </div>`;
-  }).join('') || (_anyRangeOrColFilterActive()
-    ? '<div class="prog-quiet" style="padding:20px 0">No tasks match the current filters. <button type="button" class="ddl-closed-toggle" data-clear-filters>Clear filters</button></div>'
-    : '<div class="prog-quiet" style="padding:20px 0">No open tasks for this program.</div>');
+  const stagesHTML = _progStagesSectionsHTML(pool, {
+    showCompleted: _showCompletedStage,
+    showFunnels: true,
+    emptyHTML: _anyRangeOrColFilterActive()
+      ? '<div class="prog-quiet" style="padding:20px 0">No tasks match the current filters. <button type="button" class="ddl-closed-toggle" data-clear-filters>Clear filters</button></div>'
+      : '<div class="prog-quiet" style="padding:20px 0">No open tasks for this program.</div>'
+  });
   list.innerHTML = `
     <div class="ddl-wrap prog-wrap">
-      <div class="prog-chips">${chipsHTML}</div>
+      ${chipsBarHTML}
       <div class="prog-sheet">
         <div class="prog-head" style="border-bottom-color:${c.bd}">
           <h2 style="color:${c.fg}">${escHtml(_progSel)}</h2>
