@@ -109,7 +109,9 @@
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     font-feature-settings: 'cv05', 'tnum' 0;
     -webkit-font-smoothing: antialiased;
-    min-height: 100vh; overflow-x: hidden;
+    /* App-shell: the page itself never scrolls — only .list does — so the
+       topbar (ECM + nav) stays pinned no matter how far you scroll. */
+    height: 100vh; overflow: hidden;
   }
   body { display: flex; flex-direction: column }
 
@@ -121,14 +123,23 @@
     border-bottom: 1px solid var(--w06);
   }
   .topbar-row {
-    display: flex; align-items: center; gap: 12px;
-    margin-bottom: 10px;
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 8px; flex-wrap: wrap;
   }
+  /* One-row header: ECM · tabs · (spacer) · meta · icons. DOM order is
+     title, meta, actions, view-toggle — `order` reflows it visually. */
+  .title { order: 0 }
+  .topbar-row .view-toggle { order: 1; margin: 0 }
+  .topbar-row .meta { order: 2; margin-left: auto }
+  .topbar-row .topbar-actions { order: 3 }
+  /* The whole secondary filter row is retired — filtering now lives on the
+     column headers. Kept in the DOM (hidden) so existing wiring stays intact. */
+  .search-row { display: none !important }
   .title {
     font-size: 22px; font-weight: 900; letter-spacing: -.02em;
     background: linear-gradient(135deg, var(--ink), var(--w70));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    flex: 1;
+    flex: 0 0 auto;
   }
   .title .tag {
     display: inline-block; margin-left: 8px;
@@ -1538,7 +1549,7 @@
   }
 
   /* ============ ROW LIST ============ */
-  .list { flex: 1; overflow-y: auto; padding: 12px 20px 80px; display: flex; flex-direction: column; gap: 6px; }
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 20px 80px; display: flex; flex-direction: column; gap: 6px; }
   .empty {
     padding: 60px 20px; text-align: center;
     color: var(--w35);
@@ -2222,8 +2233,12 @@
     .sup-chip-strip::-webkit-scrollbar { display: none }
     .sup-chip { flex-shrink: 0 }
     .status-bar { padding-bottom: 2px }
-    /* Topbar actions wrap cleanly */
+    /* Topbar actions wrap cleanly. On phones: line 1 = ECM + icons,
+       line 2 = the full-width tab strip (the count is dropped as noise). */
     .topbar-row { flex-wrap: wrap; gap: 8px }
+    .topbar-row .topbar-actions { order: 1; margin-left: auto }
+    .topbar-row .meta { display: none }
+    .topbar-row .view-toggle { order: 3; width: 100% }
     .user-pill { max-width: 100px; font-size: 11px; padding: 0 10px; height: 32px }
     .icon-btn { width: 32px; height: 32px }
   }
@@ -3606,6 +3621,15 @@
   }
   .cfp-clear:hover:not(:disabled) { color: var(--ink); border-color: var(--w25) }
   .cfp-clear:disabled { opacity: .35; cursor: default }
+  .cfp-reorder {
+    display: block; width: calc(100% - 10px); margin: 5px 5px 0;
+    padding: 7px 10px; border-radius: 8px;
+    background: var(--w05); border: 1px solid var(--w12);
+    color: var(--w75); font-family: inherit;
+    font-size: 11.5px; font-weight: 800; text-align: left; cursor: pointer;
+    transition: all .12s;
+  }
+  .cfp-reorder:hover { color: var(--ink); border-color: var(--w25); background: var(--w08) }
   .cfp-list {
     overflow-y: auto; padding: 5px;
     display: flex; flex-direction: column; gap: 1px;
@@ -3921,6 +3945,46 @@
   .po-row button:disabled { opacity: .25; cursor: default }
   /* ★ Today — stacked full program sheets (mirrors the individual page) */
   .prog-today-stack { display: flex; flex-direction: column; gap: 16px }
+  /* Sticky Today picker — only today's programs; scrolls to each sheet. */
+  .today-picker {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
+    padding: 10px 0; margin-bottom: 14px;
+    background: var(--bg); border-bottom: 1px solid var(--w10);
+  }
+  .today-picker .tp-lead {
+    font-size: 12px; font-weight: 900; letter-spacing: .3px;
+    color: var(--amber, #FFC15A); white-space: nowrap;
+  }
+  /* flex-basis keeps the program buttons from being squeezed to 0 width when
+     the lead + Edit + See-all siblings claim the row (they overflowed before). */
+  .today-picker .tp-progs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 220px }
+  @media (max-width: 640px) {
+    .today-picker { gap: 8px 6px }
+    .today-picker .tp-progs { flex-basis: 100%; order: 5 }
+  }
+  .tp-prog {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 99px;
+    background: var(--w04); border: 1px solid var(--w12);
+    font-family: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+    transition: all .12s;
+  }
+  .tp-prog:hover { border-color: var(--w25) }
+  .tp-prog.active { background: var(--w08); border-color: var(--w30) }
+  .tp-prog .ct { font-size: 10.5px; font-weight: 800; opacity: .7; color: var(--w55) }
+  .tp-empty { font-size: 12px; color: var(--w45); font-weight: 600 }
+  .tp-edit, .tp-all {
+    padding: 5px 12px; border-radius: 99px; background: transparent;
+    border: 1px solid var(--w12); color: var(--w60);
+    font-family: inherit; font-size: 11px; font-weight: 800; cursor: pointer;
+    white-space: nowrap; transition: all .12s; flex-shrink: 0;
+  }
+  .tp-edit:hover, .tp-all:hover { color: var(--ink); border-color: var(--w25) }
+  .tp-all { color: var(--blue); border-color: rgba(74,158,255,.3) }
+  .tp-all:hover { color: var(--blue); border-color: rgba(74,158,255,.55) }
+  /* Offset so scroll-to doesn't hide a sheet's header behind the sticky picker. */
+  .prog-today-sheet { scroll-margin-top: 60px }
   .prog-today-sheet { padding: 18px 20px 22px }
   .prog-today-name {
     background: transparent; border: none; cursor: pointer; padding: 0;
@@ -4104,9 +4168,9 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       </button>
     </div>
-  </div>
-  <!-- View toggle: All rows / Acks / Notifications. -->
-  <div class="view-toggle">
+    <!-- View tabs now live on the ECM header row itself (moved up from their
+         own row). CSS `order` lays the row out as: ECM · tabs · meta · icons. -->
+    <div class="view-toggle">
     <!-- The three former Tasks tabs (Non-Dev/Non-Report, Dev/Reports, All)
          collapse into this single dropdown styled as a tab. The dropdown's
          value IS the active tab — currentView is one of 'all' | 'dev' |
@@ -4168,7 +4232,8 @@
          updateSupportCount() can write to it. The visible count surfaces
          beside the Task pill via updateTasksTabBadge(). -->
     <span id="supportCount" style="display:none"></span>
-  </div>
+    </div><!-- /view-toggle -->
+  </div><!-- /topbar-row: ECM + tabs + meta + icons all on one line -->
   <div class="search-row">
     <input type="text" class="search-input" id="searchInput" placeholder="Search…" autocomplete="off">
     <!-- Mobile-only Filters toggle. On wider screens .mobile-filters-btn is
@@ -7381,6 +7446,7 @@ function openColFilterPop(kind, anchor){
         <span>Filter · ${kind === 'status' ? 'Status' : kind === 'program' ? 'Program' : 'Owner'}</span>
         <button type="button" class="cfp-clear" data-cfp-clear ${sel.size ? '' : 'disabled'}>Clear</button>
       </div>
+      ${kind === 'program' ? `<button type="button" class="cfp-reorder" data-cfp-reorder>⇅ Reorder programs…</button>` : ''}
       <div class="cfp-list">
         ${opts.map(([v, n]) => `
           <button type="button" class="wk-fd-opt ${sel.has(v) ? 'on' : ''}" data-cfp-val="${escHtml(v)}">
@@ -7389,6 +7455,12 @@ function openColFilterPop(kind, anchor){
             <span class="n">${n}</span>
           </button>`).join('')}
       </div>`;
+    const reorderBtn = pop.querySelector('[data-cfp-reorder]');
+    if (reorderBtn) reorderBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeColFilterPop();
+      try { openProgOrderModal(); } catch (err) { console.error(err); }
+    });
     pop.querySelectorAll('[data-cfp-val]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
       const v = b.getAttribute('data-cfp-val');
@@ -11010,7 +11082,7 @@ function _todayProgramSheetHTML(program){
     emptyHTML: '<div class="prog-quiet" style="padding:14px 2px 2px">No open tasks for this program right now.</div>'
   });
   return `
-    <div class="prog-sheet prog-today-sheet">
+    <div class="prog-sheet prog-today-sheet" data-prog-anchor="${escHtml(program)}">
       <div class="prog-head" style="border-bottom-color:${c.bd}">
         <button type="button" class="prog-today-name" data-prog-pick="${escHtml(program)}" style="color:${c.fg}" title="Open the full ${escHtml(program)} page">${escHtml(program)} <span class="pth-arrow">→</span></button>
         <div class="prog-stats">
@@ -11091,12 +11163,21 @@ function renderPrograms(){
   // Today to read like the program pages, not compact cards.)
   if (_progSel === '__today__') {
     if (metaEl) metaEl.textContent = `Today · ${dayLbl} · ${todayProgs.length} program${todayProgs.length === 1 ? '' : 's'}`;
-    const noteHTML = `<div class="prog-today-note">
-        <span class="ptn-lead">★ Today · ${escHtml(dayLbl)}</span>
-        <span class="ptn-body">${focusCfg.review
-          ? 'Review day — programs with starred or priority-linked work.'
-          : (focusCfg.programs.length ? 'Dedicated to ' + focusCfg.programs.map(escHtml).join(' · ') : 'Nothing dedicated to today yet.')}</span>
-        <button type="button" class="ptn-edit" data-df-config>Edit week</button>
+    // Sticky picker: ONLY today's programs (not all 15). Each button scrolls
+    // down to that program's sheet; "See all programs" leaves Today for the
+    // full list. The picker stays stuck to the top as you scroll.
+    const pickerHTML = `
+      <div class="today-picker">
+        <span class="tp-lead">★ ${escHtml(dayLbl)}</span>
+        <div class="tp-progs">
+          ${todayProgs.map(p => {
+            const c = programColor(p);
+            const n = named.filter(r => r.program === p && !_rowClosed(r)).length;
+            return `<button type="button" class="tp-prog" data-tp-scroll="${escHtml(p)}" style="color:${c.fg}">${escHtml(p)}<span class="ct">${n}</span></button>`;
+          }).join('') || '<span class="tp-empty">Nothing dedicated to today yet.</span>'}
+        </div>
+        <button type="button" class="tp-edit" data-df-config title="Edit which programs are dedicated to each day">Edit week</button>
+        <button type="button" class="tp-all" data-prog-pick="__all__" title="Leave Today and see every program">See all programs →</button>
       </div>`;
     const sheetsHTML = todayProgs.map(p => _todayProgramSheetHTML(p)).join('') ||
       `<div class="empty">${
@@ -11104,9 +11185,17 @@ function renderPrograms(){
         : focusCfg.programs.length ? 'No open work in today’s focus programs.'
         : `Nothing is dedicated to ${escHtml(dayLbl)} yet — set up the week.`
       } <button type="button" class="ddl-closed-toggle" data-df-config>Edit week</button> <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`;
-    list.innerHTML = `<div class="ddl-wrap prog-wrap">${chipsBarHTML}${noteHTML}<div class="prog-today-stack">${sheetsHTML}</div></div>`;
+    list.innerHTML = `<div class="ddl-wrap prog-wrap">${pickerHTML}<div class="prog-today-stack">${sheetsHTML}</div></div>`;
     _wireProgramShared(list);
     list.querySelectorAll('[data-df-config]').forEach(b => b.addEventListener('click', openDayFocusConfig));
+    // Today program buttons scroll to that program's sheet (match by data attr
+    // to avoid escaping program names with spaces).
+    list.querySelectorAll('[data-tp-scroll]').forEach(b => b.addEventListener('click', () => {
+      const prog = b.getAttribute('data-tp-scroll');
+      const target = [...list.querySelectorAll('.prog-today-sheet')].find(s => s.getAttribute('data-prog-anchor') === prog);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      list.querySelectorAll('[data-tp-scroll]').forEach(x => x.classList.toggle('active', x === b));
+    }));
     // Note task-chips open the side panel; long notes collapse behind a
     // per-sheet Show more (measure via setTimeout — the pane throttles rAF).
     list.querySelectorAll('[data-note-task]').forEach(b => b.addEventListener('click', (e) => {
