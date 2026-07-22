@@ -6641,6 +6641,10 @@ function applyFilters(){
     return na - nb;
   };
   const STATUS_ORDER = SS_STATUSES.reduce((m, s, i) => (m[s] = i, m), {});
+  // Program sort follows the user's custom program order (the reorder editor).
+  // Precomputed once so the comparator stays O(1); unknown/blank sink last.
+  const progOrderMap = new Map(allPrograms().map((p, i) => [p, i]));
+  const progIdx = p => (progOrderMap.has(p) ? progOrderMap.get(p) : 9999);
   pool.sort((a, b) => {
     const aDone = a.status === 'Completed' || a.status === 'Not feasible - close ticket';
     const bDone = b.status === 'Completed' || b.status === 'Not feasible - close ticket';
@@ -6651,9 +6655,12 @@ function applyFilters(){
     else if (sortBy === 'modified') r = cmpDate(a.modifiedAt, b.modifiedAt);
     else if (sortBy === 'ticket')   r = cmpNum(a.ticket, b.ticket);
     else if (sortBy === 'status')   r = (STATUS_ORDER[a.status] ?? 999) - (STATUS_ORDER[b.status] ?? 999);
+    else if (sortBy === 'program')  r = progIdx(a.program) - progIdx(b.program);
     else if (sortBy === 'subnew')   r = latestSubTs(a.id) - latestSubTs(b.id);
     else if (sortBy === 'subcount') r = subsForParent(a.id).length - subsForParent(b.id).length;
-    return r * dirMul || cmpStr(a.task, b.task); // tie-break by name
+    // Tie-break by name — for program sort this keeps each program's rows
+    // grouped together, ordered by name within the group.
+    return r * dirMul || cmpStr(a.task, b.task);
   });
   // Review-day focus overrides the sort: stalest first, so the items the
   // team flagged but hasn't touched surface at the top. Closed still sinks.
@@ -7968,7 +7975,7 @@ function render(){
           <thead><tr>
             <th class="c-status" style="width:92px" data-th-sort="status" title="Sort by status">Status${sortArrow('status')}${_thFilterBtn('status')}</th>
             <th data-th-sort="name" title="Sort by task name">Task${sortArrow('name')}</th>
-            <th class="c-prog" style="width:100px">Program${_thFilterBtn('program')}</th>
+            <th class="c-prog" style="width:100px" data-th-sort="program" title="Sort by program order (set via ⇅ Reorder)">Program${sortArrow('program')}${_thFilterBtn('program')}</th>
             <th class="c-ticket" style="width:80px" data-th-sort="ticket" title="Sort by ticket #">Ticket${sortArrow('ticket')}</th>
             ${AGE_TH()}
             ${DUE_TH()}
@@ -10895,6 +10902,10 @@ function openProgOrderModal(opts){
     } else {
       _progOrderSave(order);
     }
+    // Reordering programs is a request to see tasks grouped that way — snap the
+    // task table's sort to "program" so the new order is visible immediately.
+    sortBy = 'program'; sortDir = 'asc';
+    try { localStorage.setItem('ecm-sort-by', 'program'); localStorage.setItem('ecm-sort-dir', 'asc'); } catch {}
   };
   // Move an item from index `from` to index `to`, persist, repaint.
   const moveItem = (from, to) => {
