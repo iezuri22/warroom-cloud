@@ -3923,6 +3923,20 @@
   /* Chip-strip reorder button + order modal */
   .prog-chip.order-chip { font-weight: 800; color: var(--w45) }
   .prog-chip.order-chip:hover { color: var(--ink) }
+  .po-scope {
+    display: flex; gap: 4px; margin: 2px 0 8px; padding: 3px;
+    background: var(--w04); border: 1px solid var(--w08); border-radius: 10px;
+  }
+  .po-scope button {
+    flex: 1; padding: 6px 10px; border-radius: 7px;
+    background: transparent; border: none; color: var(--w55);
+    font-family: inherit; font-size: 11.5px; font-weight: 800; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    transition: all .12s;
+  }
+  .po-scope button:hover { color: var(--w80) }
+  .po-scope button.on { background: var(--w08); color: var(--ink) }
+  .po-scope-n { font-size: 10px; font-weight: 800; opacity: .6 }
   .po-list { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; margin: 4px 0 8px }
   .po-row {
     display: flex; align-items: center; gap: 8px;
@@ -10829,8 +10843,23 @@ function _progPrioListHTML(program, compact){
 }
 // Reorder modal — the chip strip, filter dropdowns, and overview cards all
 // follow this order (allPrograms applies it). Stored per browser.
-function openProgOrderModal(){
-  let order = allPrograms();   // current effective order = starting point
+function openProgOrderModal(opts){
+  opts = opts || {};
+  const dayLbl = DAY_LABELS[DAY_KEYS[new Date().getDay()]] || 'Today';
+  const todayList = () => { try { return _todayFocusPrograms(); } catch { return []; } };
+  // "Today" scope is offered when the day dedicates ≥2 programs. Default to it
+  // when a day-focus is engaged (the user asked to reorder only the day's
+  // programs, not the whole list) — a toggle switches back to All.
+  const canToday = todayList().length >= 2;
+  const engaged = (typeof _dayFocusEngaged === 'function') ? _dayFocusEngaged() : true;
+  let scope = opts.scope || (canToday && engaged ? 'today' : 'all');
+  if (scope === 'today' && !canToday) scope = 'all';
+  const computeOrder = () => scope === 'today' ? todayList().slice() : allPrograms();
+  let order = computeOrder();
+  const HINTS = {
+    today: `Reordering just <strong>${escHtml(dayLbl)}'s</strong> programs — every other program keeps its place.`,
+    all: `Drag the ⠿ handle (or ↑ / ↓) to arrange <strong>all</strong> programs — chips, filters, and every page follow this order.`
+  };
   const wrap = document.createElement('div');
   wrap.className = 'star-modal-bg';
   wrap.innerHTML = `
@@ -10839,7 +10868,11 @@ function openProgOrderModal(){
         <span class="sm-title">Program order</span>
         <button class="sm-x" data-sm-close title="Close">✕</button>
       </div>
-      <div class="dfc-hint">Drag the ⠿ handle (or use ↑ / ↓) to arrange programs — chips, the filter dropdown, and every program page follow this order.</div>
+      ${canToday ? `<div class="po-scope">
+        <button type="button" data-po-scope="today" class="${scope === 'today' ? 'on' : ''}">★ ${escHtml(dayLbl)} <span class="po-scope-n">${todayList().length}</span></button>
+        <button type="button" data-po-scope="all" class="${scope === 'all' ? 'on' : ''}">All programs <span class="po-scope-n">${allPrograms().length}</span></button>
+      </div>` : ''}
+      <div class="dfc-hint" data-po-hint>${HINTS[scope]}</div>
       <div class="po-list" data-po-list></div>
       <div class="sm-actions">
         <button class="sm-btn ghost" data-po-reset>Reset to A–Z</button>
@@ -10849,12 +10882,22 @@ function openProgOrderModal(){
     </div>`;
   document.body.appendChild(wrap);
   const listEl = wrap.querySelector('[data-po-list]');
+  // Persist. In "today" scope we splice the reordered subset back into the
+  // global order so only today's programs move — the rest stay put.
+  const save = () => {
+    if (scope === 'today') {
+      const subset = new Set(order); let si = 0;
+      _progOrderSave(allPrograms().map(p => (subset.has(p) && si < order.length) ? order[si++] : p));
+    } else {
+      _progOrderSave(order);
+    }
+  };
   // Move an item from index `from` to index `to`, persist, repaint.
   const moveItem = (from, to) => {
     if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
     const [it] = order.splice(from, 1);
     order.splice(to, 0, it);
-    _progOrderSave(order);
+    save();
     paint();
   };
   let dragFrom = null;
@@ -10904,14 +10947,30 @@ function openProgOrderModal(){
     });
   };
   paint();
+  // Scope toggle — switch between today's programs and the full list.
+  wrap.querySelectorAll('[data-po-scope]').forEach(b => b.addEventListener('click', () => {
+    const s = b.getAttribute('data-po-scope');
+    if (s === scope) return;
+    scope = s;
+    order = computeOrder();
+    wrap.querySelectorAll('[data-po-scope]').forEach(x => x.classList.toggle('on', x.getAttribute('data-po-scope') === scope));
+    const hint = wrap.querySelector('[data-po-hint]');
+    if (hint) hint.innerHTML = HINTS[scope];
+    paint();
+  }));
   // The topbar program filter is only rebuilt on sheet loads — refresh it so
   // the new order shows up there immediately too.
   const close = () => { try { wrap.remove(); } catch {} try { populateProgramSelect(); } catch {} render(); };
   wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
   wrap.querySelectorAll('[data-sm-close]').forEach(b => b.addEventListener('click', close));
   wrap.querySelector('[data-po-reset]').addEventListener('click', () => {
-    _progOrderSave([]);
-    order = allPrograms();
+    if (scope === 'today') {
+      order = todayList().slice().sort((a, b) => a.localeCompare(b));
+      save();
+    } else {
+      _progOrderSave([]);
+      order = allPrograms();
+    }
     paint();
   });
 }
