@@ -1467,6 +1467,38 @@
     margin-bottom: 6px;
   }
   .field-collapsible .field-body { margin-top: 8px }
+  /* Status history timeline (drawer) */
+  .sh-sum {
+    margin-left: auto; text-transform: none; letter-spacing: 0;
+    font-size: 10.5px; font-weight: 700; color: var(--w45);
+  }
+  .status-hist { display: flex; flex-direction: column; gap: 2px; }
+  .sh-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 8px; border-radius: 7px;
+    font-size: 12px; line-height: 1.3;
+    position: relative;
+  }
+  /* Connector line between the status dots */
+  .sh-row:not(:last-child)::before {
+    content: ''; position: absolute; left: 11.5px; top: 17px; bottom: -2px;
+    width: 1px; background: var(--w12);
+  }
+  .sh-row.now { background: var(--w03); }
+  .sh-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    box-shadow: 0 0 0 3px var(--bg-elev); position: relative; z-index: 1;
+  }
+  .sh-row.now .sh-dot { box-shadow: 0 0 0 3px var(--bg-elev), 0 0 0 5px rgba(255,255,255,.06); }
+  .sh-name { font-weight: 700; color: var(--ink); white-space: nowrap; }
+  .sh-dur {
+    font-weight: 800; color: var(--w55); font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .sh-dur.now { color: var(--green); }
+  .sh-range { margin-left: auto; color: var(--w38); font-size: 11px; white-space: nowrap; }
+  .sh-empty { font-size: 12px; color: var(--w45); padding: 4px 2px; line-height: 1.5; }
+  @media (max-width: 560px) { .sh-range { display: none } }
 
   /* Status filter chips */
   .status-bar {
@@ -6343,6 +6375,9 @@ async function loadSheet(){
     });
     populateOwnerSelect();
     populateProgramSelect();
+    // Seed "in status" baselines for any newly-seen open rows so the counter is
+    // stable from first load (and catch statuses changed directly in Smartsheet).
+    try { _reconcileStatusLog(); } catch {}
     render();
   } catch (e) {
     console.error(e);
@@ -7139,6 +7174,20 @@ function _drawerHTML(r){
             </div>
           </div>
         </div>
+        <details class="field-collapsible status-hist-wrap">
+          <summary>
+            <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            <span>Status history</span>
+            ${(function(){
+              const d = _statusAgeDays(r);
+              if (d == null) return '';
+              return `<span class="sh-sum" title="Days in the current status">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')} · ${d}d</span>`;
+            })()}
+          </summary>
+          <div class="field field-body">
+            ${_statusHistoryHTML(r)}
+          </div>
+        </details>
         <details class="field-collapsible"${r.outcome ? ' open' : ''}>
           <summary>
             <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
@@ -7702,43 +7751,154 @@ document.addEventListener('click', (e) => {
 });
 
 // ===== Status history (Firestore: ecm_status_log) =====
-// One doc per row records when it entered its CURRENT status (`since`) plus a
-// short trail of prior statuses. That lets us show "days in this status" that
-// survives status changes — otherwise we'd only have Smartsheet's single
-// modifiedAt. Best-effort: rows changed outside War Room fall back to
-// modifiedAt/createdDate.
+// One doc per row: { rowId, status, since, history:[{status,from,to}] }.
+//   • `status` / `since` — the CURRENT status and the ISO time the row entered
+//     it. `Date.now() - since` is the true "days in this status", and unlike
+//     Smartsheet's row-level `modifiedAt` it does NOT reset when some OTHER
+//     field (owner, ticket, details…) is edited — that reset was the "In status
+//     stuck on 1 day" bug.
+//   • `history` — the closed segments the row already moved through, each with
+//     its status and from→to span, so we can show how long every status lasted.
+// The log is the source of truth. `_reconcileStatusLog` seeds a `since` for
+// rows we've never logged (and catches status changes made directly in
+// Smartsheet), so the counter is STABLE from first sight instead of tracking
+// `modifiedAt`. Seeds anchor to `createdDate` — the most conservative baseline
+// that never moves — and self-correct the moment a real status change lands.
 const statusLogCol = collection(db, 'ecm_status_log');
 let statusLog = {};
 let statusLogUnsub = null;
+let _statusLogRenderT = null;
 function subscribeStatusLog(){
   if (statusLogUnsub) try { statusLogUnsub(); } catch {}
   statusLogUnsub = onSnapshot(statusLogCol, snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data() || {}; });
     statusLog = next;
-    try { if (typeof render === 'function' && rows.length && (currentView === 'programs' || TASKS_SCOPES.has(currentView))) render(); } catch {}
+    // Seed/repair any rows the snapshot doesn't yet cover. Idempotent: once a
+    // row's logged status matches the sheet it's skipped, so this converges
+    // (each seed write fires one more snapshot that then finds nothing to do).
+    try { _reconcileStatusLog(); } catch {}
+    // Coalesce renders — a first-load seed can fire a burst of snapshots.
+    if (_statusLogRenderT) clearTimeout(_statusLogRenderT);
+    _statusLogRenderT = setTimeout(() => {
+      _statusLogRenderT = null;
+      try { if (typeof render === 'function' && rows.length && (currentView === 'programs' || TASKS_SCOPES.has(currentView))) render(); } catch {}
+    }, 120);
   }, err => console.error('status log snapshot error', err));
 }
+// Low-level writer — optimistic local update then Firestore. `history` is
+// capped so a churny row can't grow the doc without bound.
+async function _writeStatusLog(rid, status, since, history){
+  const payload = { rowId: String(rid), status, since, history: (Array.isArray(history) ? history : []).slice(-40) };
+  statusLog[String(rid)] = payload; // optimistic
+  try { await setDoc(doc(db, 'ecm_status_log', String(rid)), payload); }
+  catch (e) { console.warn('status log write failed', e); }
+}
+// A real status change happened in War Room right now — close the prior
+// segment at `now` and open the new one.
 async function recordStatusChange(rowId, newStatus){
   const rid = String(rowId);
   const prev = statusLog[rid];
   if (prev && prev.status === newStatus) return; // no real change
   const nowIso = new Date().toISOString();
-  const history = Array.isArray(prev && prev.history) ? prev.history.slice(-19) : [];
+  const history = Array.isArray(prev && prev.history) ? prev.history.slice() : [];
   if (prev && prev.status) history.push({ status: prev.status, from: prev.since || '', to: nowIso });
-  const payload = { rowId: rid, status: newStatus, since: nowIso, history };
-  statusLog[rid] = payload; // optimistic
-  try { await setDoc(doc(db, 'ecm_status_log', rid), payload); }
-  catch (e) { console.warn('status log write failed', e); }
+  await _writeStatusLog(rid, newStatus, nowIso, history);
+}
+// Best STABLE baseline for when a row entered its current status when we have
+// no log yet: created date first (never resets), then modifiedAt, then now.
+function _statusSeedSince(r){
+  if (r.createdDate && Date.parse(r.createdDate)) return r.createdDate;
+  if (r.modifiedAt && Date.parse(r.modifiedAt)) return r.modifiedAt;
+  return new Date().toISOString();
+}
+// Make the log agree with the live sheet. Runs after the sheet loads and after
+// every status-log snapshot; idempotent and converges.
+//   • No log yet            → seed `since` from createdDate (freezes the value
+//                             so it stops tracking modifiedAt).
+//   • Logged status differs → the status was changed directly in Smartsheet;
+//                             close the old segment at modifiedAt and open the
+//                             new one, so outside edits still build history.
+// Closed rows are skipped — "in status" isn't tracked for them, and skipping
+// keeps the first-load seed burst down to just the open backlog.
+function _reconcileStatusLog(){
+  if (!Array.isArray(rows) || !rows.length) return;
+  for (const r of rows){
+    const status = (r.status || '').trim();
+    if (!status || _rowClosed(r)) continue;
+    const rid = String(r.id);
+    const log = statusLog[rid];
+    if (log && log.status === status) continue; // already accurate
+    if (!log){
+      _writeStatusLog(rid, status, _statusSeedSince(r), []);
+    } else {
+      // Out-of-band status change: modifiedAt is roughly when it happened.
+      // Never let the new segment boundary predate the prior segment's start.
+      let changedAt = (r.modifiedAt && Date.parse(r.modifiedAt)) ? r.modifiedAt : new Date().toISOString();
+      if (log.since && Date.parse(log.since) > Date.parse(changedAt)) changedAt = new Date().toISOString();
+      const history = Array.isArray(log.history) ? log.history.slice() : [];
+      if (log.status) history.push({ status: log.status, from: log.since || '', to: changedAt });
+      _writeStatusLog(rid, status, changedAt, history);
+    }
+  }
 }
 // Days the row has sat in its current status. Uses the log's `since` when it
-// matches the live status, else falls back to modifiedAt/createdDate.
+// matches the live status; otherwise a stable createdDate baseline (NOT
+// modifiedAt — that resets on any field edit). Reconcile keeps the log in
+// sync, so the fallback only covers the brief window before the first seed.
 function _statusAgeDays(r){
   const log = statusLog[String(r.id)];
-  const base = (log && log.status === r.status && log.since) ? log.since : (r.modifiedAt || r.createdDate);
+  const base = (log && log.status === r.status && log.since) ? log.since : (r.createdDate || r.modifiedAt);
   const t = Date.parse(base);
   if (!t) return null;
   return Math.floor((Date.now() - t) / 86400000);
+}
+// Normalized status segments for the drawer's history view, oldest → newest.
+// Each: { status, from, to ('' = ongoing), ms (duration, null if unknown),
+// ongoing }. Returns [] when nothing has been logged yet.
+function _statusHistorySegments(r){
+  const log = statusLog[String(r.id)];
+  if (!log || !log.status) return [];
+  const segs = [];
+  (Array.isArray(log.history) ? log.history : []).forEach(h => {
+    if (!h || !h.status) return;
+    const f = Date.parse(h.from), t = Date.parse(h.to);
+    segs.push({ status: h.status, from: h.from || '', to: h.to || '', ms: (f && t && t >= f) ? (t - f) : null, ongoing: false });
+  });
+  const f = Date.parse(log.since);
+  segs.push({ status: log.status, from: log.since || '', to: '', ms: f ? (Date.now() - f) : null, ongoing: true });
+  return segs;
+}
+// Compact human duration: "3d", "5h", "12m", or "<1m".
+function _fmtDur(ms){
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
+  const d = Math.floor(ms / 86400000);
+  if (d >= 1) return `${d}d`;
+  const h = Math.floor(ms / 3600000);
+  if (h >= 1) return `${h}h`;
+  const m = Math.floor(ms / 60000);
+  return m >= 1 ? `${m}m` : '<1m';
+}
+// Drawer timeline: every status the row has passed through, newest first, with
+// how long each one lasted. Sourced from ecm_status_log (see above).
+function _statusHistoryHTML(r){
+  const segs = _statusHistorySegments(r);
+  if (!segs.length){
+    return '<div class="sh-empty">No status changes recorded yet — changes from here on are tracked automatically.</div>';
+  }
+  const rowsHTML = segs.slice().reverse().map(s => {
+    const label = SS_STATUS_SHORT[s.status] || s.status || '—';
+    const fromD = fmtAbsoluteDate(s.from);
+    const toD = s.ongoing ? 'now' : fmtAbsoluteDate(s.to);
+    const range = (fromD || toD) ? `<span class="sh-range">${escHtml(fromD || '—')} → ${escHtml(toD || '—')}</span>` : '';
+    return `<div class="sh-row${s.ongoing ? ' now' : ''}">
+      <span class="sh-dot" style="background:${statusDotVar(s.status)}"></span>
+      <span class="sh-name">${escHtml(label)}</span>
+      <span class="sh-dur${s.ongoing ? ' now' : ''}"${s.ongoing ? ' title="Current status"' : ''}>${_fmtDur(s.ms)}${s.ongoing ? ' · now' : ''}</span>
+      ${range}
+    </div>`;
+  }).join('');
+  return `<div class="status-hist">${rowsHTML}</div>`;
 }
 function SAGE_TH(){ return `<th class="c-sage th-wrap" style="width:52px" title="Days in the current status">In status${_thRangeBtn('sage')}</th>`; }
 function DUE_TH(){ return `<th class="c-due th-wrap" style="width:68px" title="Due date / completion">Due Date${_thRangeBtn('due')}</th>`; }
