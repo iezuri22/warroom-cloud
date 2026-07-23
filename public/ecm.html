@@ -1055,6 +1055,39 @@
     border-radius:8px; color:var(--ink); font:inherit; font-size:13px;
     resize:vertical; min-height:64px; outline:none; box-sizing:border-box;
   }
+  /* Starred view: "Mentioned" filter bar + the @chips in the Mentioned column.
+     The page has no per-person identity, so this dropdown is how a teammate
+     narrows the list to the stars that tag them. */
+  .star-filter-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 0 10px;
+  }
+  .star-filter-bar .sfb-lbl {
+    font-size: 10px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--w45);
+  }
+  .star-filter-bar .sfb-select {
+    height: 28px; padding: 0 26px 0 9px; border-radius: 7px;
+    background: var(--w04); border: 1px solid var(--w12); color: var(--ink);
+    font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .star-filter-bar .sfb-select:hover { border-color: var(--w25) }
+  .star-filter-bar .sfb-clear {
+    height: 28px; padding: 0 10px; border-radius: 99px;
+    background: transparent; border: 1px solid var(--w12); color: var(--w55);
+    font-family: inherit; font-size: 10.5px; font-weight: 800; cursor: pointer;
+  }
+  .star-filter-bar .sfb-clear:hover { color: var(--ink); border-color: var(--w25) }
+  .ment-chip {
+    display: inline-block; margin: 1px 3px 1px 0; padding: 1px 6px;
+    border-radius: 99px; font-size: 10.5px; font-weight: 800; white-space: nowrap;
+    background: rgba(167,139,250,.12); border: 1px solid rgba(167,139,250,.32);
+    color: var(--violet, #A78BFA);
+  }
+  .ment-chip.on {
+    background: rgba(255,200,77,.15); border-color: rgba(255,200,77,.45);
+    color: var(--amber, #FFC15A);
+  }
   .sm-note::placeholder { color:var(--w45) }
   .sm-note:focus { border-color:rgba(74,158,255,.6); background:var(--w08) }
   .sm-mentions {
@@ -3492,6 +3525,9 @@
   @media (max-width: 500px) {
     .ddl-table .c-prog { display: none }
     .ddl-table .c-sage { display: none }
+    /* Mentioned sheds last of the extras — the dropdown above still filters,
+       and the 📝 flag's tooltip still lists the tags. */
+    .ddl-table .c-ment { display: none }
     .ddl-table .st-lbl { display: none }
     .ddl-table th.c-status { width: 34px !important; font-size: 0 }
     .ddl-table thead th, .ddl-table tbody td { padding-left: 8px; padding-right: 8px }
@@ -3526,15 +3562,18 @@
      stripe of identity color. */
   .rsp-accent { height: 3px; flex-shrink: 0 }
   .rsp-head {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: flex-start; gap: 8px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--w08);
     flex-shrink: 0;
   }
+  /* Long task names wrap in full rather than truncating — the whole point of
+     opening the panel is to read the task. Icons stay pinned to the top line. */
   .rsp-title {
     flex: 1; min-width: 0;
     font-size: 13.5px; font-weight: 800; color: var(--ink);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    white-space: normal; overflow-wrap: anywhere; line-height: 1.35;
+    padding-top: 4px;
   }
   .rsp-icon {
     display: inline-flex; align-items: center; justify-content: center;
@@ -3571,8 +3610,13 @@
     background: var(--w03);
     border-color: rgba(74,158,255,.45);
   }
-  /* Task name doubles as the editable heading. */
-  .rsp-body .input[data-field="Task Name"] { font-size: 15px; font-weight: 800 }
+  /* Task name doubles as the editable heading. It's a textarea (not an input)
+     so a long name WRAPS and shows in full instead of scrolling out of sight;
+     JS autosizes it and Enter commits rather than inserting a newline. */
+  .rsp-body [data-field="Task Name"] {
+    font-size: 15px; font-weight: 800; line-height: 1.35;
+  }
+  .task-name-ta { overflow: hidden; resize: none; white-space: pre-wrap; overflow-wrap: anywhere }
   /* Description shows everything — the textarea autosizes (JS) and never
      scrolls internally. */
   .rsp-body .textarea {
@@ -4283,8 +4327,14 @@
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;vertical-align:middle"><polyline points="6 9 12 15 18 9"/></svg>
         <span class="more-dot" id="moreTabDot"></span>
       </button>
-      <span id="starredCount" style="display:none"></span>
       <div class="more-menu" id="moreMenu" hidden>
+        <!-- Starred is back in the nav: it's where the team's ★ notes and
+             @mentions live, and the "Mentioned" filter there is how a teammate
+             finds what they were tagged on. -->
+        <button type="button" class="view-tab more-item" data-view="starred">
+          Starred
+          <span class="view-tab-ct" id="starredCount"></span>
+        </button>
         <button type="button" class="view-tab more-item" data-view="activity">
           Activity
           <span class="view-tab-ct" id="activityCount"></span>
@@ -4973,6 +5023,18 @@ async function unstarRow(rowId){
     try { render(); } catch {}
     toast("Couldn't unstar.", 'err');
   }
+}
+// Names tagged on a given star (the @mentions picked in the star modal).
+function _starMentions(rowId){
+  const s = stars[String(rowId)];
+  return (s && Array.isArray(s.mentions)) ? s.mentions.map(m => String(m || '').trim()).filter(Boolean) : [];
+}
+// Everyone tagged on ANY star — powers the Starred view's "Mentioned"
+// dropdown so a teammate can narrow the list to just their own tags.
+function _allStarMentions(){
+  const set = new Set();
+  Object.keys(stars).forEach(rid => _starMentions(rid).forEach(m => set.add(m)));
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 function starBtnHTML(r){
   const on = !!stars[String(r.id)];
@@ -6178,6 +6240,10 @@ let filterProgram = '';
 let filterAge = '';   // '' = any, else min days since created ('7'|'14'|'30'|'60'|'90')
 let filterDue = '';   // '' = any, else 'overdue'|'soon'|'dated'|'undated'|'done'
 let filterSage = '';  // '' = any, else min days in current status ('7'|'10'|'21'|'30') — Programs only
+// Starred view only: '' = anyone, else show just stars tagging this name.
+// Persisted so a teammate sets it to themselves once and it sticks — the page
+// has no per-person identity, so this dropdown IS how "my mentions" works.
+let filterMention = (function(){ try { return localStorage.getItem('ecm-mention-filter') || ''; } catch { return ''; } })();
 let sortBy = (function(){ try { return localStorage.getItem('ecm-sort-by') || 'name'; } catch { return 'name'; } })();
 let sortDir = (function(){ try { return localStorage.getItem('ecm-sort-dir') || 'asc'; } catch { return 'asc'; } })();
 let expandedId = null;
@@ -7039,7 +7105,7 @@ function _drawerHTML(r){
       <div class="drawer">
         <div class="field">
           <span class="lbl">Task name</span>
-          <input class="input" data-field="Task Name" value="${escHtml(r.task || '')}" placeholder="Task name" style="font-weight:700">
+          <textarea class="textarea task-name-ta" data-field="Task Name" rows="1" placeholder="Task name">${escHtml(r.task || '')}</textarea>
         </div>
         <div class="field">
           <span class="lbl">Description</span>
@@ -7245,6 +7311,28 @@ function _wireDrawer(row, r, onCollapse){
       };
       ticketInput.addEventListener('input', refreshMissing);
       refreshMissing();
+    }
+    // Task name is a textarea so a long name wraps and stays fully readable,
+    // but it's still ONE logical line: Enter commits (blur → save) instead of
+    // inserting a newline, and pasted newlines collapse to spaces.
+    const taskTA = row.querySelector('.task-name-ta');
+    if (taskTA) {
+      const growTask = () => {
+        taskTA.style.height = 'auto';
+        taskTA.style.height = (taskTA.scrollHeight + 2) + 'px';
+      };
+      taskTA.addEventListener('input', () => {
+        if (taskTA.value.includes('\n')) {
+          const pos = taskTA.selectionStart;
+          taskTA.value = taskTA.value.replace(/\n/g, ' ');
+          try { taskTA.setSelectionRange(pos, pos); } catch {}
+        }
+        growTask();
+      });
+      taskTA.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); taskTA.blur(); }
+      });
+      growTask();
     }
     // Wire field handlers
     row.querySelectorAll('[data-field]').forEach(el => {
@@ -7454,6 +7542,14 @@ function _syncRowPanel(){
   const ssLink = r.permalink
     ? `<a class="rsp-icon" href="${escHtml(r.permalink)}" target="_blank" rel="noopener" title="Open in Smartsheets"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
     : '';
+  // Every render rebuilds this panel wholesale, which otherwise scrolls it back
+  // to the top and re-collapses Status history / Outcome. Acking re-renders, so
+  // without this the panel visibly "resets" the moment you click Ack. Snapshot
+  // the view state and put it back when it's the SAME row being re-rendered.
+  const _sameRow = panel.dataset.rowId === String(r.id);
+  const _prevScroll = _sameRow ? ((panel.querySelector('.rsp-body') || {}).scrollTop || 0) : 0;
+  const _prevOpen = _sameRow ? [...panel.querySelectorAll('.rsp-body details')].map(d => d.open) : null;
+  panel.dataset.rowId = String(r.id);
   panel.innerHTML = `
     <div class="rsp-accent" style="background:${r.program ? programColor(r.program).fg : 'var(--w14)'}"></div>
     <div class="rsp-head">
@@ -7471,6 +7567,12 @@ function _syncRowPanel(){
   // Textareas (description / outcome) show their whole content — autosize to
   // fit and re-grow on typing. The outcome one lives in a <details>, so it
   // also re-measures when that section is opened.
+  // Re-open whatever was open before the rebuild, BEFORE measuring textareas
+  // (a textarea inside a closed <details> measures as 0-height).
+  if (_prevOpen) {
+    const ds = [...panel.querySelectorAll('.rsp-body details')];
+    _prevOpen.forEach((open, i) => { if (ds[i]) ds[i].open = open; });
+  }
   const growTA = (t) => { t.style.height = 'auto'; t.style.height = (t.scrollHeight + 2) + 'px'; };
   panel.querySelectorAll('.rsp-body textarea').forEach(t => {
     t.addEventListener('input', () => growTA(t));
@@ -7478,6 +7580,10 @@ function _syncRowPanel(){
   });
   panel.querySelectorAll('.rsp-body details').forEach(d =>
     d.addEventListener('toggle', () => d.querySelectorAll('textarea').forEach(growTA)));
+  if (_prevScroll) {
+    const body = panel.querySelector('.rsp-body');
+    if (body) body.scrollTop = _prevScroll;
+  }
   document.body.classList.add('has-row-panel');
 }
 // Escape closes the panel — but only when no modal is sitting on top of it.
@@ -8270,7 +8376,10 @@ async function handleAck(rowId, nameOverride){
   const owner = (rr && rr.owner) || '';
   const name = (nameOverride || owner || 'Team').trim();
   acks[rowId] = { ackedBy: name, ackedAt: new Date().toISOString(), rowId: String(rowId), ackOwner: owner };
-  selectedAckIds.delete(rowId);
+  // Always keyed as a string — the ack PROMPT passes a stringified id while
+  // the row checkboxes add numeric ones, so an un-normalized delete missed and
+  // left the row stuck in the bulk-bar selection after it was acked.
+  selectedAckIds.delete(String(rowId));
   if (rr) { try { recordActivity('ack', rr, { ackedBy: name }); } catch {} }
   render();
   try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
@@ -9793,7 +9902,7 @@ function renderAcknowledge(){
   const buildAckTR = (r, i) => {
     const a = acks[r.id];
     const pcol = programColor(r.program);
-    const isChecked = selectedAckIds.has(r.id);
+    const isChecked = selectedAckIds.has(String(r.id));
     const cls = ['ddl-row', i % 2 ? 'even' : '', isExpandedRow(r.id) ? 'expanded' : ''].filter(Boolean).join(' ');
     const actionTD = _ackTab === 'del'
       ? `<td class="ack-act-td">
@@ -9845,8 +9954,8 @@ function renderAcknowledge(){
         e.stopPropagation();
         const rr = rows.find(x => String(x.id) === String(id));
         if (!rr) return;
-        if (selectedAckIds.has(rr.id)) selectedAckIds.delete(rr.id);
-        else selectedAckIds.add(rr.id);
+        if (selectedAckIds.has(String(rr.id))) selectedAckIds.delete(String(rr.id));
+        else selectedAckIds.add(String(rr.id));
         renderBulkBar();
         render();
         return;
@@ -11887,12 +11996,45 @@ function renderStarred(){
     const q = filterSearch.toLowerCase();
     pool = pool.filter(r => _wkSearchMatch(r, q));
   }
+  // "Mentioned" narrows to stars tagging one person. Built from ALL stars (not
+  // the filtered pool) so the dropdown never loses the option you're on.
+  const mentionNames = _allStarMentions();
+  if (filterMention) pool = pool.filter(r => _starMentions(r.id).includes(filterMention));
   pool.sort((a, b) =>
     (Date.parse((stars[String(b.id)] || {}).starredAt || 0) || 0) -
     (Date.parse((stars[String(a.id)] || {}).starredAt || 0) || 0));
-  if (metaEl) metaEl.textContent = `${pool.length} starred`;
+  if (metaEl) metaEl.textContent = filterMention ? `${pool.length} tagging @${filterMention}` : `${pool.length} starred`;
+  // The bar renders even when the result is empty — otherwise filtering to
+  // someone with no tags would remove the only control that can undo it.
+  const mentionBarHTML = mentionNames.length ? `
+    <div class="star-filter-bar">
+      <label class="sfb-lbl" for="mentionSelect">Mentioned</label>
+      <select id="mentionSelect" class="sfb-select" title="Show only starred tasks tagging this person">
+        <option value="">Anyone</option>
+        ${mentionNames.map(n => `<option value="${escHtml(n)}" ${n === filterMention ? 'selected' : ''}>@${escHtml(n)}</option>`).join('')}
+      </select>
+      ${filterMention ? `<button type="button" class="sfb-clear" data-mention-clear>Clear</button>` : ''}
+    </div>` : '';
+  const wireMentionBar = () => {
+    const sel = document.getElementById('mentionSelect');
+    if (sel) sel.addEventListener('change', () => {
+      filterMention = sel.value;
+      try { localStorage.setItem('ecm-mention-filter', filterMention); } catch {}
+      render();
+    });
+    list.querySelectorAll('[data-mention-clear]').forEach(b => b.addEventListener('click', () => {
+      filterMention = '';
+      try { localStorage.setItem('ecm-mention-filter', ''); } catch {}
+      render();
+    }));
+  };
   if (!pool.length) {
-    list.innerHTML = `<div class="empty">Nothing starred${filterOwner || filterSearch ? ' in this view' : ' yet'}. Tap the <strong>★</strong> on any task — on any tab — to keep it here for quick reference.</div>`;
+    list.innerHTML = mentionBarHTML + `<div class="empty">${
+      filterMention
+        ? `No starred tasks tag <strong>@${escHtml(filterMention)}</strong> right now.`
+        : `Nothing starred${filterOwner || filterSearch ? ' in this view' : ' yet'}. Tap the <strong>★</strong> on any task — on any tab — to keep it here for quick reference.`
+    }</div>`;
+    wireMentionBar();
     return;
   }
   // Grid layout — star note rides in the Task cell; edits/unstar in the panel.
@@ -11915,10 +12057,15 @@ function renderStarred(){
         <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
         ${_ageCellTD(r)}
         <td class="tt-created-td c-ticket"><span title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '—')}</span></td>
+        <td class="c-ment">${(function(){
+          const ms = _starMentions(r.id);
+          if (!ms.length) return '<span style="color:var(--w30);font-weight:600">—</span>';
+          return ms.map(m => `<span class="ment-chip${m === filterMention ? ' on' : ''}">@${escHtml(m)}</span>`).join('');
+        })()}</td>
         <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
       </tr>`;
   }).join('');
-  list.innerHTML = `
+  list.innerHTML = mentionBarHTML + `
     <div class="ddl-wrap">
       <div class="ddl-scroll">
         <table class="ddl-table">
@@ -11927,12 +12074,14 @@ function renderStarred(){
             <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
             ${AGE_TH()}
             <th class="c-ticket" style="width:96px">Starred</th>
+            <th class="c-ment th-wrap" style="width:118px" title="Teammates tagged on the star">Mentioned</th>
             <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
           </tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
       </div>
     </div>`;
+  wireMentionBar();
   list.querySelectorAll('[data-star-row]').forEach(tr => {
     const id = tr.getAttribute('data-star-row');
     tr.addEventListener('click', (e) => {
@@ -12401,6 +12550,14 @@ async function setRowDeletion(rowId, flag){
   }
 }
 
+// Smartsheets column title → the property it mirrors to on a local row.
+// Shared by pushField and ssPushFields so both mirror the same way.
+const SS_FIELD_KEY = {
+  'Status': 'status', 'Ticket #': 'ticket', 'Details': 'details',
+  'Outcome Details': 'outcome', 'Task Name': 'task', 'Owner': 'owner',
+  'Program': 'program', 'Request Type': 'requestType',
+  'Completion Date': 'completionDate', 'Due Date': 'dueDate'
+};
 async function pushField(r, fieldTitle, value, rowEl){
   const col = fieldTitle === 'Due Date' ? ecmDueCol() : columns[fieldTitle];
   if (!col) return;
@@ -12410,22 +12567,35 @@ async function pushField(r, fieldTitle, value, rowEl){
   if (savedEl) { savedEl.textContent = 'Saving…'; savedEl.classList.remove('ok','err'); }
   // Smartsheets accepts null to clear, otherwise the typed value
   const cells = [{ columnId: col.id, value: value === '' ? null : value, strict: false }];
-  // Status change → also update Completion Date sensibly
+  // Status change → also update Completion Date sensibly. `null` here means
+  // "this push doesn't touch Completion Date".
+  let _completionMirror = null;
   if (fieldTitle === 'Status') {
     const colCompletion = columns['Completion Date'];
     if (colCompletion) {
-      if (value === 'Completed') {
-        const today = new Date().toISOString().slice(0, 10);
-        cells.push({ columnId: colCompletion.id, value: today, strict: false });
-      } else {
-        cells.push({ columnId: colCompletion.id, value: null, strict: false });
-      }
+      _completionMirror = value === 'Completed' ? new Date().toISOString().slice(0, 10) : '';
+      cells.push({ columnId: colCompletion.id, value: _completionMirror === '' ? null : _completionMirror, strict: false });
     }
   }
   const body = [{ id: r.id, cells }];
+  // Mirror into the local row BEFORE the round-trip. Anything that re-renders
+  // while the PUT is in flight would otherwise rebuild from the STALE row and
+  // the user's edit looks like it vanished — which is exactly what happened
+  // when clicking Ack: the click blurs the field (starting this save) and then
+  // handleAck() re-renders synchronously. Reverted below if the write fails.
+  const _key = SS_FIELD_KEY[fieldTitle];
+  const _prev = _key ? (r[_key] ?? '') : '';
+  const _prevCompletion = r.completionDate;
+  if (_key) r[_key] = value;
+  if (_completionMirror !== null) r.completionDate = _completionMirror;
+  const _revert = () => {
+    if (_key) r[_key] = _prev;
+    if (_completionMirror !== null) r.completionDate = _prevCompletion;
+  };
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', body);
     if (res.status === 401 && !_teamMode) {
+      _revert();
       _ecmSessionExpiredRedirect();
       return;
     }
@@ -12433,31 +12603,12 @@ async function pushField(r, fieldTitle, value, rowEl){
       const t = await res.text().catch(() => '');
       throw new Error(`${res.status}: ${t.slice(0, 200)}`);
     }
-    // Capture the previous value BEFORE mirroring so we can log a meaningful
-    // before/after event for the Activity feed.
-    const _activityKey = ({
-      'Status': 'status', 'Ticket #': 'ticket', 'Details': 'details',
-      'Outcome Details': 'outcome', 'Task Name': 'task', 'Owner': 'owner',
-      'Program': 'program', 'Request Type': 'requestType',
-      'Completion Date': 'completionDate', 'Due Date': 'dueDate'
-    })[fieldTitle];
-    const _activityPrev = _activityKey ? (r[_activityKey] ?? '') : '';
-    // Mirror local
-    if (fieldTitle === 'Status') { r.status = value; try { recordStatusChange(r.id, value); } catch {} }
-    if (fieldTitle === 'Ticket #') r.ticket = value;
-    if (fieldTitle === 'Details') r.details = value;
-    if (fieldTitle === 'Outcome Details') r.outcome = value;
-    if (fieldTitle === 'Task Name') r.task = value;
-    if (fieldTitle === 'Owner') r.owner = value;
-    if (fieldTitle === 'Program') r.program = value;
-    if (fieldTitle === 'Request Type') r.requestType = value;
-    if (fieldTitle === 'Completion Date') r.completionDate = value;
-    if (fieldTitle === 'Due Date') r.dueDate = value;
+    if (fieldTitle === 'Status') { try { recordStatusChange(r.id, value); } catch {} }
     // Log to the Activity feed.
     try {
-      if (_activityKey && String(_activityPrev) !== String(value ?? '')) {
-        recordActivity('field', r, { field: fieldTitle, from: String(_activityPrev), to: String(value ?? '') });
-        if (fieldTitle === 'Status' && value === 'Completed' && _activityPrev !== 'Completed') {
+      if (_key && String(_prev) !== String(value ?? '')) {
+        recordActivity('field', r, { field: fieldTitle, from: String(_prev), to: String(value ?? '') });
+        if (fieldTitle === 'Status' && value === 'Completed' && _prev !== 'Completed') {
           recordActivity('complete', r, {});
         }
       }
@@ -12477,10 +12628,15 @@ async function pushField(r, fieldTitle, value, rowEl){
     maybePromptAck(r.id);
   } catch (e) {
     console.error('push failed', e);
+    // Put the row back the way Smartsheets still has it, and re-render so the
+    // UI stops showing a value that never saved.
+    _revert();
     if (savedEl) {
       savedEl.textContent = 'Save failed — try again';
       savedEl.classList.add('err');
     }
+    try { toast('Couldn\'t save that change — reverted.', 'err'); } catch {}
+    try { render(); } catch {}
   }
 }
 
@@ -12582,9 +12738,28 @@ async function ssPushFields(r, fields){
   const _byCol = new Map();
   cells.forEach(cl => _byCol.set(cl.columnId, cl));
   const dedupedCells = [..._byCol.values()];
+  // Mirror locally BEFORE the round-trip — same reason as pushField: the ack
+  // prompt's "Yes, acknowledge" blurs a field (starting this save), closes the
+  // prompt and re-renders, all before the PUT resolves. Without an up-front
+  // mirror that re-render rebuilds from the stale row and the edit is lost.
+  const prev = {
+    status: r.status, ticket: r.ticket, details: r.details, outcome: r.outcome,
+    task: r.task, owner: r.owner, program: r.program, requestType: r.requestType,
+    completionDate: r.completionDate, dueDate: r.dueDate
+  };
+  const _revert = () => { Object.assign(r, prev); };
+  for (const [title, raw] of Object.entries(fields)) {
+    const k = SS_FIELD_KEY[title];
+    if (k) r[k] = raw;
+  }
+  // Status also stamps/clears Completion Date in the same PUT (see cells above).
+  if (Object.prototype.hasOwnProperty.call(fields, 'Status') && columns['Completion Date']) {
+    r.completionDate = fields['Status'] === 'Completed' ? new Date().toISOString().slice(0, 10) : '';
+  }
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}/rows`, 'PUT', [{ id: r.id, cells: dedupedCells }]);
     if (res.status === 401 && !_teamMode) {
+      _revert();
       _ecmSessionExpiredRedirect();
       return false;
     }
@@ -12592,26 +12767,12 @@ async function ssPushFields(r, fields){
       const t = await res.text().catch(() => '');
       console.warn('ssPushFields failed', res.status, t.slice(0, 200));
       _ssLastPushError = `Smartsheets ${res.status}${t ? ' — ' + t.slice(0, 140) : ''}`;
+      _revert();
       return false;
     }
     _ssLastPushError = '';
-    // Mirror local — capture prev values FIRST so we can log meaningful
-    // before/after for the activity feed.
-    const prev = {
-      status: r.status, ticket: r.ticket, details: r.details, outcome: r.outcome,
-      task: r.task, owner: r.owner, program: r.program,
-      completionDate: r.completionDate, dueDate: r.dueDate
-    };
-    for (const [title, raw] of Object.entries(fields)) {
-      if (title === 'Status') { r.status = raw; try { recordStatusChange(r.id, raw); } catch {} }
-      else if (title === 'Ticket #') r.ticket = raw;
-      else if (title === 'Details') r.details = raw;
-      else if (title === 'Outcome Details') r.outcome = raw;
-      else if (title === 'Task Name') r.task = raw;
-      else if (title === 'Owner') r.owner = raw;
-      else if (title === 'Program') r.program = raw;
-      else if (title === 'Completion Date') r.completionDate = raw;
-      else if (title === 'Due Date') r.dueDate = raw;
+    if (Object.prototype.hasOwnProperty.call(fields, 'Status')) {
+      try { recordStatusChange(r.id, fields['Status']); } catch {}
     }
     // Activity log — one event per changed field, plus a 'complete' marker
     // if Status flipped to Completed (so the user can see closures at a glance).
@@ -12637,6 +12798,8 @@ async function ssPushFields(r, fields){
   } catch (e) {
     console.error('ssPushFields error', e);
     _ssLastPushError = (e && e.message) ? e.message.slice(0, 140) : 'network error';
+    _revert();
+    try { render(); } catch {}
     return false;
   }
 }
@@ -12898,7 +13061,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
 // other tabs get .active by exact data-view match (the legacy behavior).
 // The More trigger lights up (and takes the inner view's name) when one of
 // its menu views is current.
-const MORE_VIEWS = { activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
+const MORE_VIEWS = { starred: 'Starred', activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
 function syncViewTabActive(){
   document.querySelectorAll('.view-tab').forEach(x => {
     if (!x.dataset.view) return; // More trigger handled below

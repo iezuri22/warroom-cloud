@@ -1,12 +1,17 @@
-// Daily hard-deadline reminder for the ECM page.
+// Daily ECM digest: hard deadlines + starred-task @mentions.
 //
-// Flow: read the ECM Smartsheet + the `ecm_deadlines` hard-flags from
-// Firestore, find open rows whose hard deadline is due soon (3d / 1d /
-// today) or overdue, and post ONE digest comment on the Notion page
-// "ECM Deadline Reminders" @mentioning the responsible people — Notion
-// then delivers the email notification. Reminded items are stamped
-// (lastRemindedDay) in Firestore so the cron never double-posts a day,
-// while overdue items keep knocking daily until closed or unlocked.
+// Flow: read the ECM Smartsheet, the `ecm_deadlines` hard-flags and the
+// `ecm_stars` docs from Firestore, then post ONE digest comment on the
+// Notion page "ECM Deadline Reminders" @mentioning the people involved —
+// Notion then delivers the email notification. Two sections:
+//   • Hard deadlines — open rows due soon (3d / 1d / today) or overdue.
+//     Stamped with `lastRemindedDay` so the cron never double-posts a day;
+//     overdue items keep knocking daily until closed or unlocked.
+//   • Starred mentions — someone tagged a teammate via the star modal.
+//     Stamped with `notifiedMentions` (sorted "A|B") on the star doc, so
+//     each name is announced exactly once; adding another teammate later
+//     pings only the new person. Closed rows are skipped.
+// The comment posts if EITHER section has content.
 //
 // Runs from vercel.json crons at 13:00 UTC (8am Chicago in CDT). Manual
 // trigger: GET /api/ecm-deadline-reminders?dryRun=1 with either the
@@ -176,8 +181,28 @@ export default async function handler(req, res) {
       due.push({ row: r, daysLeft, flagDocId: f._id });
     }
 
-    if (!due.length) {
-      res.json({ ok: true, today, reminded: 0, skipped });
+    // 3b) Star mentions nobody has been told about yet. Starring a task with
+    // @mentions is how the team tags each other; without this the mention just
+    // sat in Firestore and the person never heard about it. Each star doc
+    // remembers who it has already announced (`notifiedMentions`, a sorted
+    // "A|B" string) so this only ever knocks for NEWLY added names — adding a
+    // teammate later pings just them, not everyone again.
+    const starDocs = await fsList('ecm_stars');
+    const mentions = [];
+    for (const s of starDocs) {
+      const names = (Array.isArray(s.mentions) ? s.mentions : []).map(n => String(n || '').trim()).filter(Boolean);
+      if (!names.length) continue;
+      const r = rows[String(s.rowId || s._id)];
+      if (!r) { skipped.push({ id: s._id, why: 'starred row gone from sheet' }); continue; }
+      if (CLOSED_STATUSES.has(r.status)) { skipped.push({ id: s._id, why: 'starred row closed' }); continue; }
+      const already = String(s.notifiedMentions || '').split('|').filter(Boolean);
+      const fresh = names.filter(n => !already.includes(n));
+      if (!fresh.length) continue;
+      mentions.push({ row: r, fresh, all: names, already, note: String(s.note || ''), starDocId: s._id });
+    }
+
+    if (!due.length && !mentions.length) {
+      res.json({ ok: true, today, reminded: 0, mentioned: 0, skipped });
       return;
     }
     // Overdue screams first, then nearest deadline.
@@ -185,11 +210,19 @@ export default async function handler(req, res) {
 
     // 4) Build the digest comment. Mention each distinct Notion user once in
     // the header; per-item lines carry the owner name, deadline, and a link.
+    const notionUserFor = (name) =>
+      userMap[name] || userMap[(name || '').split(/\s+/)[0]] || fallbackUserId;
     const mentionIds = new Set();
     due.forEach(d => {
-      const uid = userMap[d.row.owner] || userMap[(d.row.owner || '').split(/\s+/)[0]] || fallbackUserId;
+      const uid = notionUserFor(d.row.owner);
       if (uid) mentionIds.add(uid);
     });
+    // Tag the people newly mentioned on a starred task — this is what makes
+    // Notion actually email them.
+    mentions.forEach(m => m.fresh.forEach(n => {
+      const uid = notionUserFor(n);
+      if (uid) mentionIds.add(uid);
+    }));
     const rt = [];
     const push = (content, annotations, link) => rt.push({
       type: 'text',
@@ -200,17 +233,38 @@ export default async function handler(req, res) {
       rt.push({ type: 'mention', mention: { type: 'user', user: { object: 'user', id } } });
       push(' ');
     });
-    push(`— ${due.length} hard deadline${due.length === 1 ? '' : 's'} need${due.length === 1 ? 's' : ''} attention (${fmtDate(today)}):\n`, { bold: true });
-    due.forEach(d => {
-      const r = d.row;
-      const when = d.daysLeft < 0 ? `OVERDUE ${Math.abs(d.daysLeft)}d`
-        : d.daysLeft === 0 ? 'DUE TODAY'
-        : `due in ${d.daysLeft}d`;
-      push(`\n${d.daysLeft <= 0 ? '🔴' : '🟠'} ${when} · `, { bold: d.daysLeft <= 0 });
-      push(r.task || '(untitled)', { bold: true }, r.permalink || null);
-      const bits = [r.owner || 'Unassigned', r.program, r.ticket ? `#${r.ticket}` : '', `due ${fmtDate(r.due)}`].filter(Boolean);
-      push(` — ${bits.join(' · ')}`);
-    });
+    const headBits = [];
+    if (due.length) headBits.push(`${due.length} hard deadline${due.length === 1 ? '' : 's'}`);
+    if (mentions.length) headBits.push(`${mentions.length} starred mention${mentions.length === 1 ? '' : 's'}`);
+    push(`— ${headBits.join(' + ')} (${fmtDate(today)}):\n`, { bold: true });
+    if (due.length) {
+      if (mentions.length) push('\nHard deadlines\n', { bold: true });
+      due.forEach(d => {
+        const r = d.row;
+        const when = d.daysLeft < 0 ? `OVERDUE ${Math.abs(d.daysLeft)}d`
+          : d.daysLeft === 0 ? 'DUE TODAY'
+          : `due in ${d.daysLeft}d`;
+        push(`\n${d.daysLeft <= 0 ? '🔴' : '🟠'} ${when} · `, { bold: d.daysLeft <= 0 });
+        push(r.task || '(untitled)', { bold: true }, r.permalink || null);
+        const bits = [r.owner || 'Unassigned', r.program, r.ticket ? `#${r.ticket}` : '', `due ${fmtDate(r.due)}`].filter(Boolean);
+        push(` — ${bits.join(' · ')}`);
+      });
+    }
+    if (mentions.length) {
+      push(`\n\nYou were tagged on ${mentions.length === 1 ? 'a starred task' : 'starred tasks'}\n`, { bold: true });
+      mentions.forEach(m => {
+        push('\n⭐ ');
+        push(m.row.task || '(untitled)', { bold: true }, m.row.permalink || null);
+        const bits = [
+          m.fresh.map(n => '@' + n).join(' '),
+          m.row.program,
+          m.row.owner ? `owner ${m.row.owner}` : '',
+          m.row.ticket ? `#${m.row.ticket}` : '',
+          m.note ? `“${m.note}”` : ''
+        ].filter(Boolean);
+        push(` — ${bits.join(' · ')}`);
+      });
+    }
 
     // 5) Post to Notion (skipped on dryRun or when the token isn't set yet).
     let notionPosted = false;
@@ -232,11 +286,20 @@ export default async function handler(req, res) {
     }
 
     // 6) Stamp so a same-day rerun doesn't double-post. Only after a real post.
+    // Deadlines stamp the day (overdue keeps knocking daily); star mentions
+    // stamp the NAMES announced, so each person is told exactly once.
     if (notionPosted) {
-      await Promise.all(due.map(d =>
-        fsPatchField(`ecm_deadlines/${d.flagDocId}`, 'lastRemindedDay', today)
-          .catch(e => console.warn('stamp failed', d.flagDocId, e.message))
-      ));
+      await Promise.all([
+        ...due.map(d =>
+          fsPatchField(`ecm_deadlines/${d.flagDocId}`, 'lastRemindedDay', today)
+            .catch(e => console.warn('stamp failed', d.flagDocId, e.message))
+        ),
+        ...mentions.map(m =>
+          fsPatchField(`ecm_stars/${m.starDocId}`, 'notifiedMentions',
+            [...new Set([...m.already, ...m.all])].sort().join('|'))
+            .catch(e => console.warn('mention stamp failed', m.starDocId, e.message))
+        )
+      ]);
     }
 
     res.json({
@@ -244,9 +307,11 @@ export default async function handler(req, res) {
       today,
       dryRun,
       reminded: due.length,
+      mentioned: mentions.length,
       notionPosted,
       ...(notionError ? { notionError } : {}),
       items: due.map(d => ({ task: d.row.task, owner: d.row.owner, due: d.row.due, daysLeft: d.daysLeft })),
+      mentionItems: mentions.map(m => ({ task: m.row.task, tagged: m.fresh, note: m.note })),
       skipped
     });
   } catch (e) {
