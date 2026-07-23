@@ -4006,6 +4006,27 @@
     font-size: 12px; font-weight: 900; letter-spacing: .3px;
     color: var(--amber, #FFC15A); white-space: nowrap;
   }
+  /* Day stepper — ‹ Wednesday › lets you look ahead to prep another day. */
+  .today-picker .tp-daynav { display: flex; align-items: center; gap: 5px; flex-shrink: 0 }
+  .tp-dayarrow {
+    width: 22px; height: 22px; padding: 0; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px; background: transparent; border: 1px solid var(--w12);
+    color: var(--w55); font-family: inherit; font-size: 15px; font-weight: 900; line-height: 1;
+    cursor: pointer; transition: all .12s;
+  }
+  .tp-dayarrow:hover { color: var(--ink); border-color: var(--w30) }
+  /* Previewing a day that isn't today — blue instead of amber so it's obvious
+     at a glance that this is prep, not the live day. */
+  .today-picker.is-preview { border-bottom-color: rgba(74,158,255,.35) }
+  .today-picker.is-preview .tp-lead { color: var(--blue) }
+  .tp-daytoday {
+    padding: 4px 10px; border-radius: 99px; background: transparent;
+    border: 1px solid rgba(255,193,90,.35); color: var(--amber, #FFC15A);
+    font-family: inherit; font-size: 10.5px; font-weight: 800; cursor: pointer;
+    white-space: nowrap; transition: all .12s;
+  }
+  .tp-daytoday:hover { border-color: rgba(255,193,90,.7) }
   /* flex-basis keeps the program buttons from being squeezed to 0 width when
      the lead + Edit + See-all siblings claim the row (they overflowed before). */
   .today-picker .tp-progs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 220px }
@@ -5189,13 +5210,18 @@ function _dayFocusDays(){
   const d = dayFocusCfg && dayFocusCfg.days;
   return (d && typeof d === 'object') ? d : DEFAULT_DAY_FOCUS;
 }
-function _dayFocusTodayCfg(){
-  const d = _dayFocusDays()[DAY_KEYS[new Date().getDay()]] || {};
+function _dayKeyToday(){ return DAY_KEYS[new Date().getDay()]; }
+// Config for ANY weekday key. The Programs → Today view reads other days
+// through this so you can prep tomorrow's work; the live focus filter
+// (_applyDayFocus and everything below) always stays on the real today.
+function _dayFocusCfgFor(dayKey){
+  const d = _dayFocusDays()[dayKey] || {};
   return {
     programs: Array.isArray(d.programs) ? d.programs.filter(Boolean) : [],
     review: !!d.review
   };
 }
+function _dayFocusTodayCfg(){ return _dayFocusCfgFor(_dayKeyToday()); }
 function _dayFocusHasContent(){
   const f = _dayFocusTodayCfg();
   return f.review || f.programs.length > 0;
@@ -5234,13 +5260,14 @@ function _applyDayFocus(pool){
 // Programs surfaced by the Programs-page "Today" chip: today's dedicated set on
 // a program day, or the programs holding flagged (starred / priority-linked)
 // work on a review day.
-function _todayFocusPrograms(){
+function _focusProgramsFor(dayKey){
   const all = allPrograms();
-  const f = _dayFocusTodayCfg();
+  const f = _dayFocusCfgFor(dayKey);
   if (f.programs.length) return all.filter(p => f.programs.includes(p));
   if (f.review) return all.filter(p => _progStarredRows(p).length || _progManualPrios(p).length);
   return [];
 }
+function _todayFocusPrograms(){ return _focusProgramsFor(_dayKeyToday()); }
 
 // ---- Day-focus banner ----
 // Lives in #dayFocusBar (between topbar and the list). Shown on the Task
@@ -10722,6 +10749,14 @@ function openPrintPicker(){
 // priorities, then every task grouped by pipeline stage. Print/PDF gives a
 // clean handout for program meetings.
 let _progSel = (function(){ try { return localStorage.getItem('ecm-prog-page') || ''; } catch { return ''; } })();
+// Which weekday the ★ Today view is showing. '' = the real today. Set by the
+// picker's ‹ / › arrows so you can prep tomorrow (or any day) ahead of time.
+// Purely a VIEW preference — it never feeds _applyDayFocus, so the Task/Weekly
+// filters and the day-focus banner stay on the real today. Deliberately not
+// persisted: it survives tab-switching mid-prep but any reload, or picking a
+// program chip (incl. ★ Today), drops back to the actual current day.
+let _progDayKey = '';
+function _progViewDayKey(){ return _progDayKey || _dayKeyToday(); }
 // Verified on PRE/UAT leads — those are the closest-to-done items, so they
 // surface above the Open backlog. Completed sits last (auto-hidden).
 const PROG_STAGES = [
@@ -11154,6 +11189,9 @@ function _wireProgramShared(list){
   list.querySelectorAll('[data-prog-pick]').forEach(b => b.addEventListener('click', () => {
     _progSel = b.getAttribute('data-prog-pick') || '';
     try { localStorage.setItem('ecm-prog-page', _progSel); } catch {}
+    // Any program switch (incl. clicking ★ Today) drops a day preview so the
+    // Today view always re-opens on the real current day.
+    _progDayKey = '';
     expandedId = null;
     _progNotesEditing = false;
     render();
@@ -11396,32 +11434,59 @@ function renderPrograms(){
   // (Same anatomy as the individual program page, stacked — the user wanted
   // Today to read like the program pages, not compact cards.)
   if (_progSel === '__today__') {
-    if (metaEl) metaEl.textContent = `Today · ${dayLbl} · ${todayProgs.length} program${todayProgs.length === 1 ? '' : 's'}`;
-    // Sticky picker: ONLY today's programs (not all 15). Each button scrolls
-    // down to that program's sheet; "See all programs" leaves Today for the
-    // full list. The picker stays stuck to the top as you scroll.
+    // The view can preview ANY weekday (prep for tomorrow) — everything below
+    // reads the previewed day, while the chips bar above keeps showing the
+    // real today's count/stars.
+    const viewKey = _progViewDayKey();
+    const isToday = viewKey === _dayKeyToday();
+    const vDayLbl = DAY_LABELS[viewKey];
+    const vCfg = _dayFocusCfgFor(viewKey);
+    const vProgs = _focusProgramsFor(viewKey);
+    if (metaEl) metaEl.textContent = `${isToday ? 'Today' : 'Prep'} · ${vDayLbl} · ${vProgs.length} program${vProgs.length === 1 ? '' : 's'}`;
+    // Sticky picker: ‹ / › step through the week, then ONLY that day's programs
+    // (not all 15). Each program button scrolls down to its sheet; "See all
+    // programs" leaves Today. The picker stays stuck to the top as you scroll.
     const pickerHTML = `
-      <div class="today-picker">
-        <span class="tp-lead">★ ${escHtml(dayLbl)}</span>
+      <div class="today-picker${isToday ? '' : ' is-preview'}">
+        <div class="tp-daynav">
+          <button type="button" class="tp-dayarrow" data-tp-day="prev" title="Previous day" aria-label="Previous day">‹</button>
+          <span class="tp-lead">${isToday ? '★ ' : ''}${escHtml(vDayLbl)}</span>
+          <button type="button" class="tp-dayarrow" data-tp-day="next" title="Next day" aria-label="Next day">›</button>
+          ${isToday ? '' : '<button type="button" class="tp-daytoday" data-tp-day="today" title="Back to today">← Today</button>'}
+        </div>
         <div class="tp-progs">
-          ${todayProgs.map(p => {
+          ${vProgs.map(p => {
             const c = programColor(p);
             const n = named.filter(r => r.program === p && !_rowClosed(r)).length;
             return `<button type="button" class="tp-prog" data-tp-scroll="${escHtml(p)}" style="color:${c.fg}">${escHtml(p)}<span class="ct">${n}</span></button>`;
-          }).join('') || '<span class="tp-empty">Nothing dedicated to today yet.</span>'}
+          }).join('') || `<span class="tp-empty">Nothing dedicated to ${escHtml(vDayLbl)} yet.</span>`}
         </div>
         <button type="button" class="tp-edit" data-df-config title="Edit which programs are dedicated to each day">Edit week</button>
         <button type="button" class="tp-all" data-prog-pick="__all__" title="Leave Today and see every program">See all programs →</button>
       </div>`;
-    const sheetsHTML = todayProgs.map(p => _todayProgramSheetHTML(p)).join('') ||
+    const sheetsHTML = vProgs.map(p => _todayProgramSheetHTML(p)).join('') ||
       `<div class="empty">${
-        focusCfg.review ? 'No flagged work to review today.'
-        : focusCfg.programs.length ? 'No open work in today’s focus programs.'
-        : `Nothing is dedicated to ${escHtml(dayLbl)} yet — set up the week.`
+        vCfg.review ? `No flagged work to review on ${escHtml(vDayLbl)}.`
+        : vCfg.programs.length ? `No open work in ${escHtml(vDayLbl)}’s focus programs.`
+        : `Nothing is dedicated to ${escHtml(vDayLbl)} yet — set up the week.`
       } <button type="button" class="ddl-closed-toggle" data-df-config>Edit week</button> <button type="button" class="ddl-closed-toggle" data-prog-pick="__all__">See all programs</button></div>`;
     list.innerHTML = `<div class="ddl-wrap prog-wrap">${pickerHTML}<div class="prog-today-stack">${sheetsHTML}</div></div>`;
     _wireProgramShared(list);
     list.querySelectorAll('[data-df-config]').forEach(b => b.addEventListener('click', openDayFocusConfig));
+    // Day stepper. Landing back on the real today stores '' so the view is
+    // always in its canonical "today" state rather than a pinned weekday.
+    list.querySelectorAll('[data-tp-day]').forEach(b => b.addEventListener('click', () => {
+      const act = b.getAttribute('data-tp-day');
+      if (act === 'today') _progDayKey = '';
+      else {
+        const cur = DAY_KEYS.indexOf(_progViewDayKey());
+        const nextKey = DAY_KEYS[(cur + (act === 'next' ? 1 : 6)) % 7];
+        _progDayKey = (nextKey === _dayKeyToday()) ? '' : nextKey;
+      }
+      expandedId = null;
+      _progNotesEditing = false;
+      render();
+    }));
     // Today program buttons scroll to that program's sheet (match by data attr
     // to avoid escaping program names with spaces).
     list.querySelectorAll('[data-tp-scroll]').forEach(b => b.addEventListener('click', () => {
