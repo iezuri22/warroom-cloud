@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Daily Goals</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Goals">
+<meta name="theme-color" content="#F6F5F1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  /* Soft Light — warm paper + white cards (app-wide system) */
+  color-scheme:light;
+  --bg:#F6F5F1; --surface:#FFFFFF; --surface-2:rgba(33,30,25,.05); --surface-3:rgba(33,30,25,.09);
+  --border:rgba(33,30,25,.08); --border-2:rgba(33,30,25,.16);
+  --text:#211E19; --text-mid:rgba(33,30,25,.78); --text-dim:rgba(33,30,25,.58); --text-fade:rgba(33,30,25,.38);
+  --accent:#F07E28; --accent-bg:rgba(240,126,40,.13);
+  --ok:#1E9E6A; --ok-bg:rgba(30,158,106,.12);
+  --warn:#B98317; --warn-bg:rgba(185,131,23,.12);
+  --block:#DC4B3E; --block-bg:rgba(220,75,62,.12);
+  --done:#3B6FD4; --done-bg:rgba(59,111,212,.12);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --radius:14px; --radius-sm:10px;
+}
+html,body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;letter-spacing:-0.01em;-webkit-font-smoothing:antialiased;font-size:15px}
+body{padding:0 14px calc(90px + env(safe-area-inset-bottom))}
+button{font-family:var(--font);cursor:pointer}
+input,textarea,select{font-family:var(--font);color:var(--text)}
+
+/* ============ TOPBAR ============ */
+.top{
+  position:sticky;top:0;z-index:20;margin:0 -14px 12px;padding:10px 14px 0;
+  background:rgba(246,245,241,.92);backdrop-filter:saturate(140%) blur(14px);-webkit-backdrop-filter:saturate(140%) blur(14px);
+  border-bottom:1px solid var(--border);
+}
+.t-row{display:flex;align-items:center;gap:10px;max-width:980px;margin:0 auto}
+.t-title{font-size:17px;font-weight:800;letter-spacing:-.02em}
+.t-score{
+  font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;
+  background:var(--accent-bg);color:var(--accent);letter-spacing:.2px;
+}
+.t-score.ok{background:var(--ok-bg);color:var(--ok)}
+.t-spacer{flex:1}
+.icon-btn{
+  width:30px;height:30px;border-radius:9px;border:1px solid var(--border);background:var(--surface);
+  display:flex;align-items:center;justify-content:center;color:var(--text-dim);flex-shrink:0;
+}
+.icon-btn:hover{color:var(--text);border-color:var(--border-2)}
+.icon-btn svg{width:15px;height:15px}
+.tabs{display:flex;gap:2px;max-width:980px;margin:8px auto 0;padding-bottom:0}
+.tab-btn{
+  flex:1 1 0;min-width:0;background:none;border:none;padding:8px 4px 10px;
+  font-size:12.5px;font-weight:700;color:var(--text-dim);letter-spacing:.1px;
+  border-bottom:2px solid transparent;
+}
+.tab-btn.active{color:var(--text);border-bottom-color:var(--accent)}
+.tab-btn .cnt{font-weight:700;color:var(--text-fade);font-size:10.5px;margin-left:3px}
+
+.wrap{max-width:980px;margin:0 auto}
+.view[hidden]{display:none}
+
+/* ============ CARDS ============ */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px}
+
+/* ============ TODAY — day nav ============ */
+.day-nav{display:flex;align-items:center;gap:8px;padding:10px 12px}
+.day-nav.is-past{border-color:rgba(185,131,23,.45)}
+.dn-arrow{
+  width:30px;height:30px;border-radius:9px;border:1px solid var(--border);background:var(--surface);
+  color:var(--text-dim);font-size:15px;font-weight:700;flex-shrink:0;line-height:1;
+}
+.dn-arrow:disabled{opacity:.3;cursor:default}
+.dn-mid{flex:1;min-width:0}
+.dn-date{font-size:14.5px;font-weight:800;letter-spacing:-.01em}
+.dn-sub{font-size:10.5px;font-weight:600;color:var(--text-dim);margin-top:1px}
+.dn-sub .past-flag{color:var(--warn);font-weight:700}
+.dn-today{
+  border:1px solid var(--border);background:var(--surface-2);border-radius:999px;
+  font-size:11px;font-weight:700;color:var(--text-mid);padding:5px 10px;flex-shrink:0;
+}
+.dn-ring{display:flex;align-items:center;gap:7px;flex-shrink:0}
+.dn-ring svg{width:34px;height:34px;transform:rotate(-90deg)}
+.dn-ring .ring-bg{stroke:var(--surface-3);fill:none}
+.dn-ring .ring-fg{stroke:var(--accent);fill:none;stroke-linecap:round;transition:stroke-dashoffset .3s}
+.dn-ring.full .ring-fg{stroke:var(--ok)}
+.dn-count{font-size:11px;font-weight:800;color:var(--text-mid);text-align:right;line-height:1.2}
+.dn-count b{display:block;font-size:13px;color:var(--text)}
+
+/* ============ TODAY — habit groups ============ */
+.group{padding:4px 0 6px}
+.group-head{
+  display:flex;align-items:baseline;gap:8px;padding:10px 14px 6px;
+  font-size:10px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-dim);
+}
+.group-head .g-cnt{font-size:10px;font-weight:700;color:var(--text-fade);letter-spacing:.3px;text-transform:none}
+.group-head .g-cnt.ok{color:var(--ok)}
+.hrow{
+  display:flex;align-items:center;gap:11px;padding:9px 14px;cursor:pointer;
+  border-top:1px solid var(--border);
+}
+.hrow:first-of-type{border-top:none}
+.hrow:active{background:var(--surface-2)}
+.hcheck{
+  width:26px;height:26px;border-radius:50%;border:1.5px solid var(--border-2);background:var(--surface);
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;color:transparent;
+  transition:background .15s,border-color .15s;
+}
+.hcheck svg{width:13px;height:13px}
+.hrow.done .hcheck{background:var(--ok);border-color:var(--ok);color:#fff}
+.hname{flex:1;min-width:0;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.hrow.done .hname{color:var(--text-dim)}
+.hstreak{font-size:10px;font-weight:700;color:var(--warn);flex-shrink:0}
+.hmeta{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.wkdots{display:flex;gap:3px}
+.wd{width:6px;height:6px;border-radius:50%;background:var(--surface-3)}
+.wd.on{background:var(--ok)}
+.wd.today{box-shadow:0 0 0 1.5px var(--accent-bg), 0 0 0 3px rgba(240,126,40,.25)}
+.wd.fut{opacity:.4}
+.hcount{
+  font-size:10.5px;font-weight:800;min-width:32px;text-align:center;
+  padding:2.5px 6px;border-radius:999px;background:var(--surface-2);color:var(--text-dim);
+}
+.hcount.ok{background:var(--ok-bg);color:var(--ok)}
+.hcount.close{background:var(--warn-bg);color:var(--warn)}
+/* Optional = weekly target already met; still tappable as a bonus rep */
+.opt-group{border-top:1px solid var(--border)}
+.hrow.is-optional .hname{color:var(--text-dim)}
+.hrow.is-optional .hcheck{border-style:dashed;border-color:var(--border-2)}
+.hrow.is-optional.done .hcheck{border-style:solid}
+.opt-tag{
+  display:inline-block;margin-left:7px;vertical-align:1px;
+  font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+  padding:2px 6px;border-radius:999px;background:var(--ok-bg);color:var(--ok);
+}
+.all-clear{
+  padding:13px 14px;font-size:13px;font-weight:700;color:var(--ok);
+  background:var(--ok-bg);border-radius:var(--radius) var(--radius) 0 0;text-align:center;
+}
+
+/* ============ PROGRESS ============ */
+.wk-nav{display:flex;align-items:center;gap:8px;padding:10px 12px}
+.sc{display:flex;align-items:center;gap:16px;padding:14px}
+.sc-pct{font-size:34px;font-weight:900;letter-spacing:-.03em;line-height:1}
+.sc-pct.ok{color:var(--ok)}
+.sc-meta{flex:1;min-width:0}
+.sc-line{font-size:12px;font-weight:600;color:var(--text-mid)}
+.sc-line b{color:var(--text)}
+.sc-bar{height:5px;border-radius:999px;background:var(--surface-3);margin-top:8px;overflow:hidden}
+.sc-bar i{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .3s}
+.sc-bar.ok i{background:var(--ok)}
+.pgrid-wrap{overflow-x:auto;padding:4px 6px 8px}
+table.pgrid{width:100%;border-collapse:collapse;table-layout:fixed;min-width:420px}
+.pgrid th{
+  font-size:9.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--text-fade);
+  padding:8px 2px 6px;text-align:center;width:30px;
+}
+.pgrid th.pg-name-h{text-align:left;width:auto;padding-left:8px}
+.pgrid th.pg-cnt-h{width:46px}
+.pgrid th.th-today{color:var(--accent)}
+.pgrid td{padding:5px 2px;text-align:center;border-top:1px solid var(--border)}
+.pgrid td.pg-name{text-align:left;font-size:12.5px;font-weight:600;padding-left:8px;overflow-wrap:anywhere;line-height:1.25}
+.pg-sec td{
+  border-top:none;padding:10px 8px 3px;text-align:left;
+  font-size:9px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:var(--text-dim);
+}
+.mark{display:inline-flex;width:17px;height:17px;border-radius:50%;align-items:center;justify-content:center;vertical-align:middle}
+.mark.on{background:var(--ok);color:#fff}
+.mark.on svg{width:9px;height:9px}
+.mark.off{background:var(--surface-3)}
+.mark.off.mini{width:7px;height:7px}
+.mark.fut{background:var(--surface-2)}
+.mark.fut{width:7px;height:7px}
+td.cell-today{background:var(--accent-bg);border-radius:0}
+.pg-cnt{font-size:10.5px;font-weight:800;padding:2px 5px;border-radius:999px;background:var(--surface-2);color:var(--text-dim)}
+.pg-cnt.ok{background:var(--ok-bg);color:var(--ok)}
+.pg-cnt.close{background:var(--warn-bg);color:var(--warn)}
+.pg-pct{font-size:9px;font-weight:800;color:var(--text-fade);margin-top:2px}
+.pg-pct.ok{color:var(--ok)}
+.pg-pct.close{color:var(--warn)}
+.cell-tap{cursor:pointer}
+.cell-tap:hover{background:var(--surface-2)}
+.grid-hint{font-size:10px;font-weight:600;color:var(--text-fade);padding:4px 8px 8px}
+.edit-link{
+  display:block;width:100%;padding:11px;text-align:center;background:none;border:none;
+  border-top:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:700;
+}
+.edit-link:hover{color:var(--text)}
+.hist{padding:6px 14px 12px}
+.hist-title{font-size:10px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-dim);padding:10px 0 8px}
+.hist-row{display:flex;align-items:center;gap:10px;padding:4px 0}
+.hr-label{font-size:11px;font-weight:700;color:var(--text-mid);width:92px;flex-shrink:0}
+.hr-label .now{color:var(--accent)}
+.hr-bar{flex:1;height:6px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+.hr-bar i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+.hr-bar i.ok{background:var(--ok)}
+.hr-pct{font-size:11px;font-weight:800;color:var(--text-mid);width:36px;text-align:right;flex-shrink:0}
+.empty{padding:26px 16px;text-align:center;font-size:12.5px;font-weight:600;color:var(--text-fade)}
+
+/* ============ HEALTH ============ */
+.hchips{display:flex;gap:6px;margin-bottom:12px}
+.hchip{
+  flex:1 1 0;min-width:0;border:1px solid var(--border);background:var(--surface);border-radius:999px;
+  font-size:12px;font-weight:700;color:var(--text-dim);padding:7px 4px;
+}
+.hchip.active{background:var(--text);border-color:var(--text);color:#fff}
+.hchip .cnt{font-size:10px;opacity:.65;margin-left:3px}
+.add-row{display:flex;gap:8px;padding:12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.in{
+  background:var(--surface-2);border:1px solid transparent;border-radius:9px;
+  font-size:13px;font-weight:500;padding:8px 10px;outline:none;min-width:0;
+}
+.in:focus{border-color:var(--accent);background:var(--surface)}
+.in::placeholder{color:var(--text-fade)}
+.btn{
+  background:var(--accent);border:none;color:#FFF7EF;border-radius:9px;
+  font-size:12.5px;font-weight:800;padding:8px 16px;letter-spacing:.2px;flex-shrink:0;
+}
+.btn:disabled{opacity:.5;cursor:default}
+.btn-ghost{
+  background:var(--surface);border:1px solid var(--border);color:var(--text-mid);border-radius:9px;
+  font-size:12px;font-weight:700;padding:7px 12px;flex-shrink:0;
+}
+.mini-act{
+  background:none;border:none;color:var(--text-fade);font-size:11.5px;font-weight:700;
+  padding:4px 6px;border-radius:7px;flex-shrink:0;
+}
+.mini-act:hover{color:var(--text-mid);background:var(--surface-2)}
+.mini-act.armed{color:#fff;background:var(--block)}
+.tag{
+  font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  padding:2px 7px;border-radius:999px;background:var(--done-bg);color:var(--done);flex-shrink:0;
+}
+/* tips */
+.tip-row{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border-top:1px solid var(--border)}
+.tip-row:first-of-type{border-top:none}
+.tip-pin{background:none;border:none;font-size:14px;color:var(--text-fade);padding:1px 2px;flex-shrink:0;line-height:1.3}
+.tip-pin.on{color:var(--warn)}
+.tip-body{flex:1;min-width:0}
+.tip-text{font-size:13.5px;font-weight:500;line-height:1.45;overflow-wrap:anywhere}
+.tip-sub{display:flex;align-items:center;gap:7px;margin-top:4px}
+.tip-date{font-size:10px;font-weight:600;color:var(--text-fade)}
+.tip-text a.tip-link{color:var(--done);font-weight:600;text-decoration:none;border-bottom:1px solid rgba(59,111,212,.35);overflow-wrap:anywhere}
+.tip-vid{display:flex;align-items:center;gap:10px;margin-top:8px}
+.tv-thumb{flex-shrink:0;display:block;width:96px;height:54px;border-radius:7px;overflow:hidden;background:var(--surface-3);border:1px solid var(--border)}
+.tv-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.btn-ghost.small{font-size:10.5px;padding:4px 9px}
+.tv-saved{font-size:10.5px;font-weight:700;color:var(--ok)}
+/* ask */
+.ask-box{display:flex;gap:8px;padding:12px;align-items:flex-end}
+.ask-box textarea{flex:1;resize:none;min-height:38px;max-height:120px;line-height:1.4}
+.ask-note{padding:0 12px 10px;font-size:10.5px;font-weight:600;color:var(--text-fade)}
+.qa-card{border-top:1px solid var(--border)}
+.qa-head{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;cursor:pointer}
+.qa-head:active{background:var(--surface-2)}
+.qa-q{flex:1;min-width:0;font-size:13.5px;font-weight:700;line-height:1.4;overflow-wrap:anywhere}
+.qa-chip{font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;padding:2px 7px;border-radius:999px;flex-shrink:0}
+.qa-chip.open{background:var(--warn-bg);color:var(--warn)}
+.qa-chev{color:var(--text-fade);flex-shrink:0;transition:transform .15s;font-size:11px;padding-top:1px}
+.qa-card.open .qa-chev{transform:rotate(90deg)}
+.qa-body{display:none;padding:0 12px 6px 12px}
+.qa-card.open .qa-body{display:block}
+.qa-a{font-size:13px;font-weight:500;line-height:1.55;color:var(--text-mid)}
+.qa-a p{margin:0 0 8px}
+.qa-a ul,.qa-a ol{margin:0 0 8px;padding-left:18px}
+.qa-a li{margin:2px 0}
+.qa-a strong{color:var(--text);font-weight:700}
+.qa-open-note{font-size:12px;font-weight:600;color:var(--text-dim);padding:2px 0 8px}
+.qa-actions{display:flex;align-items:center;gap:6px;padding:2px 0 10px}
+.qa-date{font-size:10px;font-weight:600;color:var(--text-fade);margin-right:auto}
+.thinking{display:flex;align-items:center;gap:8px;padding:12px;font-size:12.5px;font-weight:600;color:var(--text-dim)}
+.thinking .dot3{display:inline-flex;gap:3px}
+.thinking .dot3 i{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:blink 1.2s infinite}
+.thinking .dot3 i:nth-child(2){animation-delay:.2s}
+.thinking .dot3 i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+/* videos */
+.vadd{display:flex;gap:8px;padding:12px;flex-wrap:wrap}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;padding:0 12px 12px}
+.vcard{border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;background:var(--surface)}
+.vcard.watched{opacity:.55}
+.vthumb{display:block;position:relative;aspect-ratio:16/9;background:var(--surface-3);text-decoration:none}
+.vthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.vph{
+  width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  color:var(--text-dim);font-size:11px;font-weight:700;
+}
+.vph .play{width:34px;height:34px;border-radius:50%;background:var(--surface);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--text-mid);padding-left:2px}
+.vbody{padding:9px 10px 8px}
+.vtitle{font-size:12.5px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.vtitle-in{width:100%;margin-bottom:2px}
+.vsub{display:flex;align-items:center;gap:6px;margin-top:5px}
+.vhost{font-size:10px;font-weight:700;color:var(--text-fade);letter-spacing:.3px;text-transform:uppercase;margin-right:auto}
+.vwatch{background:none;border:none;font-size:11px;font-weight:700;color:var(--text-fade);padding:2px 5px;border-radius:6px;white-space:nowrap}
+.vwatch.on{color:var(--ok)}
+
+/* ============ MODAL ============ */
+.modal-bg{position:fixed;inset:0;background:rgba(33,30,25,.38);z-index:60;display:none;align-items:flex-end;justify-content:center}
+.modal-bg.show{display:flex}
+.modal{
+  background:var(--surface);border-radius:16px 16px 0 0;width:100%;max-width:640px;
+  max-height:86dvh;display:flex;flex-direction:column;
+}
+@media(min-width:700px){
+  .modal-bg.show{align-items:center}
+  .modal{border-radius:16px}
+}
+.modal-head{display:flex;align-items:center;gap:10px;padding:14px 16px 10px}
+.modal-title{font-size:15px;font-weight:800;flex:1}
+.modal-body{overflow-y:auto;padding:0 16px;flex:1}
+.modal-foot{display:flex;gap:8px;padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--border)}
+.mh-row{display:flex;gap:7px;align-items:center;padding:6px 0}
+.mh-name{flex:1;min-width:0}
+.mh-row select{
+  background:var(--surface-2);border:1px solid transparent;border-radius:9px;
+  font-size:12px;font-weight:600;padding:8px 6px;outline:none;
+}
+.mh-hint{font-size:10.5px;font-weight:600;color:var(--text-fade);padding:8px 0 12px}
+
+/* ============ TOAST ============ */
+#toast{
+  position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+  background:#211E19;color:#F6F5F1;font-size:12.5px;font-weight:600;padding:10px 16px;border-radius:999px;
+  opacity:0;pointer-events:none;transition:all .25s;z-index:99;max-width:88vw;text-align:center;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+@media(max-width:640px){
+  body{padding:0 10px calc(80px + env(safe-area-inset-bottom));font-size:14px}
+  .top{margin:0 -10px 10px;padding:8px 10px 0}
+  .hrow{padding:9px 11px}
+  .wkdots{display:none}
+  .group-head{padding:9px 11px 5px}
+  .sc-pct{font-size:28px}
+  /* The whole week grid must fit without horizontal scroll — the Wk chip is
+     the payoff column and can't live off-screen. */
+  table.pgrid{min-width:0}
+  .pgrid th{width:24px;padding:8px 1px 6px;letter-spacing:.4px}
+  .pgrid th.pg-cnt-h{width:40px}
+  .pgrid td{padding:5px 1px}
+  .pgrid td.pg-name{font-size:11.5px;padding-left:6px}
+  .mark{width:15px;height:15px}
+  .mark.on svg{width:8px;height:8px}
+  .pg-cnt{font-size:9.5px;padding:2px 4px}
+  .vgrid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+  .add-row .in,.vadd .in{flex:1 1 100%}
+  .add-row .btn,.vadd .btn{flex:1}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="t-row">
+    <div class="t-title">Daily Goals</div>
+    <span class="t-score" id="topScore" hidden></span>
+    <div class="t-spacer"></div>
+    <button class="icon-btn" id="editHabitsBtn" title="Edit habits" aria-label="Edit habits">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    </button>
+  </div>
+  <nav class="tabs">
+    <button class="tab-btn" data-tab="today">Today</button>
+    <button class="tab-btn" data-tab="progress">Progress</button>
+    <button class="tab-btn" data-tab="health">Health</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <!-- ============ TODAY ============ -->
+  <section class="view" id="viewToday">
+    <div class="card day-nav" id="dayNav"></div>
+    <div class="card" id="todayGroups"></div>
+  </section>
+
+  <!-- ============ PROGRESS ============ -->
+  <section class="view" id="viewProgress" hidden>
+    <div class="card wk-nav" id="wkNav"></div>
+    <div class="card sc" id="scoreCard"></div>
+    <div class="card">
+      <div class="pgrid-wrap" id="gridWrap"></div>
+    </div>
+    <div class="card hist" id="histCard"></div>
+  </section>
+
+  <!-- ============ HEALTH ============ -->
+  <section class="view" id="viewHealth" hidden>
+    <div class="hchips">
+      <button class="hchip" data-hsub="tips">Tips<span class="cnt" id="cntTips"></span></button>
+      <button class="hchip" data-hsub="ask">Ask<span class="cnt" id="cntAsk"></span></button>
+      <button class="hchip" data-hsub="videos">Videos<span class="cnt" id="cntVids"></span></button>
+    </div>
+
+    <div class="card" id="panelTips" hidden>
+      <div class="add-row">
+        <input class="in" id="tipText" placeholder="Save a healthy tip — links welcome…" style="flex:3 1 200px">
+        <input class="in" id="tipTag" placeholder="Tag (sleep, food…)" style="flex:1 1 90px">
+        <button class="btn" id="tipAddBtn">Save</button>
+      </div>
+      <div id="tipsList"></div>
+    </div>
+
+    <div class="card" id="panelAsk" hidden>
+      <div class="ask-box">
+        <textarea class="in" id="askInput" rows="2" placeholder="Ask a health question — stretching, food, sleep, supplements…"></textarea>
+        <button class="btn" id="askBtn">Ask</button>
+      </div>
+      <div class="ask-note">Answered by Claude — general wellness info, not medical advice. Everything you ask is saved below.</div>
+      <div id="askLive"></div>
+      <div id="qaList"></div>
+    </div>
+
+    <div class="card" id="panelVideos" hidden>
+      <div class="vadd">
+        <input class="in" id="vidUrl" placeholder="Paste a video link (YouTube etc.)" style="flex:3 1 220px">
+        <input class="in" id="vidTitle" placeholder="Title (optional)" style="flex:2 1 120px">
+        <button class="btn" id="vidAddBtn">Save</button>
+      </div>
+      <div class="vgrid" id="vidGrid"></div>
+      <div id="vidEmpty"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ EDIT HABITS MODAL ============ -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Edit habits</div>
+      <button class="icon-btn" id="modalClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot">
+      <button class="btn-ghost" id="modalAdd">+ Add habit</button>
+      <div style="flex:1"></div>
+      <button class="btn" id="modalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot }
+  from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+// ============= Firebase =============
+const firebaseConfig = {
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "566644863130",
+  appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ============= Habits config =============
+// Weekly targets straight from the owner's routine. Order inside a section is
+// display order. Overridable via Firestore health_config/habits (Edit modal).
+const DEFAULT_HABITS = [
+  { id:'bible',    name:'Read Bible',        section:'morning',   target:5 },
+  { id:'bedclean', name:'Make bed + clean',  section:'morning',   target:7 },
+  { id:'pray',     name:'Pray',              section:'morning',   target:5 },
+  { id:'journal',  name:'Journal',           section:'morning',   target:7 },
+  { id:'stretch',  name:'Stretch / PT',      section:'morning',   target:7 },
+  { id:'vitamins', name:'Take vitamins',     section:'afternoon', target:7 },
+  { id:'workout',  name:'Workout',           section:'afternoon', target:7 },
+  { id:'cook',     name:'Home-cooked meal',  section:'afternoon', target:6 },
+  { id:'finances', name:'Review finances',   section:'afternoon', target:5 },
+  { id:'read',     name:'Read',              section:'night',     target:5 },
+  { id:'teeth',    name:'Brush teeth',       section:'night',     target:7 },
+  { id:'shower',   name:'Shower',            section:'night',     target:5 },
+];
+const SECTIONS = [
+  { key:'morning',   label:'Morning' },
+  { key:'afternoon', label:'Afternoon' },
+  { key:'night',     label:'Night' },
+];
+
+// ============= Date utils (all LOCAL — never UTC-parse day keys) =============
+const pad = n => String(n).padStart(2,'0');
+const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parseKey = k => { const [y,m,dd] = k.split('-').map(Number); return new Date(y, m-1, dd); };
+const todayKey = () => dateKey(new Date());
+const addDays = (d,n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+// Weeks run Sun–Sat local, matching the rest of the app (two-meals convention).
+const weekStartOf = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate()-x.getDay()); return x; };
+const fmtDate = k => parseKey(k).toLocaleDateString('en-US',{ weekday:'long', month:'long', day:'numeric' });
+const fmtShort = d => d.toLocaleDateString('en-US',{ month:'short', day:'numeric' });
+
+// ============= State =============
+let habits = DEFAULT_HABITS.slice();
+const days = new Map();            // 'YYYY-MM-DD' -> {habitId:true,...}
+let viewDate = todayKey();         // Today tab date (backfill allowed)
+let viewWeekStart = weekStartOf(new Date());  // Progress tab week
+let tab = localStorage.getItem('dg-tab') || 'today';
+let healthSub = localStorage.getItem('dg-health') || 'tips';
+let tips = [], videos = [], qa = [];
+let asking = false;
+const qaOpen = new Set();
+let vidRenaming = null;
+let editHabits = null;             // working copy while the modal is open
+let _lastToday = todayKey();
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+let toastT = null;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove('show'), 3200);
+}
+
+// ============= Subscriptions =============
+onSnapshot(collection(db,'health_habit_days'), snap => {
+  days.clear();
+  snap.forEach(d => days.set(d.id, (d.data()||{}).checks || {}));
+  render();
+}, e => console.error('[goals] days sub', e));
+
+onSnapshot(doc(db,'health_config','habits'), snap => {
+  const d = snap.data();
+  habits = (d && Array.isArray(d.habits) && d.habits.length) ? d.habits : DEFAULT_HABITS.slice();
+  render();
+}, e => console.error('[goals] config sub', e));
+
+onSnapshot(collection(db,'health_tips'), snap => {
+  tips = [];
+  snap.forEach(d => tips.push({ id:d.id, ...d.data() }));
+  tips.sort((a,b) => (b.pinned?1:0)-(a.pinned?1:0) || String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  renderHealth();
+}, e => console.error('[goals] tips sub', e));
+
+onSnapshot(collection(db,'health_videos'), snap => {
+  videos = [];
+  snap.forEach(d => videos.push({ id:d.id, ...d.data() }));
+  videos.sort((a,b) => String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  renderHealth();
+}, e => console.error('[goals] videos sub', e));
+
+onSnapshot(collection(db,'health_qa'), snap => {
+  qa = [];
+  snap.forEach(d => qa.push({ id:d.id, ...d.data() }));
+  qa.sort((a,b) => String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  renderHealth();
+}, e => console.error('[goals] qa sub', e));
+
+// ============= Metrics =============
+const checkedOn = (k, hid) => !!((days.get(k)||{})[hid]);
+
+function weekCounts(ws){
+  // per-habit checked count for the week starting at Date ws
+  const out = {};
+  for (const h of habits) out[h.id] = 0;
+  for (let i=0;i<7;i++){
+    const k = dateKey(addDays(ws,i));
+    const checks = days.get(k);
+    if (!checks) continue;
+    for (const h of habits) if (checks[h.id]) out[h.id]++;
+  }
+  return out;
+}
+
+function habitState(h, count){
+  // Generous grading: hitting the target is "met"; one day shy still shows
+  // warm as "close" — a 6/7 week is 86%, not a failure.
+  if (count >= h.target) return 'met';
+  if (h.target > 1 && count >= h.target - 1) return 'close';
+  return '';
+}
+const habitPct = (h, count) => Math.min(100, Math.round(count / h.target * 100));
+
+function weekScore(ws){
+  const counts = weekCounts(ws);
+  let got = 0, total = 0, met = 0, close = 0;
+  for (const h of habits){
+    got += Math.min(counts[h.id], h.target); total += h.target;
+    const st = habitState(h, counts[h.id]);
+    if (st === 'met') met++; else if (st === 'close') close++;
+  }
+  return { got, total, met, close, pct: total ? Math.round(got/total*100) : 0, counts };
+}
+
+function streak(hid){
+  let s = 0;
+  let d = new Date();
+  if (!checkedOn(todayKey(), hid)) d = addDays(d,-1);   // today still in play
+  while (checkedOn(dateKey(d), hid)){ s++; d = addDays(d,-1); }
+  return s;
+}
+
+function optionalOn(h, k){
+  // Once the weekly target is met WITHOUT day k's own check, day k is a
+  // bonus rep, not an obligation. Excluding k means the day that hits the
+  // target stays "required + done" and only later days flip to optional —
+  // and a 7/7 habit never does (all seven days are needed).
+  const ws = weekStartOf(parseKey(k));
+  let c = 0;
+  for (let i=0;i<7;i++){
+    const dk = dateKey(addDays(ws,i));
+    if (dk !== k && checkedOn(dk, h.id)) c++;
+  }
+  return c >= h.target;
+}
+
+// ============= Render: shell =============
+function render(){
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('viewToday').hidden = tab !== 'today';
+  $('viewProgress').hidden = tab !== 'progress';
+  $('viewHealth').hidden = tab !== 'health';
+  const sc = weekScore(weekStartOf(new Date()));
+  const el = $('topScore');
+  el.hidden = false;
+  el.textContent = `Week ${sc.pct}%`;
+  el.classList.toggle('ok', sc.pct >= 100);
+  if (tab === 'today') renderToday();
+  if (tab === 'progress') renderProgress();
+  if (tab === 'health') renderHealth();
+}
+
+function switchTab(t){
+  // Progress opens on the week you were just looking at in Today — after
+  // backfilling last week, Progress must show THAT week, not silently snap
+  // to the current one (real confusion, 2026-07-28).
+  if (t === 'progress') viewWeekStart = weekStartOf(parseKey(viewDate));
+  tab = t; localStorage.setItem('dg-tab', t); render();
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+// ============= Render: Today =============
+function renderToday(){
+  const isToday = viewDate === todayKey();
+  const checks = days.get(viewDate) || {};
+  // Habits whose weekly target is already met are OPTIONAL today — they drop
+  // out of the day's ring/count so "done" means "everything still needed".
+  const optional = new Set(habits.filter(h => optionalOn(h, viewDate)).map(h => h.id));
+  const required = habits.filter(h => !optional.has(h.id));
+  const done = required.filter(h => checks[h.id]).length;
+  const bonus = habits.filter(h => optional.has(h.id) && checks[h.id]).length;
+  const frac = required.length ? done / required.length : 1;
+  const C = 2 * Math.PI * 14;
+
+  const nav = $('dayNav');
+  nav.classList.toggle('is-past', !isToday);
+  nav.innerHTML = `
+    <button class="dn-arrow" data-dnav="-1" aria-label="Previous day">‹</button>
+    <button class="dn-arrow" data-dnav="1" aria-label="Next day" ${isToday?'disabled':''}>›</button>
+    <div class="dn-mid">
+      <div class="dn-date">${esc(fmtDate(viewDate))}</div>
+      <div class="dn-sub">${isToday ? 'Today' : '<span class="past-flag">Editing a past day</span>'}</div>
+    </div>
+    ${isToday ? '' : '<button class="dn-today" data-dnav="today">← Today</button>'}
+    <div class="dn-ring ${done===required.length ? 'full':''}">
+      <svg viewBox="0 0 34 34">
+        <circle class="ring-bg" cx="17" cy="17" r="14" stroke-width="3.5"/>
+        <circle class="ring-fg" cx="17" cy="17" r="14" stroke-width="3.5"
+          stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C*(1-frac)).toFixed(1)}"/>
+      </svg>
+      <div class="dn-count">${required.length ? `<b>${done}/${required.length}</b>${bonus?`+${bonus} bonus`:'done'}` : '<b>✓</b>all met'}</div>
+    </div>`;
+
+  const ws = weekStartOf(parseKey(viewDate));
+  const counts = weekCounts(ws);
+  const tk = todayKey();
+
+  const rowHTML = (h, isOpt) => {
+    const on = !!checks[h.id];
+    const st = habitState(h, counts[h.id]);
+    const sk = streak(h.id);
+    let dots = '';
+    for (let i=0;i<7;i++){
+      const k = dateKey(addDays(ws,i));
+      const cls = ['wd'];
+      if ((days.get(k)||{})[h.id]) cls.push('on');
+      if (k === tk) cls.push('today');
+      if (k > tk) cls.push('fut');
+      dots += `<span class="${cls.join(' ')}"></span>`;
+    }
+    return `<div class="hrow ${on?'done':''} ${isOpt?'is-optional':''}" data-htoggle="${esc(h.id)}">
+      <button class="hcheck" aria-label="Toggle ${esc(h.name)}">${CHECK_SVG}</button>
+      <div class="hname">${esc(h.name)}${isOpt?'<span class="opt-tag">Goal met</span>':''}</div>
+      ${sk >= 3 ? `<span class="hstreak">🔥${sk}</span>` : ''}
+      <div class="hmeta">
+        <div class="wkdots">${dots}</div>
+        <span class="hcount ${st==='met'?'ok':st==='close'?'close':''}">${counts[h.id]}/${h.target}</span>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  for (const sec of SECTIONS){
+    const list = required.filter(h => h.section === sec.key);
+    if (!list.length) continue;
+    const secDone = list.filter(h => checks[h.id]).length;
+    html += `<div class="group">
+      <div class="group-head">${sec.label}<span class="g-cnt ${secDone===list.length?'ok':''}">${secDone}/${list.length}</span></div>`;
+    for (const h of list) html += rowHTML(h, false);
+    html += `</div>`;
+  }
+
+  // Optional group last — goals already hit this week. Still checkable (extra
+  // reps count toward the weekly total and keep streaks alive).
+  const optList = habits.filter(h => optional.has(h.id));
+  if (optList.length){
+    html += `<div class="group opt-group">
+      <div class="group-head">Optional — goal met<span class="g-cnt ok">${optList.length}</span></div>`;
+    for (const h of optList) html += rowHTML(h, true);
+    html += `</div>`;
+  }
+  if (!required.length && optList.length){
+    html = `<div class="all-clear">🎉 Every goal met for the week — the rest is bonus.</div>` + html;
+  }
+  if (html) html += '<button class="edit-link" data-edit-habits>✎ Edit habits &amp; targets</button>';
+  $('todayGroups').innerHTML = html || '<div class="empty">No habits yet — add some with the pencil up top.</div>';
+}
+
+$('dayNav').addEventListener('click', e => {
+  const b = e.target.closest('[data-dnav]');
+  if (!b) return;
+  if (b.dataset.dnav === 'today') viewDate = todayKey();
+  else {
+    const next = dateKey(addDays(parseKey(viewDate), Number(b.dataset.dnav)));
+    if (next > todayKey()) return;               // no checking the future
+    viewDate = next;
+  }
+  renderToday();
+});
+
+$('todayGroups').addEventListener('click', e => {
+  if (e.target.closest('[data-edit-habits]')){ openModal(); return; }
+  const row = e.target.closest('[data-htoggle]');
+  if (row) toggleCheck(row.dataset.htoggle);
+});
+
+async function toggleCheckOn(k, hid){
+  const cur = { ...(days.get(k) || {}) };
+  if (cur[hid]) delete cur[hid]; else cur[hid] = true;
+  days.set(k, cur);                              // optimistic; snapshot reconciles
+  render();
+  try {
+    await setDoc(doc(db,'health_habit_days',k), { checks: cur, updatedAt: new Date().toISOString() });
+  } catch(e) {
+    console.error('[goals] save check', e);
+    toast('Couldn’t save — check your connection');
+  }
+}
+const toggleCheck = hid => toggleCheckOn(viewDate, hid);
+
+// ============= Render: Progress =============
+function renderProgress(){
+  const ws = viewWeekStart;
+  const we = addDays(ws,6);
+  const curWs = weekStartOf(new Date());
+  const isCur = dateKey(ws) === dateKey(curWs);
+  const sc = weekScore(ws);
+  const tk = todayKey();
+
+  $('wkNav').innerHTML = `
+    <button class="dn-arrow" data-wnav="-1" aria-label="Previous week">‹</button>
+    <button class="dn-arrow" data-wnav="1" aria-label="Next week" ${isCur?'disabled':''}>›</button>
+    <div class="dn-mid">
+      <div class="dn-date">${esc(fmtShort(ws))} – ${esc(fmtShort(we))}</div>
+      <div class="dn-sub">${isCur ? 'This week' : 'Past week'}</div>
+    </div>
+    ${isCur ? '' : '<button class="dn-today" data-wnav="cur">← This week</button>'}`;
+
+  $('scoreCard').innerHTML = `
+    <div class="sc-pct ${sc.pct>=100?'ok':''}">${sc.pct}%</div>
+    <div class="sc-meta">
+      <div class="sc-line"><b>${sc.got}</b> of <b>${sc.total}</b> checks · <b>${sc.met}</b> met${sc.close?` · <b>${sc.close}</b> close`:''}</div>
+      <div class="sc-bar ${sc.pct>=100?'ok':''}"><i style="width:${Math.min(100,sc.pct)}%"></i></div>
+    </div>`;
+
+  const DAYL = ['S','M','T','W','T','F','S'];
+  let head = '<tr><th class="pg-name-h">Habit</th>';
+  for (let i=0;i<7;i++){
+    const k = dateKey(addDays(ws,i));
+    head += `<th class="${k===tk?'th-today':''}">${DAYL[i]}</th>`;
+  }
+  head += '<th class="pg-cnt-h">Wk</th></tr>';
+
+  let rows = '';
+  for (const sec of SECTIONS){
+    const list = habits.filter(h => h.section === sec.key);
+    if (!list.length) continue;
+    rows += `<tr class="pg-sec"><td colspan="9">${sec.label}</td></tr>`;
+    for (const h of list){
+      const st = habitState(h, sc.counts[h.id]);
+      const pct = habitPct(h, sc.counts[h.id]);
+      const sk = isCur ? streak(h.id) : 0;
+      rows += `<tr><td class="pg-name">${esc(h.name)}${sk>=3?` <span class="hstreak">🔥${sk}</span>`:''}</td>`;
+      for (let i=0;i<7;i++){
+        const k = dateKey(addDays(ws,i));
+        const on = checkedOn(k, h.id);
+        const fut = k > tk;
+        // past + today cells toggle in place — backfilling shouldn't require
+        // walking the Today pager day by day
+        rows += `<td class="${k===tk?'cell-today':''}${fut?'':' cell-tap'}"${fut?'':` data-cell="${esc(h.id)}|${k}"`}>` +
+          (on ? `<span class="mark on">${CHECK_SVG}</span>` : `<span class="mark ${fut?'fut':'off mini'}"></span>`) +
+          '</td>';
+      }
+      const stCls = st==='met'?'ok':st==='close'?'close':'';
+      rows += `<td><span class="pg-cnt ${stCls}">${sc.counts[h.id]}/${h.target}</span>${sc.counts[h.id]?`<div class="pg-pct ${stCls}">${pct}%</div>`:''}</td></tr>`;
+    }
+  }
+  $('gridWrap').innerHTML = `<table class="pgrid"><thead>${head}</thead><tbody>${rows}</tbody></table>
+    <div class="grid-hint">Tap any day to check it off — handy for backfilling.</div>`;
+
+  // History — last 8 weeks that have any data (current week always shown)
+  const weekSet = new Set([dateKey(curWs)]);
+  for (const k of days.keys()){
+    const checks = days.get(k);
+    if (checks && Object.keys(checks).length) weekSet.add(dateKey(weekStartOf(parseKey(k))));
+  }
+  const weeks = [...weekSet].sort().reverse().slice(0,8);
+  let hist = '<div class="hist-title">Past weeks</div>';
+  if (weeks.length <= 1 && weekScore(curWs).got === 0){
+    hist += '<div class="empty">History shows up here after your first checked-off day.</div>';
+  } else {
+    for (const wk of weeks){
+      const wss = parseKey(wk);
+      const s = weekScore(wss);
+      const cur = dateKey(wss) === dateKey(curWs);
+      hist += `<div class="hist-row" data-wjump="${wk}" style="cursor:pointer">
+        <div class="hr-label">${cur?'<span class="now">This week</span>':esc(fmtShort(wss))+' – '+esc(fmtShort(addDays(wss,6)))}</div>
+        <div class="hr-bar"><i class="${s.pct>=100?'ok':''}" style="width:${Math.min(100,s.pct)}%"></i></div>
+        <div class="hr-pct">${s.pct}%</div>
+      </div>`;
+    }
+  }
+  $('histCard').innerHTML = hist;
+}
+
+$('wkNav').addEventListener('click', e => {
+  const b = e.target.closest('[data-wnav]');
+  if (!b) return;
+  const curWs = weekStartOf(new Date());
+  if (b.dataset.wnav === 'cur') viewWeekStart = curWs;
+  else {
+    const next = addDays(viewWeekStart, 7 * Number(b.dataset.wnav));
+    if (next > curWs) return;
+    viewWeekStart = next;
+  }
+  renderProgress();
+});
+
+$('gridWrap').addEventListener('click', e => {
+  const td = e.target.closest('[data-cell]');
+  if (!td) return;
+  const [hid, k] = td.dataset.cell.split('|');
+  toggleCheckOn(k, hid);
+});
+
+$('histCard').addEventListener('click', e => {
+  const r = e.target.closest('[data-wjump]');
+  if (!r) return;
+  viewWeekStart = parseKey(r.dataset.wjump);
+  renderProgress();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// ============= Render: Health =============
+function renderHealth(){
+  if (tab !== 'health'){
+    // keep chip counts fresh even when the tab is closed
+    $('cntTips').textContent = tips.length ? `(${tips.length})` : '';
+    $('cntAsk').textContent = qa.length ? `(${qa.length})` : '';
+    $('cntVids').textContent = videos.length ? `(${videos.length})` : '';
+    return;
+  }
+  document.querySelectorAll('.hchip').forEach(c => c.classList.toggle('active', c.dataset.hsub === healthSub));
+  $('cntTips').textContent = tips.length ? `(${tips.length})` : '';
+  $('cntAsk').textContent = qa.length ? `(${qa.length})` : '';
+  $('cntVids').textContent = videos.length ? `(${videos.length})` : '';
+  $('panelTips').hidden = healthSub !== 'tips';
+  $('panelAsk').hidden = healthSub !== 'ask';
+  $('panelVideos').hidden = healthSub !== 'videos';
+  if (healthSub === 'tips') renderTips();
+  if (healthSub === 'ask') renderQa();
+  if (healthSub === 'videos') renderVideos();
+}
+document.querySelectorAll('.hchip').forEach(c => c.addEventListener('click', () => {
+  healthSub = c.dataset.hsub; localStorage.setItem('dg-health', healthSub); renderHealth();
+}));
+
+const fmtWhen = iso => { try { return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch { return ''; } };
+const shortUrl = u => { try { const x = new URL(u); const s = x.hostname.replace(/^www\./,'') + (x.pathname !== '/' ? x.pathname : ''); return s.length > 34 ? s.slice(0,32) + '…' : s; } catch { return String(u).slice(0,34); } };
+// Escape-safe linkify: split on URLs so only the non-URL parts get escaped as
+// text; the URL lands in href attribute-escaped (&amp; parses back to & there).
+const linkify = raw => String(raw ?? '').split(/(https?:\/\/[^\s<>"']+)/g)
+  .map((p,i) => i % 2 ? `<a class="tip-link" href="${esc(p)}" target="_blank" rel="noopener">${esc(shortUrl(p))}</a>` : esc(p)).join('');
+const firstVideoUrl = raw => {
+  for (const u of (String(raw ?? '').match(/https?:\/\/[^\s<>"']+/g) || [])) if (ytId(u)) return u;
+  return null;
+};
+
+// ---- Tips ----
+function renderTips(){
+  let html = '';
+  for (const t of tips){
+    // A video link pasted into a tip gets an inline preview + one-tap
+    // cross-save into the Videos library.
+    const vurl = firstVideoUrl(t.text);
+    let vidHtml = '';
+    if (vurl){
+      const vid = ytId(vurl);
+      const saved = videos.some(v => (v.vid && v.vid === vid) || v.url === vurl);
+      vidHtml = `<div class="tip-vid">
+        <a class="tv-thumb" href="${esc(vurl)}" target="_blank" rel="noopener"><img src="https://i.ytimg.com/vi/${esc(vid)}/hqdefault.jpg" alt="" loading="lazy"></a>
+        ${saved ? '<span class="tv-saved">✓ In Videos</span>' : `<button class="btn-ghost small" data-tipvid="${esc(vurl)}">+ Save to Videos</button>`}
+      </div>`;
+    }
+    html += `<div class="tip-row">
+      <button class="tip-pin ${t.pinned?'on':''}" data-pin="${esc(t.id)}" title="Pin">★</button>
+      <div class="tip-body">
+        <div class="tip-text">${linkify(t.text)}</div>
+        <div class="tip-sub">
+          ${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ''}
+          <span class="tip-date">${fmtWhen(t.createdAt)}</span>
+        </div>
+        ${vidHtml}
+      </div>
+      <button class="mini-act" data-del="health_tips|${esc(t.id)}">✕</button>
+    </div>`;
+  }
+  $('tipsList').innerHTML = html || '<div class="empty">Tips you save land here — things that work for you, advice worth keeping. Paste video links right in.</div>';
+}
+
+$('tipAddBtn').addEventListener('click', addTip);
+$('tipText').addEventListener('keydown', e => { if (e.key === 'Enter') addTip(); });
+async function addTip(){
+  const text = $('tipText').value.trim();
+  if (!text) return;
+  const tag = $('tipTag').value.trim().slice(0,20);
+  $('tipText').value = ''; $('tipTag').value = '';
+  try {
+    await addDoc(collection(db,'health_tips'), { text, tag, pinned:false, createdAt: new Date().toISOString() });
+  } catch(e){ console.error(e); toast('Couldn’t save tip'); }
+}
+
+$('tipsList').addEventListener('click', async e => {
+  const pin = e.target.closest('[data-pin]');
+  if (pin){
+    const t = tips.find(x => x.id === pin.dataset.pin);
+    if (t) try { await updateDoc(doc(db,'health_tips',t.id), { pinned: !t.pinned }); } catch(err){ console.error(err); }
+    return;
+  }
+  const sv = e.target.closest('[data-tipvid]');
+  if (sv){
+    sv.disabled = true;
+    sv.textContent = 'Saving…';
+    try { await saveVideoFromUrl(sv.dataset.tipvid); toast('Saved to Videos'); }
+    catch(err){ console.error(err); toast('Couldn’t save video'); sv.disabled = false; sv.textContent = '+ Save to Videos'; }
+  }
+});
+
+// ---- Ask (Q&A) ----
+const mdLite = s => {
+  let h = esc(s).replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  const lines = h.split('\n');
+  let out = '', mode = '';
+  const close = () => { if (mode){ out += mode === 'ul' ? '</ul>' : '</ol>'; mode = ''; } };
+  for (const ln of lines){
+    const t = ln.trim();
+    if (/^[-*•]\s+/.test(t)){
+      if (mode !== 'ul'){ close(); out += '<ul>'; mode = 'ul'; }
+      out += '<li>' + t.replace(/^[-*•]\s+/,'') + '</li>';
+    } else if (/^\d+[.)]\s+/.test(t)){
+      if (mode !== 'ol'){ close(); out += '<ol>'; mode = 'ol'; }
+      out += '<li>' + t.replace(/^\d+[.)]\s+/,'') + '</li>';
+    } else {
+      close();
+      if (t) out += '<p>' + t + '</p>';
+    }
+  }
+  close();
+  return out;
+};
+
+function renderQa(){
+  $('askLive').innerHTML = asking
+    ? '<div class="thinking"><span class="dot3"><i></i><i></i><i></i></span>Thinking it through…</div>'
+    : '';
+  $('askBtn').disabled = asking;
+  $('askBtn').textContent = asking ? '…' : 'Ask';
+  let html = '';
+  for (const item of qa){
+    const open = qaOpen.has(item.id);
+    const isOpenQ = item.status !== 'answered';
+    html += `<div class="qa-card ${open?'open':''}">
+      <div class="qa-head" data-qtoggle="${esc(item.id)}">
+        <span class="qa-chev">▶</span>
+        <div class="qa-q">${esc(item.q)}</div>
+        ${isOpenQ ? '<span class="qa-chip open">No answer yet</span>' : ''}
+      </div>
+      <div class="qa-body">
+        ${isOpenQ
+          ? '<div class="qa-open-note">Saved without an answer — retry when the answer service is set up.</div>'
+          : `<div class="qa-a">${mdLite(item.a || '')}</div>`}
+        <div class="qa-actions">
+          <span class="qa-date">${fmtWhen(item.createdAt)}</span>
+          ${isOpenQ ? `<button class="btn-ghost" data-retry="${esc(item.id)}">Retry</button>` : ''}
+          <button class="mini-act" data-del="health_qa|${esc(item.id)}">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  $('qaList').innerHTML = html || (asking ? '' : '<div class="empty">Ask anything — answers get saved so you can come back to them.</div>');
+}
+
+$('qaList').addEventListener('click', e => {
+  if (e.target.closest('[data-del]') || e.target.closest('[data-retry]')) return;
+  const head = e.target.closest('[data-qtoggle]');
+  if (!head) return;
+  const id = head.dataset.qtoggle;
+  qaOpen.has(id) ? qaOpen.delete(id) : qaOpen.add(id);
+  renderQa();
+});
+
+$('askBtn').addEventListener('click', () => ask());
+$('askInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ask();
+});
+
+async function fetchAnswer(question){
+  // Recent answered pairs, oldest-first, so follow-ups have context
+  const history = qa.filter(x => x.status === 'answered' && x.a).slice(0,3).reverse().map(x => ({ q:x.q, a:x.a }));
+  const res = await fetch('/api/health-chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, history }),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { res, data };
+}
+
+async function ask(){
+  const q = $('askInput').value.trim();
+  if (!q || asking) return;
+  asking = true; renderQa();
+  let saved = null;
+  try {
+    const { res, data } = await fetchAnswer(q);
+    if (res.ok && data.answer){
+      saved = await addDoc(collection(db,'health_qa'), { q, a: data.answer, status:'answered', createdAt: new Date().toISOString() });
+    } else {
+      saved = await addDoc(collection(db,'health_qa'), { q, status:'open', createdAt: new Date().toISOString() });
+      if (res.status === 501 || data.error === 'not_configured') toast('Saved. Add ANTHROPIC_API_KEY in Vercel to turn on answers.');
+      else if (data.error === 'refused') toast('That one can’t be answered here — question saved.');
+      else toast('Answer service unreachable — question saved.');
+    }
+    $('askInput').value = '';
+  } catch(e){
+    console.error(e);
+    try { saved = await addDoc(collection(db,'health_qa'), { q, status:'open', createdAt: new Date().toISOString() }); $('askInput').value=''; } catch {}
+    toast('Offline? Question saved for later.');
+  }
+  if (saved) qaOpen.add(saved.id);
+  asking = false; renderQa();
+}
+
+$('qaList').addEventListener('click', async e => {
+  const r = e.target.closest('[data-retry]');
+  if (!r) return;
+  const item = qa.find(x => x.id === r.dataset.retry);
+  if (!item || asking) return;
+  asking = true; renderQa();
+  try {
+    const { res, data } = await fetchAnswer(item.q);
+    if (res.ok && data.answer){
+      await updateDoc(doc(db,'health_qa',item.id), { a: data.answer, status:'answered', answeredAt: new Date().toISOString() });
+      qaOpen.add(item.id);
+    } else if (res.status === 501 || data.error === 'not_configured'){
+      toast('Still not set up — add ANTHROPIC_API_KEY in Vercel.');
+    } else toast('No luck — try again later.');
+  } catch(err){ console.error(err); toast('Answer service unreachable.'); }
+  asking = false; renderQa();
+});
+
+// ---- Videos ----
+const ytId = url => {
+  const m = String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/))([\w-]{6,})/);
+  return m ? m[1] : null;
+};
+const hostOf = url => { try { return new URL(url).hostname.replace(/^www\./,''); } catch { return ''; } };
+
+function renderVideos(){
+  let html = '';
+  for (const v of videos){
+    const vid = v.vid || ytId(v.url);
+    const thumb = vid ? `https://i.ytimg.com/vi/${esc(vid)}/hqdefault.jpg` : (v.thumb || '');
+    const renaming = vidRenaming === v.id;
+    html += `<div class="vcard ${v.watched?'watched':''}">
+      <a class="vthumb" href="${esc(v.url)}" target="_blank" rel="noopener">
+        ${thumb
+          ? `<img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;vph&quot;><div class=&quot;play&quot;>▶</div>Open link</div>'">`
+          : '<div class="vph"><div class="play">▶</div>Open link</div>'}
+      </a>
+      <div class="vbody">
+        ${renaming
+          ? `<input class="in vtitle-in" data-vrename-in="${esc(v.id)}" value="${esc(v.title || '')}" placeholder="Title">`
+          : `<div class="vtitle">${esc(v.title || hostOf(v.url) || 'Video')}</div>`}
+        <div class="vsub">
+          <span class="vhost">${esc(hostOf(v.url))}</span>
+          <button class="vwatch ${v.watched?'on':''}" data-vwatch="${esc(v.id)}">${v.watched?'✓ Watched':'Watched?'}</button>
+          <button class="mini-act" data-vrename="${esc(v.id)}" title="Rename">✎</button>
+          <button class="mini-act" data-del="health_videos|${esc(v.id)}">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  $('vidGrid').innerHTML = html;
+  $('vidEmpty').innerHTML = videos.length ? '' : '<div class="empty">Save workout, stretching, and cooking videos to watch later.</div>';
+  const inEl = document.querySelector('[data-vrename-in]');
+  if (inEl){
+    inEl.focus();
+    const commit = async () => {
+      const id = inEl.dataset.vrenameIn;
+      const val = inEl.value.trim();
+      vidRenaming = null;
+      try { await updateDoc(doc(db,'health_videos',id), { title: val }); } catch(e){ console.error(e); }
+      renderVideos();
+    };
+    inEl.addEventListener('keydown', e => { if (e.key === 'Enter') inEl.blur(); if (e.key === 'Escape'){ vidRenaming = null; renderVideos(); } });
+    inEl.addEventListener('blur', commit, { once:true });
+  }
+}
+
+$('vidAddBtn').addEventListener('click', addVideo);
+$('vidUrl').addEventListener('keydown', e => { if (e.key === 'Enter') addVideo(); });
+async function saveVideoFromUrl(url, title = ''){
+  const vid = ytId(url);
+  if (!title){
+    // best-effort title lookup; noembed sends CORS headers (YouTube's own oEmbed doesn't)
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch('https://noembed.com/embed?url=' + encodeURIComponent(url), { signal: ctl.signal });
+      clearTimeout(t);
+      const j = await r.json();
+      if (j && j.title) title = String(j.title).slice(0,140);
+    } catch {}
+  }
+  await addDoc(collection(db,'health_videos'), { url, title, vid: vid || '', watched:false, createdAt: new Date().toISOString() });
+}
+
+async function addVideo(){
+  let url = $('vidUrl').value.trim();
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const title = $('vidTitle').value.trim();
+  $('vidUrl').value = ''; $('vidTitle').value = '';
+  try { await saveVideoFromUrl(url, title); }
+  catch(e){ console.error(e); toast('Couldn’t save video'); }
+}
+
+$('vidGrid').addEventListener('click', async e => {
+  const w = e.target.closest('[data-vwatch]');
+  if (w){
+    const v = videos.find(x => x.id === w.dataset.vwatch);
+    if (v) try { await updateDoc(doc(db,'health_videos',v.id), { watched: !v.watched }); } catch(err){ console.error(err); }
+    return;
+  }
+  const rn = e.target.closest('[data-vrename]');
+  if (rn){ vidRenaming = rn.dataset.vrename; renderVideos(); }
+});
+
+// ---- Two-tap delete (confirm() is unreliable inside iOS iframes) ----
+let armTimer = null;
+document.addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]');
+  document.querySelectorAll('.mini-act.armed').forEach(b => { if (b !== del){ b.classList.remove('armed'); b.textContent = '✕'; } });
+  if (!del) return;
+  e.stopPropagation();
+  if (!del.classList.contains('armed')){
+    del.classList.add('armed');
+    del.textContent = 'Sure?';
+    clearTimeout(armTimer);
+    armTimer = setTimeout(() => { del.classList.remove('armed'); del.textContent = '✕'; }, 4000);
+    return;
+  }
+  const [col, id] = del.dataset.del.split('|');
+  try { await deleteDoc(doc(db, col, id)); } catch(err){ console.error(err); toast('Delete failed'); }
+});
+
+// ============= Edit habits modal =============
+const genId = name => (String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,18) || 'habit') + '-' + Math.random().toString(36).slice(2,6);
+
+function openModal(){
+  editHabits = habits.map(h => ({ ...h }));
+  renderModal();
+  $('modalBg').classList.add('show');
+}
+function closeModal(){ $('modalBg').classList.remove('show'); editHabits = null; }
+
+function renderModal(){
+  let html = '<div class="mh-hint">Target = days per week. Checked history is kept even if you rename or retarget.</div>';
+  editHabits.forEach((h, i) => {
+    html += `<div class="mh-row">
+      <input class="in mh-name" data-mh-name="${i}" value="${esc(h.name)}" placeholder="Habit name">
+      <select data-mh-target="${i}" title="Days per week">
+        ${[1,2,3,4,5,6,7].map(n => `<option value="${n}" ${h.target===n?'selected':''}>${n}/7</option>`).join('')}
+      </select>
+      <select data-mh-sec="${i}">
+        ${SECTIONS.map(s => `<option value="${s.key}" ${h.section===s.key?'selected':''}>${s.label}</option>`).join('')}
+      </select>
+      <button class="mini-act" data-mh-del="${i}">✕</button>
+    </div>`;
+  });
+  $('modalBody').innerHTML = html;
+}
+
+$('editHabitsBtn').addEventListener('click', openModal);
+$('modalClose').addEventListener('click', closeModal);
+$('modalBg').addEventListener('click', e => { if (e.target === $('modalBg')) closeModal(); });
+$('modalAdd').addEventListener('click', () => {
+  editHabits.push({ id:'', name:'', section:'morning', target:7 });
+  renderModal();
+  const inputs = document.querySelectorAll('[data-mh-name]');
+  const last = inputs[inputs.length-1];
+  if (last){ last.focus(); last.scrollIntoView({ block:'nearest' }); }
+});
+$('modalBody').addEventListener('input', e => {
+  const n = e.target.closest('[data-mh-name]');
+  if (n) editHabits[Number(n.dataset.mhName)].name = n.value;
+});
+$('modalBody').addEventListener('change', e => {
+  const t = e.target.closest('[data-mh-target]');
+  if (t) editHabits[Number(t.dataset.mhTarget)].target = Number(t.value);
+  const s = e.target.closest('[data-mh-sec]');
+  if (s) editHabits[Number(s.dataset.mhSec)].section = s.value;
+});
+$('modalBody').addEventListener('click', e => {
+  const d = e.target.closest('[data-mh-del]');
+  if (!d) return;
+  if (!d.classList.contains('armed')){
+    d.classList.add('armed'); d.textContent = 'Sure?';
+    setTimeout(() => { d.classList.remove('armed'); d.textContent = '✕'; }, 2600);
+    return;
+  }
+  editHabits.splice(Number(d.dataset.mhDel), 1);
+  renderModal();
+});
+$('modalSave').addEventListener('click', async () => {
+  const clean = editHabits
+    .filter(h => h.name.trim())
+    .map(h => ({ id: h.id || genId(h.name), name: h.name.trim().slice(0,60), section: h.section, target: Math.min(7, Math.max(1, Number(h.target)||7)) }));
+  if (!clean.length){ toast('Keep at least one habit'); return; }
+  try {
+    await setDoc(doc(db,'health_config','habits'), { habits: clean, updatedAt: new Date().toISOString() });
+    closeModal();
+    toast('Habits updated');
+  } catch(e){ console.error(e); toast('Couldn’t save habits'); }
+});
+
+// ============= Midnight / resume rollover =============
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  const tk = todayKey();
+  if (tk !== _lastToday){
+    _lastToday = tk;
+    viewDate = tk;
+    viewWeekStart = weekStartOf(new Date());
+  }
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
