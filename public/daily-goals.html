@@ -115,6 +115,15 @@ input,textarea,select{font-family:var(--font);color:var(--text)}
 }
 .hcheck svg{width:13px;height:13px}
 .hrow.done .hcheck{background:var(--ok);border-color:var(--ok);color:#fff}
+/* Don'ts: clean by default, a tap records a slip. */
+.hrow.slipped .hcheck{background:var(--block);border-color:var(--block);color:#fff}
+.hrow.slipped .hname{color:var(--text)}
+.hrow.na{opacity:.5;cursor:default}
+.slip-tag{
+  margin-left:7px;font-size:9.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+  padding:2px 7px;border-radius:999px;background:var(--block-bg);color:var(--block);white-space:nowrap;
+}
+.wd.slip{background:var(--block)}
 .hname{flex:1;min-width:0;font-size:14px;font-weight:600;overflow-wrap:anywhere}
 .hrow.done .hname{color:var(--text-dim)}
 .hstreak{font-size:10px;font-weight:700;color:var(--warn);flex-shrink:0}
@@ -174,6 +183,8 @@ table.pgrid{width:100%;border-collapse:collapse;table-layout:fixed;min-width:420
 .mark{display:inline-flex;width:17px;height:17px;border-radius:50%;align-items:center;justify-content:center;vertical-align:middle}
 .mark.on{background:var(--ok);color:#fff}
 .mark.on svg{width:9px;height:9px}
+.mark.slip{background:var(--block);color:#fff}
+.mark.slip svg{width:9px;height:9px}
 .mark.off{background:var(--surface-3)}
 .mark.off.mini{width:7px;height:7px}
 .mark.fut{background:var(--surface-2)}
@@ -514,15 +525,17 @@ const DEFAULT_HABITS = [
   { id:'read',     name:'Read',              section:'night',     target:5 },
   { id:'teeth',    name:'Brush teeth',       section:'night',     target:7 },
   { id:'shower',   name:'Shower',            section:'night',     target:5 },
-  // Don'ts — avoidance goals. Checking one means "stayed clean today".
-  { id:'noexplicit', name:'No explicit content', section:'dont',  target:7 },
-  { id:'noyoutube',  name:'No YouTube',          section:'dont',  target:7 },
+  // Don'ts — avoidance goals. Clean by default: a day counts unless a slip
+  // is recorded. `since` anchors the auto-credit so days before the habit
+  // existed stay neutral instead of retro-scoring as perfect.
+  { id:'noexplicit', name:'No explicit content', section:'dont',  target:7, since:'2026-07-28' },
+  { id:'noyoutube',  name:'No YouTube',          section:'dont',  target:7, since:'2026-07-28' },
 ];
 const SECTIONS = [
   { key:'morning',   label:'Morning' },
   { key:'afternoon', label:'Afternoon' },
   { key:'night',     label:'Night' },
-  { key:'dont',      label:'Don’ts', hint:'✓ = stayed clean' },
+  { key:'dont',      label:'Don’ts', hint:'clean by default — tap if you slipped' },
 ];
 
 // ============= Date utils (all LOCAL — never UTC-parse day keys) =============
@@ -538,7 +551,8 @@ const fmtShort = d => d.toLocaleDateString('en-US',{ month:'short', day:'numeric
 
 // ============= State =============
 let habits = DEFAULT_HABITS.slice();
-const days = new Map();            // 'YYYY-MM-DD' -> {habitId:true,...}
+const days = new Map();            // 'YYYY-MM-DD' -> checks {habitId:true,...}
+const slips = new Map();           // 'YYYY-MM-DD' -> slips  {dontId:true,...}
 let viewDate = todayKey();         // Today tab date (backfill allowed)
 let viewWeekStart = weekStartOf(new Date());  // Progress tab week
 let viewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);  // Progress month view
@@ -555,6 +569,7 @@ let _lastToday = todayKey();
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const X_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 let toastT = null;
 function toast(msg){
@@ -564,15 +579,23 @@ function toast(msg){
 
 // ============= Subscriptions =============
 onSnapshot(collection(db,'health_habit_days'), snap => {
-  days.clear();
-  snap.forEach(d => days.set(d.id, (d.data()||{}).checks || {}));
+  days.clear(); slips.clear();
+  snap.forEach(d => {
+    const data = d.data() || {};
+    days.set(d.id, data.checks || {});
+    slips.set(d.id, data.slips || {});
+  });
   render();
 }, e => console.error('[goals] days sub', e));
+
+// Every don't MUST carry a `since` floor — without it the auto-credit runs
+// back through all of history and streak()'s backwards walk never terminates.
+const normHabits = arr => arr.map(h => (h.section === 'dont' && !h.since) ? { ...h, since: todayKey() } : h);
 
 let _dontSeedTried = false;
 onSnapshot(doc(db,'health_config','habits'), snap => {
   const d = snap.data();
-  habits = (d && Array.isArray(d.habits) && d.habits.length) ? d.habits : DEFAULT_HABITS.slice();
+  habits = normHabits((d && Array.isArray(d.habits) && d.habits.length) ? d.habits : DEFAULT_HABITS.slice());
   // One-time: fold the Don'ts into a config saved before they existed (the
   // hardcoded defaults already include them). dontsSeeded stops the seed from
   // re-firing if the user later deletes them on purpose.
@@ -611,16 +634,26 @@ onSnapshot(collection(db,'health_qa'), snap => {
 
 // ============= Metrics =============
 const checkedOn = (k, hid) => !!((days.get(k)||{})[hid]);
+const isDont = h => h.section === 'dont';
+const slippedOn = (k, hid) => !!((slips.get(k)||{})[hid]);
+// A don't is credited automatically: you were clean unless a slip is on
+// record. `since` is the floor (normalized on load, so it always exists) —
+// days before the goal existed aren't retro-credited, and it's what stops
+// streak()'s walk-backwards loop from running forever.
+const dontCleanOn = (h, k) => k <= todayKey() && k >= (h.since || todayKey()) && !slippedOn(k, h.id);
+// Did this habit count on day k? The one predicate every metric goes through.
+const satisfiedOn = (h, k) => isDont(h) ? dontCleanOn(h, k) : checkedOn(k, h.id);
+// A past/today cell a don't can't own yet (before it existed) — renders
+// neutral and isn't tappable.
+const dontNA = (h, k) => isDont(h) && k < (h.since || todayKey());
 
 function weekCounts(ws){
-  // per-habit checked count for the week starting at Date ws
+  // per-habit satisfied-day count for the week starting at Date ws
   const out = {};
   for (const h of habits) out[h.id] = 0;
   for (let i=0;i<7;i++){
     const k = dateKey(addDays(ws,i));
-    const checks = days.get(k);
-    if (!checks) continue;
-    for (const h of habits) if (checks[h.id]) out[h.id]++;
+    for (const h of habits) if (satisfiedOn(h, k)) out[h.id]++;
   }
   return out;
 }
@@ -645,15 +678,17 @@ function weekScore(ws){
   return { got, total, met, close, pct: total ? Math.round(got/total*100) : 0, counts };
 }
 
-function streak(hid){
+function streak(h){
   let s = 0;
   let d = new Date();
-  if (!checkedOn(todayKey(), hid)) d = addDays(d,-1);   // today still in play
-  while (checkedOn(dateKey(d), hid)){ s++; d = addDays(d,-1); }
+  if (!satisfiedOn(h, todayKey())) d = addDays(d,-1);   // today still in play
+  while (satisfiedOn(h, dateKey(d))){ s++; d = addDays(d,-1); }
   return s;
 }
 
 function optionalOn(h, k){
+  // Don'ts are never optional — hitting a quota doesn't license a slip.
+  if (isDont(h)) return false;
   // Once the weekly target is met WITHOUT day k's own check, day k is a
   // bonus rep, not an obligation. Excluding k means the day that hits the
   // target stays "required + done" and only later days flip to optional —
@@ -700,13 +735,12 @@ document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', (
 // ============= Render: Today =============
 function renderToday(){
   const isToday = viewDate === todayKey();
-  const checks = days.get(viewDate) || {};
   // Habits whose weekly target is already met are OPTIONAL today — they drop
   // out of the day's ring/count so "done" means "everything still needed".
   const optional = new Set(habits.filter(h => optionalOn(h, viewDate)).map(h => h.id));
   const required = habits.filter(h => !optional.has(h.id));
-  const done = required.filter(h => checks[h.id]).length;
-  const bonus = habits.filter(h => optional.has(h.id) && checks[h.id]).length;
+  const done = required.filter(h => satisfiedOn(h, viewDate)).length;
+  const bonus = habits.filter(h => optional.has(h.id) && satisfiedOn(h, viewDate)).length;
   const frac = required.length ? done / required.length : 1;
   const C = 2 * Math.PI * 14;
 
@@ -734,21 +768,26 @@ function renderToday(){
   const tk = todayKey();
 
   const rowHTML = (h, isOpt) => {
-    const on = !!checks[h.id];
+    const dont = isDont(h);
+    const na = dontNA(h, viewDate);                 // don't that didn't exist yet
+    const slipped = dont && !na && slippedOn(viewDate, h.id);
+    const on = satisfiedOn(h, viewDate);
     const st = habitState(h, counts[h.id]);
-    const sk = streak(h.id);
+    const sk = streak(h);
     let dots = '';
     for (let i=0;i<7;i++){
       const k = dateKey(addDays(ws,i));
       const cls = ['wd'];
-      if ((days.get(k)||{})[h.id]) cls.push('on');
+      if (satisfiedOn(h, k)) cls.push('on');
+      if (dont && k <= tk && k >= (h.since||tk) && slippedOn(k, h.id)) cls.push('slip');
       if (k === tk) cls.push('today');
-      if (k > tk) cls.push('fut');
+      if (k > tk || dontNA(h, k)) cls.push('fut');
       dots += `<span class="${cls.join(' ')}"></span>`;
     }
-    return `<div class="hrow ${on?'done':''} ${isOpt?'is-optional':''}" data-htoggle="${esc(h.id)}">
-      <button class="hcheck" aria-label="Toggle ${esc(h.name)}">${CHECK_SVG}</button>
-      <div class="hname">${esc(h.name)}${isOpt?'<span class="opt-tag">Goal met</span>':''}</div>
+    const icon = slipped ? X_SVG : CHECK_SVG;
+    return `<div class="hrow ${on?'done':''} ${slipped?'slipped':''} ${na?'na':''} ${isOpt?'is-optional':''}"${na?'':` data-htoggle="${esc(h.id)}"`}>
+      <button class="hcheck" aria-label="${slipped?'Undo slip':dont?'Mark a slip':'Toggle'} ${esc(h.name)}">${icon}</button>
+      <div class="hname">${esc(h.name)}${slipped?'<span class="slip-tag">Slipped</span>':''}${na?`<span class="opt-tag">Starts ${esc(fmtShort(parseKey(h.since)))}</span>`:''}${isOpt?'<span class="opt-tag">Goal met</span>':''}</div>
       ${sk >= 3 ? `<span class="hstreak">🔥${sk}</span>` : ''}
       <div class="hmeta">
         <div class="wkdots">${dots}</div>
@@ -761,7 +800,7 @@ function renderToday(){
   for (const sec of SECTIONS){
     const list = required.filter(h => h.section === sec.key);
     if (!list.length) continue;
-    const secDone = list.filter(h => checks[h.id]).length;
+    const secDone = list.filter(h => satisfiedOn(h, viewDate)).length;
     html += `<div class="group">
       <div class="group-head">${sec.label}<span class="g-cnt ${secDone===list.length?'ok':''}">${secDone}/${list.length}</span>${sec.hint?`<span class="g-hint">${sec.hint}</span>`:''}</div>`;
     for (const h of list) html += rowHTML(h, false);
@@ -803,6 +842,8 @@ $('todayGroups').addEventListener('click', e => {
 });
 
 async function toggleCheckOn(k, hid){
+  const h = habits.find(x => x.id === hid);
+  if (h && isDont(h)) return toggleSlipOn(k, h);
   const cur = { ...(days.get(k) || {}) };
   const turningOn = !cur[hid];
   if (turningOn) cur[hid] = true; else delete cur[hid];
@@ -821,6 +862,26 @@ async function toggleCheckOn(k, hid){
   }
 }
 const toggleCheck = hid => toggleCheckOn(viewDate, hid);
+
+async function toggleSlipOn(k, h){
+  // Don'ts invert: the tap records a SLIP (stored in its own `slips` map),
+  // and absence of a slip is what counts as clean.
+  if (k > todayKey()) return;
+  if (k < (h.since || todayKey())){ toast(`“${h.name}” started ${fmtShort(parseKey(h.since))}`); return; }
+  const cur = { ...(slips.get(k) || {}) };
+  const slipping = !cur[h.id];
+  if (slipping) cur[h.id] = true; else delete cur[h.id];
+  slips.set(k, cur);                               // optimistic; snapshot reconciles
+  render();
+  try {
+    await setDoc(doc(db,'health_habit_days',k),
+      { slips: { [h.id]: slipping ? true : deleteField() }, updatedAt: new Date().toISOString() },
+      { merge: true });
+  } catch(e) {
+    console.error('[goals] save slip', e);
+    toast('Couldn’t save — check your connection');
+  }
+}
 
 // ============= Render: Progress =============
 function renderProgress(){
@@ -871,16 +932,20 @@ function renderWeekProgress(){
     for (const h of list){
       const st = habitState(h, sc.counts[h.id]);
       const pct = habitPct(h, sc.counts[h.id]);
-      const sk = isCur ? streak(h.id) : 0;
+      const sk = isCur ? streak(h) : 0;
       rows += `<tr><td class="pg-name">${esc(h.name)}${sk>=3?` <span class="hstreak">🔥${sk}</span>`:''}</td>`;
       for (let i=0;i<7;i++){
         const k = dateKey(addDays(ws,i));
-        const on = checkedOn(k, h.id);
-        const fut = k > tk;
+        const on = satisfiedOn(h, k);
+        const na = dontNA(h, k);                   // don't that didn't exist yet
+        const fut = k > tk || na;
+        const slip = isDont(h) && !na && k <= tk && slippedOn(k, h.id);
         // past + today cells toggle in place — backfilling shouldn't require
         // walking the Today pager day by day
         rows += `<td class="${k===tk?'cell-today':''}${fut?'':' cell-tap'}"${fut?'':` data-cell="${esc(h.id)}|${k}"`}>` +
-          (on ? `<span class="mark on">${CHECK_SVG}</span>` : `<span class="mark ${fut?'fut':'off mini'}"></span>`) +
+          (on ? `<span class="mark on">${CHECK_SVG}</span>`
+              : slip ? `<span class="mark slip">${X_SVG}</span>`
+              : `<span class="mark ${fut?'fut':'off mini'}"></span>`) +
           '</td>';
       }
       const stCls = st==='met'?'ok':st==='close'?'close':'';
@@ -956,9 +1021,8 @@ function monthMetrics(m){
   let done = 0;
   for (let d = 1; d <= dim; d++){
     const k = dateKey(new Date(y, mo, d));
-    const checks = days.get(k) || {};
     let c = 0;
-    for (const h of habits) if (checks[h.id]){ c++; counts[h.id]++; }
+    for (const h of habits) if (satisfiedOn(h, k)){ c++; counts[h.id]++; }
     perDay[d] = c;
     if (k <= tk) done += c;
   }
@@ -1423,7 +1487,15 @@ $('modalBody').addEventListener('click', e => {
 $('modalSave').addEventListener('click', async () => {
   const clean = editHabits
     .filter(h => h.name.trim())
-    .map(h => ({ id: h.id || genId(h.name), name: h.name.trim().slice(0,60), section: h.section, target: Math.min(7, Math.max(1, Number(h.target)||7)) }));
+    .map(h => {
+      const out = { id: h.id || genId(h.name), name: h.name.trim().slice(0,60), section: h.section,
+                    target: Math.min(7, Math.max(1, Number(h.target)||7)) };
+      // Don'ts carry a start floor so auto-credit can't reach back before the
+      // goal existed. Keep an existing one; a habit moved INTO don'ts today
+      // starts today. (Never write undefined — Firestore rejects it.)
+      if (out.section === 'dont') out.since = h.since || todayKey();
+      return out;
+    });
   if (!clean.length){ toast('Keep at least one habit'); return; }
   try {
     await setDoc(doc(db,'health_config','habits'), { habits: clean, dontsSeeded: true, updatedAt: new Date().toISOString() });
