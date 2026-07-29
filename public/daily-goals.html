@@ -15,6 +15,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none !important}
 :root{
   /* Soft Light — warm paper + white cards (app-wide system) */
   color-scheme:light;
@@ -192,6 +193,31 @@ td.cell-today{background:var(--accent-bg);border-radius:0}
   border-top:1px solid var(--border);color:var(--text-dim);font-size:12px;font-weight:700;
 }
 .edit-link:hover{color:var(--text)}
+/* progress mode toggle + month overview */
+.pmode{display:flex;gap:6px;margin-bottom:12px}
+.pm-btn{flex:1 1 0;min-width:0;border:1px solid var(--border);background:var(--surface);border-radius:999px;font-size:12px;font-weight:700;color:var(--text-dim);padding:7px 4px}
+.pm-btn.active{background:var(--text);border-color:var(--text);color:#fff}
+.mo-stats{display:flex;gap:10px;padding:14px}
+.mst{flex:1;min-width:0}
+.mst .l{font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim)}
+.mst .v{font-size:21px;font-weight:900;letter-spacing:-.02em;margin-top:4px}
+.mst .v small{font-size:11px;font-weight:700;color:var(--text-dim)}
+.mst .v.ok{color:var(--ok)}
+.mo-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px 3px;padding:10px 10px 2px}
+.mo-dow{font-size:9px;font-weight:800;letter-spacing:.6px;color:var(--text-fade);text-align:center;padding:4px 0}
+.mo-day{
+  width:min(100%,42px);aspect-ratio:1;margin:0 auto;border-radius:50%;border:none;background:none;
+  display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;
+  color:var(--text-mid);padding:0;font-family:var(--font);
+}
+.mo-day.tap{cursor:pointer}
+.mo-day.zero{box-shadow:inset 0 0 0 1.5px var(--surface-3)}
+.mo-day.part{color:var(--text)}
+.mo-day.full{background:var(--ok);color:#fff}
+.mo-day.fut{color:var(--text-fade)}
+.mo-day.today{outline:2px solid var(--accent);outline-offset:1.5px}
+.mo-hint{font-size:10px;font-weight:600;color:var(--text-fade);padding:8px 14px 12px}
+.g-hint{margin-left:auto;font-size:9px;font-weight:700;letter-spacing:.3px;text-transform:none;color:var(--text-fade)}
 .hist{padding:6px 14px 12px}
 .hist-title{font-size:10px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--text-dim);padding:10px 0 8px}
 .hist-row{display:flex;align-items:center;gap:10px;padding:4px 0}
@@ -381,12 +407,19 @@ td.cell-today{background:var(--accent-bg);border-radius:0}
 
   <!-- ============ PROGRESS ============ -->
   <section class="view" id="viewProgress" hidden>
+    <div class="pmode">
+      <button class="pm-btn" data-pmode="week">Week</button>
+      <button class="pm-btn" data-pmode="month">Month</button>
+    </div>
     <div class="card wk-nav" id="wkNav"></div>
     <div class="card sc" id="scoreCard"></div>
-    <div class="card">
+    <div class="card" id="weekGridCard">
       <div class="pgrid-wrap" id="gridWrap"></div>
     </div>
     <div class="card hist" id="histCard"></div>
+    <div class="card wk-nav" id="moNav" hidden></div>
+    <div class="card" id="moStats" hidden></div>
+    <div class="card" id="moCalCard" hidden></div>
   </section>
 
   <!-- ============ HEALTH ============ -->
@@ -450,7 +483,7 @@ td.cell-today{background:var(--accent-bg);border-radius:0}
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot }
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, deleteField, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 
 // ============= Firebase =============
@@ -481,11 +514,15 @@ const DEFAULT_HABITS = [
   { id:'read',     name:'Read',              section:'night',     target:5 },
   { id:'teeth',    name:'Brush teeth',       section:'night',     target:7 },
   { id:'shower',   name:'Shower',            section:'night',     target:5 },
+  // Don'ts — avoidance goals. Checking one means "stayed clean today".
+  { id:'noexplicit', name:'No explicit content', section:'dont',  target:7 },
+  { id:'noyoutube',  name:'No YouTube',          section:'dont',  target:7 },
 ];
 const SECTIONS = [
   { key:'morning',   label:'Morning' },
   { key:'afternoon', label:'Afternoon' },
   { key:'night',     label:'Night' },
+  { key:'dont',      label:'Don’ts', hint:'✓ = stayed clean' },
 ];
 
 // ============= Date utils (all LOCAL — never UTC-parse day keys) =============
@@ -504,6 +541,8 @@ let habits = DEFAULT_HABITS.slice();
 const days = new Map();            // 'YYYY-MM-DD' -> {habitId:true,...}
 let viewDate = todayKey();         // Today tab date (backfill allowed)
 let viewWeekStart = weekStartOf(new Date());  // Progress tab week
+let viewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);  // Progress month view
+let progMode = localStorage.getItem('dg-pmode') || 'week';   // 'week' | 'month'
 let tab = localStorage.getItem('dg-tab') || 'today';
 let healthSub = localStorage.getItem('dg-health') || 'tips';
 let tips = [], videos = [], qa = [];
@@ -530,9 +569,22 @@ onSnapshot(collection(db,'health_habit_days'), snap => {
   render();
 }, e => console.error('[goals] days sub', e));
 
+let _dontSeedTried = false;
 onSnapshot(doc(db,'health_config','habits'), snap => {
   const d = snap.data();
   habits = (d && Array.isArray(d.habits) && d.habits.length) ? d.habits : DEFAULT_HABITS.slice();
+  // One-time: fold the Don'ts into a config saved before they existed (the
+  // hardcoded defaults already include them). dontsSeeded stops the seed from
+  // re-firing if the user later deletes them on purpose.
+  if (d && Array.isArray(d.habits) && d.habits.length && !d.dontsSeeded
+      && !habits.some(h => h.section === 'dont') && !_dontSeedTried){
+    _dontSeedTried = true;
+    setDoc(doc(db,'health_config','habits'), {
+      habits: [...d.habits, ...DEFAULT_HABITS.filter(h => h.section === 'dont')],
+      dontsSeeded: true,
+      updatedAt: new Date().toISOString(),
+    }).catch(e => console.error('[goals] dont seed', e));
+  }
   render();
 }, e => console.error('[goals] config sub', e));
 
@@ -635,7 +687,11 @@ function switchTab(t){
   // Progress opens on the week you were just looking at in Today — after
   // backfilling last week, Progress must show THAT week, not silently snap
   // to the current one (real confusion, 2026-07-28).
-  if (t === 'progress') viewWeekStart = weekStartOf(parseKey(viewDate));
+  if (t === 'progress'){
+    viewWeekStart = weekStartOf(parseKey(viewDate));
+    const vd = parseKey(viewDate);
+    viewMonth = new Date(vd.getFullYear(), vd.getMonth(), 1);
+  }
   tab = t; localStorage.setItem('dg-tab', t); render();
   window.scrollTo({ top: 0 });
 }
@@ -707,7 +763,7 @@ function renderToday(){
     if (!list.length) continue;
     const secDone = list.filter(h => checks[h.id]).length;
     html += `<div class="group">
-      <div class="group-head">${sec.label}<span class="g-cnt ${secDone===list.length?'ok':''}">${secDone}/${list.length}</span></div>`;
+      <div class="group-head">${sec.label}<span class="g-cnt ${secDone===list.length?'ok':''}">${secDone}/${list.length}</span>${sec.hint?`<span class="g-hint">${sec.hint}</span>`:''}</div>`;
     for (const h of list) html += rowHTML(h, false);
     html += `</div>`;
   }
@@ -748,11 +804,17 @@ $('todayGroups').addEventListener('click', e => {
 
 async function toggleCheckOn(k, hid){
   const cur = { ...(days.get(k) || {}) };
-  if (cur[hid]) delete cur[hid]; else cur[hid] = true;
+  const turningOn = !cur[hid];
+  if (turningOn) cur[hid] = true; else delete cur[hid];
   days.set(k, cur);                              // optimistic; snapshot reconciles
   render();
   try {
-    await setDoc(doc(db,'health_habit_days',k), { checks: cur, updatedAt: new Date().toISOString() });
+    // Field-level merge, NOT a full-doc overwrite: a stale tab (phone that
+    // slept before the latest snapshot) must never clobber the day's other
+    // checks — that pattern cost real data on 2026-07-28.
+    await setDoc(doc(db,'health_habit_days',k),
+      { checks: { [hid]: turningOn ? true : deleteField() }, updatedAt: new Date().toISOString() },
+      { merge: true });
   } catch(e) {
     console.error('[goals] save check', e);
     toast('Couldn’t save — check your connection');
@@ -762,6 +824,14 @@ const toggleCheck = hid => toggleCheckOn(viewDate, hid);
 
 // ============= Render: Progress =============
 function renderProgress(){
+  document.querySelectorAll('.pm-btn').forEach(b => b.classList.toggle('active', b.dataset.pmode === progMode));
+  const wk = progMode === 'week';
+  $('wkNav').hidden = !wk; $('scoreCard').hidden = !wk; $('weekGridCard').hidden = !wk; $('histCard').hidden = !wk;
+  $('moNav').hidden = wk; $('moStats').hidden = wk; $('moCalCard').hidden = wk;
+  if (wk) renderWeekProgress(); else renderMonthProgress();
+}
+
+function renderWeekProgress(){
   const ws = viewWeekStart;
   const we = addDays(ws,6);
   const curWs = weekStartOf(new Date());
@@ -871,6 +941,101 @@ $('histCard').addEventListener('click', e => {
   viewWeekStart = parseKey(r.dataset.wjump);
   renderProgress();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// ---- Month overview ----
+function monthMetrics(m){
+  const y = m.getFullYear(), mo = m.getMonth();
+  const dim = new Date(y, mo + 1, 0).getDate();
+  const now = new Date();
+  const isCur = now.getFullYear() === y && now.getMonth() === mo;
+  const elapsed = isCur ? now.getDate() : dim;
+  const tk = todayKey();
+  const counts = {}; habits.forEach(h => counts[h.id] = 0);
+  const perDay = {};
+  let done = 0;
+  for (let d = 1; d <= dim; d++){
+    const k = dateKey(new Date(y, mo, d));
+    const checks = days.get(k) || {};
+    let c = 0;
+    for (const h of habits) if (checks[h.id]){ c++; counts[h.id]++; }
+    perDay[d] = c;
+    if (k <= tk) done += c;
+  }
+  // Generous month completion, same philosophy as weeks: each habit owes
+  // target×(elapsed/7) checks, capped per habit so overachieving one habit
+  // can't paper over another.
+  let total = 0, capped = 0;
+  for (const h of habits){
+    const cap = Math.max(1, Math.round(h.target * elapsed / 7));
+    total += cap;
+    capped += Math.min(counts[h.id], cap);
+  }
+  return { dim, elapsed, isCur, perDay, done, total,
+           pct: total ? Math.round(capped / total * 100) : 0,
+           avg: elapsed ? done / elapsed : 0 };
+}
+
+function renderMonthProgress(){
+  const m = viewMonth, y = m.getFullYear(), mo = m.getMonth();
+  const mm = monthMetrics(m);
+  const tk = todayKey();
+  $('moNav').innerHTML = `
+    <button class="dn-arrow" data-mnav="-1" aria-label="Previous month">‹</button>
+    <button class="dn-arrow" data-mnav="1" aria-label="Next month" ${mm.isCur?'disabled':''}>›</button>
+    <div class="dn-mid">
+      <div class="dn-date">${esc(m.toLocaleDateString('en-US',{ month:'long', year:'numeric' }))}</div>
+      <div class="dn-sub">${mm.isCur ? 'This month' : 'Past month'}</div>
+    </div>
+    ${mm.isCur ? '' : '<button class="dn-today" data-mnav="cur">← This month</button>'}`;
+  $('moStats').innerHTML = `<div class="mo-stats">
+    <div class="mst"><div class="l">Avg checks / day</div><div class="v">${mm.avg.toFixed(1)}</div></div>
+    <div class="mst"><div class="l">Done / Total</div><div class="v">${mm.done}<small>/${mm.total}</small></div></div>
+    <div class="mst"><div class="l">Completion</div><div class="v ${mm.pct>=100?'ok':''}">${mm.pct}%</div></div>
+  </div>`;
+  const DOW = ['S','M','T','W','T','F','S'];
+  let cal = DOW.map(d => `<span class="mo-dow">${d}</span>`).join('');
+  const lead = new Date(y, mo, 1).getDay();
+  for (let i = 0; i < lead; i++) cal += '<span></span>';
+  for (let d = 1; d <= mm.dim; d++){
+    const k = dateKey(new Date(y, mo, d));
+    const fut = k > tk;
+    const frac = habits.length ? Math.min(1, (mm.perDay[d] || 0) / habits.length) : 0;
+    let cls = 'mo-day', style = '';
+    if (fut) cls += ' fut';
+    else if (frac >= 1) cls += ' full tap';
+    else if (frac > 0){ cls += ' part tap'; style = ` style="background:rgba(30,158,106,${(0.12 + 0.4 * frac).toFixed(2)})"`; }
+    else cls += ' zero tap';
+    if (k === tk) cls += ' today';
+    cal += `<button class="${cls}"${style}${fut ? ' disabled' : ` data-mjump="${k}"`}>${d}</button>`;
+  }
+  $('moCalCard').innerHTML = `<div class="mo-cal">${cal}</div><div class="mo-hint">Tap a date to open it in Today.</div>`;
+}
+
+document.querySelectorAll('.pm-btn').forEach(b => b.addEventListener('click', () => {
+  progMode = b.dataset.pmode;
+  localStorage.setItem('dg-pmode', progMode);
+  renderProgress();
+}));
+
+$('moNav').addEventListener('click', e => {
+  const b = e.target.closest('[data-mnav]');
+  if (!b) return;
+  const cur = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  if (b.dataset.mnav === 'cur') viewMonth = cur;
+  else {
+    const next = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + Number(b.dataset.mnav), 1);
+    if (next > cur) return;
+    viewMonth = next;
+  }
+  renderProgress();
+});
+
+$('moCalCard').addEventListener('click', e => {
+  const d = e.target.closest('[data-mjump]');
+  if (!d) return;
+  viewDate = d.dataset.mjump;
+  switchTab('today');
 });
 
 // ============= Render: Health =============
@@ -1261,7 +1426,7 @@ $('modalSave').addEventListener('click', async () => {
     .map(h => ({ id: h.id || genId(h.name), name: h.name.trim().slice(0,60), section: h.section, target: Math.min(7, Math.max(1, Number(h.target)||7)) }));
   if (!clean.length){ toast('Keep at least one habit'); return; }
   try {
-    await setDoc(doc(db,'health_config','habits'), { habits: clean, updatedAt: new Date().toISOString() });
+    await setDoc(doc(db,'health_config','habits'), { habits: clean, dontsSeeded: true, updatedAt: new Date().toISOString() });
     closeModal();
     toast('Habits updated');
   } catch(e){ console.error(e); toast('Couldn’t save habits'); }
