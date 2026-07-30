@@ -203,6 +203,68 @@
     background:rgba(255,138,61,.14); border:1px solid rgba(255,138,61,.4);
     color:#e2701f; cursor:pointer; font-family:inherit;
   }
+  /* Weekly cook ritual card + planning gate */
+  .cookr{
+    background:var(--bg-elev); border:1px solid var(--line); border-radius:14px;
+    padding:12px 14px;
+  }
+  .cookr.locked{ border-color:rgba(185,131,23,.45); background:rgba(185,131,23,.04) }
+  .cookr-head{ display:flex; align-items:center; gap:9px; flex-wrap:wrap }
+  .cookr-title{
+    font-size:10.5px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase;
+    color:var(--muted);
+  }
+  .cookr-chip{ font-size:10px; font-weight:800; padding:2px 8px; border-radius:99px }
+  .cookr-chip.todo{ background:rgba(185,131,23,.13); color:#B98317 }
+  .cookr-chip.done{ background:rgba(30,158,106,.13); color:#1E9E6A }
+  .cookr-spacer{ flex:1 }
+  .cookr-dish{ font-size:14px; font-weight:800 }
+  .cookr-row{ display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap }
+  .cookr-row.cookr-chips{ margin-top:8px }
+  .cookr input[type=text], .cookr textarea{
+    background:var(--w04); border:1px solid transparent; border-radius:9px;
+    padding:8px 11px; font:inherit; font-size:13px; color:var(--ink); outline:none;
+    flex:1; min-width:170px; -webkit-user-select:text; user-select:text;
+  }
+  .cookr input[type=text]:focus, .cookr textarea:focus{ border-color:var(--accent); background:var(--bg-elev) }
+  .cookr textarea{ width:100%; min-height:110px; resize:vertical; margin-top:10px; line-height:1.5 }
+  .cookr-btn{
+    border:1px solid var(--line); background:var(--bg-elev); border-radius:99px;
+    padding:7px 13px; font-size:12px; font-weight:700; color:var(--w70);
+    cursor:pointer; font-family:inherit;
+  }
+  .cookr-btn:hover{ border-color:var(--line2) }
+  .cookr-btn.primary{ background:var(--accent); border-color:var(--accent); color:#FFF7EF }
+  .cookr-btn.on{ background:rgba(30,158,106,.12); border-color:rgba(30,158,106,.4); color:#1E9E6A }
+  .cookr-mini{
+    border:none; background:none; color:var(--w55); font-size:13px; cursor:pointer;
+    padding:2px 6px; border-radius:7px;
+  }
+  .cookr-mini:hover{ background:var(--w06); color:var(--ink) }
+  .cookr-note{ font-size:11.5px; font-weight:600; color:var(--w55); margin-top:8px }
+  .cookr-track{ border-top:1px solid var(--line); margin-top:11px; padding-top:3px }
+  .cookr-tlabel{
+    font-size:10px; font-weight:800; letter-spacing:.9px; text-transform:uppercase;
+    color:var(--w55); margin-top:7px;
+  }
+  .cookr-track.tdone .cookr-tlabel{ color:#1E9E6A }
+  .cookr-thint{
+    margin-left:8px; font-weight:600; letter-spacing:.2px; text-transform:none;
+    font-size:10px; color:var(--w55); opacity:.85;
+  }
+  #cookGateBg{
+    position:fixed; inset:0; background:rgba(33,30,25,.42); z-index:95;
+    display:none; align-items:center; justify-content:center; padding:20px;
+  }
+  #cookGateBg.open{ display:flex }
+  .cook-gate{
+    background:var(--bg-elev); border:1px solid var(--line); border-radius:16px;
+    max-width:400px; padding:22px 22px 18px; text-align:center;
+  }
+  .cook-gate .cg-emoji{ font-size:30px }
+  .cook-gate h3{ margin:8px 0 6px; font-size:16px; font-weight:800 }
+  .cook-gate p{ margin:0 0 16px; font-size:13px; line-height:1.5; color:var(--w70) }
+  .cook-gate .cg-row{ display:flex; gap:8px; justify-content:center }
   /* Chef iQ / original-recipe link-outs */
   a.mini.link-out{ text-decoration:none; display:inline-flex; align-items:center; gap:4px }
   .recipe-link-btn{
@@ -1333,6 +1395,10 @@ const categoriesCol    = collection(db, 'meals_categories');
 // Grocery settings: pantry items the user wants hidden globally + manually
 // added items not tied to any recipe. Single doc per user.
 const groceryDoc       = doc(db, 'meals_grocery', 'singleton');
+// Weekly cook ritual: one doc per weekKey — {dish, recipeId?, mastered,
+// cookedAt, recipe (text), updatedAt}. Deliberately its OWN collection so
+// the week-doc save path can never clobber it.
+const cookWeeksCol     = collection(db, 'meals_cook_weeks');
 
 // localStorage flag: when present, loadEz becomes a no-op and we serve
 // recipes from Firestore only. Set by the Disconnect EZ migrator.
@@ -1358,6 +1424,7 @@ function ezClient(){
 
 // ---------- State ----------
 const mealWeeks = new Map();
+const cookWeeks = new Map();   // weekKey -> cook-ritual doc
 const recipeMeta = new Map();
 let ezRecipes = [];
 let pickingSlot = null;
@@ -1862,6 +1929,15 @@ function subscribeMealWeeks(){
     renderAll();
   }, (err) => console.warn('[meals] snapshot err', err));
 }
+function subscribeCookWeeks(){
+  onSnapshot(cookWeeksCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') cookWeeks.delete(ch.doc.id);
+      else cookWeeks.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
+    });
+    renderAll();
+  }, (err) => console.warn('[meals] cook snapshot err', err));
+}
 // Live mirror of meals_recipes. Once you've migrated, this is the source of
 // truth — every change here re-renders the rest of the page just like the
 // EZ pull used to. The shape matches what loadEz produces so downstream
@@ -2193,6 +2269,8 @@ async function saveMealWeek(weekKey, wk){
 }
 
 async function setMealSlot(weekKey, slotIdx, recipeId){
+  // Clearing (recipeId null) is always allowed — only ADDING is gated.
+  if (recipeId && gateBlocked(weekKey)) return;
   const wk = getMealWeek(weekKey);
   // Allow setting a 3rd slot by auto-expanding the array.
   while (wk.slots.length <= slotIdx) { wk.slots.push(null); wk.sides.push([]); }
@@ -2208,6 +2286,7 @@ async function setShowThird(weekKey, on){
   await saveMealWeek(weekKey, wk);
 }
 async function addMealSide(weekKey, slotIdx, recipeId){
+  if (recipeId && gateBlocked(weekKey)) return;
   const wk = getMealWeek(weekKey);
   while (wk.sides.length <= slotIdx) wk.sides.push([]);
   if (!Array.isArray(wk.sides[slotIdx])) wk.sides[slotIdx] = [];
@@ -2631,11 +2710,199 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
     ${addSideBtn}
   </div>`;
 }
+// ---------- Weekly cook ritual + planning gate ----------
+// One rule: each week you must cook TWO meals — one simple (salad/sandwich
+// tier) and one entrée — master both, and save both recipes. Until the
+// current week's ritual is done, the NEXT week can't be planned. Weeks
+// before the rule shipped count as satisfied so history never gates.
+const COOK_GATE_EPOCH = '2026-07-26';
+const COOK_TRACKS = [
+  { key:'simple', label:'Simple', hint:'salad · sandwich · quick' },
+  { key:'entree', label:'Entrée', hint:'a real dish' },
+];
+
+function trackDone(t){
+  return !!(t && t.mastered && ((t.recipe || '').trim() || t.recipeId));
+}
+function cookSatisfied(weekKey){
+  if (weekKey < COOK_GATE_EPOCH) return true;
+  const c = cookWeeks.get(weekKey);
+  return !!(c && COOK_TRACKS.every(T => trackDone(c[T.key])));
+}
+// Adds to week X need X-1's ritual done — or X's own (redemption: if last
+// week slipped, cooking THIS week's meal re-unlocks planning). Past weeks
+// are free; blocking history edits disciplines nothing.
+function canAddToWeek(weekKey){
+  if (weekKey < isoWeekKey()) return true;
+  return cookSatisfied(shiftWeekKey(weekKey, -1)) || cookSatisfied(weekKey);
+}
+function gateBlocked(weekKey){
+  if (canAddToWeek(weekKey)) return false;
+  showCookGate();
+  return true;
+}
+
+async function saveCookTrack(weekKey, track, patch){
+  // Per-track nested patch. The wire write leans on Firestore's deep merge;
+  // the optimistic local copy must merge the track map by hand (spread is
+  // shallow and would drop the track's other fields).
+  const cur = cookWeeks.get(weekKey) || { weekKey };
+  const next = { ...cur, [track]: { ...(cur[track] || {}), ...patch }, updatedAt: nowISO() };
+  cookWeeks.set(weekKey, next);
+  renderAll();
+  try { await setDoc(doc(cookWeeksCol, weekKey), { weekKey, [track]: patch, updatedAt: next.updatedAt }, { merge: true }); }
+  catch (e) {
+    console.error('[meals] cook save', e);
+    alert("Couldn't save your cook log — check your connection and try again.");
+  }
+}
+
+function showCookGate(){
+  let bg = document.getElementById('cookGateBg');
+  if (!bg) {
+    bg = document.createElement('div');
+    bg.id = 'cookGateBg';
+    bg.innerHTML = `<div class="cook-gate">
+      <div class="cg-emoji">🔒</div>
+      <h3>Master two meals first</h3>
+      <p>The deal you made: every week you cook two meals — one simple, one entrée — master both, and save the recipes. Then next week's planning unlocks.</p>
+      <div class="cg-row">
+        <button class="tb-btn" id="cgClose">Not now</button>
+        <button class="tb-btn primary" id="cgGo">Go to this week</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bg);
+    bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('open'); });
+    bg.querySelector('#cgClose').addEventListener('click', () => bg.classList.remove('open'));
+    bg.querySelector('#cgGo').addEventListener('click', () => {
+      bg.classList.remove('open');
+      viewWeekKey = isoWeekKey();
+      renderAll();
+    });
+  }
+  bg.classList.add('open');
+}
+
+let _cookEditWeek = null;      // week whose satisfied-card is in edit mode
+let _cookRecipeOpen = null;    // track key ('simple'|'entree') whose textarea is expanded
+
+function cookRitualHtml(k){
+  const cur = isoWeekKey();
+  // Future week: show the lock strip when planning is blocked; stay silent
+  // when it's unlocked (the card lives on the week you cook in).
+  if (k > cur) {
+    if (canAddToWeek(k)) return '';
+    return `<div class="cookr locked" style="grid-column:1/-1">
+      <div class="cookr-head"><span class="cookr-title">🔒 Locked week</span></div>
+      <div class="cookr-note">Master this week's two meals — one simple, one entrée, recipes saved — to unlock planning here.</div>
+      <div class="cookr-row"><button class="cookr-btn primary" data-cr-go>Go to this week</button></div>
+    </div>`;
+  }
+  if (k < COOK_GATE_EPOCH) return '';           // history predates the rule
+  const c = cookWeeks.get(k) || {};
+  const doneCount = COOK_TRACKS.filter(T => trackDone(c[T.key])).length;
+  const done = doneCount === COOK_TRACKS.length;
+  const editing = _cookEditWeek === k;
+  const isCurrent = k === cur;
+  if (done && !editing) {
+    return `<div class="cookr" style="grid-column:1/-1">
+      <div class="cookr-head">
+        <span class="cookr-title">Master two meals</span>
+        <span class="cookr-chip done">Done</span>
+        <span class="cookr-spacer"></span>
+        <button class="cookr-mini" data-cr-edit title="Edit">✎</button>
+      </div>
+      <div class="cookr-note">✓ Simple: <b>${esc((c.simple || {}).dish || '—')}</b> · Entrée: <b>${esc((c.entree || {}).dish || '—')}</b> — ${isCurrent ? 'next week is unlocked.' : 'this week was earned.'}</div>
+    </div>`;
+  }
+  // To-do (or editing) state — one block per track.
+  const wk = getMealWeek(k);
+  const planned = wk.slots.filter(Boolean).map(rid => ({ rid, title: (lookupRecipe(rid) || {}).title || '' })).filter(x => x.title);
+  const trackHtml = (T) => {
+    const t = c[T.key] || {};
+    const tDone = trackDone(t);
+    const chips = (!t.dish && planned.length)
+      ? `<div class="cookr-row cookr-chips">${planned.map(p => `<button class="cookr-btn" data-cr-slot="${T.key}|${attr(p.rid)}">${esc(p.title)}</button>`).join('')}</div>`
+      : '';
+    const dishRow = t.dish
+      ? `<div class="cookr-row"><span class="cookr-dish">${esc(t.dish)}</span><button class="cookr-mini" data-cr-redish="${T.key}" title="Change dish">✎</button></div>`
+      : `<div class="cookr-row">
+          <input type="text" data-cr-dishin="${T.key}" placeholder="${T.key === 'simple' ? 'Something simple — salad, sandwich…' : 'The entrée you’ll master…'}" maxlength="80">
+          <button class="cookr-btn primary" data-cr-dishsave="${T.key}">Set</button>
+        </div>${chips}`;
+    const recipeSaved = !!((t.recipe || '').trim() || t.recipeId);
+    const steps = t.dish ? `
+      <div class="cookr-row">
+        <button class="cookr-btn ${t.mastered ? 'on' : ''}" data-cr-master="${T.key}">${t.mastered ? '✓ Cooked & mastered' : '① Cooked & mastered?'}</button>
+        <button class="cookr-btn ${recipeSaved ? 'on' : ''}" data-cr-recipe="${T.key}">${recipeSaved ? (t.recipeId && !(t.recipe || '').trim() ? '✓ Recipe in library' : '✓ Recipe saved') : '② Save the recipe'}</button>
+      </div>` : '';
+    const ta = (t.dish && _cookRecipeOpen === T.key) ? `
+      <textarea data-cr-recipeta="${T.key}" placeholder="Write it the way YOU cooked it — ingredients, steps, the tweaks that made it yours.">${esc(t.recipe || '')}</textarea>
+      <div class="cookr-row"><button class="cookr-btn primary" data-cr-recipesave="${T.key}">Save recipe</button></div>` : '';
+    return `<div class="cookr-track ${tDone ? 'tdone' : ''}">
+      <div class="cookr-tlabel">${tDone ? '✓ ' : ''}${T.label}<span class="cookr-thint">${T.hint}</span></div>
+      ${dishRow}${steps}${ta}
+    </div>`;
+  };
+  return `<div class="cookr" style="grid-column:1/-1">
+    <div class="cookr-head">
+      <span class="cookr-title">Master two meals</span>
+      <span class="cookr-chip todo">${doneCount}/2</span>
+      <span class="cookr-spacer"></span>
+      ${isCurrent ? '<span class="cookr-note" style="margin:0">unlocks next week</span>' : ''}
+    </div>
+    ${COOK_TRACKS.map(trackHtml).join('')}
+  </div>`;
+}
+
+function wireCookRitual(el, k){
+  el.querySelector('[data-cr-go]')?.addEventListener('click', () => { viewWeekKey = isoWeekKey(); renderAll(); });
+  el.querySelector('[data-cr-edit]')?.addEventListener('click', () => { _cookEditWeek = k; renderAll(); });
+  el.querySelectorAll('[data-cr-redish]').forEach(b => b.addEventListener('click', () => {
+    saveCookTrack(k, b.getAttribute('data-cr-redish'), { dish: '', recipeId: null });
+  }));
+  const saveDish = (track) => {
+    const inp = el.querySelector(`[data-cr-dishin="${track}"]`);
+    const v = (inp?.value || '').trim();
+    if (v) saveCookTrack(k, track, { dish: v });
+  };
+  el.querySelectorAll('[data-cr-dishsave]').forEach(b => b.addEventListener('click', () => saveDish(b.getAttribute('data-cr-dishsave'))));
+  el.querySelectorAll('[data-cr-dishin]').forEach(inp => inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveDish(inp.getAttribute('data-cr-dishin'));
+  }));
+  el.querySelectorAll('[data-cr-slot]').forEach(b => b.addEventListener('click', () => {
+    const v = b.getAttribute('data-cr-slot');
+    const track = v.slice(0, v.indexOf('|'));
+    const rid = v.slice(v.indexOf('|') + 1);
+    saveCookTrack(k, track, { dish: (lookupRecipe(rid) || {}).title || '', recipeId: rid });
+  }));
+  el.querySelectorAll('[data-cr-master]').forEach(b => b.addEventListener('click', () => {
+    const track = b.getAttribute('data-cr-master');
+    const t = (cookWeeks.get(k) || {})[track] || {};
+    saveCookTrack(k, track, t.mastered ? { mastered: false } : { mastered: true, cookedAt: nowISO() });
+  }));
+  el.querySelectorAll('[data-cr-recipe]').forEach(b => b.addEventListener('click', () => {
+    const track = b.getAttribute('data-cr-recipe');
+    _cookRecipeOpen = _cookRecipeOpen === track ? null : track;
+    renderAll();
+  }));
+  el.querySelectorAll('[data-cr-recipesave]').forEach(b => b.addEventListener('click', () => {
+    const track = b.getAttribute('data-cr-recipesave');
+    const ta = el.querySelector(`[data-cr-recipeta="${track}"]`);
+    _cookRecipeOpen = null;
+    _cookEditWeek = null;
+    saveCookTrack(k, track, { recipe: (ta?.value || '').trim() });
+  }));
+}
+
+let _cookLastWeek = null;
 function renderSlots(){
   const k = viewWeekKey;
   const cur = isoWeekKey();
   const wk = getMealWeek(k);
   const el = document.getElementById('slots');
+  // Collapse the ritual card's transient edit state when the pager moves.
+  if (_cookLastWeek !== k){ _cookLastWeek = k; _cookRecipeOpen = null; _cookEditWeek = null; }
   // Week pager — spans the grid. Lets the user plan future weeks (and see the
   // week their picks actually landed in after a Sunday rollover).
   const rel = k === cur ? 'This week'
@@ -2652,6 +2919,7 @@ function renderSlots(){
       <button class="wp-nav" id="wpNext" title="Next week">›</button>
     </div>`;
   let html = pager
+           + cookRitualHtml(k)
            + slotHtml(wk.slots[0], 0, k, true, wk.sides[0])
            + slotHtml(wk.slots[1], 1, k, true, wk.sides[1]);
   if (wk.showThird) {
@@ -2660,6 +2928,7 @@ function renderSlots(){
     html += `<button class="add-third" id="addThirdBtn">+ Add a third meal this week</button>`;
   }
   el.innerHTML = html;
+  wireCookRitual(el, k);
   document.getElementById('wpPrev')?.addEventListener('click', () => { viewWeekKey = shiftWeekKey(viewWeekKey, -1); renderAll(); });
   document.getElementById('wpNext')?.addEventListener('click', () => { viewWeekKey = shiftWeekKey(viewWeekKey, 1); renderAll(); });
   document.getElementById('wpToday')?.addEventListener('click', () => { viewWeekKey = isoWeekKey(); renderAll(); });
@@ -2747,6 +3016,7 @@ async function toggleFavorite(rid){
 // expose it. If everything is full, do nothing (user must clear a slot first).
 async function reAddToCurrentWeek(rid){
   const k = viewWeekKey;
+  if (gateBlocked(k)) return;
   const wk = getMealWeek(k);
   // Look for an empty main slot first (0, then 1, then 2 if showThird).
   for (let i = 0; i < (wk.showThird ? 3 : 2); i++) {
@@ -3250,6 +3520,9 @@ function renderCookList(){
 
 // ---------- Picker ----------
 function openPicker(){
+  // Don't let the user browse and choose only to be refused at commit —
+  // if the viewed week is gate-locked, say so up front.
+  if (gateBlocked(viewWeekKey)) return;
   const slotLabel = pickingSlot === 2 ? 'the 3rd meal' : `meal #${pickingSlot + 1}`;
   document.getElementById('pickerH').textContent = pickingForSide
     ? `Pick a side for ${slotLabel}`
@@ -4837,6 +5110,7 @@ if (new URLSearchParams(location.search).get('embed') === '1') {
 }
 subscribeCategories();
 subscribeMealWeeks();
+subscribeCookWeeks();
 subscribeRecipeMeta();
 subscribeIngredientLib();
 subscribeRecipes();
