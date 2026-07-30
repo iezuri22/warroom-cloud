@@ -265,6 +265,18 @@
   .cook-gate h3{ margin:8px 0 6px; font-size:16px; font-weight:800 }
   .cook-gate p{ margin:0 0 16px; font-size:13px; line-height:1.5; color:var(--w70) }
   .cook-gate .cg-row{ display:flex; gap:8px; justify-content:center }
+  /* Manual picker entry + slot mastery-role chips */
+  .picker-manual{
+    grid-column:1/-1; padding:11px 14px; border:1.5px dashed var(--line2); border-radius:11px;
+    font-size:13px; font-weight:700; color:var(--w70); cursor:pointer; background:var(--w03);
+  }
+  .picker-manual:hover{ border-color:var(--accent); color:var(--ink) }
+  .picker-manual.muted{ cursor:default; font-weight:600; opacity:.65 }
+  .picker-manual.muted:hover{ border-color:var(--line2); color:var(--w70) }
+  .slot-chip.role{
+    background:rgba(255,138,61,.14); border-color:rgba(255,138,61,.4); color:#e2701f; font-weight:800;
+  }
+  .slot.empty .sub2{ font-size:10.5px; opacity:.65; margin-top:3px }
   /* Chef iQ / original-recipe link-outs */
   a.mini.link-out{ text-decoration:none; display:inline-flex; align-items:center; gap:4px }
   .recipe-link-btn{
@@ -1428,6 +1440,7 @@ const cookWeeks = new Map();   // weekKey -> cook-ritual doc
 const recipeMeta = new Map();
 let ezRecipes = [];
 let pickingSlot = null;
+let pickingTrack = null;       // 'simple'|'entree' when the picker feeds a mastery track
 let pickerQuery = '';
 let pickerLabel = '';
 let pickerChef  = '';   // '' = all · 'chef' = Chef iQ only · 'nochef' = no Chef iQ link
@@ -2277,6 +2290,14 @@ async function setMealSlot(weekKey, slotIdx, recipeId){
   wk.slots[slotIdx] = recipeId || null;
   if (slotIdx === 2 && recipeId) wk.showThird = true;
   await saveMealWeek(weekKey, wk);
+  // Collab: meal #1 IS the simple track, meal #2 the entrée. Picking a slot
+  // auto-names the matching mastery track — but never overwrites a dish the
+  // user already chose there.
+  const role = SLOT_ROLES[slotIdx];
+  if (recipeId && role) {
+    const t = (cookWeeks.get(weekKey) || {})[role.track] || {};
+    if (!t.dish) await saveCookTrack(weekKey, role.track, { dish: (lookupRecipe(recipeId) || {}).title || '', recipeId });
+  }
 }
 async function setShowThird(weekKey, on){
   const wk = getMealWeek(weekKey);
@@ -2630,8 +2651,17 @@ function renderTopbar(){
   // persist regardless of which slots are filled.
   document.getElementById('groceryBtn').hidden = false;
 }
+// Manual meals: slots/tracks can hold a typed-in meal that isn't a library
+// recipe. It lives entirely in the rid string ('manual:<name>') so no doc is
+// written to the meals_recipes mirror (EZ sync must never fight over it).
+const MANUAL_RID_PREFIX = 'manual:';
+const isManualRid = rid => typeof rid === 'string' && rid.startsWith(MANUAL_RID_PREFIX);
 function lookupRecipe(rid){
   if (!rid) return null;
+  if (isManualRid(rid)) {
+    return { rid, title: rid.slice(MANUAL_RID_PREFIX.length), manual: true,
+             ingredients: [], steps: [], labels: [], tags: [] };
+  }
   return ezRecipes.find(r => r.rid === rid) || null;
 }
 // Render one side row (compact card under the main slot).
@@ -2656,15 +2686,23 @@ function sideRowHtml(rid, slotIdx, sideIdx, weekKey){
     <button class="mini danger" data-side-clear="${slotIdx}|${sideIdx}|${attr(weekKey)}" title="Remove side">✕</button>
   </div>`;
 }
+// Slots #1/#2 double as the week's two mastery tracks (simple / entrée) —
+// the role line + chip make that pairing visible.
+const SLOT_ROLES = [
+  { track:'simple', chip:'Simple', sub:'Simple — salad, sandwich, quick' },
+  { track:'entree', chip:'Entrée', sub:'Entrée — a real dish' },
+];
 function slotHtml(rid, slotIdx, weekKey, editable, sides){
   const raw = lookupRecipe(rid);
+  const role = SLOT_ROLES[slotIdx] || null;
   if (!rid) {
     if (!editable) return `<div class="slot empty" style="pointer-events:none;opacity:.5;border-style:solid;border-width:1px"><div class="h">(empty)</div></div>`;
     const label = slotIdx === 2 ? 'Pick the 3rd meal' : `Pick meal #${slotIdx + 1}`;
     return `<div class="slot empty" data-pick="${slotIdx}">
       <div class="plus">+</div>
       <div class="h">${label}</div>
-      <div class="sub">From your recipes</div>
+      <div class="sub">${role ? esc(role.sub) : 'From your recipes'}</div>
+      <div class="sub sub2">From your recipes — or type your own</div>
     </div>`;
   }
   if (!raw) {
@@ -2680,8 +2718,9 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
   const merged = recipeWithMeta(raw);
   const img = merged.img
     ? `<img class="slot-img" src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
-    : `<div class="slot-img placeholder">🍳</div>`;
-  const labels = (merged.labels || []).slice(0, 3).map(L => `<span class="slot-chip">${esc(L)}</span>`).join('');
+    : `<div class="slot-img placeholder">${raw.manual ? '📝' : '🍳'}</div>`;
+  const roleChip = role ? `<span class="slot-chip role">${esc(role.chip)}</span>` : '';
+  const labels = roleChip + (merged.labels || []).slice(0, 3).map(L => `<span class="slot-chip">${esc(L)}</span>`).join('');
   // Sides — hidden by default, revealed by the "+ Add side" button.
   const hasSides = Array.isArray(sides) && sides.length > 0;
   const sidesHtml = hasSides
@@ -2695,13 +2734,13 @@ function slotHtml(rid, slotIdx, weekKey, editable, sides){
     <div class="slot-body">
       <div class="slot-title">${esc(merged.title)}</div>
       <div class="slot-chips">${labels}</div>
-      <div class="slot-meta">${(merged.ingredients || []).length} ingredients · ${(merged.steps || []).length} steps</div>
+      <div class="slot-meta">${raw.manual ? 'manual entry' : `${(merged.ingredients || []).length} ingredients · ${(merged.steps || []).length} steps`}</div>
     </div>
     ${editable ? `<div class="slot-actions">
-      <button class="mini primary" data-cook="${attr(rid)}">🍴 Cook</button>
+      ${raw.manual ? '' : `<button class="mini primary" data-cook="${attr(rid)}">🍴 Cook</button>
       <button class="mini" data-ings="${attr(rid)}|${slotIdx}">🥬 Ingredients</button>
       <button class="mini" data-view="${attr(rid)}">📖 View</button>
-      ${merged.link ? `<a class="mini link-out" href="${attr(merged.link)}" target="_blank" rel="noopener" title="Open the original recipe">${isChefIq(merged.link) ? '⚡ Chef iQ' : '🔗 Recipe'}</a>` : ''}
+      ${merged.link ? `<a class="mini link-out" href="${attr(merged.link)}" target="_blank" rel="noopener" title="Open the original recipe">${isChefIq(merged.link) ? '⚡ Chef iQ' : '🔗 Recipe'}</a>` : ''}`}
       <button class="mini" data-pick="${slotIdx}">↻ Replace</button>
       <button class="mini danger" data-clear="${slotIdx}|${attr(weekKey)}">✕ Clear</button>
     </div>
@@ -2721,8 +2760,13 @@ const COOK_TRACKS = [
   { key:'entree', label:'Entrée', hint:'a real dish' },
 ];
 
+// A linked LIBRARY recipe counts as saved (it lives in the library); a
+// manual ('manual:…') id is just a name — the recipe still has to be written.
+function trackRecipeSaved(t){
+  return !!(t && ((t.recipe || '').trim() || (t.recipeId && !isManualRid(t.recipeId))));
+}
 function trackDone(t){
-  return !!(t && t.mastered && ((t.recipe || '').trim() || t.recipeId));
+  return !!(t && t.mastered && trackRecipeSaved(t));
 }
 function cookSatisfied(weekKey){
   if (weekKey < COOK_GATE_EPOCH) return true;
@@ -2827,14 +2871,15 @@ function cookRitualHtml(k){
     const dishRow = t.dish
       ? `<div class="cookr-row"><span class="cookr-dish">${esc(t.dish)}</span><button class="cookr-mini" data-cr-redish="${T.key}" title="Change dish">✎</button></div>`
       : `<div class="cookr-row">
-          <input type="text" data-cr-dishin="${T.key}" placeholder="${T.key === 'simple' ? 'Something simple — salad, sandwich…' : 'The entrée you’ll master…'}" maxlength="80">
+          <input type="text" data-cr-dishin="${T.key}" placeholder="${T.key === 'simple' ? 'Type something simple — salad, sandwich…' : 'Type the entrée you’ll master…'}" maxlength="80">
           <button class="cookr-btn primary" data-cr-dishsave="${T.key}">Set</button>
+          <button class="cookr-btn" data-cr-pick="${T.key}">📖 Pick from recipes</button>
         </div>${chips}`;
-    const recipeSaved = !!((t.recipe || '').trim() || t.recipeId);
+    const recipeSaved = trackRecipeSaved(t);
     const steps = t.dish ? `
       <div class="cookr-row">
         <button class="cookr-btn ${t.mastered ? 'on' : ''}" data-cr-master="${T.key}">${t.mastered ? '✓ Cooked & mastered' : '① Cooked & mastered?'}</button>
-        <button class="cookr-btn ${recipeSaved ? 'on' : ''}" data-cr-recipe="${T.key}">${recipeSaved ? (t.recipeId && !(t.recipe || '').trim() ? '✓ Recipe in library' : '✓ Recipe saved') : '② Save the recipe'}</button>
+        <button class="cookr-btn ${recipeSaved ? 'on' : ''}" data-cr-recipe="${T.key}">${recipeSaved ? (t.recipeId && !isManualRid(t.recipeId) && !(t.recipe || '').trim() ? '✓ Recipe in library' : '✓ Recipe saved') : '② Save the recipe'}</button>
       </div>` : '';
     const ta = (t.dish && _cookRecipeOpen === T.key) ? `
       <textarea data-cr-recipeta="${T.key}" placeholder="Write it the way YOU cooked it — ingredients, steps, the tweaks that made it yours.">${esc(t.recipe || '')}</textarea>
@@ -2875,6 +2920,12 @@ function wireCookRitual(el, k){
     const track = v.slice(0, v.indexOf('|'));
     const rid = v.slice(v.indexOf('|') + 1);
     saveCookTrack(k, track, { dish: (lookupRecipe(rid) || {}).title || '', recipeId: rid });
+  }));
+  el.querySelectorAll('[data-cr-pick]').forEach(b => b.addEventListener('click', () => {
+    pickingTrack = b.getAttribute('data-cr-pick');
+    pickingForSide = false;
+    pickingSlot = null;
+    openPicker();
   }));
   el.querySelectorAll('[data-cr-master]').forEach(b => b.addEventListener('click', () => {
     const track = b.getAttribute('data-cr-master');
@@ -3521,12 +3572,16 @@ function renderCookList(){
 // ---------- Picker ----------
 function openPicker(){
   // Don't let the user browse and choose only to be refused at commit —
-  // if the viewed week is gate-locked, say so up front.
-  if (gateBlocked(viewWeekKey)) return;
+  // if the viewed week is gate-locked, say so up front. Picking for a
+  // mastery TRACK is exempt: completing the ritual is how a locked week
+  // gets unlocked, so that path must always stay open.
+  if (!pickingTrack && gateBlocked(viewWeekKey)) return;
   const slotLabel = pickingSlot === 2 ? 'the 3rd meal' : `meal #${pickingSlot + 1}`;
-  document.getElementById('pickerH').textContent = pickingForSide
-    ? `Pick a side for ${slotLabel}`
-    : `Pick ${slotLabel}`;
+  document.getElementById('pickerH').textContent = pickingTrack
+    ? (pickingTrack === 'simple' ? 'Pick your simple meal' : 'Pick your entrée')
+    : pickingForSide
+      ? `Pick a side for ${slotLabel}`
+      : `Pick ${slotLabel}`;
   document.getElementById('pickerBg').classList.add('open');
   pickerQuery = '';
   pickerLabel = '';
@@ -3537,7 +3592,17 @@ function openPicker(){
 function closePicker(){
   pickingSlot = null;
   pickingForSide = false;
+  pickingTrack = null;
   document.getElementById('pickerBg').classList.remove('open');
+}
+// One commit path for every picker mode — slot, side, or mastery track —
+// and for both library recipes and manual ('manual:<name>') entries.
+function commitPick(rid){
+  const wk = viewWeekKey;
+  if (pickingTrack) saveCookTrack(wk, pickingTrack, { dish: (lookupRecipe(rid) || {}).title || '', recipeId: rid });
+  else if (pickingForSide) addMealSide(wk, pickingSlot, rid);
+  else setMealSlot(wk, pickingSlot, rid);
+  closePicker();
 }
 function renderPicker(){
   // Two independent filter tiers that combine (AND):
@@ -3582,19 +3647,32 @@ function renderPicker(){
     return hay.includes(q);
   }).sort((a,b) => (a.title || '').localeCompare(b.title || ''));
   const grid = document.getElementById('pickerGrid');
+  // Manual entry: whatever's typed in the search box can be used as-is —
+  // meals don't have to live in the recipe library to count.
+  const manualText = pickerQuery.trim();
+  const manualRow = manualText
+    ? `<div class="picker-manual" data-manual="${attr(manualText)}">➕ Use “${esc(manualText)}” as typed — no recipe needed</div>`
+    : `<div class="picker-manual muted">…or type anything above and use it as a manual entry</div>`;
+  const wireManual = () => {
+    grid.querySelector('[data-manual]')?.addEventListener('click', e => {
+      commitPick(MANUAL_RID_PREFIX + e.currentTarget.getAttribute('data-manual'));
+    });
+  };
   if (!ezRecipes.length) {
-    grid.innerHTML = ezSignedIn
+    grid.innerHTML = manualRow + (ezSignedIn
       ? `<div class="empty-msg">No recipes loaded yet. Add some in EZ Recipes / PotLuck, then refresh.</div>`
-      : `<div class="empty-msg">Not signed in to EZ Recipes.<br><button class="tb-btn primary" id="pickerSignInBtn" style="margin-top:14px">Sign in</button></div>`;
+      : `<div class="empty-msg">Not signed in to EZ Recipes.<br><button class="tb-btn primary" id="pickerSignInBtn" style="margin-top:14px">Sign in</button></div>`);
     const sb = document.getElementById('pickerSignInBtn');
     if (sb) sb.addEventListener('click', openEzAuth);
+    wireManual();
     return;
   }
   if (!matches.length) {
-    grid.innerHTML = `<div class="empty-msg">No recipes match.</div>`;
+    grid.innerHTML = manualRow + `<div class="empty-msg">No recipes match.</div>`;
+    wireManual();
     return;
   }
-  grid.innerHTML = matches.map(r => {
+  grid.innerHTML = manualRow + matches.map(r => {
     const merged = recipeWithMeta(r);
     const img = merged.img
       ? `<img src="${attr(merged.img)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="empty-thumb" style="display:none">🍳</div>`
@@ -3608,15 +3686,10 @@ function renderPicker(){
       </div>
     </div>`;
   }).join('');
-  grid.querySelectorAll('[data-rid]').forEach(c => c.addEventListener('click', () => {
-    const rid = c.getAttribute('data-rid');
-    // Save into the week the slot view is LOOKING AT — that's what makes
-    // planning next week (or fixing a rolled-over week) actually stick.
-    const wk = viewWeekKey;
-    if (pickingForSide) addMealSide(wk, pickingSlot, rid);
-    else setMealSlot(wk, pickingSlot, rid);
-    closePicker();
-  }));
+  // commitPick saves into the week the slot view is LOOKING AT — that's what
+  // makes planning next week (or fixing a rolled-over week) actually stick.
+  grid.querySelectorAll('[data-rid]').forEach(c => c.addEventListener('click', () => commitPick(c.getAttribute('data-rid'))));
+  wireManual();
 }
 
 // ---------- View ----------
