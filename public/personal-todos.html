@@ -5456,6 +5456,44 @@
     cursor: pointer;
   }
   .ov-cta:hover { border-color: var(--accent); color: var(--accent); }
+  /* Successful-days modal */
+  .ovs-modal { max-width: 460px; }
+  .ovs-head { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+  .ovs-head .pof-title { flex: 1; text-align: center; }
+  .ovs-nav {
+    width: 32px; height: 32px; border: 1px solid var(--border-strong); border-radius: 50%;
+    background: var(--surface); color: var(--ink-mid); font-size: 18px; line-height: 1;
+    cursor: pointer; flex-shrink: 0; font-family: inherit;
+  }
+  .ovs-stats { display: flex; gap: 8px; margin-bottom: 14px; }
+  .ovs-stat {
+    flex: 1; background: var(--fill); border-radius: 12px; padding: 10px 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .ovs-num { font-size: 17px; font-weight: 800; letter-spacing: -.3px; }
+  .ovs-num i { font-style: normal; font-size: 12px; font-weight: 700; color: var(--ink-dim); }
+  .ovs-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-dim); }
+  .ovs-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .ovs-wd { font-size: 10px; font-weight: 800; color: var(--ink-dim); text-align: center; text-transform: uppercase; letter-spacing: .4px; padding-bottom: 2px; }
+  .ovs-cell {
+    aspect-ratio: 1; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    font-size: 12.5px; font-weight: 700; color: var(--ink-mid); background: transparent;
+  }
+  .ovs-cell.pad { visibility: hidden; }
+  .ovs-cell.fut { color: var(--ink-dim); opacity: .5; }
+  .ovs-cell.nodata { color: var(--ink-dim); }
+  .ovs-cell.zero { box-shadow: inset 0 0 0 1.5px var(--border-strong); }
+  .ovs-cell.half { background: rgba(30,158,106,.18); color: #1A7A54; }
+  .ovs-cell.full { background: var(--green); color: #fff; }
+  .ovs-cell.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ovs-legend {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-top: 12px; font-size: 11.5px; font-weight: 600; color: var(--ink-mid);
+  }
+  .ovs-dot { display: inline-block; width: 11px; height: 11px; border-radius: 4px; margin-right: 4px; vertical-align: -1px; }
+  .ovs-dot.full { background: var(--green); }
+  .ovs-dot.half { background: rgba(30,158,106,.18); }
+  .ovs-note { margin-left: auto; color: var(--ink-dim); }
   @media (max-width: 640px) {
     .ov-go { padding: 6px 10px; font-size: 11.5px; }
     .ov-mode button { padding: 6px 13px; }
@@ -6104,6 +6142,22 @@
       <button class="coach-send" id="coachSend" type="button" aria-label="Send">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- Successful days — month calendar scored on two gentle tracks:
+     tasks ≥30% done, habits ≥65% satisfied (read from the Habits page data). -->
+<div class="priority-overflow-backdrop" id="ovStatsBackdrop" aria-hidden="true">
+  <div class="priority-overflow ovs-modal" role="dialog" aria-modal="true" aria-labelledby="ovStatsTitle">
+    <div class="pof-head ovs-head">
+      <button class="ovs-nav" id="ovStatsPrev" type="button" aria-label="Previous month">‹</button>
+      <div class="pof-title" id="ovStatsTitle">Stats</div>
+      <button class="ovs-nav" id="ovStatsNext" type="button" aria-label="Next month">›</button>
+    </div>
+    <div class="pof-body" id="ovStatsBody"></div>
+    <div class="pof-foot">
+      <button class="pof-cancel" id="ovStatsClose" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -13273,6 +13327,9 @@ const VOICE = {
   const _ovMealTitles = {};     // rid -> resolved recipe title
   let _ovMealsKickKey = '';
   let _ovAddOpen = null;        // section key whose inline quick-add row is open
+  // Checked-off tasks leave the cards — the ✓ browser is the archive. A row
+  // lingers struck-through briefly so a mis-tap is undoable in place.
+  const _ovJustDone = new Map(); // id -> ts of the check-off
 
   function _ovCollect(extraSeen){
     const today = todayKey();
@@ -13438,6 +13495,7 @@ const VOICE = {
       <div class="ov-gos">
         <button class="ov-go" type="button" data-ov-go="planned">Planned${plOpen ? ` · ${plOpen}` : ''}</button>
         <button class="ov-go" type="button" data-ov-go="lists">Lists</button>
+        <button class="ov-go" type="button" data-ov-go="stats">Stats</button>
         <button class="ov-go" type="button" data-ov-go="done" aria-label="Completed">✓</button>
       </div>`;
     col.appendChild(top);
@@ -13450,11 +13508,17 @@ const VOICE = {
             todayArr.length ? `${tDone}/${todayArr.length} today` : '',
             weekArr.length ? `${weekArr.length} wk` : ''
           ].filter(Boolean).join(' · ');
+      // Done rows hide (the ✓ browser keeps the archive) except during the
+      // brief post-check linger; the n/total count still tells the story.
+      const visToday = todayArr.filter(t => !t.done || _ovJustDone.has(String(t.id)));
       const rowsHTML = _ovMode === 'day'
-        ? todayArr.map(t => _ovRowHTML(t)).join('')
-        : todayArr.map(t => _ovRowHTML(t, 'Today')).join('') + weekArr.map(_ovWeekRowHTML).join('');
+        ? visToday.map(t => _ovRowHTML(t)).join('')
+        : visToday.map(t => _ovRowHTML(t, 'Today')).join('') + weekArr.map(_ovWeekRowHTML).join('');
+      const allDone = todayArr.length > 0 && tDone === todayArr.length;
       const emptyHTML = (!rowsHTML && !extraHTML)
-        ? `<div class="ov-empty">${_ovMode === 'day' ? 'Nothing yet' : 'Nothing this week'}</div>` : '';
+        ? (allDone
+            ? '<div class="ov-empty">All done today.</div>'
+            : `<div class="ov-empty">${_ovMode === 'day' ? 'Nothing yet' : 'Nothing this week'}</div>`) : '';
       const card = document.createElement('div');
       card.className = `ov-sec sec-${key}`;
       const addRow = _ovAddOpen === key
@@ -13566,13 +13630,31 @@ const VOICE = {
         } else if (dest === 'lists') {
           const first = (focus5State.lists || []).find(l => !l.routine) || (focus5State.lists || [])[0];
           if (first) focus5SwitchList(first.id);
+        } else if (dest === 'stats') {
+          try { openOvStats(); } catch (e) { console.warn(e); }
         } else if (dest === 'done') {
           try { openCompletedBrowser(); } catch {}
         }
         return;
       }
       const doneBtn = e.target.closest('[data-ov-done]');
-      if (doneBtn) { e.stopPropagation(); toggleTodo(doneBtn.getAttribute('data-ov-done')); return; }
+      if (doneBtn) {
+        e.stopPropagation();
+        const id = doneBtn.getAttribute('data-ov-done');
+        const t = todos.find(x => x.id === id);
+        if (t && !t.done) {
+          // Being completed — linger struck-through, then drop off the card.
+          _ovJustDone.set(String(id), Date.now());
+          setTimeout(() => {
+            _ovJustDone.delete(String(id));
+            try { if (_f5OverviewTab) render(); } catch {}
+          }, 1400);
+        } else {
+          _ovJustDone.delete(String(id));
+        }
+        toggleTodo(id);
+        return;
+      }
       if (e.target.closest('[data-ov-inbox]')) { try { openEcmInbox(); } catch {} return; }
       if (e.target.closest('[data-ov-meals]')) {
         try {
@@ -13586,6 +13668,156 @@ const VOICE = {
     });
     view.appendChild(shell);
   }
+  // ===== SUCCESSFUL DAYS — month calendar + gentle thresholds =============
+  // A day is a win on two independent tracks: tasks (≥30% of that day's
+  // non-routine todos done) and habits (≥65% satisfied, read straight from
+  // the Habits page's health_habit_days docs — checks for positives, don'ts
+  // auto-credit from their `since` unless slipped). Full green = both, soft
+  // green = one. The bar is deliberately low: productive, not overwhelmed.
+  const OV_TASK_WIN = 0.30;
+  const OV_HABIT_WIN = 0.65;
+  let _ovStatsMonth = null;   // Date, first of the viewed month
+  function _ovStatsKey(y, m, d){ return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+  async function _ovStatsData(y, m){
+    const dim = new Date(y, m + 1, 0).getDate();
+    const start = _ovStatsKey(y, m, 1), end = _ovStatsKey(y, m, dim);
+    const today = todayKey();
+    // Tasks: one range query for the month. Routine instances (fromTemplate)
+    // belong to the habits track, not here.
+    const perDay = {};
+    for (let d = 1; d <= dim; d++) perDay[_ovStatsKey(y, m, d)] = { tt: 0, td: 0, ht: 0, hd: 0 };
+    try {
+      const qs = await getDocs(query(todosCol, where('date', '>=', start), where('date', '<=', end)));
+      qs.forEach(dref => {
+        const t = dref.data() || {};
+        if (t.fromTemplate) return;
+        const p = perDay[t.date];
+        if (!p) return;
+        p.tt++;
+        if (t.done) p.td++;
+      });
+    } catch (e) { console.warn('stats tasks query failed', e); }
+    // Habits: config doc for the roster, one small collection for the days.
+    // The config doc only exists once habits are edited on the Habits page —
+    // until then that page runs on its hardcoded defaults, so we mirror them
+    // (kept in sync with DEFAULT_HABITS in daily-goals.html).
+    const OV_DEFAULT_HABITS = [
+      { id: 'bible', section: 'morning' }, { id: 'bedclean', section: 'morning' },
+      { id: 'pray', section: 'morning' }, { id: 'journal', section: 'morning' },
+      { id: 'stretch', section: 'morning' }, { id: 'vitamins', section: 'afternoon' },
+      { id: 'workout', section: 'afternoon' }, { id: 'cook', section: 'afternoon' },
+      { id: 'finances', section: 'afternoon' }, { id: 'read', section: 'night' },
+      { id: 'teeth', section: 'night' }, { id: 'shower', section: 'night' },
+      { id: 'noexplicit', section: 'dont', since: '2026-07-28' },
+      { id: 'noyoutube', section: 'dont', since: '2026-07-28' }
+    ];
+    try {
+      const cfgSnap = await getDoc(doc(db, 'health_config', 'habits'));
+      const habits = (cfgSnap.exists() && Array.isArray((cfgSnap.data() || {}).habits) && cfgSnap.data().habits.length)
+        ? cfgSnap.data().habits.filter(h => h && h.id) : OV_DEFAULT_HABITS;
+      if (habits.length) {
+        const daysSnap = await getDocs(collection(db, 'health_habit_days'));
+        const dayDocs = {};
+        daysSnap.forEach(dref => { dayDocs[dref.id] = dref.data() || {}; });
+        for (let d = 1; d <= dim; d++) {
+          const k = _ovStatsKey(y, m, d);
+          if (k > today) continue;
+          const checks = (dayDocs[k] || {}).checks || {};
+          const slips = (dayDocs[k] || {}).slips || {};
+          habits.forEach(h => {
+            const isDont = h.section === 'dont';
+            if (isDont && k < (h.since || today)) return;      // N/A before its start
+            perDay[k].ht++;
+            const ok = isDont ? !slips[h.id] : !!checks[h.id];
+            if (ok) perDay[k].hd++;
+          });
+        }
+      }
+    } catch (e) { console.warn('stats habits load failed', e); }
+    return { dim, perDay, today };
+  }
+  function _ovStatsRender(data, y, m){
+    const body = document.getElementById('ovStatsBody');
+    const title = document.getElementById('ovStatsTitle');
+    if (!body || !title) return;
+    title.textContent = new Date(y, m, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const { dim, perDay, today } = data;
+    // Everything shown is threshold-based — no raw done/total counts. The
+    // bars ARE the story: a day is a win, or it isn't.
+    let wins = 0, taskWins = 0, habitWins = 0, elapsed = 0, run = 0, bestRun = 0;
+    const cells = [];
+    // Monday-first grid like the reference.
+    const lead = (new Date(y, m, 1).getDay() + 6) % 7;
+    for (let i = 0; i < lead; i++) cells.push('<span class="ovs-cell pad"></span>');
+    for (let d = 1; d <= dim; d++) {
+      const k = _ovStatsKey(y, m, d);
+      const p = perDay[k];
+      const fut = k > today;
+      let cls = 'nodata';
+      if (fut) cls = 'fut';
+      else {
+        const taskOk = p.tt > 0 && (p.td / p.tt) >= OV_TASK_WIN;
+        const habitOk = p.ht > 0 && (p.hd / p.ht) >= OV_HABIT_WIN;
+        if (taskOk && habitOk) cls = 'full';
+        else if (taskOk || habitOk) cls = 'half';
+        else if (p.tt || p.ht) cls = 'zero';
+        if (taskOk) taskWins++;
+        if (habitOk) habitWins++;
+        if (taskOk || habitOk) { wins++; run++; bestRun = Math.max(bestRun, run); }
+        else run = 0;
+        elapsed++;
+      }
+      cells.push(`<span class="ovs-cell ${cls} ${k === today ? 'today' : ''}">${d}</span>`);
+    }
+    body.innerHTML = `
+      <div class="ovs-stats">
+        <div class="ovs-stat"><span class="ovs-num">${wins}<i>/${elapsed}</i></span><span class="ovs-lbl">good days</span></div>
+        <div class="ovs-stat"><span class="ovs-num">${taskWins}</span><span class="ovs-lbl">task days</span></div>
+        <div class="ovs-stat"><span class="ovs-num">${habitWins}</span><span class="ovs-lbl">habit days</span></div>
+        <div class="ovs-stat"><span class="ovs-num">${bestRun}</span><span class="ovs-lbl">best streak</span></div>
+      </div>
+      <div class="ovs-grid">
+        ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(w => `<span class="ovs-wd">${w}</span>`).join('')}
+        ${cells.join('')}
+      </div>
+      <div class="ovs-legend">
+        <span><i class="ovs-dot full"></i> tasks + habits</span>
+        <span><i class="ovs-dot half"></i> one of two</span>
+        <span class="ovs-note">tasks ≥ ${Math.round(OV_TASK_WIN * 100)}% · habits ≥ ${Math.round(OV_HABIT_WIN * 100)}%</span>
+      </div>`;
+  }
+  async function _ovStatsGo(delta){
+    const cur = _ovStatsMonth || new Date();
+    const next = new Date(cur.getFullYear(), cur.getMonth() + delta, 1);
+    _ovStatsMonth = next;
+    const body = document.getElementById('ovStatsBody');
+    if (body) body.innerHTML = '<div class="ov-empty">Loading…</div>';
+    const data = await _ovStatsData(next.getFullYear(), next.getMonth());
+    _ovStatsRender(data, next.getFullYear(), next.getMonth());
+  }
+  function openOvStats(){
+    const bd = document.getElementById('ovStatsBackdrop');
+    if (!bd) return;
+    bd.classList.add('show');
+    bd.setAttribute('aria-hidden', 'false');
+    _ovStatsMonth = null;
+    _ovStatsGo(0);
+  }
+  function closeOvStats(){
+    const bd = document.getElementById('ovStatsBackdrop');
+    if (!bd) return;
+    bd.classList.remove('show');
+    bd.setAttribute('aria-hidden', 'true');
+  }
+  (function wireOvStats(){
+    const bd = document.getElementById('ovStatsBackdrop');
+    if (!bd) return;
+    document.getElementById('ovStatsClose').addEventListener('click', closeOvStats);
+    bd.addEventListener('click', (e) => { if (e.target === bd) closeOvStats(); });
+    document.getElementById('ovStatsPrev').addEventListener('click', () => _ovStatsGo(-1));
+    document.getElementById('ovStatsNext').addEventListener('click', () => _ovStatsGo(1));
+  })();
+
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
