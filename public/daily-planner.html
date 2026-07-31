@@ -1240,48 +1240,6 @@ body.focus-big-min .focus-big{cursor:pointer}
 .followup-actions .confirm{background:var(--text);color:var(--bg);border-color:var(--text)}
 .followup-actions .confirm:hover{opacity:.85}
 
-/* BRAIN DUMP / AI COACH */
-.coach-section{display:none;padding-bottom:80px}
-.coach-section.active{display:block}
-.coach-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.coach-header h2{font-size:20px;font-weight:800}
-.coach-chat{
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:16px;margin-bottom:16px;max-height:50vh;overflow-y:auto;
-}
-.coach-msg{margin-bottom:14px;line-height:1.5}
-.coach-msg.ai{padding:12px;background:var(--surface-2);border-radius:10px;font-size:13px;font-weight:500}
-.coach-msg.ai .coach-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:6px}
-.coach-msg.user{padding:12px;background:var(--c-work-bg);border-radius:10px;font-size:13px;font-weight:500;margin-left:32px}
-.coach-msg.user .coach-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--c-work);margin-bottom:6px}
-.coach-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.coach-action{
-  font-family:var(--ios-font);font-size:12px;font-weight:600;padding:6px 12px;
-  border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);
-  cursor:pointer;transition:all .12s;
-}
-.coach-action:hover{background:var(--surface-2)}
-.coach-action.primary{background:var(--text);color:var(--bg);border-color:var(--text)}
-.coach-input-row{display:flex;gap:6px}
-.coach-input{
-  flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);
-  font-family:var(--ios-font);font-size:14px;padding:10px 12px;border-radius:8px;outline:none;
-}
-.coach-input::placeholder{color:var(--text-dim)}
-.coach-send{
-  background:var(--text);color:var(--bg);border:none;font-family:var(--ios-font);
-  font-size:14px;font-weight:600;padding:10px 14px;border-radius:8px;cursor:pointer;
-}
-.coach-voice{
-  background:none;border:1px solid var(--border);color:var(--text-mid);font-family:var(--ios-font);
-  font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;cursor:pointer;
-  display:flex;align-items:center;gap:5px;transition:all .12s;
-}
-.coach-voice.recording{background:rgba(201,48,48,0.10);border-color:var(--overdue);color:var(--overdue);animation:pulse-timer 1.5s ease infinite}
-.coach-voice-live{font-size:12px;color:var(--text-dim);font-style:italic;margin-top:6px;min-height:18px}
-.coach-spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
 /* YOUTUBE QUEUE */
 .yt-section{display:none;padding-bottom:80px}
 .yt-section.active{display:block}
@@ -2136,8 +2094,7 @@ body.fullscreen #calendarView iframe{
 
 /* Softer urgency + time-of-day accents on beige */
 .plan-item-urgent-tag,
-.plan-btn.urgent-btn.is-urgent,
-.coach-voice.recording{background:rgba(201,48,48,0.10) !important;color:var(--overdue) !important}
+.plan-btn.urgent-btn.is-urgent{background:rgba(201,48,48,0.10) !important;color:var(--overdue) !important}
 .time-col-icon.morning{background:var(--c-ezrk-bg) !important;color:var(--c-morning) !important}
 .time-col-icon.afternoon{background:var(--c-work-bg) !important;color:var(--c-afternoon) !important}
 .time-col-icon.night{background:var(--c-personal-bg) !important;color:var(--c-night) !important}
@@ -3048,7 +3005,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 
   <!-- TODOS VIEW (default) -->
   <div class="todos-view" id="todosView">
-    <iframe id="todosFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="todosFrame" src="about:blank" allow="microphone" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
   </div>
 
   <!-- HABITS VIEW (Daily Goals + health hub — same iframe pattern as Learning) -->
@@ -6556,9 +6513,9 @@ function reorderYT(draggedId,targetId){
   saveYT(list);renderYT();
 }
 
-// --- AI Coach / Brain Dump ---
-let coachMessages=[];
-let coachVoice=null,coachRecording=false;
+// --- Settings panel (API key + Smartsheets) ---
+// The old in-shell AI Coach was retired; planning chat now lives in
+// personal-todos.html (Coach sheet → /api/plan-chat).
 function getApiKey(){return localStorage.getItem('goals-api-key')||''}
 function toggleApiKeyPanel(){
   const p=document.getElementById('apiKeyPanel');
@@ -6679,286 +6636,6 @@ function importAllData(e){
   };
   reader.readAsText(file);
   e.target.value='';
-}
-
-let pendingPlan=null; // holds proposed items before accept
-
-async function coachAnalyze(){
-  let apiKey=getApiKey();
-  if(!apiKey){
-    apiKey=prompt('Paste your Anthropic API key (sk-ant-...):');
-    if(!apiKey)return;
-    localStorage.setItem('goals-api-key',apiKey);backupKey('goals-api-key',apiKey);
-  }
-  const{items:planItems}=currentPlan();
-  const goals=loadGoals().filter(g=>!g.done);
-  const h=new Date().getHours();
-  const timeOfDay=h<12?'morning':h<17?'afternoon':'evening';
-  const dayName=viewDate.toLocaleDateString('en-US',{weekday:'long'});
-
-  const planContext=planItems.length?
-    'Current plan for today:\n'+planItems.map((p,i)=>`${i+1}. [${p.slot}] [${D[p.domain]?.name||p.domain}] ${p.text}${p.done?' (done)':''} ${p.timeSpent?'('+Math.round(p.timeSpent/60)+'m tracked)':''}`).join('\n'):
-    'No tasks planned yet for this day.';
-  const goalsContext=goals.slice(0,30).map(g=>`[${D[g.domain]?.name||g.domain}${g.subcat?' / '+g.subcat:''}] ${g.text}${g.due?' (due '+g.due+')':''}${g.urgent?' URGENT':''}`).join('\n');
-
-  const systemPrompt=`You are If's daily operations coach inside his "War Room" planner. Be direct, sharp, no fluff. Talk like a smart coworker.
-
-CONTEXT:
-- It's ${timeOfDay} on ${dayName}, ${viewDate.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}
-- If runs: ECM (9-5 GovTech consulting), EZRK Apps (evening/weekend builds), VitalTouch (home care), and personal life
-- His top priorities: EZ Reader (App Store by May 1), EZ Chef next, Butterfly Health Academy (Aug 2026)
-- Work hours: 9am-5pm CT. Build hours: evenings after 6pm, weekends
-
-${planContext}
-
-ACTIVE GOALS (from tracker):
-${goalsContext||'(none)'}
-
-YOUR JOB:
-1. Analyze what matters most given time of day, priorities, and deadlines
-2. Produce a structured day plan as JSON
-3. Give a brief rationale (2-3 sentences max) explaining your reasoning
-4. Flag anything urgent or overdue
-
-RESPOND WITH ONLY THIS JSON (no markdown fences):
-{"rationale":"brief explanation of why this order","plan":[{"text":"task description","domain":"work|vt|ezrk|personal","slot":"morning|afternoon|night"}],"question":"one sharp focusing question"}
-
-RULES:
-- domain must be: work, vt, ezrk, or personal
-- slot must be: morning, afternoon, or night
-- Order the plan array by priority within each slot
-- 5-10 items max. Be realistic about what fits in a day
-- If items already exist in the plan, include them in the right order
-- Never use emojis`;
-
-  addCoachMsg('ai','<div class="coach-spinner"></div> Thinking...');
-  try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1500,system:systemPrompt,messages:[{role:'user',content:'Plan my day. What should I focus on and in what order?'}]})
-    });
-    if(!resp.ok)throw new Error('API '+resp.status);
-    const data=await resp.json();
-    const raw=data.content[0].text;
-    coachMessages=[{role:'assistant',content:raw}];
-    // Try to parse structured plan
-    try{
-      const jsonMatch=raw.match(/\{[\s\S]*\}/);
-      const parsed=JSON.parse(jsonMatch[0]);
-      if(parsed.plan&&parsed.plan.length){
-        pendingPlan=parsed.plan.map(p=>({...p,id:uid(),accepted:true}));
-        let html='';
-        if(parsed.rationale)html+=`<div style="margin-bottom:12px">${formatCoachText(parsed.rationale)}</div>`;
-        html+=renderPendingPlan();
-        if(parsed.question)html+=`<div style="margin-top:12px;font-weight:600;font-style:italic">${esc(parsed.question)}</div>`;
-        replaceLastCoachMsg('ai',html);
-        return;
-      }
-    }catch{}
-    // Fallback: plain text
-    replaceLastCoachMsg('ai',formatCoachText(raw));
-  }catch(e){
-    replaceLastCoachMsg('ai','Could not reach AI. Check your API key via the gear icon.');
-  }
-}
-
-function renderPendingPlan(){
-  if(!pendingPlan||!pendingPlan.length)return'';
-  const slotOrder={morning:0,afternoon:1,night:2};
-  const sorted=[...pendingPlan].sort((a,b)=>(slotOrder[a.slot]||0)-(slotOrder[b.slot]||0));
-  let html='<div style="margin:12px 0">';
-  let lastSlot='';
-  sorted.forEach(p=>{
-    if(p.slot!==lastSlot){
-      lastSlot=p.slot;
-      const slotLabel={morning:'Morning',afternoon:'Afternoon',night:'Night'}[p.slot]||p.slot;
-      html+=`<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin:${lastSlot?'12px':'0'} 0 6px">${slotLabel}</div>`;
-    }
-    const d=D[p.domain]||D.personal;
-    html+=`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${p.accepted?'var(--surface-2)':'var(--surface)'};border:1px solid ${p.accepted?'var(--border)':'var(--border)'};border-radius:8px;margin-bottom:4px;opacity:${p.accepted?'1':'.4'};transition:all .12s">
-      <input type="checkbox" ${p.accepted?'checked':''} onchange="togglePlanItem('${p.id}')" style="accent-color:var(--text);width:16px;height:16px;cursor:pointer;flex-shrink:0">
-      <span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:${d.bg};color:${d.color};text-transform:uppercase;letter-spacing:.3px;flex-shrink:0">${d.name}</span>
-      <span style="font-size:13px;font-weight:500;flex:1">${esc(p.text)}</span>
-    </div>`;
-  });
-  html+=`<div style="display:flex;gap:6px;margin-top:12px">
-    <button class="coach-action primary" onclick="acceptPlan()">Add to Today's Plan</button>
-    <button class="coach-action" onclick="pendingPlan=null;addCoachMsg('ai','Plan discarded. Tell me what you want instead.')">Discard</button>
-  </div></div>`;
-  return html;
-}
-
-function togglePlanItem(id){
-  if(!pendingPlan)return;
-  const item=pendingPlan.find(p=>p.id===id);
-  if(item)item.accepted=!item.accepted;
-  // Re-render the last AI message
-  const chat=document.getElementById('coachChat');
-  const msgs=chat.querySelectorAll('.coach-msg.ai');
-  const last=msgs[msgs.length-1];
-  if(last){
-    // Preserve rationale and question, just update the plan
-    const rDiv=last.querySelector('div');
-    const qDiv=last.querySelector('div[style*="font-style:italic"]');
-    const rationale=rDiv?rDiv.outerHTML:'';
-    const question=qDiv?qDiv.outerHTML:'';
-    last.innerHTML=`<div class="coach-label">Coach</div>${rationale}${renderPendingPlan()}${question}`;
-  }
-}
-
-function acceptPlan(){
-  if(!pendingPlan)return;
-  const accepted=pendingPlan.filter(p=>p.accepted);
-  if(!accepted.length){addCoachMsg('ai','Nothing selected. Check the items you want to add.');return}
-  const{all,items,key}=currentPlan();
-  const existingTexts=new Set(items.map(i=>i.text));
-  let added=0;
-  accepted.forEach(p=>{
-    if(existingTexts.has(p.text))return; // no dupes
-    const id=uid();
-    items.push({id,text:p.text,domain:p.domain,slot:p.slot,originalSlot:p.slot,done:false,shifted:false,skipped:false,timeSpent:0,createdAt:new Date().toISOString()});
-    syncToGoals({id,text:p.text,domain:p.domain,due:key});
-    added++;
-  });
-  all[key]=items;savePlan(all);
-  pendingPlan=null;
-  addCoachMsg('ai',`Added ${added} task${added!==1?'s':''} to Today\'s Plan and Goals. Switch to the Plan tab to see them.`);
-  render();
-}
-
-async function sendCoachMsg(){
-  const input=document.getElementById('coachInput');
-  const text=input.value.trim();if(!text)return;
-  input.value='';
-  if(coachRecording)toggleCoachVoice();
-
-  let apiKey=getApiKey();
-  if(!apiKey){
-    apiKey=prompt('Paste your Anthropic API key (sk-ant-...):');
-    if(!apiKey)return;
-    localStorage.setItem('goals-api-key',apiKey);backupKey('goals-api-key',apiKey);
-  }
-
-  addCoachMsg('user',esc(text));
-  coachMessages.push({role:'user',content:text});
-  addCoachMsg('ai','<div class="coach-spinner"></div> Thinking...');
-
-  const{items:planItems}=currentPlan();
-  const planContext=planItems.length?
-    'Current plan:\n'+planItems.map((p,i)=>`${i+1}. [${p.slot}] [${D[p.domain]?.name||p.domain}] ${p.text}${p.done?' (done)':''}`).join('\n'):'No plan yet.';
-  const goals=loadGoals().filter(g=>!g.done);
-  const goalsContext=goals.slice(0,20).map(g=>`[${D[g.domain]?.name||g.domain}] ${g.text}`).join('\n');
-
-  const systemPrompt=`You are If's War Room coach. Be direct, no emojis.
-Current plan: ${planContext}
-Active goals: ${goalsContext||'(none)'}
-
-If he dumps tasks, ideas, or asks you to add something: extract items and return JSON:
-{"rationale":"brief note","plan":[{"text":"task","domain":"work|vt|ezrk|personal","slot":"morning|afternoon|night"}]}
-
-If he asks to reorder or change existing items, return the updated plan as JSON.
-If he's just chatting or asking a question, respond as plain text (no JSON).
-Always be concise. Never use emojis.`;
-
-  const msgs=coachMessages.map(m=>({role:m.role,content:m.content}));
-
-  try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1500,system:systemPrompt,messages:msgs})
-    });
-    if(!resp.ok)throw new Error('API '+resp.status);
-    const data=await resp.json();
-    const reply=data.content[0].text;
-    coachMessages.push({role:'assistant',content:reply});
-    // Try structured plan parse
-    try{
-      const jsonMatch=reply.match(/\{[\s\S]*\}/);
-      const parsed=JSON.parse(jsonMatch[0]);
-      if(parsed.plan&&parsed.plan.length){
-        pendingPlan=parsed.plan.map(p=>({...p,id:uid(),accepted:true}));
-        let html='';
-        if(parsed.rationale)html+=`<div style="margin-bottom:12px">${formatCoachText(parsed.rationale)}</div>`;
-        html+=renderPendingPlan();
-        if(parsed.question)html+=`<div style="margin-top:12px;font-weight:600;font-style:italic">${esc(parsed.question)}</div>`;
-        replaceLastCoachMsg('ai',html);
-        return;
-      }
-    }catch{}
-    replaceLastCoachMsg('ai',formatCoachText(reply));
-  }catch(e){
-    replaceLastCoachMsg('ai','Error reaching AI. Try again.');
-  }
-}
-
-function formatCoachText(t){
-  // Convert markdown-ish to HTML
-  return t.replace(/\n\n/g,'<br><br>').replace(/\n/g,'<br>').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/`(.+?)`/g,'<code style="background:var(--surface-2);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
-}
-
-function addCoachMsg(type,html){
-  const chat=document.getElementById('coachChat');
-  const div=document.createElement('div');
-  div.className='coach-msg '+type;
-  div.innerHTML=`<div class="coach-label">${type==='ai'?'Coach':'You'}</div>${html}`;
-  chat.appendChild(div);
-  chat.scrollTop=chat.scrollHeight;
-}
-function replaceLastCoachMsg(type,html){
-  const chat=document.getElementById('coachChat');
-  const msgs=chat.querySelectorAll('.coach-msg.'+type);
-  const last=msgs[msgs.length-1];
-  if(last){last.innerHTML=`<div class="coach-label">${type==='ai'?'Coach':'You'}</div>${html}`}
-  chat.scrollTop=chat.scrollHeight;
-}
-
-// --- Coach Voice ---
-function initCoachVoice(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR)return null;
-  const r=new SR();
-  r.continuous=true;r.interimResults=true;r.lang='en-US';
-  r.onresult=(e)=>{
-    let interim='',final='';
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      const t=e.results[i][0].transcript;
-      if(e.results[i].isFinal){final+=t}else{interim+=t}
-    }
-    if(final){
-      const input=document.getElementById('coachInput');
-      const sep=(input.value&&!input.value.endsWith(' '))?' ':'';
-      input.value+=sep+final.trim();
-      document.getElementById('coachVoiceLive').textContent='';
-    } else {
-      document.getElementById('coachVoiceLive').textContent=interim;
-    }
-  };
-  r.onerror=(e)=>{
-    if(e.error==='not-allowed')alert('Microphone access denied.');
-    stopCoachVoice();
-  };
-  r.onend=()=>{if(coachRecording)try{r.start()}catch{stopCoachVoice()}};
-  return r;
-}
-
-function toggleCoachVoice(){
-  if(coachRecording){stopCoachVoice();return}
-  if(!coachVoice)coachVoice=initCoachVoice();
-  if(!coachVoice){alert('Voice not supported in this browser.');return}
-  try{
-    coachVoice.start();coachRecording=true;
-    document.getElementById('coachVoiceBtn').classList.add('recording');
-    document.getElementById('coachVoiceText').textContent='Listening...';
-  }catch{stopCoachVoice()}
-}
-function stopCoachVoice(){
-  coachRecording=false;
-  if(coachVoice)try{coachVoice.stop()}catch{}
-  document.getElementById('coachVoiceBtn').classList.remove('recording');
-  document.getElementById('coachVoiceText').textContent='Talk';
-  document.getElementById('coachVoiceLive').textContent='';
 }
 
 // --- Sync to Goals Tracker ---
