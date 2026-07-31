@@ -324,15 +324,17 @@ YOUR JOB:
 2. Pull from ALL four sources: what he just said, his existing lists, ECM work (prefer overdue, due soon, hard deadlines, assigned-to-me), and coach memory. Say why an ECM item made the cut.
 3. Anything he mentions that does NOT get scheduled right now goes into memory adds so it resurfaces next time. When a memory item gets scheduled or he says it's done/irrelevant, resolve it.
 4. Never propose items that already sit in his task lists or planned parking — those are shown above. Suggest at most what fits; he can always ask for more.
+5. Route every plan item to a SECTION of his page: "ecm" (GovTech consulting — ALWAYS for Smartsheet rows), "vitaltouch" (VitalTouch home-care business), "meals" (cooking, groceries, meal prep), "life" (everything else — personal, EZRK builds, BHA, errands, health).
 
 RESPOND WITH ONLY THIS JSON — no markdown fences, no text outside it:
 {"reply":"what you'd say to him — plain text, may use **bold** and \\n- bullets, keep it tight",
- "plan":[{"title":"task as it should appear","date":"YYYY-MM-DD","slot":"morning|afternoon|evening","source":"ecm|memory|new","rowId":"only for source ecm — the [row N] id","memoryId":"only for source memory — the [mem X] id","note":"optional 3-6 word reason"}],
+ "plan":[{"title":"task as it should appear","date":"YYYY-MM-DD","slot":"morning|afternoon|evening","source":"ecm|memory|new","section":"ecm|vitaltouch|meals|life","rowId":"only for source ecm — the [row N] id","memoryId":"only for source memory — the [mem X] id","note":"optional 3-6 word reason"}],
  "memory_add":["new unscheduled task text", "..."],
  "memory_resolve":[{"id":"mem doc id","why":"scheduled|done|dropped"}]}
 
 JSON RULES:
 - "plan" may be [] when he's just chatting. Every plan item MUST have a real date (today or later). Undated ideas belong in memory_add, not plan.
+- Every plan item MUST carry "section". Items with a rowId are always section "ecm".
 - rowId must be copied exactly from a [row N] line above; memoryId from a [mem X] line. Never invent ids.
 - memory_resolve with why:"scheduled" is REQUIRED for every memory item you put in the plan.
 - Keep "reply" under 120 words; the plan speaks for itself.`;
@@ -412,15 +414,22 @@ async function handlePlan(req, res, body) {
   const plan = (Array.isArray(parsed.plan) ? parsed.plan : [])
     .filter(p => p && typeof p.title === 'string' && p.title.trim() && /^\d{4}-\d{2}-\d{2}$/.test(String(p.date || '')))
     .slice(0, 40)
-    .map(p => ({
-      title: p.title.trim().slice(0, 200),
-      date: String(p.date),
-      slot: ['morning', 'afternoon', 'evening'].includes(p.slot) ? p.slot : null,
-      source: ['ecm', 'memory', 'new'].includes(p.source) ? p.source : 'new',
-      rowId: p.rowId && ecm.rowIds.has(String(p.rowId)) ? String(p.rowId) : null,
-      memoryId: p.memoryId && validMemIds.has(String(p.memoryId)) ? String(p.memoryId) : null,
-      note: typeof p.note === 'string' ? p.note.slice(0, 80) : null
-    }));
+    .map(p => {
+      const rowId = p.rowId && ecm.rowIds.has(String(p.rowId)) ? String(p.rowId) : null;
+      // A real Smartsheet row is ECM work no matter what the model labeled it.
+      const section = rowId ? 'ecm'
+        : (['ecm', 'vitaltouch', 'meals', 'life'].includes(p.section) ? p.section : 'life');
+      return {
+        title: p.title.trim().slice(0, 200),
+        date: String(p.date),
+        slot: ['morning', 'afternoon', 'evening'].includes(p.slot) ? p.slot : null,
+        source: ['ecm', 'memory', 'new'].includes(p.source) ? p.source : 'new',
+        section,
+        rowId,
+        memoryId: p.memoryId && validMemIds.has(String(p.memoryId)) ? String(p.memoryId) : null,
+        note: typeof p.note === 'string' ? p.note.slice(0, 80) : null
+      };
+    });
 
   // Persist memory changes server-side so a brain-dump can't be lost by
   // closing the sheet. Dedupe adds against open items (case-insensitive).

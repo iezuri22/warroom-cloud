@@ -5343,6 +5343,61 @@
     .ags-add-btn { padding: 7px 10px; font-size: 11px; }
   }
 
+  /* ===== OVERVIEW — sectioned home (ECM · VitalTouch · Meals · Life) ===== */
+  .ov-wrap { display: flex; flex-direction: column; gap: 12px; }
+  .ov-sec {
+    background: var(--surface); border-radius: var(--radius);
+    box-shadow: var(--shadow-card); padding: 14px 16px 12px;
+  }
+  .ov-head { display: flex; align-items: center; gap: 9px; }
+  .ov-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .ov-sec.sec-ecm .ov-dot { background: var(--blue); }
+  .ov-sec.sec-vitaltouch .ov-dot { background: var(--teal); }
+  .ov-sec.sec-meals .ov-dot { background: var(--green); }
+  .ov-sec.sec-life .ov-dot { background: var(--purple); }
+  .ov-name { font-size: 15px; font-weight: 800; letter-spacing: -.2px; }
+  .ov-ct { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--ink-dim); white-space: nowrap; }
+  .ov-inbox {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 3px 9px; font-size: 11px; font-weight: 700; color: var(--blue);
+    cursor: pointer; font-family: inherit;
+  }
+  .ov-sub {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--ink-dim); margin: 10px 0 2px;
+  }
+  .ov-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 0; }
+  .ov-row + .ov-row { border-top: 1px solid var(--border); }
+  .ov-check {
+    width: 20px; height: 20px; border-radius: 7px; border: 1.5px solid var(--border-strong);
+    background: var(--surface); cursor: pointer; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    color: var(--on-accent); margin-top: 1px;
+  }
+  .ov-check.on { background: var(--accent); border-color: var(--accent); }
+  .ov-row.done .ov-text { text-decoration: line-through; opacity: .45; }
+  .ov-text { flex: 1; font-size: 13.5px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+  .ov-pin { margin-right: 4px; font-size: 11px; }
+  .ov-flag {
+    font-size: 9px; font-weight: 800; letter-spacing: .4px; color: var(--blue);
+    background: rgba(59,111,212,.1); padding: 2px 5px; border-radius: 4px;
+    flex-shrink: 0; margin-top: 2px;
+  }
+  .ov-row.wk .ov-text { color: var(--ink-mid); }
+  .ov-daychip {
+    font-size: 10px; font-weight: 800; color: var(--ink-dim); background: var(--fill);
+    border-radius: 5px; padding: 3px 6px; flex-shrink: 0; min-width: 34px; text-align: center;
+  }
+  .ov-meal-chips { display: flex; flex-wrap: wrap; gap: 6px; cursor: pointer; padding-top: 4px; }
+  .ov-meal-chip {
+    font-size: 12px; font-weight: 600; background: rgba(30,158,106,.1); color: var(--green);
+    border-radius: 99px; padding: 5px 11px;
+  }
+  .ov-empty { font-size: 12.5px; color: var(--ink-dim); padding: 8px 0 2px; }
+  @media (max-width: 640px) {
+    .overview-pill .name { display: none; }
+  }
+
   /* ===== COACH — voice planning chat (day/week plans via /api/plan-chat) ===== */
   .coach-fab {
     position: fixed; top: 14px; right: 122px; z-index: 60;
@@ -5429,9 +5484,10 @@
     font-size: 9.5px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
     padding: 2px 6px; border-radius: 5px; flex-shrink: 0; margin-top: 3px;
   }
-  .cp-badge.ecm { background: rgba(59,111,212,.12); color: var(--blue); }
-  .cp-badge.memory { background: rgba(232,162,61,.16); color: #9A6B1F; }
-  .cp-badge.new { background: var(--fill); color: var(--ink-mid); }
+  .cp-badge.sec-ecm { background: rgba(59,111,212,.12); color: var(--blue); }
+  .cp-badge.sec-vitaltouch { background: rgba(42,167,155,.14); color: var(--teal); }
+  .cp-badge.sec-meals { background: rgba(30,158,106,.13); color: var(--green); }
+  .cp-badge.sec-life { background: rgba(124,99,232,.12); color: var(--purple); }
   .cp-actions { display: flex; gap: 8px; margin-top: 10px; }
   .cp-btn {
     flex: 1; height: 38px; border: none; border-radius: 11px;
@@ -6169,6 +6225,38 @@
   }
   function migrateJobId(id) { return JOB_ID_MIGRATE[id] || id; }
   let JOBS = loadJobsList();
+
+  // ---- Sections (Overview cards + Coach routing) ----
+  // Every todo belongs to one of four page sections. The coach stamps
+  // `section` explicitly on accept; for everything else (older tasks, manual
+  // adds, ssSync rows) we infer from the job board or the smartsheet link.
+  // Lives up here with the jobs helpers because the boot render needs it.
+  const SECTION_META = {
+    ecm:        { label: 'ECM' },
+    vitaltouch: { label: 'VitalTouch' },
+    meals:      { label: 'Meals' },
+    life:       { label: 'Life' }
+  };
+  function sectionOf(t){
+    if (t && SECTION_META[t.section]) return t.section;
+    if (t && t.smartsheetRowId) return 'ecm';
+    const jm = t && t.job ? jobMeta(t.job) : null;
+    const label = (jm ? jm.label : (t && t.job) || '').toLowerCase();
+    if (/ecm|govtech|\bwork\b/.test(label) || t?.job === 'work') return 'ecm';
+    if (/vital|^vt$/.test(label) || t?.job === 'vt') return 'vitaltouch';
+    if (/meal|cook|chef|grocer/.test(label)) return 'meals';
+    return 'life';
+  }
+  // Best job board for a section, so section'd tasks also carry the right
+  // job pill everywhere else in the app. Null = leave job unset.
+  function sectionJob(section){
+    const find = (re) => (JOBS.find(j => re.test(String(j.label || '').toLowerCase())) || {}).id || null;
+    if (section === 'ecm') return ecmJobId();
+    if (section === 'vitaltouch') return find(/vital/) || (JOBS.some(j => j.id === 'vt') ? 'vt' : null);
+    if (section === 'meals') return find(/meal|cook|chef/);
+    if (section === 'life') return find(/^personal$/) || (JOBS.some(j => j.id === 'personal') ? 'personal' : null);
+    return null;
+  }
   // Find which job id maps to "ECM" — user's boards probably has it under a
   // custom id (e.g. 'ecm'), but legacy installs used 'work' (GovTech). Match
   // by label first so we follow whatever the user actually named their ECM
@@ -10407,6 +10495,7 @@ const VOICE = {
     _focus5EditMode = false;
     _f5PlannedTab = false;
     _f5DayTab = false;
+    _f5OverviewTab = false;
     // Uncommitted quick-capture text belongs to the list it was typed under —
     // don't carry it across an explicit list switch.
     _f5QuickText = '';
@@ -13095,6 +13184,146 @@ const VOICE = {
     });
   })();
 
+  // ===== OVERVIEW — the sectioned home view ==============================
+  // Four vertical domain cards — ECM · VitalTouch · Meals · Life — each with
+  // Today (checkable rows) and This week (planned ledger, next 7 days). The
+  // Meals card also mirrors this week's meal slots. Boot lands here; tapping
+  // any list tab or pill leaves it for the session, reload comes back.
+  let _f5OverviewTab = true;
+  let _ovMealsWeek = null;      // latest goals_canvas_meal_weeks doc (stashed by the banner subscription)
+  const _ovMealTitles = {};     // rid -> resolved recipe title
+  let _ovMealsKickKey = '';
+
+  function _ovCollect(){
+    const today = todayKey();
+    const end = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return dkey(d); })();
+    const seen = new Set();
+    const sections = {};
+    Object.keys(SECTION_META).forEach(k => { sections[k] = { today: [], week: [] }; });
+    const skipped = (typeof _focus5GetSkippedToday === 'function') ? _focus5GetSkippedToday() : new Set();
+    // 1) Non-routine focus lists, in list order — today's working set.
+    (focus5State.lists || []).forEach(l => {
+      if (l.routine) return;
+      (l.taskIds || []).forEach(ref => {
+        if (skipped.has(ref)) return;
+        const t = resolveFocus5TaskId(ref);
+        if (!t || seen.has(t.id) || skipped.has(t.id)) return;
+        seen.add(t.id);
+        sections[sectionOf(t)].today.push(t);
+      });
+    });
+    // 2) Loose todos dated today (fresh adds not yet listed). Routine
+    //    instances and planned items stay out.
+    todos.filter(t => t.date === today && !t.fromTemplate && !seen.has(t.id) && !_isPlannedDoc(t))
+      .sort((a, b) => (a.position || 0) - (b.position || 0))
+      .forEach(t => { seen.add(t.id); sections[sectionOf(t)].today.push(t); });
+    // 3) The week ahead, from the planned ledger.
+    (_plannedCache || [])
+      .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor > today && p.plannedFor <= end)
+      .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+      .forEach(p => { if (!seen.has(p.id)) sections[sectionOf(p)].week.push(p); });
+    return sections;
+  }
+  function _ovDayChip(ds){
+    try {
+      const t = new Date(); t.setDate(t.getDate() + 1);
+      if (ds === dkey(t)) return 'Tmrw';
+      return new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+    } catch { return ds; }
+  }
+  function _ovRowHTML(t){
+    const done = !!t.done;
+    return `<div class="ov-row ${done ? 'done' : ''}">
+      <button class="ov-check ${done ? 'on' : ''}" type="button" data-ov-done="${escHtml(t.id)}" aria-label="${done ? 'Mark open' : 'Mark done'}">${done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
+      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}</span>
+      ${t.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
+    </div>`;
+  }
+  function _ovWeekRowHTML(p){
+    return `<div class="ov-row wk">
+      <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
+      <span class="ov-text">${escHtml(p.text || '')}</span>
+      ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
+    </div>`;
+  }
+  // Meal slots for the week — resolved against meals_recipes with our own
+  // little cache (the banner's resolver is closed over in its IIFE).
+  function _ovMealChips(){
+    const slots = Array.isArray(_ovMealsWeek && _ovMealsWeek.slots) ? _ovMealsWeek.slots.filter(Boolean) : [];
+    if (!slots.length) return '';
+    const key = slots.join('|');
+    const missing = slots.filter(rid => !(rid in _ovMealTitles));
+    if (missing.length && _ovMealsKickKey !== key) {
+      _ovMealsKickKey = key;
+      Promise.all(missing.map(rid =>
+        getDoc(doc(db, 'meals_recipes', rid))
+          .then(s => { _ovMealTitles[rid] = (s.exists() && (s.data() || {}).title) || ''; })
+          .catch(() => { _ovMealTitles[rid] = ''; })
+      )).then(() => { try { if (_f5OverviewTab) render(); } catch {} });
+    }
+    const chips = slots.map((rid, i) =>
+      `<span class="ov-meal-chip">${escHtml(_ovMealTitles[rid] || ('Meal ' + (i + 1)))}</span>`).join('');
+    return `<div class="ov-sub">This week's meals</div><div class="ov-meal-chips" data-ov-meals="1" role="button" title="Open Meals">${chips}</div>`;
+  }
+  function renderOverviewView(view){
+    // Freshen the planned ledger in the background (30s cache inside).
+    if (Date.now() - _plannedLoadedAt > 30000) {
+      loadPlannedTodos().then(() => { try { if (_f5OverviewTab) render(); } catch {} }).catch(() => {});
+    }
+    const sections = _ovCollect();
+    const wrap = document.createElement('div');
+    wrap.className = 'ov-wrap';
+    Object.keys(SECTION_META).forEach(key => {
+      const sec = sections[key];
+      const tDone = sec.today.filter(t => t.done).length;
+      const card = document.createElement('div');
+      card.className = `ov-sec sec-${key}`;
+      // Unaccepted ECM assignments surface as an inbox chip on the ECM card.
+      let inboxChip = '';
+      if (key === 'ecm') {
+        const inbox = (_plannedCache || []).filter(p =>
+          p.smartsheetRowId && !p.done && !(typeof p.plannedFor === 'string' && p.plannedFor) &&
+          !p.ecmAccepted && !_inAnyFocus5List(p.id)).length;
+        if (inbox) inboxChip = `<button class="ov-inbox" type="button" data-ov-inbox="1">Inbox · ${inbox}</button>`;
+      }
+      const counts = [
+        sec.today.length ? `${tDone}/${sec.today.length} today` : '',
+        sec.week.length ? `${sec.week.length} this wk` : ''
+      ].filter(Boolean).join(' · ');
+      const mealsExtra = key === 'meals' ? _ovMealChips() : '';
+      const emptyHTML = (!sec.today.length && !sec.week.length && !mealsExtra)
+        ? '<div class="ov-empty">Nothing here — ask the Coach.</div>' : '';
+      card.innerHTML = `
+        <div class="ov-head">
+          <span class="ov-dot"></span>
+          <span class="ov-name">${SECTION_META[key].label}</span>
+          ${inboxChip}
+          <span class="ov-ct">${counts}</span>
+        </div>
+        ${sec.today.length ? '<div class="ov-sub">Today</div>' + sec.today.map(_ovRowHTML).join('') : ''}
+        ${sec.week.length ? '<div class="ov-sub">This week</div>' + sec.week.map(_ovWeekRowHTML).join('') : ''}
+        ${mealsExtra}
+        ${emptyHTML}`;
+      wrap.appendChild(card);
+    });
+    // One delegated handler: done toggles, ECM inbox, meal chips → Meals tab.
+    wrap.addEventListener('click', (e) => {
+      const doneBtn = e.target.closest('[data-ov-done]');
+      if (doneBtn) { e.stopPropagation(); toggleTodo(doneBtn.getAttribute('data-ov-done')); return; }
+      if (e.target.closest('[data-ov-inbox]')) { try { openEcmInbox(); } catch {} return; }
+      if (e.target.closest('[data-ov-meals]')) {
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'warroom:switch-tab', tab: 'meals' }, '*');
+            return;
+          }
+        } catch {}
+        window.location.href = '/two-meals.html';
+      }
+    });
+    view.appendChild(wrap);
+  }
+
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
@@ -13122,6 +13351,23 @@ const VOICE = {
     // Planned pill leads the strip — dated priorities that haven't hit the
     // lists yet. The count flips to "N due" (amber) when anything has
     // reached its day.
+    // Overview pill — the sectioned home view; first in the strip.
+    const ovTab = document.createElement('button');
+    ovTab.type = 'button';
+    ovTab.className = `focus5-tab overview-pill ${_f5OverviewTab ? 'active' : ''}`;
+    ovTab.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <span class="name">Overview</span>
+    `;
+    ovTab.addEventListener('click', () => {
+      _f5OverviewTab = true;
+      _f5PlannedTab = false;
+      _f5DayTab = false;
+      loadPlannedTodos().then(() => { try { if (_f5OverviewTab) render(); } catch {} });
+      render();
+    });
+    strip.appendChild(ovTab);
+
     const plannedTab = document.createElement('button');
     plannedTab.type = 'button';
     const _plOpen = _plannedCache.filter(p => !p.done).length;
@@ -13135,6 +13381,7 @@ const VOICE = {
     plannedTab.addEventListener('click', () => {
       _f5PlannedTab = true;
       _f5DayTab = false;
+      _f5OverviewTab = false;
       loadPlannedTodos().then(() => { try { if (_f5PlannedTab) render(); } catch {} });
       render();
     });
@@ -13153,6 +13400,7 @@ const VOICE = {
     dayTab.addEventListener('click', () => {
       _f5DayTab = true;
       _f5PlannedTab = false;
+      _f5OverviewTab = false;
       dayBlocksDate = todayKey();
       render();
     });
@@ -13161,7 +13409,7 @@ const VOICE = {
       const lTasks = l.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
       const lDone = lTasks.filter(t => t.done).length;
       const total = lTasks.length;
-      const isActive = !_f5PlannedTab && !_f5DayTab && l.id === focus5State.activeListId;
+      const isActive = !_f5PlannedTab && !_f5DayTab && !_f5OverviewTab && l.id === focus5State.activeListId;
       const isComplete = total > 0 && lDone === total;
       // <div role="button"> so we can nest the reorder <button>s inside.
       const tab = document.createElement('div');
@@ -13226,6 +13474,12 @@ const VOICE = {
     strip.appendChild(addTab);
     view.appendChild(strip);
 
+    // ---- OVERVIEW TAB — sectioned home (boot default) ----
+    if (_f5OverviewTab) {
+      renderOverviewView(view);
+      list.appendChild(view);
+      return;
+    }
     // ---- PLANNED TAB — swaps the list content for the planned ledger ----
     if (_f5PlannedTab) {
       renderPlannedView(view);
@@ -16096,7 +16350,10 @@ const VOICE = {
       if (_mealsWeekUnsub) { try { _mealsWeekUnsub(); } catch {} _mealsWeekUnsub = null; }
       try {
         _mealsWeekUnsub = onSnapshot(doc(db, 'goals_canvas_meal_weeks', key), (snap) => {
-          renderMealsBanner(snap.exists() ? (snap.data() || {}) : null);
+          const wk = snap.exists() ? (snap.data() || {}) : null;
+          _ovMealsWeek = wk;               // feeds the Overview Meals card
+          renderMealsBanner(wk);
+          try { if (_f5OverviewTab) render(); } catch {}
         }, (err) => console.warn('[meals banner] subscribe error', err));
       } catch (e) { console.warn('[meals banner] init failed', e); }
     }
@@ -16417,11 +16674,12 @@ const VOICE = {
       byDate[ds].forEach(p => {
         const row = document.createElement('div');
         row.className = 'cp-row' + (p.accepted ? '' : ' off');
-        const badge = p.source === 'ecm' ? '<span class="cp-badge ecm">ECM</span>'
-          : p.source === 'memory' ? '<span class="cp-badge memory">Parked</span>'
-          : '<span class="cp-badge new">New</span>';
+        // Badge shows the DESTINATION section; provenance rides in the note.
+        const sec = SECTION_META[p.section] ? p.section : (p.rowId ? 'ecm' : 'life');
+        const badge = `<span class="cp-badge sec-${sec}">${SECTION_META[sec].label}</span>`;
+        const noteBits = [p.note || (p.source === 'memory' ? 'from your parked list' : ''), p.slot].filter(Boolean).join(' · ');
         row.innerHTML = `<input type="checkbox" class="cp-check" ${p.accepted ? 'checked' : ''}>
-          <span class="cp-text">${escHtml(p.title)}${p.note ? `<span class="cp-note">${escHtml(p.note)}${p.slot ? ' · ' + p.slot : ''}</span>` : (p.slot ? `<span class="cp-note">${p.slot}</span>` : '')}</span>
+          <span class="cp-text">${escHtml(p.title)}${noteBits ? `<span class="cp-note">${escHtml(noteBits)}</span>` : ''}</span>
           ${badge}`;
         row.querySelector('.cp-check').addEventListener('change', (e) => {
           p.accepted = !!e.target.checked;
@@ -16581,6 +16839,8 @@ const VOICE = {
   }
 
   // ---- Accepting a proposal ----
+  // (Section helpers — SECTION_META / sectionOf / sectionJob — live up by the
+  // jobs helpers so they're initialized before the first render.)
   // ECM row → find-or-create the tv_todos doc keyed by smartsheetRowId (same
   // dedupe as the push drain); future dates park it in Planned, today lands it
   // on top of the first priority list with ecmAccepted set.
@@ -16594,7 +16854,7 @@ const VOICE = {
     }
     const future = p.date > today;
     if (todo) {
-      const patch = { ecmAccepted: true };
+      const patch = { ecmAccepted: true, section: 'ecm' };
       if (todo.done) { patch.done = false; patch.completedAt = null; }
       if (future) { patch.plannedFor = p.date; patch.date = p.date; patch.planned = true; }
       else { patch.plannedFor = ''; patch.planned = false; patch.date = today; }
@@ -16622,7 +16882,7 @@ const VOICE = {
     const payload = {
       text: p.title, done: false, date: future ? p.date : today, position: maxPos,
       timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
-      job: ecmJobId(), details: '', ecmAccepted: true,
+      job: ecmJobId(), details: '', ecmAccepted: true, section: 'ecm',
       smartsheetRowId: String(p.rowId), smartsheetSheetId: sheetId,
       smartsheetTicket: '', smartsheetStatus: '', smartsheetOutcome: '', smartsheetPermalink: ''
     };
@@ -16648,18 +16908,27 @@ const VOICE = {
     for (const p of accepted) {
       try {
         const date = (p.date && p.date > today) ? p.date : today;
+        const sec = SECTION_META[p.section] ? p.section : (p.rowId ? 'ecm' : 'life');
+        const job = sectionJob(sec);
         if (p.rowId) {
           if (await _coachAcceptEcm({ ...p, date }, today)) { date > today ? nPlanned++ : nToday++; }
         } else if (date > today) {
-          const id = await createPlannedTask(p.title, date, '');
-          if (id) nPlanned++;
-        } else {
-          const id = await addTodoItem(p.title, null, {});
+          const id = await createPlannedTask(p.title, date, job || '');
           if (id) {
-            if (dkey(currentDate) !== today) {
-              try { await updateTodoFields(id, { date: today }); } catch {}
-              const t = todos.find(x => x.id === id); if (t) t.date = today;
-            }
+            // Direct updateDoc — updateTodoFields no-ops for ids outside the
+            // day's `todos` array, and planned tasks live in _plannedCache.
+            try { await updateDoc(doc(db, 'tv_todos', id), { section: sec }); } catch (e) { console.warn(e); }
+            const pc = _plannedCache.find(x => x.id === id); if (pc) pc.section = sec;
+            nPlanned++;
+          }
+        } else {
+          const id = await addTodoItem(p.title, null, job ? { job } : {});
+          if (id) {
+            const patch = { section: sec };
+            if (dkey(currentDate) !== today) patch.date = today;
+            try { await updateTodoFields(id, patch); } catch {}
+            const t = todos.find(x => x.id === id);
+            if (t) Object.assign(t, patch);
             const lists = getPriorityLists();
             if (lists.length) cascadeAddTaskToList(id, lists[0].id, 'end');
             nToday++;
