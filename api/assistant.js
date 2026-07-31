@@ -1,24 +1,99 @@
-// Planning coach for the Personal page. The page POSTs {message, history?,
-// personal?} — `personal` is a client-assembled snapshot of the user's lists,
-// planned items, day blocks, and calendar. The server enriches that with live
-// ECM work (Smartsheet rows assigned to the owner, deadlines, stars,
-// priorities) and the `coach_memory` backlog of tasks the user has mentioned
-// in past conversations, then asks Claude for either a chat reply or a
-// structured day/week plan proposal.
-//
-// Response: { reply, plan:[{title,date,slot,source,rowId,note}], memory:[...],
-// historyEntry }. Plan items are PROPOSALS — the page renders them with
-// checkboxes and only writes todos when the user accepts. Memory adds and
-// resolves returned by the model are persisted here (Firestore REST, open
-// rules) so a brain-dumped task survives even if the user closes the sheet
-// right after talking.
-//
-// Env: ANTHROPIC_API_KEY (501 without it, same contract as health-chat.js).
-// SMARTSHEET_API_TOKEN + SMARTSHEET_SHEET_ID + SMARTSHEET_OWNER_NAME make the
-// ECM section work; if they're missing or the fetch fails we still answer,
-// just without ECM context. SMARTSHEET_BASE_URL overrides for mock testing.
+// One function, two chat endpoints. Vercel's Hobby plan caps a deployment at
+// 12 serverless functions and this repo sits exactly at the cap, so the
+// Daily-Goals health Q&A and the Personal-page planning coach share this
+// file. vercel.json rewrites keep the semantic URLs the pages already call:
+//   /api/health-chat → /api/assistant?mode=health
+//   /api/plan-chat   → /api/assistant?mode=plan
+// Shared gates (cookie auth, POST-only, 501 without ANTHROPIC_API_KEY) run
+// once in the default export; each mode keeps its original behavior below.
 import Anthropic from '@anthropic-ai/sdk';
 import { requireAuth } from './_auth.js';
+
+/* ======================= health mode (was health-chat.js) =======================
+   The Daily Goals page POSTs {question, history?} and we ask Claude for a
+   friendly, evidence-based answer; the page persists the Q&A to Firestore
+   itself. */
+
+const HEALTH_SYSTEM = `You are the health assistant inside War Room, a personal planner. You answer the owner's everyday health and wellness questions — fitness, stretching and physical therapy habits, nutrition and home cooking, sleep, vitamins and supplements, hygiene, and routine-building.
+
+Style:
+- Lead with the answer in one or two sentences, then a few short bullets with the practical specifics (amounts, timing, technique).
+- Ground advice in mainstream, evidence-based guidance; say plainly when evidence is mixed or weak.
+- Use simple markdown only: **bold** for key numbers or terms, "-" bullets, numbered lists. No headers, no tables.
+- Keep the whole answer compact — this renders in a small card on a phone.
+- These are wellness questions, not diagnosis. Don't lecture or stack disclaimers; add one short "worth seeing a clinician" line only when the question involves red-flag symptoms, persistent pain, or medications.`;
+
+async function handleHealth(req, res, body) {
+  const question = (body.question || '').toString().trim().slice(0, 2000);
+  if (!question) {
+    res.status(400).json({ error: 'missing_question' });
+    return;
+  }
+
+  // Up to 3 prior Q&A pairs so follow-ups ("what about at night?") make sense.
+  const messages = [];
+  for (const h of (Array.isArray(body.history) ? body.history.slice(-3) : [])) {
+    if (h && h.q && h.a) {
+      messages.push({ role: 'user', content: String(h.q).slice(0, 2000) });
+      messages.push({ role: 'assistant', content: String(h.a).slice(0, 4000) });
+    }
+  }
+  messages.push({ role: 'user', content: question });
+
+  try {
+    const client = new Anthropic();
+    const response = await client.beta.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 1500,
+      output_config: { effort: 'low' },
+      // Safety classifiers can decline benign-adjacent requests; the server-side
+      // fallback re-runs those on Anthropic's recommended model instead of
+      // surfacing a refusal to the user.
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: HEALTH_SYSTEM,
+      messages,
+    });
+    if (response.stop_reason === 'refusal') {
+      res.status(200).json({ error: 'refused' });
+      return;
+    }
+    const text = (response.content || [])
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n')
+      .trim();
+    if (!text) {
+      res.status(502).json({ error: 'empty_answer' });
+      return;
+    }
+    res.status(200).json({ answer: text });
+  } catch (e) {
+    console.error('health-chat error:', e);
+    const status = e && Number.isInteger(e.status) ? e.status : 502;
+    res.status(status >= 400 && status < 600 ? status : 502).json({ error: 'upstream_failed', message: e.message });
+  }
+}
+
+/* ======================== plan mode (was plan-chat.js) ========================
+   Planning coach for the Personal page. The page POSTs {message, history?,
+   personal?} — `personal` is a client-assembled snapshot of the user's lists,
+   planned items, day blocks, and calendar. The server enriches that with live
+   ECM work (Smartsheet rows assigned to the owner, deadlines, stars,
+   priorities) and the `coach_memory` backlog of tasks the user has mentioned
+   in past conversations, then asks Claude for either a chat reply or a
+   structured day/week plan proposal.
+
+   Response: { reply, plan:[{title,date,slot,source,rowId,note}], memory:[...],
+   historyEntry }. Plan items are PROPOSALS — the page renders them with
+   checkboxes and only writes todos when the user accepts. Memory adds and
+   resolves returned by the model are persisted here (Firestore REST, open
+   rules) so a brain-dumped task survives even if the user closes the sheet
+   right after talking.
+
+   SMARTSHEET_API_TOKEN + SMARTSHEET_SHEET_ID + SMARTSHEET_OWNER_NAME make the
+   ECM section work; if they're missing or the fetch fails we still answer,
+   just without ECM context. SMARTSHEET_BASE_URL overrides for mock testing. */
 
 // ---- Firestore REST helpers (mirror api/ecm-deadline-reminders.js) ----
 const FS_BASE = 'https://firestore.googleapis.com/v1/projects/tv-todos/databases/(default)/documents';
@@ -223,7 +298,7 @@ function personalToText(p) {
   return out.join('\n');
 }
 
-function systemPrompt({ today, ecmText, memoryDocs, personalText }) {
+function planSystemPrompt({ today, ecmText, memoryDocs, personalText }) {
   const memText = memoryDocs.length
     ? memoryDocs.map(m => `- [mem ${m._id}] ${String(m.text).slice(0, 120)}${m.createdAt ? ` (mentioned ${String(m.createdAt).slice(0, 10)})` : ''}`).join('\n')
     : '(nothing pending)';
@@ -271,23 +346,7 @@ function parseModelJSON(raw) {
   return null;
 }
 
-export default async function handler(req, res) {
-  const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-  if (!requireAuth(req, SESSION_SECRET)) {
-    res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'method_not_allowed' });
-    return;
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(501).json({ error: 'not_configured' });
-    return;
-  }
-
-  let body = req.body || {};
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+async function handlePlan(req, res, body) {
   const message = (body.message || '').toString().trim().slice(0, 4000);
   if (!message) {
     res.status(400).json({ error: 'missing_message' });
@@ -318,11 +377,11 @@ export default async function handler(req, res) {
       model: 'claude-opus-5',
       max_tokens: 4000,
       output_config: { effort: 'medium' },
-      // Same fallback contract as health-chat: benign-adjacent declines rerun
+      // Same fallback contract as health mode: benign-adjacent declines rerun
       // on the recommended model instead of surfacing a refusal.
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      system: systemPrompt({ today, ecmText: ecm.text, memoryDocs, personalText }),
+      system: planSystemPrompt({ today, ecmText: ecm.text, memoryDocs, personalText }),
       messages,
     });
     if (response.stop_reason === 'refusal') {
@@ -404,4 +463,29 @@ export default async function handler(req, res) {
     : '');
 
   res.status(200).json({ reply: parsed.reply, plan, memory: memoryOut, historyEntry });
+}
+
+/* ============================== shared gates ============================== */
+
+export default async function handler(req, res) {
+  const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
+  if (!requireAuth(req, SESSION_SECRET)) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'method_not_allowed' });
+    return;
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.status(501).json({ error: 'not_configured' });
+    return;
+  }
+
+  let body = req.body || {};
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+
+  const mode = (req.query && req.query.mode || '').toString();
+  if (mode === 'plan') return handlePlan(req, res, body);
+  return handleHealth(req, res, body);
 }
