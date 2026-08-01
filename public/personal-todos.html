@@ -5494,6 +5494,62 @@
   .ovs-dot.full { background: var(--green); }
   .ovs-dot.half { background: rgba(30,158,106,.18); }
   .ovs-note { margin-left: auto; color: var(--ink-dim); }
+  .ovs-cell.sel { box-shadow: 0 0 0 2px var(--ink); }
+  .ovs-adjust-btn {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 4px 10px; font-size: 11px; font-weight: 700; color: var(--ink-mid);
+    cursor: pointer; font-family: inherit;
+  }
+  .ovs-adjust {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 10px; padding: 10px 12px; background: var(--fill); border-radius: 12px;
+    font-size: 12.5px; font-weight: 600; color: var(--ink-mid);
+  }
+  .ovs-adjust input {
+    width: 52px; border: 1px solid var(--border-strong); border-radius: 8px;
+    background: var(--surface); font-family: inherit; font-size: 13px; font-weight: 700;
+    color: var(--ink); padding: 5px 7px; text-align: center;
+  }
+  .ovs-adjust-save {
+    margin-left: auto; border: none; background: var(--accent); color: var(--on-accent);
+    border-radius: 9px; padding: 7px 16px; font-size: 12.5px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+  }
+  .ovs-detail { margin-top: 12px; }
+  .ovs-hint { font-size: 11.5px; color: var(--ink-dim); text-align: center; padding: 4px 0; }
+  .ovs-dhead { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
+  .ovs-verdict { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-dim); }
+  .ovs-verdict.win { color: var(--green); }
+  .ovs-dsec { background: var(--fill); border-radius: 12px; padding: 9px 11px; margin-bottom: 8px; }
+  .ovs-dtitle { font-size: 12px; font-weight: 800; margin-bottom: 5px; }
+  .ovs-dtitle i { font-style: normal; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-left: 4px; }
+  .ovs-dtitle i.hit { color: var(--green); }
+  .ovs-dtitle i.miss { color: var(--ink-dim); }
+  .ovs-drow { font-size: 12px; font-weight: 500; color: var(--ink-mid); padding: 2px 0; display: flex; gap: 6px; align-items: flex-start; }
+  .ovs-drow.ok { color: var(--ink); }
+  .ovs-mark { flex-shrink: 0; font-weight: 800; width: 13px; }
+  .ovs-drow.ok .ovs-mark { color: var(--green); }
+  .ovs-drow:not(.ok) .ovs-mark { color: var(--red); }
+  /* Overview good-days strip */
+  .ov-wins {
+    border: none; background: var(--surface); border-radius: var(--radius);
+    box-shadow: var(--shadow-card); padding: 12px 16px; cursor: pointer;
+    font-family: inherit; text-align: left; display: block; width: 100%;
+  }
+  .ovw-line { display: flex; align-items: baseline; gap: 8px; }
+  .ovw-title { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+  .ovw-meta { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--ink-mid); }
+  .ovw-squares { display: flex; gap: 4px; margin-top: 9px; }
+  .ovw-sq {
+    flex: 1; aspect-ratio: 1; max-width: 26px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 800; color: var(--ink-dim);
+  }
+  .ovw-sq.zero { box-shadow: inset 0 0 0 1.2px var(--border-strong); }
+  .ovw-sq.nodata { box-shadow: inset 0 0 0 1.2px var(--border); }
+  .ovw-sq.half { background: rgba(30,158,106,.18); color: #1A7A54; }
+  .ovw-sq.full { background: var(--green); color: #fff; }
+  .ovw-sq.today { outline: 2px solid var(--accent); outline-offset: 1px; }
   @media (max-width: 640px) {
     .ov-go { padding: 6px 10px; font-size: 11.5px; }
     .ov-mode button { padding: 6px 13px; }
@@ -13447,6 +13503,42 @@ const VOICE = {
     const prio = getPriorityLists().filter(l => !l.routine);
     return prio[0] || (focus5State.lists || []).find(l => !l.routine) || null;
   }
+  // Good-days strip on the Overview — the calendar's front-page presence.
+  // One fetch per day (or when thresholds change); taps open the full modal.
+  function _ovWinsEnsure(){
+    const cfg = _ovWinCfg();
+    const stamp = todayKey() + '|' + cfg.task + '|' + cfg.habit;
+    if ((_ovWinsCache && _ovWinsCache.stamp === stamp) || _ovWinsBusy) return;
+    _ovWinsBusy = true;
+    const now = new Date();
+    _ovStatsData(now.getFullYear(), now.getMonth()).then(data => {
+      const today = data.today;
+      let wins = 0, elapsed = 0, run = 0, endRun = 0;
+      const squares = [];
+      for (let d = 1; d <= data.dim; d++) {
+        const k = _ovStatsKey(now.getFullYear(), now.getMonth(), d);
+        if (k > today) break;
+        const s = _ovsScoreDay(data.perDay[k], cfg);
+        const win = s.taskOk || s.habitOk;
+        if (win) { wins++; run++; } else run = 0;
+        if (k === today) endRun = win ? run : (squares.length ? endRun : 0);
+        else endRun = run;
+        elapsed++;
+        squares.push({ d, cls: s.cls, today: k === today });
+      }
+      _ovWinsCache = {
+        stamp, wins, elapsed,
+        streak: endRun,
+        label: now.toLocaleDateString('en-US', { month: 'long' }),
+        squares: squares.slice(-14)
+      };
+    }).catch(e => console.warn('wins strip failed', e))
+      .finally(() => {
+        _ovWinsBusy = false;
+        try { if (_f5OverviewTab) render(); } catch {}
+      });
+  }
+
   // Per-section quick add — same rails as a Coach accept for today: create,
   // stamp section + job, cascade into the working list.
   async function _ovQuickAdd(sectionKey, text){
@@ -13499,6 +13591,26 @@ const VOICE = {
         <button class="ov-go" type="button" data-ov-go="done" aria-label="Completed">✓</button>
       </div>`;
     col.appendChild(top);
+
+    // Good-days strip — this month's wins at a glance, tap for the calendar.
+    _ovWinsEnsure();
+    const winsCard = document.createElement('button');
+    winsCard.type = 'button';
+    winsCard.className = 'ov-wins';
+    winsCard.setAttribute('data-ov-go', 'stats');
+    if (_ovWinsCache) {
+      const w = _ovWinsCache;
+      winsCard.innerHTML = `
+        <div class="ovw-line">
+          <span class="ovw-title">${w.label}</span>
+          <span class="ovw-meta">${w.wins}/${w.elapsed} good days${w.streak > 1 ? ` · ${w.streak} streak` : ''}</span>
+        </div>
+        <div class="ovw-squares">${w.squares.map(s =>
+          `<span class="ovw-sq ${s.cls}${s.today ? ' today' : ''}">${s.d}</span>`).join('')}</div>`;
+    } else {
+      winsCard.innerHTML = '<div class="ovw-line"><span class="ovw-title">Good days</span><span class="ovw-meta">…</span></div>';
+    }
+    col.appendChild(winsCard);
 
     const buildCard = (key, label, todayArr, weekArr, extraHTML, inboxChip) => {
       const tDone = todayArr.filter(t => t.done).length;
@@ -13674,9 +13786,37 @@ const VOICE = {
   // the Habits page's health_habit_days docs — checks for positives, don'ts
   // auto-credit from their `since` unless slipped). Full green = both, soft
   // green = one. The bar is deliberately low: productive, not overwhelmed.
-  const OV_TASK_WIN = 0.30;
-  const OV_HABIT_WIN = 0.65;
+  // Thresholds are the user's dial — stored (and cloud-synced like all
+  // localStorage) so the bar can move as life does. Defaults: 30% / 65%.
+  function _ovWinCfg(){
+    try {
+      const c = JSON.parse(localStorage.getItem('personal-win-thresholds-v1') || 'null');
+      const t = c && Number(c.task), h = c && Number(c.habit);
+      return {
+        task: (t >= 0.05 && t <= 1) ? t : 0.30,
+        habit: (h >= 0.05 && h <= 1) ? h : 0.65
+      };
+    } catch { return { task: 0.30, habit: 0.65 }; }
+  }
+  function _ovWinCfgSave(taskPct, habitPct){
+    const clamp = v => Math.min(100, Math.max(5, Math.round(Number(v) || 0)));
+    try {
+      localStorage.setItem('personal-win-thresholds-v1',
+        JSON.stringify({ task: clamp(taskPct) / 100, habit: clamp(habitPct) / 100 }));
+    } catch {}
+    _ovWinsCache = null;   // the Overview strip recomputes with the new bars
+  }
+  // One scorer for the modal, the day detail, and the Overview strip.
+  function _ovsScoreDay(p, cfg){
+    const taskOk = p.tt > 0 && (p.td / p.tt) >= cfg.task;
+    const habitOk = p.ht > 0 && (p.hd / p.ht) >= cfg.habit;
+    const cls = (taskOk && habitOk) ? 'full' : (taskOk || habitOk) ? 'half' : (p.tt || p.ht) ? 'zero' : 'nodata';
+    return { taskOk, habitOk, cls };
+  }
   let _ovStatsMonth = null;   // Date, first of the viewed month
+  let _ovStatsLast = null;    // {data, y, m, selKey} — for re-render + day detail
+  let _ovWinsCache = null;    // Overview strip: {stamp, wins, elapsed, streak, squares}
+  let _ovWinsBusy = false;
   function _ovStatsKey(y, m, d){ return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
   async function _ovStatsData(y, m){
     const dim = new Date(y, m + 1, 0).getDate();
@@ -13685,7 +13825,7 @@ const VOICE = {
     // Tasks: one range query for the month. Routine instances (fromTemplate)
     // belong to the habits track, not here.
     const perDay = {};
-    for (let d = 1; d <= dim; d++) perDay[_ovStatsKey(y, m, d)] = { tt: 0, td: 0, ht: 0, hd: 0 };
+    for (let d = 1; d <= dim; d++) perDay[_ovStatsKey(y, m, d)] = { tt: 0, td: 0, ht: 0, hd: 0, tasks: [], hl: [] };
     try {
       const qs = await getDocs(query(todosCol, where('date', '>=', start), where('date', '<=', end)));
       qs.forEach(dref => {
@@ -13695,6 +13835,7 @@ const VOICE = {
         if (!p) return;
         p.tt++;
         if (t.done) p.td++;
+        p.tasks.push({ text: String(t.text || '').slice(0, 70), done: !!t.done });
       });
     } catch (e) { console.warn('stats tasks query failed', e); }
     // Habits: config doc for the roster, one small collection for the days.
@@ -13702,14 +13843,20 @@ const VOICE = {
     // until then that page runs on its hardcoded defaults, so we mirror them
     // (kept in sync with DEFAULT_HABITS in daily-goals.html).
     const OV_DEFAULT_HABITS = [
-      { id: 'bible', section: 'morning' }, { id: 'bedclean', section: 'morning' },
-      { id: 'pray', section: 'morning' }, { id: 'journal', section: 'morning' },
-      { id: 'stretch', section: 'morning' }, { id: 'vitamins', section: 'afternoon' },
-      { id: 'workout', section: 'afternoon' }, { id: 'cook', section: 'afternoon' },
-      { id: 'finances', section: 'afternoon' }, { id: 'read', section: 'night' },
-      { id: 'teeth', section: 'night' }, { id: 'shower', section: 'night' },
-      { id: 'noexplicit', section: 'dont', since: '2026-07-28' },
-      { id: 'noyoutube', section: 'dont', since: '2026-07-28' }
+      { id: 'bible', name: 'Read Bible', section: 'morning' },
+      { id: 'bedclean', name: 'Make bed + clean', section: 'morning' },
+      { id: 'pray', name: 'Pray', section: 'morning' },
+      { id: 'journal', name: 'Journal', section: 'morning' },
+      { id: 'stretch', name: 'Stretch / PT', section: 'morning' },
+      { id: 'vitamins', name: 'Take vitamins', section: 'afternoon' },
+      { id: 'workout', name: 'Workout', section: 'afternoon' },
+      { id: 'cook', name: 'Home-cooked meal', section: 'afternoon' },
+      { id: 'finances', name: 'Review finances', section: 'afternoon' },
+      { id: 'read', name: 'Read', section: 'night' },
+      { id: 'teeth', name: 'Brush teeth', section: 'night' },
+      { id: 'shower', name: 'Shower', section: 'night' },
+      { id: 'noexplicit', name: 'No explicit content', section: 'dont', since: '2026-07-28' },
+      { id: 'noyoutube', name: 'No YouTube', section: 'dont', since: '2026-07-28' }
     ];
     try {
       const cfgSnap = await getDoc(doc(db, 'health_config', 'habits'));
@@ -13730,6 +13877,7 @@ const VOICE = {
             perDay[k].ht++;
             const ok = isDont ? !slips[h.id] : !!checks[h.id];
             if (ok) perDay[k].hd++;
+            perDay[k].hl.push({ name: String(h.name || h.id).slice(0, 40), ok, slipped: isDont && !ok });
           });
         }
       }
@@ -13741,6 +13889,7 @@ const VOICE = {
     const title = document.getElementById('ovStatsTitle');
     if (!body || !title) return;
     title.textContent = new Date(y, m, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const cfg = _ovWinCfg();
     const { dim, perDay, today } = data;
     // Everything shown is threshold-based — no raw done/total counts. The
     // bars ARE the story: a day is a win, or it isn't.
@@ -13753,21 +13902,18 @@ const VOICE = {
       const k = _ovStatsKey(y, m, d);
       const p = perDay[k];
       const fut = k > today;
-      let cls = 'nodata';
-      if (fut) cls = 'fut';
-      else {
-        const taskOk = p.tt > 0 && (p.td / p.tt) >= OV_TASK_WIN;
-        const habitOk = p.ht > 0 && (p.hd / p.ht) >= OV_HABIT_WIN;
-        if (taskOk && habitOk) cls = 'full';
-        else if (taskOk || habitOk) cls = 'half';
-        else if (p.tt || p.ht) cls = 'zero';
-        if (taskOk) taskWins++;
-        if (habitOk) habitWins++;
-        if (taskOk || habitOk) { wins++; run++; bestRun = Math.max(bestRun, run); }
+      let cls = 'fut';
+      if (!fut) {
+        const s = _ovsScoreDay(p, cfg);
+        cls = s.cls;
+        if (s.taskOk) taskWins++;
+        if (s.habitOk) habitWins++;
+        if (s.taskOk || s.habitOk) { wins++; run++; bestRun = Math.max(bestRun, run); }
         else run = 0;
         elapsed++;
       }
-      cells.push(`<span class="ovs-cell ${cls} ${k === today ? 'today' : ''}">${d}</span>`);
+      const sel = _ovStatsLast && _ovStatsLast.selKey === k ? ' sel' : '';
+      cells.push(`<span class="ovs-cell ${cls}${sel} ${k === today ? 'today' : ''}" ${fut ? '' : `data-ovs-day="${k}"`}>${d}</span>`);
     }
     body.innerHTML = `
       <div class="ovs-stats">
@@ -13780,10 +13926,71 @@ const VOICE = {
         ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(w => `<span class="ovs-wd">${w}</span>`).join('')}
         ${cells.join('')}
       </div>
+      <div class="ovs-detail" id="ovsDayDetail"></div>
       <div class="ovs-legend">
         <span><i class="ovs-dot full"></i> tasks + habits</span>
         <span><i class="ovs-dot half"></i> one of two</span>
-        <span class="ovs-note">tasks ≥ ${Math.round(OV_TASK_WIN * 100)}% · habits ≥ ${Math.round(OV_HABIT_WIN * 100)}%</span>
+        <span class="ovs-note">tasks ≥ ${Math.round(cfg.task * 100)}% · habits ≥ ${Math.round(cfg.habit * 100)}%</span>
+        <button class="ovs-adjust-btn" id="ovsAdjustBtn" type="button">Adjust</button>
+      </div>
+      <div class="ovs-adjust" id="ovsAdjustForm" hidden>
+        <label>Tasks ≥ <input id="ovsTaskPct" type="number" min="5" max="100" step="5" value="${Math.round(cfg.task * 100)}">%</label>
+        <label>Habits ≥ <input id="ovsHabitPct" type="number" min="5" max="100" step="5" value="${Math.round(cfg.habit * 100)}">%</label>
+        <button class="ovs-adjust-save" id="ovsAdjustSave" type="button">Save</button>
+      </div>`;
+    // Day click → the "why is it that color" breakdown.
+    body.querySelector('.ovs-grid').addEventListener('click', (e) => {
+      const cell = e.target.closest('[data-ovs-day]');
+      if (!cell) return;
+      const k = cell.getAttribute('data-ovs-day');
+      _ovStatsLast.selKey = _ovStatsLast.selKey === k ? null : k;
+      body.querySelectorAll('.ovs-cell.sel').forEach(c => c.classList.remove('sel'));
+      if (_ovStatsLast.selKey) cell.classList.add('sel');
+      _ovsRenderDetail();
+    });
+    document.getElementById('ovsAdjustBtn').addEventListener('click', () => {
+      const f = document.getElementById('ovsAdjustForm');
+      f.hidden = !f.hidden;
+    });
+    document.getElementById('ovsAdjustSave').addEventListener('click', () => {
+      _ovWinCfgSave(document.getElementById('ovsTaskPct').value, document.getElementById('ovsHabitPct').value);
+      // Same data, new bars — re-render without refetching.
+      if (_ovStatsLast) _ovStatsRender(_ovStatsLast.data, _ovStatsLast.y, _ovStatsLast.m);
+      try { if (_f5OverviewTab) render(); } catch {}
+    });
+    _ovsRenderDetail();
+  }
+  function _ovsRenderDetail(){
+    const host = document.getElementById('ovsDayDetail');
+    if (!host || !_ovStatsLast) return;
+    const k = _ovStatsLast.selKey;
+    if (!k) { host.innerHTML = '<div class="ovs-hint">Tap a day to see what made it count.</div>'; return; }
+    const cfg = _ovWinCfg();
+    const p = _ovStatsLast.data.perDay[k];
+    if (!p) { host.innerHTML = ''; return; }
+    const s = _ovsScoreDay(p, cfg);
+    const dayName = new Date(k + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const verdict = (s.taskOk && s.habitOk) ? 'Good day — both bars cleared'
+      : s.taskOk ? 'Good day — task bar cleared'
+      : s.habitOk ? 'Good day — habit bar cleared'
+      : (p.tt || p.ht) ? 'No bar cleared' : 'Nothing tracked';
+    const taskPct = p.tt ? Math.round((p.td / p.tt) * 100) : null;
+    const habitPct = p.ht ? Math.round((p.hd / p.ht) * 100) : null;
+    const taskRows = p.tasks.slice(0, 12).map(t =>
+      `<div class="ovs-drow ${t.done ? 'ok' : ''}"><span class="ovs-mark">${t.done ? '✓' : '✗'}</span>${escHtml(t.text)}</div>`).join('')
+      + (p.tasks.length > 12 ? `<div class="ovs-hint">+${p.tasks.length - 12} more</div>` : '');
+    const missedH = p.hl.filter(h => !h.ok).map(h => escHtml(h.name) + (h.slipped ? ' (slipped)' : ''));
+    const doneH = p.hl.filter(h => h.ok).map(h => escHtml(h.name));
+    host.innerHTML = `
+      <div class="ovs-dhead"><b>${dayName}</b><span class="ovs-verdict ${s.taskOk || s.habitOk ? 'win' : ''}">${verdict}</span></div>
+      <div class="ovs-dsec">
+        <div class="ovs-dtitle">Tasks ${p.tt ? `${p.td}/${p.tt} · ${taskPct}%` : '— none that day'} ${p.tt ? `<i class="${s.taskOk ? 'hit' : 'miss'}">${s.taskOk ? 'bar cleared' : `bar ${Math.round(cfg.task * 100)}%`}</i>` : ''}</div>
+        ${taskRows}
+      </div>
+      <div class="ovs-dsec">
+        <div class="ovs-dtitle">Habits ${p.ht ? `${p.hd}/${p.ht} · ${habitPct}%` : '— no data'} ${p.ht ? `<i class="${s.habitOk ? 'hit' : 'miss'}">${s.habitOk ? 'bar cleared' : `bar ${Math.round(cfg.habit * 100)}%`}</i>` : ''}</div>
+        ${missedH.length ? `<div class="ovs-drow"><span class="ovs-mark">✗</span>Missed: ${missedH.join(' · ')}</div>` : ''}
+        ${doneH.length ? `<div class="ovs-drow ok"><span class="ovs-mark">✓</span>${doneH.join(' · ')}</div>` : ''}
       </div>`;
   }
   async function _ovStatsGo(delta){
@@ -13793,6 +14000,7 @@ const VOICE = {
     const body = document.getElementById('ovStatsBody');
     if (body) body.innerHTML = '<div class="ov-empty">Loading…</div>';
     const data = await _ovStatsData(next.getFullYear(), next.getMonth());
+    _ovStatsLast = { data, y: next.getFullYear(), m: next.getMonth(), selKey: null };
     _ovStatsRender(data, next.getFullYear(), next.getMonth());
   }
   function openOvStats(){
