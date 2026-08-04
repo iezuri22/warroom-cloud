@@ -5571,6 +5571,7 @@
     padding: 5px 11px; font-size: 11.5px; font-weight: 700; color: var(--ink-mid);
     cursor: pointer; font-family: inherit;
   }
+  .ov-acts-note { margin-left: auto; font-size: 10.5px; font-weight: 700; color: var(--ink-dim); }
   .ov-act.del { margin-left: auto; color: var(--red); border-color: rgba(220,75,62,.35); }
   .ov-act.del.arm { background: var(--red); color: #fff; border-color: var(--red); }
   /* Habit check-off sheet */
@@ -9743,6 +9744,11 @@ const VOICE = {
       const colTicket = ssColumnByTitle(sheet, 'Ticket #');
       const colDetails = ssColumnByTitle(sheet, 'Details');
       const colOutcome = ssColumnByTitle(sheet, 'Outcome Details');
+      // The sheet's real deadline. Without it every synced row used to be
+      // stamped "today", which is why all of ECM read as due now.
+      const colDue = ssColumnByTitle(sheet, 'Due Date')
+        || ssColumnByTitle(sheet, 'Deadline')
+        || ssColumnByTitle(sheet, 'Target Date');
       if (!colTask || !colOwner || !colStatus) {
         throw new Error('Required columns not found (Task Name, Owner, Status).');
       }
@@ -9898,7 +9904,23 @@ const VOICE = {
         const outcome = colOutcome ? (ssCellValue(row, colOutcome.id) || '') : '';
         const status = (ssCellValue(row, colStatus.id) || '').toString();
         const permalink = (row.permalink || '').toString();
-        const existing = byRowId.get(String(row.id));
+        const dueRaw = colDue ? String(ssCellValue(row, colDue.id) || '').slice(0, 10) : '';
+        const sheetDue = /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : '';
+        // The in-memory map only holds THIS day's todos, so a copy parked on
+        // another date was invisible and got recreated on every sync — that's
+        // how 12 sheet rows became 48 docs. Ask Firestore before creating.
+        let existing = byRowId.get(String(row.id));
+        if (!existing) {
+          try {
+            const dq = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(row.id))));
+            if (!dq.empty) {
+              const hit = dq.docs.find(d => !(d.data() || {}).done) || dq.docs[0];
+              existing = { id: hit.id, ...hit.data() };
+              byRowId.set(String(row.id), existing);
+              if (!todos.some(t => t.id === existing.id)) todos.push(existing);
+            }
+          } catch (e) { console.warn('ss dedupe lookup failed', e); }
+        }
         if (existing) {
           // Update if anything drifted on the Smartsheets side
           const patch = {};
@@ -9908,6 +9930,11 @@ const VOICE = {
           if ((existing.smartsheetTicket || '') !== String(ticket || '')) patch.smartsheetTicket = String(ticket || '');
           if ((existing.smartsheetOutcome || '') !== (outcome || '')) patch.smartsheetOutcome = outcome;
           if (permalink && (existing.smartsheetPermalink || '') !== permalink) patch.smartsheetPermalink = permalink;
+          // Backfill the sheet's deadline, but never clobber a date the user
+          // set here (a push) or a task they pulled into their day.
+          if (sheetDue && !existing.plannedFor && !existing.ecmAccepted) {
+            patch.plannedFor = sheetDue; patch.date = sheetDue; patch.planned = true;
+          }
           if (Object.keys(patch).length) {
             Object.assign(existing, patch);
             try { await updateDoc(doc(db, 'tv_todos', existing.id), patch); } catch {}
@@ -9918,7 +9945,11 @@ const VOICE = {
         // Create new
         const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position || 0)) + 1 : 0;
         const payload = {
-          text, done: false, date: dkey(currentDate), position: maxPos,
+          // An assigned sheet row is an INBOX item, not "due today": it lands
+          // on the sheet's own deadline when it has one, otherwise it waits
+          // in Planned until you pull it into a day.
+          text, done: false, date: sheetDue || '', position: maxPos,
+          plannedFor: sheetDue || '', planned: true,
           timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
           job: ecmJobId(),
           details: details || '',
@@ -13487,8 +13518,11 @@ const VOICE = {
       });
     });
     // 2) Loose todos dated today (fresh adds not yet listed). Routine
-    //    instances and planned items stay out.
-    todos.filter(t => t.date === today && !t.fromTemplate && !seen.has(t.id) && !_isPlannedDoc(t))
+    //    instances and planned items stay out — and so do un-accepted ECM
+    //    rows: an assignment off the sheet belongs in the Inbox/Planned
+    //    until you pull it into a day, never auto-parked on Today.
+    todos.filter(t => t.date === today && !t.fromTemplate && !seen.has(t.id) && !_isPlannedDoc(t)
+        && !(t.smartsheetRowId && !t.ecmAccepted))
       .sort((a, b) => (a.position || 0) - (b.position || 0))
       .forEach(t => { seen.add(t.id); sections[sectionOf(t)].today.push(t); });
     // 3) The week ahead, from the planned ledger.
@@ -13519,10 +13553,17 @@ const VOICE = {
     ];
   }
   function _ovActsHTML(id){
+    const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
+    // ECM work is owned by the ECM page — you can move it on your own
+    // calendar, but it can't be deleted from here (and a delete wouldn't
+    // stick anyway: the next sheet sync would bring it right back).
+    const isEcm = !!(t && t.smartsheetRowId);
     return `<div class="ov-acts">
       <span class="ov-acts-lbl">Push</span>
       ${_ovPushDates().map(o => `<button class="ov-act" type="button" data-ov-push="${escHtml(id)}|${o.ds}">${o.label}</button>`).join('')}
-      <button class="ov-act del ${_ovDelArm === id ? 'arm' : ''}" type="button" data-ov-del="${escHtml(id)}">${_ovDelArm === id ? 'Sure?' : 'Delete'}</button>
+      ${isEcm
+        ? '<span class="ov-acts-note">Managed on ECM</span>'
+        : `<button class="ov-act del ${_ovDelArm === id ? 'arm' : ''}" type="button" data-ov-del="${escHtml(id)}">${_ovDelArm === id ? 'Sure?' : 'Delete'}</button>`}
     </div>`;
   }
   async function _ovPushTask(id, ds){
@@ -13541,17 +13582,12 @@ const VOICE = {
   }
   async function _ovDeleteTask(id){
     const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
+    // Guard: ECM-sourced work isn't deletable from Personal (the UI hides the
+    // button; this backstops any other caller). Close it on the ECM page.
+    if (t && t.smartsheetRowId) { _ovRowOpen = null; _ovDelArm = null; return; }
     try {
-      if (t && t.smartsheetRowId) {
-        // Hard-deleting an ECM-linked task is futile — ssSync recreates any
-        // open sheet row it can't find. Dismiss it locally instead (done,
-        // WITHOUT the smartsheet status push a toggleTodo would fire).
-        await updateDoc(doc(db, 'tv_todos', id), { done: true, completedAt: new Date().toISOString(), ecmAccepted: true });
-        Object.assign(t, { done: true });
-      } else {
-        await deleteDoc(doc(db, 'tv_todos', id));
-        todos = todos.filter(x => x.id !== id);
-      }
+      await deleteDoc(doc(db, 'tv_todos', id));
+      todos = todos.filter(x => x.id !== id);
     } catch (e) { console.warn('delete failed', e); return; }
     _plannedCache = _plannedCache.filter(x => x.id !== id);
     (focus5State.lists || []).forEach(l => {
@@ -13739,6 +13775,73 @@ const VOICE = {
       if (t) _ovHabitToggle(t.getAttribute('data-ovh-toggle'), t.getAttribute('data-ovh-dont') === '1');
     });
   })();
+
+  // ---- One-time ECM repair ----
+  // ssSync used to dedupe only against the todos loaded for the current day,
+  // so any copy parked elsewhere was invisible and got recreated on the next
+  // sync: 12 sheet rows had grown into 48 docs — some flagged planned (Inbox),
+  // some not (Today), which is why the same task showed in both places.
+  // Collapse each sheet row back to its richest doc and park undated,
+  // un-accepted work in Planned where it belongs. Idempotent + once-guarded.
+  async function _ecmRepairOnce(){
+    const KEY = 'ecm-dedupe-repair-v2';
+    try { if (localStorage.getItem(KEY)) return; } catch { return; }
+    const groups = new Map();
+    try {
+      const qs = await getDocs(query(todosCol, where('done', '==', false)));
+      qs.forEach(d => {
+        const p = d.data() || {};
+        if (!p.smartsheetRowId) return;
+        const k = String(p.smartsheetRowId);
+        const arr = groups.get(k) || [];
+        arr.push({ id: d.id, p });
+        groups.set(k, arr);
+      });
+    } catch (e) { console.warn('ecm repair scan failed', e); return; }
+    // Keep whichever copy carries the most of the user's own work.
+    const score = x => (x.p.ecmAccepted ? 8 : 0) + (_inAnyFocus5List(x.id) ? 4 : 0)
+      + (x.p.plannedFor ? 2 : 0) + ((x.p.timeSpent || 0) > 0 ? 1 : 0);
+    let removed = 0, parked = 0;
+    for (const [, arr] of groups) {
+      arr.sort((a, b) => score(b) - score(a)
+        || String(a.p.createdAt || '').localeCompare(String(b.p.createdAt || '')));
+      const keep = arr[0];
+      for (const extra of arr.slice(1)) {
+        try {
+          await deleteDoc(doc(db, 'tv_todos', extra.id));
+          todos = todos.filter(t => t.id !== extra.id);
+          _plannedCache = _plannedCache.filter(t => t.id !== extra.id);
+          (focus5State.lists || []).forEach(l => {
+            const i = (l.taskIds || []).findIndex(x => String(x) === String(extra.id));
+            if (i >= 0) l.taskIds.splice(i, 1);
+          });
+          removed++;
+        } catch (e) { console.warn('ecm repair delete failed', e); }
+      }
+      // Undated ECM work belongs in the Inbox, not on Today. That includes
+      // rows "accepted" under the old semantics, where accept only meant
+      // acknowledged — it never picked a day, and they'd otherwise sit
+      // invisible in Planned/Someday. Tasks already on a list are being
+      // worked; leave those alone.
+      if (!keep.p.plannedFor && !_inAnyFocus5List(keep.id)) {
+        const patch = { planned: true, date: '' };
+        if (keep.p.ecmAccepted) patch.ecmAccepted = false;
+        try {
+          await updateDoc(doc(db, 'tv_todos', keep.id), patch);
+          const t = todos.find(x => x.id === keep.id);
+          if (t) Object.assign(t, patch);
+          parked++;
+        } catch (e) { console.warn('ecm repair park failed', e); }
+      }
+    }
+    try { localStorage.setItem(KEY, `${new Date().toISOString()}|removed:${removed}|parked:${parked}`); } catch {}
+    if (removed || parked) {
+      console.log(`[ecm repair] collapsed ${removed} duplicate doc(s), parked ${parked} undated task(s)`);
+      try { saveFocus5(); } catch {}
+      try { await loadPlannedTodos(true); } catch {}
+      try { render(); } catch {}
+    }
+  }
 
   // Good-days strip on the Overview — the calendar's front-page presence.
   // One fetch per day (or when thresholds change); taps open the full modal.
@@ -17445,6 +17548,8 @@ const VOICE = {
       // isn't already planned should slide into Planned (undated). Runs
       // once per device thanks to the localStorage flag.
       setTimeout(() => { try { _migrateNonPriorityToPlanned(); } catch (e) { console.warn('plan-migration failed', e); } }, 3000);
+      // One-time repair for the ECM duplicate storm (see _ecmRepairOnce).
+      setTimeout(() => { try { _ecmRepairOnce(); } catch (e) { console.warn('ecm repair failed', e); } }, 3600);
       // Cleanup: the first migration accidentally swept routines/templates
       // into Planned. Un-plan them once per device. Safe to leave in.
       setTimeout(() => { try { _cleanupRoutinesFromPlanned(); } catch (e) { console.warn('plan-cleanup failed', e); } }, 3500);
