@@ -6255,6 +6255,7 @@
     table.pgrid td { padding: 3px 0; }
     .vgrid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
   }
+
 </style>
 <!-- Cloud sync — pulls cloud state before app code runs and pushes writes out
      so personal-todos-cache (consumed by Sprint) and other prefs sync laptop ↔ TV. -->
@@ -16083,9 +16084,60 @@ const VOICE = {
   // Meals card also mirrors this week's meal slots. Boot lands here; tapping
   // any list tab or pill leaves it for the session, reload comes back.
   let _f5OverviewTab = true;
-  // 'day' = just today per section; 'week' = today + the next 7 days with
-  // day chips. Sticky preference.
-  let _ovMode = (localStorage.getItem('personal-ov-mode-v1') === 'week') ? 'week' : 'day';
+  // 'day' = just today per section; 'week' = the whole calendar week with day
+  // chips (pageable backwards and forwards); 'morning' = the morning routine.
+  // Sticky preference.
+  let _ovMode = (() => {
+    const v = localStorage.getItem('personal-ov-mode-v1');
+    return (v === 'week' || v === 'morning') ? v : 'day';
+  })();
+  // Week pager: 0 = this week, -1 = last week, +1 = next week. Deliberately
+  // NOT sticky — the page always opens on the week you're actually in.
+  let _ovWeekOff = 0;
+  // ---- Calendar weeks, Monday-start ----
+  // Monday because the "Next wk" push target is a Monday, so a pushed task
+  // lands on day one of the week the pager calls "Next week".
+  function _ovWeekStart(off){
+    const d = new Date();
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + (off || 0) * 7);
+    return dkey(d);
+  }
+  function _ovWeekEnd(off){
+    const d = new Date(_ovWeekStart(off) + 'T12:00:00');
+    d.setDate(d.getDate() + 6);
+    return dkey(d);
+  }
+  function _ovWeekLabel(off){
+    if (off === 0) return 'This week';
+    if (off === -1) return 'Last week';
+    if (off === 1) return 'Next week';
+    return `${_ovShortDate(_ovWeekStart(off))} – ${_ovShortDate(_ovWeekEnd(off))}`;
+  }
+  // ---- Past weeks: what actually got done ----
+  // One scan of the done tasks per session (same query the ✓ browser runs),
+  // then filtered per week in memory. Refetched when the user checks
+  // something off so a just-finished task shows up on the way back.
+  let _ovDoneCache = null;   // Array of done todos, or null before the first fetch
+  let _ovDoneBusy = false;
+  function _ovDoneEnsure(){
+    if (_ovDoneCache || _ovDoneBusy) return;
+    _ovDoneBusy = true;
+    getDocs(query(todosCol, where('done', '==', true)))
+      .then(snap => { _ovDoneCache = snap.docs.map(d => ({ id: d.id, ...d.data() })); })
+      .catch(e => { console.warn('overview done scan failed', e); _ovDoneCache = []; })
+      .finally(() => {
+        _ovDoneBusy = false;
+        try { if (_f5OverviewTab) render(); } catch {}
+      });
+  }
+  // The day a done task counts against — completedAt if it was stamped,
+  // otherwise the day it was scheduled for (older tasks predate the stamp).
+  function _ovDoneDay(t){
+    if (t && t.completedAt) {
+      try { return dkey(new Date(t.completedAt)); } catch {}
+    }
+    return (t && t.date) ? String(t.date).slice(0, 10) : '';
+  }
   let _ovMealsWeek = null;      // latest goals_canvas_meal_weeks doc (stashed by the banner subscription)
   const _ovMealTitles = {};     // rid -> resolved recipe title
   let _ovMealsKickKey = '';
@@ -16098,12 +16150,36 @@ const VOICE = {
 
   function _ovCollect(extraSeen){
     const today = todayKey();
-    const end = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return dkey(d); })();
+    const wkStart = _ovWeekStart(_ovWeekOff);
+    const wkEnd = _ovWeekEnd(_ovWeekOff);
     // Seed with ids already claimed elsewhere (the Routine card) so a task
     // never renders in two cards.
     const seen = new Set(extraSeen || []);
     const sections = {};
     Object.keys(SECTION_META).forEach(k => { sections[k] = { today: [], week: [] }; });
+    // A PAST week is a record, not a plan: only what actually got finished,
+    // filed under the day it was finished on. Nothing is "today" back there.
+    if (_ovMode === 'week' && _ovWeekOff < 0) {
+      _ovDoneEnsure();
+      (_ovDoneCache || [])
+        .map(t => ({ t, day: _ovDoneDay(t) }))
+        .filter(x => x.day && x.day >= wkStart && x.day <= wkEnd && !seen.has(x.t.id))
+        .sort((a, b) => a.day.localeCompare(b.day))
+        .forEach(x => {
+          seen.add(x.t.id);
+          sections[sectionOf(x.t)].week.push({ ...x.t, plannedFor: x.day, done: true });
+        });
+      return sections;
+    }
+    // A FUTURE week is only the planned ledger for that stretch.
+    if (_ovMode === 'week' && _ovWeekOff > 0) {
+      (_plannedCache || [])
+        .filter(p => !p.done && typeof p.plannedFor === 'string'
+          && p.plannedFor >= wkStart && p.plannedFor <= wkEnd && !seen.has(p.id))
+        .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+        .forEach(p => { seen.add(p.id); sections[sectionOf(p)].week.push(p); });
+      return sections;
+    }
     const skipped = (typeof _focus5GetSkippedToday === 'function') ? _focus5GetSkippedToday() : new Set();
     // 1) Non-routine focus lists, in list order — today's working set.
     (focus5State.lists || []).forEach(l => {
@@ -16133,7 +16209,9 @@ const VOICE = {
         && p.plannedFor <= today && !seen.has(p.id))
       .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
       .forEach(p => { seen.add(p.id); sections[sectionOf(p)].today.push(p); });
-    // 3) The week ahead, from the planned ledger.
+    // 3) The rest of THIS week, from the planned ledger. Day mode stops at
+    //    today — the week rows are a Week-mode idea.
+    const end = (_ovMode === 'week') ? wkEnd : today;
     (_plannedCache || [])
       .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor > today && p.plannedFor <= end)
       .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
@@ -16251,6 +16329,16 @@ const VOICE = {
     </div>${open ? _ovActsHTML(t.id) : ''}`;
   }
   function _ovWeekRowHTML(p){
+    // A row from a past week is history: a tick, the day it landed, no push
+    // menu and no "overdue" scolding about a deadline that's long settled.
+    if (p.done) {
+      return `<div class="ov-row wk done">
+        <span class="ov-check on" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+        <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
+        <span class="ov-text">${escHtml(p.text || '')}</span>
+        ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
+      </div>`;
+    }
     const open = _ovRowOpen === p.id;
     return `<div class="ov-row wk ${open ? 'open' : ''}" data-ov-open="${escHtml(p.id)}">
       <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
@@ -16296,9 +16384,85 @@ const VOICE = {
         b.classList.toggle('on', b.getAttribute('data-ov-jump') === key));
     }, { passive: true, capture: true });
   }
-  // Routine-list tasks are EXCLUDED from the Overview (routines live on the
-  // Habits page) — this only feeds the dedupe seed so they never leak into
-  // section cards.
+  // ---- MORNING ROUTINE ----
+  // The morning routine used to be a tab in the list strip. The strip is gone;
+  // it lives here as the third Overview mode, driven by the same routine-
+  // flagged list, so nothing about the stored data changed.
+  function _ovMorningList(){
+    const lists = (focus5State && focus5State.lists) || [];
+    return lists.find(l => l.routine === 'morning') || lists.find(l => !!l.routine) || null;
+  }
+  // Returns {ref, task} pairs — the RAW ref is what removal needs, since a
+  // recurring routine is stored as 'tpl:<id>' and resolves to a fresh
+  // instance each day.
+  function _ovMorningRows(){
+    const l = _ovMorningList();
+    if (!l) return [];
+    return (l.taskIds || [])
+      .map(ref => ({ ref, task: resolveFocus5TaskId(ref) }))
+      .filter(x => !!x.task);
+  }
+  async function _ovMorningAdd(text){
+    let l = _ovMorningList();
+    // No routine list yet (deleted, or a fresh device mid-seed) — make one.
+    if (!l) {
+      l = { id: focus5MakeId(), name: 'Morning Routine', taskIds: [], routine: 'morning' };
+      focus5State.lists.push(l);
+    }
+    try {
+      const id = await addTodoItem(text, null, {});
+      if (!id) return;
+      // Straight onto the routine list — no cascade, no priority chain. A
+      // routine isn't work that overflows anywhere.
+      if (!l.taskIds.includes(id)) l.taskIds.push(id);
+      saveFocus5();
+    } catch (e) { console.warn('morning add failed', e); }
+    try { render(); } catch {}
+  }
+  function _ovMorningRemove(ref){
+    const l = _ovMorningList();
+    if (!l) return;
+    const i = (l.taskIds || []).findIndex(x => String(x) === String(ref));
+    if (i >= 0) l.taskIds.splice(i, 1);
+    saveFocus5();
+    try { render(); } catch {}
+  }
+  function _ovMorningCard(){
+    const rows = _ovMorningRows();
+    const done = rows.filter(x => x.task.done).length;
+    const card = document.createElement('div');
+    card.className = 'ov-sec sec-morning';
+    const addRow = _ovAddOpen === 'morning'
+      ? `<div class="ov-addrow"><input class="ov-add-input" data-ov-input="morning" placeholder="Add to your morning — Enter to save" autocomplete="off"></div>`
+      : '';
+    // Unlike the section cards, checked-off routine steps STAY put — the
+    // point of a routine is seeing the whole sequence, ticks and all.
+    const rowsHTML = rows.map(({ ref, task }) => `
+      <div class="ov-row am ${task.done ? 'done' : ''}">
+        <button class="ov-check ${task.done ? 'on' : ''}" type="button" data-ov-done="${escHtml(task.id)}" aria-label="${task.done ? 'Mark open' : 'Mark done'}">${task.done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
+        <span class="ov-text">${escHtml(task.text || '')}</span>
+        <button class="ov-amdel" type="button" data-ov-amdel="${escHtml(String(ref))}" aria-label="Remove from the morning routine">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>`).join('');
+    card.innerHTML = `
+      <div class="ov-head">
+        <span class="ov-dot"></span>
+        <span class="ov-name">Morning routine</span>
+        <span class="ov-ct">${rows.length ? `${done}/${rows.length}` : ''}</span>
+        <button class="ov-add ${_ovAddOpen === 'morning' ? 'on' : ''}" type="button" data-ov-add="morning" aria-label="Add a step to the morning routine">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      ${addRow}
+      ${rowsHTML ? '<div class="ov-body">' + rowsHTML + '</div>' : ''}
+      ${rows.length && done === rows.length ? '<div class="ov-empty">Routine done. Good start.</div>' : ''}
+      ${rows.length ? '' : '<div class="ov-empty">No steps yet — tap + and type the first one.</div>'}`;
+    return card;
+  }
+  // Routine-list tasks are EXCLUDED from the Overview's section cards (they
+  // have their own Morning mode) — this only feeds the dedupe seed so they
+  // never leak into ECM / VitalTouch / Meals / Life.
   function _ovRoutineTasks(){
     const skipped = (typeof _focus5GetSkippedToday === 'function') ? _focus5GetSkippedToday() : new Set();
     const out = [];
@@ -16561,8 +16725,8 @@ const VOICE = {
 
     const col = document.createElement('div');
     col.className = 'ov-col';
-    // Top row: Day|Week owns time; quiet chips reach the secondary views
-    // (the pill strip doesn't render on Overview).
+    // Top row: Day|Week|Morning owns time; quiet chips reach the secondary
+    // views (the pill strip doesn't render on Overview).
     const plOpen = (_plannedCache || []).filter(p => !p.done).length;
     const top = document.createElement('div');
     top.className = 'ov-top';
@@ -16570,14 +16734,34 @@ const VOICE = {
       <div class="ov-mode">
         <button type="button" data-ov-mode="day" class="${_ovMode === 'day' ? 'on' : ''}">Day</button>
         <button type="button" data-ov-mode="week" class="${_ovMode === 'week' ? 'on' : ''}">Week</button>
+        <button type="button" data-ov-mode="morning" class="${_ovMode === 'morning' ? 'on' : ''}"><span class="ovm-full">Morning</span><span class="ovm-short">AM</span></button>
       </div>
       <div class="ov-gos">
         <button class="ov-go" type="button" data-ov-go="planned">Planned${plOpen ? ` · ${plOpen}` : ''}</button>
-        <button class="ov-go" type="button" data-ov-go="lists">Lists</button>
         <button class="ov-go" type="button" data-ov-go="stats">Stats</button>
         <button class="ov-go" type="button" data-ov-go="done" aria-label="Completed">✓</button>
       </div>`;
     col.appendChild(top);
+    // Week pager — Week mode only. Back through what actually got done,
+    // forward through what's planned.
+    if (_ovMode === 'week') {
+      const pager = document.createElement('div');
+      pager.className = 'ov-weeknav';
+      const loading = _ovWeekOff < 0 && !_ovDoneCache;
+      pager.innerHTML = `
+        <button class="ovwn-arrow" type="button" data-ov-week="-1" aria-label="Previous week">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span class="ovwn-label">
+          <span class="ovwn-name">${escHtml(_ovWeekLabel(_ovWeekOff))}</span>
+          <span class="ovwn-range">${escHtml(_ovShortDate(_ovWeekStart(_ovWeekOff)))} – ${escHtml(_ovShortDate(_ovWeekEnd(_ovWeekOff)))}${loading ? ' · loading…' : ''}</span>
+        </span>
+        <button class="ovwn-arrow" type="button" data-ov-week="1" aria-label="Next week">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        ${_ovWeekOff !== 0 ? '<button class="ovwn-now" type="button" data-ov-week="0">Now</button>' : ''}`;
+      col.appendChild(pager);
+    }
 
     // Timer — running state up top, plus the day's goal/limit bars so a cap
     // can't be blown through without ever being seen.
@@ -16606,28 +16790,37 @@ const VOICE = {
     }
     col.appendChild(winsCard);
 
+    // In a week that isn't this one there's no "today" and nothing to add to
+    // — you're reading a record (past) or a plan (future).
+    const otherWeek = _ovMode === 'week' && _ovWeekOff !== 0;
     const buildCard = (key, label, todayArr, weekArr, extraHTML, inboxChip) => {
       const tDone = todayArr.filter(t => t.done).length;
-      const counts = _ovMode === 'day'
-        ? (todayArr.length ? `${tDone}/${todayArr.length}` : '')
-        : [
-            todayArr.length ? `${tDone}/${todayArr.length} today` : '',
-            weekArr.length ? `${weekArr.length} wk` : ''
-          ].filter(Boolean).join(' · ');
+      const counts = otherWeek
+        ? (weekArr.length ? `${weekArr.length}` : '')
+        : _ovMode === 'day'
+          ? (todayArr.length ? `${tDone}/${todayArr.length}` : '')
+          : [
+              todayArr.length ? `${tDone}/${todayArr.length} today` : '',
+              weekArr.length ? `${weekArr.length} wk` : ''
+            ].filter(Boolean).join(' · ');
       // Done rows hide (the ✓ browser keeps the archive) except during the
       // brief post-check linger; the n/total count still tells the story.
       const visToday = todayArr.filter(t => !t.done || _ovJustDone.has(String(t.id)));
-      const rowsHTML = _ovMode === 'day'
-        ? visToday.map(t => _ovRowHTML(t)).join('')
-        : visToday.map(t => _ovRowHTML(t, 'Today')).join('') + weekArr.map(_ovWeekRowHTML).join('');
+      const rowsHTML = otherWeek
+        ? weekArr.map(_ovWeekRowHTML).join('')
+        : _ovMode === 'day'
+          ? visToday.map(t => _ovRowHTML(t)).join('')
+          : visToday.map(t => _ovRowHTML(t, 'Today')).join('') + weekArr.map(_ovWeekRowHTML).join('');
       const allDone = todayArr.length > 0 && tDone === todayArr.length;
       const emptyHTML = (!rowsHTML && !extraHTML)
-        ? (allDone
-            ? '<div class="ov-empty">All done today.</div>'
-            : `<div class="ov-empty">${_ovMode === 'day' ? 'Nothing yet' : 'Nothing this week'}</div>`) : '';
+        ? (otherWeek
+            ? `<div class="ov-empty">${_ovWeekOff < 0 ? 'Nothing logged' : 'Nothing planned'}</div>`
+            : allDone
+              ? '<div class="ov-empty">All done today.</div>'
+              : `<div class="ov-empty">${_ovMode === 'day' ? 'Nothing yet' : 'Nothing this week'}</div>`) : '';
       const card = document.createElement('div');
       card.className = `ov-sec sec-${key}`;
-      const addRow = _ovAddOpen === key
+      const addRow = (!otherWeek && _ovAddOpen === key)
         ? `<div class="ov-addrow"><input class="ov-add-input" data-ov-input="${key}" placeholder="Add to ${label} — Enter to save" autocomplete="off"></div>`
         : '';
       card.innerHTML = `
@@ -16637,9 +16830,9 @@ const VOICE = {
           <span class="ov-name">${label}</span>
           ${inboxChip || ''}
           <span class="ov-ct">${counts}</span>
-          <button class="ov-add ${_ovAddOpen === key ? 'on' : ''}" type="button" data-ov-add="${key}" aria-label="Add a task to ${label}">
+          ${otherWeek ? '' : `<button class="ov-add ${_ovAddOpen === key ? 'on' : ''}" type="button" data-ov-add="${key}" aria-label="Add a task to ${label}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
+          </button>`}
         </div>
         ${addRow}
         ${rowsHTML ? '<div class="ov-body">' + rowsHTML + '</div>' : ''}
@@ -16648,19 +16841,23 @@ const VOICE = {
       return card;
     };
 
-    Object.keys(SECTION_META).forEach(key => {
-      const sec = sections[key];
-      // Unaccepted ECM assignments surface as an inbox chip on the ECM card.
-      let inboxChip = '';
-      if (key === 'ecm') {
-        const inbox = (_plannedCache || []).filter(p =>
-          p.smartsheetRowId && !p.done && !(typeof p.plannedFor === 'string' && p.plannedFor) &&
-          !p.ecmAccepted && !_inAnyFocus5List(p.id)).length;
-        if (inbox) inboxChip = `<button class="ov-inbox" type="button" data-ov-inbox="1">Inbox · ${inbox}</button>`;
-      }
-      col.appendChild(buildCard(key, SECTION_META[key].label, sec.today, sec.week,
-        key === 'meals' ? _ovMealChips() : '', inboxChip));
-    });
+    if (_ovMode === 'morning') {
+      col.appendChild(_ovMorningCard());
+    } else {
+      Object.keys(SECTION_META).forEach(key => {
+        const sec = sections[key];
+        // Unaccepted ECM assignments surface as an inbox chip on the ECM card.
+        let inboxChip = '';
+        if (key === 'ecm' && !otherWeek) {
+          const inbox = (_plannedCache || []).filter(p =>
+            p.smartsheetRowId && !p.done && !(typeof p.plannedFor === 'string' && p.plannedFor) &&
+            !p.ecmAccepted && !_inAnyFocus5List(p.id)).length;
+          if (inbox) inboxChip = `<button class="ov-inbox" type="button" data-ov-inbox="1">Inbox · ${inbox}</button>`;
+        }
+        col.appendChild(buildCard(key, SECTION_META[key].label, sec.today, sec.week,
+          (key === 'meals' && !otherWeek) ? _ovMealChips() : '', inboxChip));
+      });
+    }
     // One quiet call-to-action, only when the whole day is actually empty.
     if (_ovMode === 'day' && Object.values(sections).every(s => !s.today.length)) {
       const cta = document.createElement('button');
@@ -16687,7 +16884,8 @@ const VOICE = {
         // (_isPersonalEditing), which kept the new row invisible until the
         // next blur. The rebuild's rAF refocuses the row for serial adds.
         inp.blur();
-        await _ovQuickAdd(key, text);
+        if (key === 'morning') await _ovMorningAdd(text);
+        else await _ovQuickAdd(key, text);
       });
     });
     // Cards must be at least as tall as their spine tab (labels vary —
@@ -16725,9 +16923,29 @@ const VOICE = {
       }
       const modeBtn = e.target.closest('[data-ov-mode]');
       if (modeBtn) {
-        _ovMode = modeBtn.getAttribute('data-ov-mode') === 'week' ? 'week' : 'day';
+        const want = modeBtn.getAttribute('data-ov-mode');
+        _ovMode = (want === 'week' || want === 'morning') ? want : 'day';
+        // Leaving Week drops the pager back to now — coming back to a
+        // three-weeks-ago view you'd forgotten you were on is disorienting.
+        if (_ovMode !== 'week') _ovWeekOff = 0;
+        _ovAddOpen = null;
         try { localStorage.setItem('personal-ov-mode-v1', _ovMode); } catch {}
         render();
+        return;
+      }
+      const wkBtn = e.target.closest('[data-ov-week]');
+      if (wkBtn) {
+        const step = parseInt(wkBtn.getAttribute('data-ov-week'), 10) || 0;
+        _ovWeekOff = step === 0 ? 0 : _ovWeekOff + step;
+        _ovRowOpen = null; _ovDelArm = null; _ovAddOpen = null;
+        if (_ovWeekOff < 0) _ovDoneEnsure();
+        render();
+        return;
+      }
+      const amDel = e.target.closest('[data-ov-amdel]');
+      if (amDel) {
+        e.stopPropagation();
+        _ovMorningRemove(amDel.getAttribute('data-ov-amdel'));
         return;
       }
       // A strip DATE opens the calendar on that day; the habit sheet is one
@@ -16738,13 +16956,10 @@ const VOICE = {
       if (go) {
         const dest = go.getAttribute('data-ov-go');
         if (dest === 'planned') {
-          _f5OverviewTab = false; _f5PlannedTab = true; _f5DayTab = false;
+          _f5OverviewTab = false; _f5PlannedTab = true;
           _f5HabitsTab = false; _f5TimerTab = false;
           loadPlannedTodos().then(() => { try { if (_f5PlannedTab) render(); } catch {} });
           render();
-        } else if (dest === 'lists') {
-          const first = (focus5State.lists || []).find(l => !l.routine) || (focus5State.lists || [])[0];
-          if (first) focus5SwitchList(first.id);
         } else if (dest === 'stats') {
           try { openOvStats(); } catch (e) { console.warn(e); }
         } else if (dest === 'done') {
@@ -16769,6 +16984,9 @@ const VOICE = {
         } else {
           _ovJustDone.delete(String(id));
         }
+        // The past-week ledger just changed — drop the scan so paging back
+        // shows this tick instead of a stale snapshot.
+        _ovDoneCache = null;
         toggleTodo(id);
         return;
       }
@@ -17079,33 +17297,23 @@ const VOICE = {
   function renderFocus5View(){
     const list = document.getElementById('list');
     if (!list) return;
+    // Overview is HOME. Everything else is one of three pills — Planned,
+    // Timer, Habits — plus Completed, which opens a modal over whatever
+    // you were on. Named lists are gone; anything else lands back here.
+    if (!_f5PlannedTab && !_f5TimerTab && !_f5HabitsTab) _f5OverviewTab = true;
     // The capsule hides on the Timer tab and shows everywhere else — repaint
     // with the view so it flips on the same frame, not on the next tick.
     try { tmrPaintCapsule(); } catch {}
     // Overview hides the meals banner via body class — the Meals card IS the
     // banner there. CSS-only so the banner's own show/hide state survives.
     document.body.classList.toggle('ov-active', !!_f5OverviewTab);
-    // Capture BEFORE the wipe: was the user mid-typing in the capture row?
-    // If so, the rebuilt input gets focus (and its caret) back — this is what
-    // makes type-Enter-type-Enter work despite full re-renders per add.
-    const _prevQuick = document.getElementById('focus5QuickInput');
-    const _quickHadFocus = !!_prevQuick && document.activeElement === _prevQuick;
-    const _refocusQuick = (el) => {
-      if (!el || !_quickHadFocus) return;
-      const ni = el.querySelector('input');
-      if (!ni) return;
-      ni.focus();
-      try { ni.setSelectionRange(ni.value.length, ni.value.length); } catch {}
-    };
     list.innerHTML = '';
-    const activeList = focus5ActiveList();
-    const tasks = focus5Tasks();
     const view = document.createElement('div');
     view.className = 'focus5-view';
 
     // ---- OVERVIEW — the sectioned home. NO pill strip here: the spine rail
-    // owns sections, Day|Week owns time, and the quiet chips reach Planned /
-    // Lists / Completed. The strip only renders on the classic list views.
+    // owns sections, Day|Week|Morning owns time, and the quiet chips reach
+    // Planned / Completed. The strip only renders on the three pill views.
     if (_f5OverviewTab) {
       renderOverviewView(view);
       list.appendChild(view);
@@ -17157,27 +17365,6 @@ const VOICE = {
       render();
     });
     strip.appendChild(plannedTab);
-    // Day tab — time-block planning for today (or any date ahead).
-    const dayTab = document.createElement('button');
-    dayTab.type = 'button';
-    loadDayBlocks();
-    const _todayBlocks = dayBlocksFor(todayKey()).length;
-    dayTab.className = `focus5-tab day-pill ${_f5DayTab ? 'active' : ''}`;
-    dayTab.innerHTML = `
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <span class="name">Day</span>
-      ${_todayBlocks ? `<span class="ct">${_todayBlocks}</span>` : ''}
-    `;
-    dayTab.addEventListener('click', () => {
-      _f5DayTab = true;
-      _f5PlannedTab = false;
-      _f5OverviewTab = false;
-      _f5HabitsTab = false;
-      _f5TimerTab = false;
-      dayBlocksDate = todayKey();
-      render();
-    });
-    strip.appendChild(dayTab);
     // Timer pill — doubles as the running readout, so the clock is visible
     // from every list view without a second piece of furniture.
     const timerTab = document.createElement('button');
@@ -17215,46 +17402,6 @@ const VOICE = {
       render();
     });
     strip.appendChild(habitsTab);
-    focus5State.lists.forEach((l, i) => {
-      const lTasks = l.taskIds.map(id => resolveFocus5TaskId(id)).filter(Boolean);
-      const lDone = lTasks.filter(t => t.done).length;
-      const total = lTasks.length;
-      const isActive = !_f5PlannedTab && !_f5DayTab && !_f5OverviewTab && !_f5HabitsTab && !_f5TimerTab && l.id === focus5State.activeListId;
-      const isComplete = total > 0 && lDone === total;
-      // <div role="button"> so we can nest the reorder <button>s inside.
-      const tab = document.createElement('div');
-      tab.setAttribute('role', 'button');
-      tab.tabIndex = 0;
-      tab.className = `focus5-tab ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`;
-      tab.dataset.listId = l.id;
-      // Inline reorder controls on the ACTIVE tab — only when more than 1 list.
-      const showReorder = isActive && focus5State.lists.length > 1;
-      const reorderHTML = showReorder ? `
-        <button class="focus5-tab-mv" data-mv="left" type="button" aria-label="Move list left" ${i === 0 ? 'disabled' : ''}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <button class="focus5-tab-mv" data-mv="right" type="button" aria-label="Move list right" ${i === focus5State.lists.length - 1 ? 'disabled' : ''}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-      ` : '';
-      // Hide the count when the list is empty — "0/5" looks like nagging when
-      // there's literally nothing to be done.
-      const ctHTML = total > 0
-        ? `<span class="ct">${lDone}/${total}</span>`
-        : '';
-      tab.innerHTML = `${focus5RoutineIcon(l.routine)}<span class="name"><span class="nm-full">${escHtml(shortListName(l.name))}</span><span class="nm-short">${escHtml(shortTabLabel(l.name))}</span></span>${ctHTML}${reorderHTML}`;
-      tab.addEventListener('click', (e) => {
-        const mv = e.target && e.target.closest && e.target.closest('[data-mv]');
-        if (mv) {
-          e.stopPropagation();
-          if (mv.dataset.mv === 'left') focus5MoveListLeft(l.id);
-          else focus5MoveListRight(l.id);
-          return;
-        }
-        focus5SwitchList(l.id);
-      });
-      strip.appendChild(tab);
-    });
     // Completed pill — shows lifetime done count of tasks WITH a project
     // (chores/no-project tasks intentionally excluded). Reads cached count
     // immediately and refreshes from Firestore async so it stays fresh.
@@ -17274,25 +17421,11 @@ const VOICE = {
     strip.appendChild(completedTab);
     // Async refresh from Firestore — counts only done tasks with a project
     try { _updateCompletedPillCount(); } catch {}
-    const addTab = document.createElement('button');
-    addTab.type = 'button';
-    addTab.className = 'focus5-add-tab';
-    addTab.innerHTML = `
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <span class="fa-label">New list</span>`;
-    addTab.addEventListener('click', () => openFocus5Picker(null));
-    strip.appendChild(addTab);
     view.appendChild(strip);
 
     // ---- PLANNED TAB — swaps the list content for the planned ledger ----
     if (_f5PlannedTab) {
       renderPlannedView(view);
-      list.appendChild(view);
-      return;
-    }
-    // ---- DAY TAB — time-block planner ----
-    if (_f5DayTab) {
-      renderDayBlocksView(view);
       list.appendChild(view);
       return;
     }
@@ -17303,240 +17436,8 @@ const VOICE = {
       return;
     }
     // ---- HABITS TAB — today's checklist, progress, health ----
-    if (_f5HabitsTab) {
-      renderHabitsView(view);
-      list.appendChild(view);
-      return;
-    }
-
-    // No active list (lists empty)? Show a simple prompt to create one.
-    if (!activeList) {
-      const empty = document.createElement('div');
-      empty.className = 'focus5-celebrate';
-      empty.innerHTML = `
-        <div class="focus5-celebrate-title">Build your first list</div>
-        <div class="focus5-celebrate-sub">Name it (like <em>Morning routine</em>) and pick the tasks for it.</div>
-        <div class="focus5-celebrate-actions">
-          <button class="focus5-btn primary" id="focus5CreateBtn" type="button">+ New focus list</button>
-          <button class="focus5-btn" id="focus5ExitBtn" type="button">Back to all tasks</button>
-        </div>`;
-      view.appendChild(empty);
-      list.appendChild(view);
-      empty.querySelector('#focus5CreateBtn').addEventListener('click', () => openFocus5Picker(null));
-      empty.querySelector('#focus5ExitBtn').addEventListener('click', () => {
-        focus5State.active = false; saveFocus5(); render();
-      });
-      return;
-    }
-
-    // ---- LIST-LEVEL TOOLS (only visible in edit mode) ----
-    // Lets user reorder lists, rename / delete the current list
-    const tools = document.createElement('div');
-    tools.className = 'focus5-list-tools';
-    const idx = focus5State.lists.findIndex(l => l.id === activeList.id);
-    const totalLists = focus5State.lists.length;
-    tools.innerHTML = `
-      <span class="lbl">List</span>
-      <button data-act="rename" type="button">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-        Rename
-      </button>
-      <button data-act="left" type="button" ${idx <= 0 ? 'disabled' : ''}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-        Move left
-      </button>
-      <button data-act="right" type="button" ${idx >= totalLists - 1 ? 'disabled' : ''}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-        Move right
-      </button>
-      <button data-act="delete" type="button" class="danger">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/></svg>
-        Delete list
-      </button>
-    `;
-    tools.querySelector('[data-act="rename"]').addEventListener('click', () => {
-      const name = prompt('Rename list:', activeList.name);
-      if (name == null) return;
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      focus5RenameList(activeList.id, trimmed);
-    });
-    tools.querySelector('[data-act="left"]').addEventListener('click', () => focus5MoveListLeft(activeList.id));
-    tools.querySelector('[data-act="right"]').addEventListener('click', () => focus5MoveListRight(activeList.id));
-    tools.querySelector('[data-act="delete"]').addEventListener('click', () => {
-      if (!confirm(`Delete "${activeList.name}"? This won't delete the tasks themselves.`)) return;
-      focus5DeleteList(activeList.id);
-    });
-    view.appendChild(tools);
-
-    // Notes-style capture row — built for every non-edit render, appended
-    // under the empty-state hint or after the task cards.
-    const quickAddEl = _focus5EditMode ? null : _buildF5QuickAdd(activeList);
-
-    // ---- Empty list (lists exist but this one has no tasks) ----
-    if (tasks.length === 0) {
-      // Recovery hint: any priority lists empty AND user has priority-flagged
-      // open tasks that aren't in any list? Show a Restore button that pulls
-      // them in. Covers the case where the sync race wiped focus5State.
-      const priorityChainIds = new Set();
-      try {
-        _priorityChain().forEach(l => (l.taskIds || []).forEach(id => priorityChainIds.add(id)));
-      } catch {}
-      const recoverable = todos.filter(t =>
-        !t.done && t.priority && !priorityChainIds.has(t.id)
-      ).sort((a, b) => {
-        const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
-        const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
-        return tb - ta;
-      });
-      const restoreHTML = recoverable.length > 0
-        ? `<button class="focus5-btn" id="focus5RestoreBtn" type="button" style="margin-left:8px;background:rgba(255,138,61,.14);border:1px solid rgba(255,138,61,.45);color:var(--accent)">Restore ${recoverable.length} priority task${recoverable.length === 1 ? '' : 's'}</button>`
-        : '';
-      const empty = document.createElement('div');
-      empty.className = 'focus5-celebrate focus5-empty';
-      empty.innerHTML = `
-        <div class="focus5-celebrate-title">${escHtml(activeList.name)}</div>
-        <div class="focus5-celebrate-sub">Nothing here yet — pick from existing tasks, or just start typing below like a note.</div>
-        <div class="focus5-celebrate-actions">
-          <button class="focus5-btn primary" id="focus5FillBtn" type="button">Pick tasks</button>
-          ${restoreHTML}
-        </div>`;
-      view.appendChild(empty);
-      if (quickAddEl) view.appendChild(quickAddEl);
-      list.appendChild(view);
-      empty.querySelector('#focus5FillBtn').addEventListener('click', () => {
-        // Routine list → single-list picker. Priority list → side-by-side
-        // confirm modal so all three priorities are visible at once.
-        openPickForActiveList();
-      });
-      const restoreBtn = empty.querySelector('#focus5RestoreBtn');
-      if (restoreBtn) {
-        restoreBtn.addEventListener('click', () => {
-          // Bulk-add recoverable tasks. cascadeAddTaskToList handles overflow
-          // per the priority chain rule (cap at 5 for First/Second, last is
-          // unlimited).
-          recoverable.forEach(t => {
-            try { cascadeAddTaskToList(t.id, activeList.id, 'end'); } catch {}
-          });
-          try { saveFocus5(); render(); } catch {}
-        });
-      }
-      _refocusQuick(quickAddEl);
-      return;
-    }
-    const done = tasks.filter(t => t.done).length;
-    const total = tasks.length;
-    // Feed the day-header ring (Direction B) — active list's done/total.
-    try {
-      const ring = document.getElementById('ptDayRing');
-      const lbl = document.getElementById('ptDayRingLabel');
-      if (ring && lbl) {
-        ring.hidden = false;
-        ring.style.setProperty('--deg', (total ? Math.round((done / total) * 360) : 0) + 'deg');
-        lbl.textContent = `${done}/${total}`;
-      }
-    } catch {}
-    // Progress row — segments + count + Edit pill on the right
-    const segs = Array.from({ length: total }, (_, i) =>
-      `<span class="focus5-progress-seg ${i < done ? 'done' : ''}"></span>`
-    ).join('');
-    const progress = document.createElement('div');
-    progress.className = 'focus5-progress';
-    progress.innerHTML = `
-      <div class="focus5-progress-track">${segs}</div>
-      <div class="focus5-progress-count"><strong>${done}</strong>/${total}</div>
-      <button class="focus5-edit-toggle ${_focus5EditMode ? 'on' : ''}" id="focus5EditToggle" type="button">
-        ${_focus5EditMode
-          ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Done`
-          : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Edit`}
-      </button>
-    `;
-    view.appendChild(progress);
-    const editToggleBtn = progress.querySelector('#focus5EditToggle');
-    if (editToggleBtn) editToggleBtn.addEventListener('click', () => {
-      // Tap Edit → route by list type: routine list opens the single-list
-      // picker (Morning Routine only), priority list opens the side-by-side
-      // confirm modal. Falls back to in-place edit if neither path works.
-      try { openPickForActiveList(); }
-      catch { focus5SetEditMode(!_focus5EditMode); }
-    });
-
-
-    // Edit mode: render in stored order so the user can rearrange explicitly.
-    // Ignore the done/pending split — that visual would fight the reorder UX.
-    if (_focus5EditMode) {
-      tasks.forEach((t, i) => {
-        view.appendChild(buildFocus5Card(t, i, /*isActive*/ false, /*isDone*/ !!t.done, i + 1, /*editing*/ true, /*total*/ tasks.length));
-      });
-      // Foot row: open picker (it pre-loads current picks so editing is
-      // non-destructive — Cancel keeps everything as it was).
-      const foot = document.createElement('div');
-      foot.className = 'focus5-edit-foot';
-      const addLabel = 'Add or swap tasks';
-      foot.innerHTML = `
-        <button class="focus5-btn" id="focus5AddBtn" type="button">${addLabel}</button>
-      `;
-      view.appendChild(foot);
-      const addBtn = foot.querySelector('#focus5AddBtn');
-      if (addBtn) addBtn.addEventListener('click', () => {
-        // Edit-mode "Add or swap": routine list → single-list picker,
-        // priority list → confirm modal showing all three side-by-side.
-        openPickForActiveList();
-      });
-      list.appendChild(view);
-      return;
-    }
-
-    // All done (and not editing) — celebrate + offer to swap, switch list, or exit
-    if (done === total) {
-      const otherLists = focus5State.lists.filter(l => l.id !== activeList.id);
-      const switchHTML = otherLists.length > 0
-        ? `<button class="focus5-btn" id="focus5SwitchBtn" type="button">Switch list →</button>`
-        : '';
-      const celebrate = document.createElement('div');
-      celebrate.className = 'focus5-celebrate';
-      celebrate.innerHTML = `
-        <div class="focus5-celebrate-title">${total === 5 ? '5 done.' : `${total} done.`}</div>
-        <div class="focus5-celebrate-sub">${escHtml(activeList.name)} — wrapped. Swap in fresh tasks, jump to another list, or step back.</div>
-        <div class="focus5-celebrate-actions">
-          <button class="focus5-btn primary" id="focus5RepickBtn" type="button">Swap in new tasks</button>
-          ${switchHTML}
-          <button class="focus5-btn" id="focus5ExitBtn" type="button">Back to all tasks</button>
-        </div>`;
-      view.appendChild(celebrate);
-      list.appendChild(view);
-      const repick = celebrate.querySelector('#focus5RepickBtn');
-      const switchBtn = celebrate.querySelector('#focus5SwitchBtn');
-      const exit = celebrate.querySelector('#focus5ExitBtn');
-      if (repick) repick.addEventListener('click', () => {
-        // Swap-in flow: routine list → single-list picker, priority list →
-        // multi-list confirm modal.
-        openPickForActiveList();
-      });
-      if (switchBtn) switchBtn.addEventListener('click', () => {
-        // Cycle to next list with open work, else just go to next list
-        const idx = focus5State.lists.findIndex(l => l.id === activeList.id);
-        const next = focus5State.lists[(idx + 1) % focus5State.lists.length];
-        if (next) focus5SwitchList(next.id);
-      });
-      if (exit) exit.addEventListener('click', () => {
-        focus5State.active = false; saveFocus5(); render();
-      });
-      return;
-    }
-    // Default: stage view — pending first (top is "Up next"), then done
-    const pending = tasks.filter(t => !t.done);
-    const completed = tasks.filter(t => t.done);
-    pending.forEach((t, i) => {
-      view.appendChild(buildFocus5Card(t, i, /*isActive*/ i === 0, /*isDone*/ false, tasks.indexOf(t) + 1, false, tasks.length));
-    });
-    completed.forEach(t => {
-      view.appendChild(buildFocus5Card(t, -1, false, true, tasks.indexOf(t) + 1, false, tasks.length));
-    });
-    // Quick-add at the BOTTOM — out of the way of the active "Up next" card.
-    if (quickAddEl) view.appendChild(quickAddEl);
+    renderHabitsView(view);
     list.appendChild(view);
-    _refocusQuick(quickAddEl);
   }
   function buildFocus5Card(todo, idx, isActive, isDone, taskNumber, editing, totalCount){
     const card = document.createElement('div');
