@@ -3608,8 +3608,26 @@
   .tmr-hero.running .tmr-clock { color: var(--accent); }
   .tmr-hero.over .tmr-clock { color: var(--red); }
   .tmr-what { font-size: 13px; font-weight: 700; color: var(--ink-mid); margin-top: 8px; min-height: 18px; }
-  .tmr-share { font-size: 11.5px; color: var(--ink-dim); margin-top: 5px; }
+  .tmr-share { font-size: 11.5px; color: var(--ink-dim); margin-top: 7px; }
+  /* Split vs at-the-same-time. Two projects on one clock usually means the
+     block gets divided; sometimes both genuinely got all of it. Same control
+     on the running hero and on the stop sheet — see .tsp-modes. */
+  .tmr-modes, .tsp-modes {
+    display: inline-flex; gap: 3px; padding: 3px; border-radius: 99px;
+    background: var(--fill); border: 1px solid var(--border);
+  }
+  .tmr-mode, .tsp-mode {
+    border: none; background: transparent; cursor: pointer;
+    font-family: inherit; font-weight: 750; color: var(--ink-dim);
+    border-radius: 99px; transition: background .12s, color .12s;
+  }
+  .tmr-mode { font-size: 11px; padding: 5px 11px; }
+  .tmr-mode:hover, .tsp-mode:hover { color: var(--ink) }
+  .tmr-mode.on, .tsp-mode.on { background: var(--accent); color: var(--on-accent) }
+  .tmr-sharenote { display: block; margin-top: 7px; }
   /* split sheet */
+  .tsp-modes { margin-bottom: 4px; }
+  .tsp-mode { font-size: 11.5px; padding: 6px 13px; }
   .tsp-total {
     display: flex; align-items: baseline; gap: 8px; padding-bottom: 12px;
     border-bottom: 1px solid var(--border); margin-bottom: 4px;
@@ -3816,6 +3834,28 @@
     color: var(--ink); margin-bottom: 5px; line-height: 1.2;
   }
   .df-sub { font-size: 13.5px; color: var(--ink-mid); font-weight: 600; line-height: 1.45 }
+  /* Time-of-day switcher inside the check-in. A prompt that fires at night
+     still has to be able to close out the morning, so every bucket with
+     habits in it is one tap away. The badge is what's still open. */
+  .df-tabs { display: flex; gap: 6px; margin-top: 13px; }
+  .df-tabs[hidden] { display: none }
+  .df-tab {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 6px; border-radius: 10px; white-space: nowrap;
+    background: var(--fill); border: 1px solid var(--border);
+    color: var(--ink-mid); font-family: inherit; font-size: 12.5px; font-weight: 750;
+    cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  }
+  .df-tab:hover { background: var(--fill-2); color: var(--ink) }
+  .df-tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent) }
+  .df-tab .n {
+    min-width: 17px; padding: 1px 5px; border-radius: 99px;
+    font-size: 10.5px; font-weight: 800; line-height: 1.5;
+    background: var(--border); color: var(--ink-mid);
+  }
+  .df-tab.active .n { background: rgba(255,255,255,.3); color: var(--on-accent) }
+  .df-tab.clear .n { background: transparent; color: var(--green); padding: 0; min-width: 0 }
+  .df-tab.active.clear .n { color: var(--on-accent) }
   .df-body { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 7px; }
   .df-row {
     display: flex; align-items: center; gap: 12px;
@@ -4296,14 +4336,16 @@
   </div>
 </div>
 
-<!-- Dayflow: period habit check-in (morning / afternoon). Writes the same
-     health_habit_days docs as the Habits page — field-level merge only. -->
+<!-- Dayflow: period habit check-in (morning / afternoon / night). Writes the
+     same health_habit_days docs as the Habits page — field-level merge only.
+     Opens on the period you're in; the tab row flips to any other. -->
 <div class="df-backdrop" id="dfPeriodBackdrop" aria-hidden="true">
   <div class="df-modal" role="dialog" aria-modal="true" aria-labelledby="dfPeriodTitle">
     <div class="df-head">
       <div class="df-eyebrow" id="dfPeriodEyebrow">Morning</div>
       <div class="df-title" id="dfPeriodTitle">Morning check-in</div>
       <div class="df-sub" id="dfPeriodSub"></div>
+      <div class="df-tabs" id="dfPeriodTabs" hidden></div>
     </div>
     <div class="df-body" id="dfPeriodBody"></div>
     <div class="df-foot">
@@ -9916,9 +9958,17 @@ const VOICE = {
   // share is only its slice of the elapsed time — the same even split the stop
   // sheet pre-fills. Showing each project the FULL elapsed would let a 2-hour
   // block read as 4 hours of work across the bars.
+  //
+  // The exception is a session flagged "at the same time": work that genuinely
+  // happened in parallel (an ECM call you sat in while writing VitalTouch
+  // notes) really did cost both projects the whole block, and slicing it would
+  // undercount both. Then — and only then — every project sees the full
+  // elapsed, and the totals across projects add up to more than the day.
+  const tmrParallel = () => !!(tmrRun && tmrRun.parallel);
   const tmrLiveShare = () => {
     const n = tmrRunProjs().length;
-    return n ? tmrLiveSecs() / n : 0;
+    if (!n) return 0;
+    return tmrParallel() ? tmrLiveSecs() : tmrLiveSecs() / n;
   };
   function tmrStored(projId, k){ return Math.round(((tmrDays.get(k) || {}).totals || {})[projId] || 0); }
   // Stored seconds plus whatever the running clock has earned but not committed.
@@ -10039,6 +10089,19 @@ const VOICE = {
     render();
     tmrPaintCapsule();
   }
+  // "I'm doing both at once" — every project on the clock earns the whole
+  // block instead of a slice. Flips the live bars immediately; the stop sheet
+  // opens pre-filled to match but still gets the last word.
+  function tmrSetParallel(on){
+    if (!tmrRun) return;
+    const next = !!on;
+    if (next === !!tmrRun.parallel) return;
+    tmrRun.parallel = next;
+    tmrSaveRun();
+    _tmrAlerted.clear();     // every share just changed size; re-arm the nudges
+    render();
+    tmrPaintCapsule();
+  }
   // Stopping a multi-project session hands you the split sheet: the elapsed
   // time is the budget, and you decide how much of it each project took.
   // `silent` (the task-stopwatch handover, a resumed overnight clock) skips
@@ -10059,12 +10122,17 @@ const VOICE = {
       tmrOpenSplit(run, secs, projs);
       return;
     }
-    const share = secs / projs.length;
-    await tmrCommitSplit(run, projs.map(p => ({ proj: p, secs: share })));
+    // A silent handover keeps whatever mode the session was in: parallel hands
+    // every project the whole block, otherwise it's an even split.
+    const share = run.parallel ? secs : secs / projs.length;
+    await tmrCommitSplit(run, projs.map(p => ({ proj: p, secs: share })), secs);
     if (doRender) render();
   }
   // One place that writes a finished session, however it was divided.
-  async function tmrCommitSplit(run, parts){
+  // `realSecs` is how long the block actually lasted: with overlapping
+  // projects the parts deliberately add up to more than that, and the attached
+  // task must still only gain the time that really passed.
+  async function tmrCommitSplit(run, parts, realSecs){
     let credited = 0;
     for (const part of parts){
       if (!part || !(part.secs >= 1)) continue;
@@ -10076,7 +10144,8 @@ const VOICE = {
     }
     // The attached task keeps its own running total too — it gets whatever
     // was actually logged, not the raw elapsed.
-    if (run.taskId && credited >= 1) await tmrCreditTask(run.taskId, credited);
+    const taskSecs = Number.isFinite(realSecs) ? Math.min(credited, realSecs) : credited;
+    if (run.taskId && taskSecs >= 1) await tmrCreditTask(run.taskId, taskSecs);
   }
 
   // ---- split sheet ----
@@ -10084,7 +10153,7 @@ const VOICE = {
   // running session by the time this opens, so a reload mid-split would
   // otherwise drop the time on the floor.
   const TMR_PENDING_KEY = 'personal-timer-pending-v1';
-  let _tmrSplit = null;   // {run, totalMins, parts:[{proj, mins}]}
+  let _tmrSplit = null;   // {run, totalMins, parallel, parts:[{proj, mins}]}
   // Whole minutes that still add up to the total — the remainder goes to the
   // first few rather than leaving the sheet off by one.
   function tmrEvenParts(totalMins, projs){
@@ -10092,10 +10161,22 @@ const VOICE = {
     const rem = totalMins - base * projs.length;
     return projs.map((p, i) => ({ proj: p, mins: base + (i < rem ? 1 : 0) }));
   }
+  // Pre-fill for the current mode: the block divided up, or the whole block on
+  // every row when the projects genuinely overlapped.
+  function tmrSplitPrefill(totalMins, projs, parallel){
+    return parallel ? projs.map(p => ({ proj: p, mins: totalMins }))
+                    : tmrEvenParts(totalMins, projs);
+  }
+  function tmrPersistSplit(){
+    try {
+      if (_tmrSplit) localStorage.setItem(TMR_PENDING_KEY, JSON.stringify(_tmrSplit));
+    } catch {}
+  }
   function tmrOpenSplit(run, secs, projs){
     const totalMins = Math.max(1, Math.round(secs / 60));
-    _tmrSplit = { run, totalMins, parts: tmrEvenParts(totalMins, projs) };
-    try { localStorage.setItem(TMR_PENDING_KEY, JSON.stringify(_tmrSplit)); } catch {}
+    const parallel = !!run.parallel;
+    _tmrSplit = { run, totalMins, parallel, parts: tmrSplitPrefill(totalMins, projs, parallel) };
+    tmrPersistSplit();
     tmrRenderSplit();
     const bd = document.getElementById('tmrSplitBackdrop');
     if (bd){ bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
@@ -10114,11 +10195,20 @@ const VOICE = {
     const s = _tmrSplit;
     if (!body || !s) return;
     const sub = document.getElementById('tmrSplitSub');
-    if (sub) sub.textContent = s.run.taskName
-      ? `“${s.run.taskName}” — divide the time between the projects on the clock.`
-      : 'Divide it between the projects you had on the clock.';
+    if (sub) sub.textContent = s.parallel
+      ? (s.run.taskName
+          ? `“${s.run.taskName}” — they ran at the same time, so each keeps the whole block.`
+          : 'They ran at the same time, so each project keeps the whole block.')
+      : (s.run.taskName
+          ? `“${s.run.taskName}” — divide the time between the projects on the clock.`
+          : 'Divide it between the projects you had on the clock.');
+    // The mode decides what the numbers below mean, so it sits above them.
     body.innerHTML = `
       <div class="tsp-total"><b>${tmrFmtMins(s.totalMins)}</b><span>on the clock</span></div>
+      <div class="tsp-modes" role="group" aria-label="How to count this time">
+        <button class="tsp-mode ${s.parallel ? '' : 'on'}" type="button" data-tsp-mode="0" aria-pressed="${!s.parallel}">Divide it up</button>
+        <button class="tsp-mode ${s.parallel ? 'on' : ''}" type="button" data-tsp-mode="1" aria-pressed="${!!s.parallel}">Both at once</button>
+      </div>
       ${s.parts.map((p, i) => {
         const meta = tmrProjMeta(p.proj);
         return `<div class="tsp-row">
@@ -10128,6 +10218,8 @@ const VOICE = {
         </div>`;
       }).join('')}
       <div class="tsp-foot" id="tmrSplitFoot"></div>`;
+    const even = document.getElementById('tmrSplitEven');
+    if (even) even.textContent = s.parallel ? 'Full time each' : 'Even split';
     tmrPaintSplitFoot();
   }
   function tmrPaintSplitFoot(){
@@ -10136,12 +10228,28 @@ const VOICE = {
     const s = _tmrSplit;
     if (!foot || !s) return;
     const used = tmrSplitAssigned();
+    if (s.parallel){
+      // Overlapping time is allowed to add up past the block — that's the
+      // whole point of the mode. The one thing still impossible is a single
+      // project logging more than the clock ever ran.
+      const over = s.parts.filter(p => (Number(p.mins) || 0) > s.totalMins);
+      foot.classList.toggle('over', over.length > 0);
+      foot.classList.remove('exact');
+      foot.textContent = over.length
+        ? `${tmrProjMeta(over[0].proj).label} has more than the ${tmrFmtMins(s.totalMins)} you actually worked.`
+        : `${tmrFmtMins(used)} logged out of ${tmrFmtMins(s.totalMins)} real time — the overlap counts on both.`;
+      if (save){
+        save.disabled = over.length > 0;
+        save.textContent = used < 1 ? 'Discard' : 'Log it';
+      }
+      return;
+    }
     const left = s.totalMins - used;
     foot.classList.toggle('over', left < 0);
     foot.classList.toggle('exact', left === 0);
     foot.textContent = left === 0 ? `All ${tmrFmtMins(s.totalMins)} accounted for.`
       : left > 0 ? `${tmrFmtMins(left)} left to assign — anything you leave over just won't be logged.`
-      : `${tmrFmtMins(-left)} more than you actually worked.`;
+      : `${tmrFmtMins(-left)} more than you actually worked — or switch to “Both at once”.`;
     // Zeroing everything is a real answer — you started the clock by mistake.
     // It must stay clickable or the sheet becomes a room with no door.
     if (save){
@@ -10159,11 +10267,26 @@ const VOICE = {
       const f = e.target.closest('[data-tsp]');
       if (!f || !_tmrSplit) return;
       _tmrSplit.parts[Number(f.getAttribute('data-tsp'))].mins = tmrParseDur(f.value);
+      tmrPersistSplit();
       tmrPaintSplitFoot();
+    });
+    body.addEventListener('click', e => {
+      const m = e.target.closest('[data-tsp-mode]');
+      if (!m || !_tmrSplit) return;
+      const parallel = m.getAttribute('data-tsp-mode') === '1';
+      if (parallel === !!_tmrSplit.parallel) return;
+      _tmrSplit.parallel = parallel;
+      // Re-prefill rather than keep the old numbers: minutes typed against a
+      // divided block mean something different once each project keeps all of
+      // it, and a stale half-and-half would quietly under-log both.
+      _tmrSplit.parts = tmrSplitPrefill(_tmrSplit.totalMins, _tmrSplit.parts.map(p => p.proj), parallel);
+      tmrPersistSplit();
+      tmrRenderSplit();
     });
     document.getElementById('tmrSplitEven').addEventListener('click', () => {
       if (!_tmrSplit) return;
-      _tmrSplit.parts = tmrEvenParts(_tmrSplit.totalMins, _tmrSplit.parts.map(p => p.proj));
+      _tmrSplit.parts = tmrSplitPrefill(_tmrSplit.totalMins, _tmrSplit.parts.map(p => p.proj), !!_tmrSplit.parallel);
+      tmrPersistSplit();
       tmrRenderSplit();
     });
     document.getElementById('tmrSplitSave').addEventListener('click', async () => {
@@ -10171,11 +10294,12 @@ const VOICE = {
       if (!s) return;
       const parts = s.parts.map(p => ({ proj: p.proj, secs: (Number(p.mins) || 0) * 60 }));
       tmrCloseSplit();
-      await tmrCommitSplit(s.run, parts);
+      await tmrCommitSplit(s.run, parts, s.totalMins * 60);
       render();
       const logged = parts.filter(p => p.secs >= 60);
       ptToast(logged.length
         ? 'Logged ' + logged.map(p => `${tmrFmtSecsShort(p.secs)} ${tmrProjMeta(p.proj).label}`).join(' · ')
+          + (s.parallel && logged.length > 1 ? ' — at the same time' : '')
         : 'Nothing logged.');
     });
   })();
@@ -10217,6 +10341,15 @@ const VOICE = {
       if (ov) ov.textContent = tmrFmtClock(tmrLiveSecs());
       const pill = document.getElementById('f5TimerPillTime');
       if (pill) pill.textContent = tmrFmtClock(tmrLiveSecs());
+      // The per-project running total moves too — leaving it at whatever it
+      // said on the last render made the split look frozen.
+      const note = document.getElementById('tmrShareNote');
+      if (note && tmrRun){
+        const n = tmrRunProjs().length;
+        note.textContent = tmrRun.parallel
+          ? `All ${n} counting in full — ${tmrFmtSecsShort(tmrLiveSecs())} each.`
+          : `Even split so far — ${tmrFmtSecsShort(tmrLiveShare())} each. You'll divide it when you stop.`;
+      }
     } catch {}
   }
   // "ECM + VitalTouch" — what the session is currently pointed at.
@@ -10318,9 +10451,18 @@ const VOICE = {
     const isToday = tmrDate === todayKey();
 
     // With more than one project on the clock, say what each is provisionally
-    // earning — the split sheet is where it gets settled for real.
+    // earning — and let the answer be "all of it, both of them" while the work
+    // is happening, not just at the stop sheet. The sheet still settles it.
     const shareNote = running && runProjs.length > 1
-      ? `<div class="tmr-share">Even split so far — ${tmrFmtSecsShort(tmrLiveShare())} each. You'll divide it when you stop.</div>`
+      ? `<div class="tmr-share">
+          <span class="tmr-modes" role="group" aria-label="How this time counts">
+            <button class="tmr-mode ${tmrRun.parallel ? '' : 'on'}" type="button" data-tmr-parallel="0" aria-pressed="${!tmrRun.parallel}">Split it</button>
+            <button class="tmr-mode ${tmrRun.parallel ? 'on' : ''}" type="button" data-tmr-parallel="1" aria-pressed="${!!tmrRun.parallel}">At the same time</button>
+          </span>
+          <span class="tmr-sharenote" id="tmrShareNote">${tmrRun.parallel
+            ? `All ${runProjs.length} counting in full — ${tmrFmtSecsShort(tmrLiveSecs())} each.`
+            : `Even split so far — ${tmrFmtSecsShort(tmrLiveShare())} each. You'll divide it when you stop.`}</span>
+        </div>`
       : '';
     let html = `<div class="tmr-hero ${running ? (over ? 'over' : 'running') : ''}">
       <div class="tmr-clock" id="tmrClock">${tmrFmtClock(running ? tmrLiveSecs() : 0)}</div>
@@ -10445,6 +10587,8 @@ const VOICE = {
         tmrDeleteSession(tmrDate, del.getAttribute('data-tmr-delsess'));
         return;
       }
+      const par = e.target.closest('[data-tmr-parallel]');
+      if (par){ tmrSetParallel(par.getAttribute('data-tmr-parallel') === '1'); return; }
       const proj = e.target.closest('[data-tmr-proj]');
       if (proj){ tmrToggleProj(proj.getAttribute('data-tmr-proj')); return; }
       if (e.target.closest('[data-tmr-stop]')){ tmrStop(); return; }
@@ -10768,9 +10912,12 @@ const VOICE = {
       const projs = tmrRunProjs();
       const cut = hbAddDays(hbParseKey(run.dayKey), 1); cut.setHours(0, 0, 0, 0);
       const firstDaySecs = Math.max(0, (cut.getTime() - run.startedAt) / 1000);
-      // Yesterday's share is banked on an even split — there's nobody awake to
-      // divide it, and the sheet only makes sense for the part you were there for.
-      tmrCommitSplit(run, projs.map(p => ({ proj: p, secs: firstDaySecs / projs.length })));
+      // Yesterday's share is banked on the session's own terms — there's nobody
+      // awake to divide it, and the sheet only makes sense for the part you
+      // were there for.
+      tmrCommitSplit(run, projs.map(p => ({
+        proj: p, secs: run.parallel ? firstDaySecs : firstDaySecs / projs.length
+      })), firstDaySecs);
       tmrRun = { ...run, startedAt: cut.getTime(), dayKey: todayKey() };
       tmrSaveRun();
       _tmrAlerted.clear();
@@ -12241,21 +12388,33 @@ const VOICE = {
     return true;
   }
 
-  // ---- Period check-in (morning / afternoon) ------------------------------
-  let _dfPeriodState = null;   // {k, period, habits, checks}
+  // ---- Period check-in (morning / afternoon / night) -----------------------
+  // It opens on the period that triggered it, but the whole day is reachable
+  // from the tab row: a check-in that fires at night still has to be able to
+  // close out the morning. Flipping tabs deliberately does NOT burn another
+  // period's gate slot — only the surface that actually auto-fired spends one,
+  // so an afternoon you already ticked off here just won't have anything left
+  // to ask when its own slot comes round.
+  const DF_PERIODS = ['morning', 'afternoon', 'night'];
+  const DF_PLABEL = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
+  let _dfPeriodState = null;   // {k, period, roster, checks}
+  // Don'ts are clean-by-default and would invert the meaning of a tap, so they
+  // stay in the Habits tab and the Overview day-sheet.
+  const dfPeriodHabits = (roster, period) =>
+    roster.filter(h => (h.section || 'morning') === period);
   // gateKey defaults to the period name; the pre-20:00 night check-in passes
-  // its own so it doesn't spend the full review's slot.
-  async function dfOpenPeriod(period, gateKey){
+  // its own so it doesn't spend the full review's slot. opts.force skips the
+  // "nothing to ask" bail — manual openings should always show up.
+  async function dfOpenPeriod(period, gateKey, opts){
     const k = todayKey();
     const [roster, day] = await Promise.all([_ovHabitRoster(), dfHabitDay(k)]);
-    const habits = roster.filter(h => (h.section || 'morning') === period);
+    const habits = dfPeriodHabits(roster, period);
     if (!habits.length) return false;
-    if (habits.every(h => day.checks[h.id])) return false;   // nothing to ask
-    _dfPeriodState = { k, period, habits, checks: day.checks };
-    const LABEL = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
-    const el = id => document.getElementById(id);
-    if (el('dfPeriodEyebrow')) el('dfPeriodEyebrow').textContent = LABEL[period];
-    if (el('dfPeriodTitle')) el('dfPeriodTitle').textContent = `${LABEL[period]} check-in`;
+    // Nothing left in the period that triggered this. Other buckets may still
+    // be open, but chasing you into them uninvited is how the old priority
+    // modal became a nag — that's what the tabs are for.
+    if (!(opts && opts.force) && habits.every(h => day.checks[h.id])) return false;
+    _dfPeriodState = { k, period, roster, checks: day.checks };
     dfRenderPeriod();
     dfMarkShown(gateKey || period);
     dfShow('dfPeriodBackdrop');
@@ -12265,18 +12424,44 @@ const VOICE = {
     const st = _dfPeriodState;
     const body = document.getElementById('dfPeriodBody');
     if (!st || !body) return;
-    const left = st.habits.filter(h => !st.checks[h.id]).length;
-    const sub = document.getElementById('dfPeriodSub');
+    const el = id => document.getElementById(id);
+    const habits = dfPeriodHabits(st.roster, st.period);
+    if (el('dfPeriodEyebrow')) el('dfPeriodEyebrow').textContent = DF_PLABEL[st.period] || '';
+    if (el('dfPeriodTitle')) el('dfPeriodTitle').textContent = `${DF_PLABEL[st.period] || ''} check-in`;
+    // Tabs carry each period's open count, so you can see there's a morning
+    // still hanging without opening it. Only buckets that have habits show,
+    // and with nowhere to flip to the row stays out of the way entirely.
+    const tabs = el('dfPeriodTabs');
+    if (tabs){
+      const live = DF_PERIODS.filter(p => dfPeriodHabits(st.roster, p).length);
+      tabs.hidden = live.length < 2;
+      tabs.innerHTML = live.map(p => {
+        const open = dfPeriodHabits(st.roster, p).filter(h => !st.checks[h.id]).length;
+        const on = p === st.period;
+        const badge = open ? String(open) : HB_CHECK_SVG.replace('<svg', '<svg width="11" height="11"');
+        return `<button class="df-tab ${on ? 'active' : ''} ${open ? '' : 'clear'}" type="button"
+          data-df-period="${p}" aria-pressed="${on}"
+          title="${DF_PLABEL[p]} — ${open ? `${open} still open` : 'all done'}">${DF_PLABEL[p]}<span class="n">${badge}</span></button>`;
+      }).join('');
+    }
+    const left = habits.filter(h => !st.checks[h.id]).length;
+    const sub = el('dfPeriodSub');
     if (sub) sub.textContent = left
       ? `${left} left. Tap what you've done.`
       : 'All clear. Nice.';
-    body.innerHTML = st.habits.map(h => {
+    body.innerHTML = habits.map(h => {
       const ok = !!st.checks[h.id];
       return `<button class="df-row ${ok ? 'ok' : ''}" type="button" data-df-habit="${escHtml(h.id)}">
         <span class="df-check">${ok ? HB_CHECK_SVG.replace('<svg', '<svg width="12" height="12"') : ''}</span>
         <span class="df-name">${escHtml(h.name || h.id)}</span>
       </button>`;
     }).join('');
+  }
+  function dfPeriodSwitch(period){
+    const st = _dfPeriodState;
+    if (!st || !period || period === st.period) return;
+    st.period = period;
+    dfRenderPeriod();
   }
   async function dfPeriodToggle(hid){
     const st = _dfPeriodState;
@@ -12343,7 +12528,7 @@ const VOICE = {
       .forEach(h => cards.push({
         kind: 'habit', id: h.id,
         text: h.name || h.id,
-        meta: ({ morning: 'Morning', afternoon: 'Afternoon', night: 'Night' })[h.section || 'morning'] || ''
+        meta: DF_PLABEL[h.section || 'morning'] || ''
       }));
     // Then today's still-open tasks. Routine instances belong to the habits
     // track, so they never double-appear here.
@@ -12578,6 +12763,8 @@ const VOICE = {
     const pbd = document.getElementById('dfPeriodBackdrop');
     if (pbd) pbd.addEventListener('click', (e) => {
       if (e.target === pbd) { dfHide('dfPeriodBackdrop'); _dfPeriodState = null; return; }
+      const tab = e.target.closest('[data-df-period]');
+      if (tab) { dfPeriodSwitch(tab.getAttribute('data-df-period')); return; }
       const t = e.target.closest('[data-df-habit]');
       if (t) dfPeriodToggle(t.getAttribute('data-df-habit'));
     });
@@ -12609,7 +12796,7 @@ const VOICE = {
   })();
   // Manual entry points — the strict gate only governs the automatic showings.
   window.ptNightReview = () => { dfMarkShown('night'); dfOpenNight(); };
-  window.ptPeriodCheckIn = (p) => dfOpenPeriod(p || dfPeriodNow());
+  window.ptPeriodCheckIn = (p) => dfOpenPeriod(p || dfPeriodNow(), null, { force: true });
 
   // ---- One-time ECM repair ----
   // ssSync used to dedupe only against the todos loaded for the current day,
