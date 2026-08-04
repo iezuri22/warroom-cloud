@@ -8,6 +8,14 @@ import { isTransientDbError, isQuotaError } from './_db-errors.js';
 const PER_ROW_MAX_BYTES = 256 * 1024;     // 256KB per key — anything bigger is almost certainly broken
 const TOTAL_MAX_BYTES = 3 * 1024 * 1024;  // 3MB cumulative envelope
 
+// `<key>__rejected_<iso>` rows are backups written by api/sync.js's
+// empty-clobber guard: a debugging audit trail, not app state. Nothing reads
+// them client-side, and sync-client.js bootstrap() hydrates whatever we return
+// straight into localStorage — so shipping them would burn both the envelope
+// above and the browser's ~5MB localStorage budget on dead weight.
+// position() rather than LIKE: no metacharacters to escape.
+const REJECTED_MARKER = '__rejected_';
+
 export default async function handler(req, res) {
   const secret = process.env.SESSION_SECRET;
   if (!requireAuth(req, secret)) {
@@ -23,6 +31,7 @@ export default async function handler(req, res) {
       SELECT key, octet_length(value::text) AS bytes
       FROM user_state
       WHERE user_id = 'me' AND octet_length(value::text) > ${PER_ROW_MAX_BYTES}
+        AND position(${REJECTED_MARKER} in key) = 0
     `;
     oversized = sizeRows.map(r => ({ key: r.key, bytes: Number(r.bytes), reason: 'oversize' }));
   } catch (e) {
@@ -38,6 +47,7 @@ export default async function handler(req, res) {
       SELECT key, value, updated_at
       FROM user_state
       WHERE user_id = 'me' AND octet_length(value::text) <= ${PER_ROW_MAX_BYTES}
+        AND position(${REJECTED_MARKER} in key) = 0
       ORDER BY octet_length(value::text) ASC
     `;
   } catch (e) {

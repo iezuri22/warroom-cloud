@@ -2,6 +2,12 @@ import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
 import { isTransientDbError, isQuotaError } from './_db-errors.js';
 
+// How many `<key>__rejected_<iso>` backups to keep per guarded key. The backup
+// key embeds a timestamp, so every rejection writes a NEW row — without a cap
+// they accumulate forever. These are a debugging audit trail (nothing reads
+// them client-side); the newest few are the only ones with diagnostic value.
+const BACKUP_RETENTION = 5;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -78,12 +84,29 @@ export default async function handler(req, res) {
         // Empty-clobber guard
         if (await clobbersExistingData(u.key, parsed)) {
           const backupKey = `${u.key}__rejected_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+          const backupPrefix = `${u.key}__rejected_`;
           try {
             await sql`
               INSERT INTO user_state (user_id, key, value, updated_at)
               VALUES ('me', ${backupKey}, ${JSON.stringify(parsed)}::jsonb, NOW())
               ON CONFLICT (user_id, key)
               DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            `;
+            // Trim to the newest BACKUP_RETENTION for this key. starts_with()
+            // rather than LIKE on purpose: keys contain `_`, which LIKE treats
+            // as a wildcard, and widening the match here would widen a DELETE.
+            // Tie-break on key DESC — the embedded ISO timestamp sorts
+            // chronologically, so it orders rows sharing an updated_at.
+            await sql`
+              DELETE FROM user_state
+              WHERE user_id = 'me'
+                AND starts_with(key, ${backupPrefix})
+                AND key NOT IN (
+                  SELECT key FROM user_state
+                  WHERE user_id = 'me' AND starts_with(key, ${backupPrefix})
+                  ORDER BY updated_at DESC, key DESC
+                  LIMIT ${BACKUP_RETENTION}
+                )
             `;
           } catch (_) { /* best-effort audit; ignore errors */ }
           console.warn('sync rejected empty-clobber', { key: u.key, backupKey });
