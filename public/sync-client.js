@@ -23,6 +23,16 @@
     // stale values on bootstrap and fight the live listener.
     'pd-active',
     'pd-collapsed',      // banner expand/collapse is a per-device preference
+    // Google Calendar paint cache. calendar.html's init() calls syncNow()
+    // unconditionally on every load, so this gets refetched from Google and
+    // overwritten within a second — the cached copy only buys an instant first
+    // paint before that round-trip lands. Rebuildable, per-device, and at
+    // ~530KB it's 2x the server's per-row cap, so /api/load has been excluding
+    // it and bootstrap has been poisoning it since it crossed the line: it was
+    // already unsynced in both directions, just silently and with churn.
+    // The user's overlays on these events (priority / retitles / notes) live in
+    // separate small keys and DO sync.
+    'calendar-gcal-cache-v1',
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
@@ -354,12 +364,30 @@
       // Server now reports any keys it skipped (oversized/erroring). Surface
       // them to the console + auto-poison them so we don't try to push the
       // same broken values back up.
+      //
+      // SKIP_SYNC keys are exempt. We never send them, so poisoning them
+      // changes nothing — and because the oversized row stays in the DB, the
+      // server re-reports it on EVERY load, so the old logic re-poisoned it
+      // forever and buried real structural failures in the same console line.
+      // We also prune any SKIP_SYNC key an earlier build already poisoned, so
+      // devices carrying that entry heal themselves on next load.
       if (Array.isArray(body.skipped) && body.skipped.length) {
-        console.warn('[sync] server skipped keys on load:', body.skipped);
+        const actionable = body.skipped.filter(s => s && s.key && !SKIP_SYNC.has(s.key));
+        const ignorable  = body.skipped.filter(s => s && s.key && SKIP_SYNC.has(s.key));
+        if (actionable.length) console.warn('[sync] server skipped keys on load:', actionable);
+        if (ignorable.length) {
+          console.info('[sync] server skipped non-synced keys (expected):', ignorable.map(s => s.key));
+        }
         try {
           const poisonedNow = loadPoisoned();
-          body.skipped.forEach(s => { if (s && s.key) poisonedNow.add(s.key); });
-          savePoisoned(poisonedNow);
+          let changed = false;
+          actionable.forEach(s => {
+            if (!poisonedNow.has(s.key)) { poisonedNow.add(s.key); changed = true; }
+          });
+          for (const k of [...poisonedNow]) {
+            if (SKIP_SYNC.has(k)) { poisonedNow.delete(k); changed = true; }
+          }
+          if (changed) savePoisoned(poisonedNow);
         } catch {}
       }
 
