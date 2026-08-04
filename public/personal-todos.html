@@ -5432,6 +5432,14 @@
   .ov-row.done .ov-text { text-decoration: line-through; opacity: .45; }
   .ov-text { flex: 1; font-size: 13.5px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
   .ov-pin { margin-right: 4px; font-size: 11px; }
+  .ov-due {
+    display: inline-block; margin-left: 7px; vertical-align: 1px;
+    font-size: 10px; font-weight: 800; letter-spacing: .2px;
+    padding: 2px 6px; border-radius: 5px; white-space: nowrap;
+  }
+  .ov-due.over { background: rgba(220,75,62,.13); color: var(--red); }
+  .ov-due.now { background: var(--accent-soft); color: var(--accent); }
+  .ov-due.moved { background: var(--fill); color: var(--ink-dim); }
   .ov-flag {
     font-size: 9px; font-weight: 800; letter-spacing: .4px; color: var(--blue);
     background: rgba(59,111,212,.1); padding: 2px 5px; border-radius: 4px;
@@ -9930,7 +9938,10 @@ const VOICE = {
           if ((existing.smartsheetTicket || '') !== String(ticket || '')) patch.smartsheetTicket = String(ticket || '');
           if ((existing.smartsheetOutcome || '') !== (outcome || '')) patch.smartsheetOutcome = outcome;
           if (permalink && (existing.smartsheetPermalink || '') !== permalink) patch.smartsheetPermalink = permalink;
-          // Backfill the sheet's deadline, but never clobber a date the user
+          // The sheet's deadline is authoritative and always mirrored — it's
+          // what "overdue" is measured against even after a local push.
+          if ((existing.sheetDue || '') !== sheetDue) patch.sheetDue = sheetDue;
+          // Backfill the working date too, but never clobber a date the user
           // set here (a push) or a task they pulled into their day.
           if (sheetDue && !existing.plannedFor && !existing.ecmAccepted) {
             patch.plannedFor = sheetDue; patch.date = sheetDue; patch.planned = true;
@@ -9949,7 +9960,7 @@ const VOICE = {
           // on the sheet's own deadline when it has one, otherwise it waits
           // in Planned until you pull it into a day.
           text, done: false, date: sheetDue || '', position: maxPos,
-          plannedFor: sheetDue || '', planned: true,
+          plannedFor: sheetDue || '', planned: true, sheetDue: sheetDue || '',
           timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString(),
           job: ecmJobId(),
           details: details || '',
@@ -13036,8 +13047,25 @@ const VOICE = {
         .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor.length > 0
           && p.plannedFor <= tk && !_inAnyFocus5List(p.id))
         .sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || ''));
-      const first = (typeof getPriorityLists === 'function' ? getPriorityLists() : [])[0];
-      if (!first || !due.length) return;
+      // Never promote into a ROUTINE list — routines live on the Habits page
+      // and the Overview skips them, so a task landed there vanished.
+      const first = (typeof _ovTargetList === 'function' ? _ovTargetList() : null)
+        || (typeof getPriorityLists === 'function' ? getPriorityLists() : []).find(l => !l.routine);
+      if (!due.length) return;
+      // With no ordinary list to land in, the Overview still surfaces due
+      // work directly (see _ovCollect); just pin it and move on.
+      if (!first) {
+        for (const p of due) {
+          try {
+            const t = todos.find(x => x.id === p.id);
+            if (t) t.pinnedUntilDone = true;
+            p.pinnedUntilDone = true;
+            await updateDoc(doc(db, 'tv_todos', p.id), { pinnedUntilDone: true });
+          } catch {}
+        }
+        try { render(); } catch {}
+        return;
+      }
       // Reverse so the earliest-due ends up at the very top after unshifts.
       for (const p of due.slice().reverse()) {
         try {
@@ -13525,12 +13553,52 @@ const VOICE = {
         && !(t.smartsheetRowId && !t.ecmAccepted))
       .sort((a, b) => (a.position || 0) - (b.position || 0))
       .forEach(t => { seen.add(t.id); sections[sectionOf(t)].today.push(t); });
+    // 2b) Planned work whose day has arrived or passed. This is the one place
+    //     dated ECM work belongs on Today — it has a real deadline. Listed
+    //     here directly so a task is never hidden by where auto-promote did
+    //     or didn't manage to file it.
+    (_plannedCache || [])
+      .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor
+        && p.plannedFor <= today && !seen.has(p.id))
+      .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+      .forEach(p => { seen.add(p.id); sections[sectionOf(p)].today.push(p); });
     // 3) The week ahead, from the planned ledger.
     (_plannedCache || [])
       .filter(p => !p.done && typeof p.plannedFor === 'string' && p.plannedFor > today && p.plannedFor <= end)
       .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
       .forEach(p => { if (!seen.has(p.id)) sections[sectionOf(p)].week.push(p); });
     return sections;
+  }
+  // ---- Deadlines that survive a push ----
+  // The REAL deadline is the sheet's Due Date for ECM work, or the date a
+  // personal task was first given (`origDue`, stamped on the first push).
+  // Pushing moves plannedFor — it never rewrites the deadline, so an item
+  // moved to next week still says what it was actually due.
+  function _ovDayDiff(a, b){
+    const t1 = Date.parse(a + 'T12:00:00'), t2 = Date.parse(b + 'T12:00:00');
+    if (!t1 || !t2) return null;
+    return Math.round((t2 - t1) / 86400000);
+  }
+  function _ovShortDate(ds){
+    try { return new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+    catch { return ds; }
+  }
+  function _ovTrueDue(t){ return (t && (t.sheetDue || t.origDue)) || ''; }
+  function _ovDueChipHTML(t){
+    const today = todayKey();
+    const trueDue = _ovTrueDue(t);
+    const cur = (typeof t.plannedFor === 'string' && t.plannedFor) ? t.plannedFor : '';
+    const anchor = trueDue || cur;
+    if (!anchor) return '';
+    const late = _ovDayDiff(anchor, today);
+    if (late === null) return '';
+    const moved = !!(trueDue && cur && cur !== trueDue);
+    if (late > 0) {
+      return `<span class="ov-due over">Overdue ${late}d${moved ? ` · was ${escHtml(_ovShortDate(trueDue))}` : ''}</span>`;
+    }
+    if (late === 0) return '<span class="ov-due now">Due today</span>';
+    if (moved) return `<span class="ov-due moved">was due ${escHtml(_ovShortDate(trueDue))}</span>`;
+    return '';
   }
   function _ovDayChip(ds){
     try {
@@ -13569,6 +13637,9 @@ const VOICE = {
   async function _ovPushTask(id, ds){
     const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
     const patch = { plannedFor: ds, date: ds, planned: true };
+    // Remember the deadline this task actually had before the first push, so
+    // moving it never hides what it was due. ECM keeps sheetDue instead.
+    if (t && !t.sheetDue && !t.origDue && t.plannedFor) patch.origDue = t.plannedFor;
     try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch (e) { console.warn('push failed', e); return; }
     if (t) Object.assign(t, patch);
     (focus5State.lists || []).forEach(l => {
@@ -13604,7 +13675,7 @@ const VOICE = {
     return `<div class="ov-row ${done ? 'done' : ''} ${open ? 'open' : ''}" data-ov-open="${escHtml(t.id)}">
       <button class="ov-check ${done ? 'on' : ''}" type="button" data-ov-done="${escHtml(t.id)}" aria-label="${done ? 'Mark open' : 'Mark done'}">${done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
       ${chip ? `<span class="ov-daychip today">${escHtml(chip)}</span>` : ''}
-      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}</span>
+      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}${done ? '' : _ovDueChipHTML(t)}</span>
       ${t.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(t.id) : ''}`;
   }
@@ -13612,7 +13683,7 @@ const VOICE = {
     const open = _ovRowOpen === p.id;
     return `<div class="ov-row wk ${open ? 'open' : ''}" data-ov-open="${escHtml(p.id)}">
       <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
-      <span class="ov-text">${escHtml(p.text || '')}</span>
+      <span class="ov-text">${escHtml(p.text || '')}${_ovDueChipHTML(p)}</span>
       ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(p.id) : ''}`;
   }
@@ -13665,7 +13736,12 @@ const VOICE = {
       (l.taskIds || []).forEach(ref => {
         if (skipped.has(ref)) return;
         const t = resolveFocus5TaskId(ref);
-        if (t && !skipped.has(t.id)) out.push(t);
+        if (!t || skipped.has(t.id)) return;
+        // A task with a real deadline that ended up in a routine list is
+        // WORK, not a routine (auto-promote used to file them here). Leave it
+        // out of the seed so the Overview can still show it.
+        if (t.plannedFor || t.sheetDue || t.origDue) return;
+        out.push(t);
       });
     });
     return out;
