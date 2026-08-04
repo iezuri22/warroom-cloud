@@ -1730,6 +1730,21 @@
     color: rgba(33,30,25,.52);
   }
   .planned-section.due .planned-section-head h3 { color: var(--accent) }
+  /* Parked — the coach's unscheduled overflow. Set apart from the dated
+     buckets above it because these aren't commitments yet. */
+  .planned-section.parked { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border-strong) }
+  .planned-section.parked .planned-section-head h3 { color: var(--ink-dim) }
+  .planned-section.parked .df-row { cursor: default }
+  .parked-act {
+    flex: 0 0 auto; background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 10px; font-weight: 800;
+    letter-spacing: .4px; text-transform: uppercase;
+    padding: 4px 6px; border-radius: 7px; transition: background .12s;
+  }
+  .parked-act:hover { background: var(--fill-2) }
+  .parked-act.today { color: var(--accent) }
+  .parked-act.later { color: var(--ink-mid) }
+  .parked-act.drop { color: var(--ink-dim); font-size: 13px; letter-spacing: 0 }
   /* ECM inbox entry — a quiet card-button, same language as the meals/learning banners */
   .planned-ecm-inbox {
     display: flex; align-items: center; gap: 14px;
@@ -6256,6 +6271,140 @@
     .vgrid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
   }
 
+  /* ============ DAYFLOW — period habit prompt, parked prompt, night review ============
+     Three surfaces that share one modal shell. Trigger rules live in the JS
+     (search "DAYFLOW"); the hard rule is that nothing here is allowed to fire
+     from a timer, page load, or visibilitychange — see the 2026-07 regression
+     note on maybeShowPriorityConfirm. */
+  .df-backdrop {
+    position: fixed; inset: 0; z-index: 420;
+    background: rgba(28,25,20,.45); backdrop-filter: blur(10px);
+    display: none; align-items: center; justify-content: center;
+    padding: 22px;
+  }
+  .df-backdrop.show { display: flex }
+  .df-modal {
+    width: 100%; max-width: 460px;
+    max-height: 88vh; display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 20px; overflow: hidden;
+    box-shadow: var(--shadow-float);
+  }
+  .df-head { padding: 22px 24px 14px; border-bottom: 1px solid var(--border); }
+  .df-eyebrow {
+    font-size: 10.5px; font-weight: 800; letter-spacing: 1.4px;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 7px;
+  }
+  .df-title {
+    font-size: 21px; font-weight: 800; letter-spacing: -.02em;
+    color: var(--ink); margin-bottom: 5px; line-height: 1.2;
+  }
+  .df-sub { font-size: 13.5px; color: var(--ink-mid); font-weight: 600; line-height: 1.45 }
+  .df-body { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 7px; }
+  .df-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 15px; border-radius: 12px;
+    background: var(--fill); border: 1px solid var(--border);
+    color: var(--ink); font-family: inherit; font-size: 14.5px; font-weight: 650;
+    cursor: pointer; text-align: left; width: 100%;
+    transition: background .12s, border-color .12s;
+  }
+  .df-row:hover { background: var(--fill-2); border-color: var(--border-strong) }
+  .df-row.ok { background: var(--accent-soft); border-color: rgba(240,126,40,.36) }
+  .df-check {
+    width: 21px; height: 21px; border-radius: 7px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 0 0 1.6px var(--border-strong); color: var(--on-accent);
+  }
+  .df-row.ok .df-check { background: var(--accent); box-shadow: none }
+  .df-name { flex: 1; min-width: 0 }
+  .df-row.ok .df-name { color: var(--ink-mid); text-decoration: line-through }
+  .df-tag {
+    flex-shrink: 0; font-size: 10px; font-weight: 800; letter-spacing: .4px;
+    text-transform: uppercase; color: var(--ink-dim);
+  }
+  .df-foot {
+    display: flex; gap: 9px; padding: 14px 18px;
+    border-top: 1px solid var(--border); background: var(--surface);
+  }
+  .df-btn {
+    flex: 1; padding: 12px 14px; border-radius: 11px;
+    font-family: inherit; font-size: 14px; font-weight: 750; cursor: pointer;
+    border: 1px solid var(--border-strong); background: transparent; color: var(--ink-mid);
+    transition: background .12s, color .12s;
+  }
+  .df-btn:hover { background: var(--fill) }
+  .df-btn.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  }
+  .df-btn.primary:hover { filter: brightness(1.05) }
+  .df-btn:disabled, .nr-mic:disabled { opacity: .42; cursor: not-allowed }
+  .df-btn:disabled:hover { background: transparent; filter: none }
+  .df-btn.primary:disabled:hover { background: var(--accent) }
+  .df-btn[hidden], .nr-mic[hidden] { display: none }
+  .df-empty { padding: 22px 4px; text-align: center; color: var(--ink-dim); font-size: 13.5px; font-weight: 600 }
+
+  /* ---- Night review: swipeable card stack ---- */
+  .nr-modal { max-width: 400px }
+  .nr-stage {
+    position: relative; height: 296px; margin: 6px 0 2px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: pan-y;
+  }
+  .nr-card {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 26px 24px; text-align: center;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: 18px; box-shadow: var(--shadow-float);
+    cursor: grab; user-select: none;
+    will-change: transform;
+  }
+  .nr-card.dragging { cursor: grabbing; transition: none }
+  .nr-card.settle { transition: transform .26s cubic-bezier(.2,.7,.3,1), opacity .26s }
+  /* Cards deeper in the stack peek out behind the live one. */
+  .nr-card.behind-1 { transform: scale(.945) translateY(13px); opacity: .68; pointer-events: none }
+  .nr-card.behind-2 { transform: scale(.89) translateY(26px); opacity: .38; pointer-events: none }
+  .nr-card.gone { opacity: 0; pointer-events: none }
+  .nr-kind {
+    font-size: 10.5px; font-weight: 800; letter-spacing: 1.4px;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .nr-text {
+    font-size: 21px; font-weight: 750; line-height: 1.3; color: var(--ink);
+    letter-spacing: -.01em; overflow-wrap: anywhere;
+  }
+  .nr-meta { font-size: 12.5px; font-weight: 650; color: var(--ink-dim) }
+  /* Verdict watermarks fade in as you drag past the commit threshold. */
+  .nr-stamp {
+    position: absolute; top: 16px;
+    font-size: 13px; font-weight: 850; letter-spacing: 1.4px; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 9px; opacity: 0; transition: opacity .1s;
+  }
+  .nr-stamp.yes { right: 16px; color: var(--green); box-shadow: inset 0 0 0 2px var(--green) }
+  .nr-stamp.no  { left: 16px;  color: var(--ink-dim); box-shadow: inset 0 0 0 2px var(--border-strong) }
+  .nr-progress {
+    display: flex; align-items: center; gap: 9px;
+    padding: 0 20px 4px; font-size: 12px; font-weight: 700; color: var(--ink-dim);
+  }
+  .nr-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--fill-2); overflow: hidden }
+  .nr-bar i { display: block; height: 100%; background: var(--accent); transition: width .2s }
+  .nr-hint { text-align: center; font-size: 12px; font-weight: 650; color: var(--ink-dim); padding: 2px 0 10px }
+  .nr-mic {
+    flex: 0 0 auto; width: 46px; padding: 12px 0; border-radius: 11px;
+    border: 1px solid var(--border-strong); background: transparent; color: var(--ink-mid);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .nr-mic.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent) }
+  .nr-done { padding: 30px 20px; text-align: center }
+  .nr-done .nr-text { margin-bottom: 8px }
+  @media (max-width: 640px) {
+    .df-backdrop { padding: 14px; align-items: flex-end }
+    .df-modal { max-width: none; border-radius: 20px 20px 0 0; max-height: 92vh }
+    .nr-stage { height: 268px }
+    .nr-text { font-size: 19px }
+  }
 </style>
 <!-- Cloud sync — pulls cloud state before app code runs and pushes writes out
      so personal-todos-cache (consumed by Sprint) and other prefs sync laptop ↔ TV. -->
@@ -6778,6 +6927,66 @@
     <div class="pof-foot ovh-foot">
       <button class="pof-cancel" id="ovHabitsCal" type="button">Calendar</button>
       <button class="pof-cancel" id="ovHabitsClose" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dayflow: period habit check-in (morning / afternoon). Writes the same
+     health_habit_days docs as the Habits page — field-level merge only. -->
+<div class="df-backdrop" id="dfPeriodBackdrop" aria-hidden="true">
+  <div class="df-modal" role="dialog" aria-modal="true" aria-labelledby="dfPeriodTitle">
+    <div class="df-head">
+      <div class="df-eyebrow" id="dfPeriodEyebrow">Morning</div>
+      <div class="df-title" id="dfPeriodTitle">Morning check-in</div>
+      <div class="df-sub" id="dfPeriodSub"></div>
+    </div>
+    <div class="df-body" id="dfPeriodBody"></div>
+    <div class="df-foot">
+      <button class="df-btn" id="dfPeriodLater" type="button">Not now</button>
+      <button class="df-btn primary" id="dfPeriodDone" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dayflow: parked-task resurface. Fires when the priority chain drains. -->
+<div class="df-backdrop" id="dfParkedBackdrop" aria-hidden="true">
+  <div class="df-modal" role="dialog" aria-modal="true" aria-labelledby="dfParkedTitle">
+    <div class="df-head">
+      <div class="df-eyebrow">Parked</div>
+      <div class="df-title" id="dfParkedTitle">Your list is clear</div>
+      <div class="df-sub" id="dfParkedSub">Ready for something you parked earlier?</div>
+    </div>
+    <div class="df-body" id="dfParkedBody"></div>
+    <div class="df-foot">
+      <button class="df-btn" id="dfParkedSkip" type="button">Not today</button>
+      <button class="df-btn primary" id="dfParkedAdd" type="button">Add selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dayflow: night review. Swipeable card stack over today's open tasks +
+     every unchecked habit, with optional voice control. -->
+<div class="df-backdrop" id="dfNightBackdrop" aria-hidden="true">
+  <div class="df-modal nr-modal" role="dialog" aria-modal="true" aria-labelledby="dfNightTitle">
+    <div class="df-head">
+      <div class="df-eyebrow">Tonight</div>
+      <div class="df-title" id="dfNightTitle">How did today go?</div>
+      <div class="df-sub">Swipe right if you did it, left if you didn't.</div>
+    </div>
+    <div class="nr-progress">
+      <span id="dfNightCount">0 / 0</span>
+      <span class="nr-bar"><i id="dfNightBar" style="width:0%"></i></span>
+    </div>
+    <div class="nr-stage" id="dfNightStage"></div>
+    <div class="nr-hint" id="dfNightHint">Drag the card, or use the buttons below</div>
+    <div class="df-foot" id="dfNightFoot">
+      <button class="df-btn" id="dfNightNo" type="button">Didn't</button>
+      <button class="nr-mic" id="dfNightMic" type="button" aria-label="Voice control" title="Say &quot;yes&quot; or &quot;no&quot;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      </button>
+      <button class="df-btn primary" id="dfNightYes" type="button">Did it</button>
+      <!-- Swapped in for the three above once the stack is empty. -->
+      <button class="df-btn primary" id="dfNightCloseBtn" type="button" hidden>Close</button>
     </div>
   </div>
 </div>
@@ -8122,6 +8331,10 @@ const VOICE = {
         try { ssPushUncompletion(todo); } catch {}
       }
     }
+    // DAYFLOW: finishing something is a real pause point, so it's one of the
+    // two user actions allowed to surface a check-in. Completion only — an
+    // un-toggle never prompts.
+    if (todo.done) { try { dfAfterTaskDone(); } catch {} }
   }
   async function removeTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
@@ -15919,6 +16132,39 @@ const VOICE = {
       items.forEach(p => sec.appendChild(_plannedRowEl(p, { confirmDelete: true })));
       groups.appendChild(sec);
     });
+    // Parked — the coach's overflow (coach_memory). Anything mentioned that
+    // never got scheduled lands here instead of only existing inside the coach
+    // panel. Lives at the bottom because it's looser than Someday: these
+    // aren't commitments yet, they're things said out loud once.
+    if (!_parkedLoaded) {
+      // Lazy first load, then re-render this tab in place.
+      loadParkedMemory().then(() => { try { if (_f5PlannedTab) render(); } catch {} });
+    } else if (_parkedCache.length) {
+      any = true;
+      const sec = document.createElement('div');
+      sec.className = 'planned-section parked';
+      sec.innerHTML = `<div class="planned-section-head"><h3>Parked</h3><span class="ct">${_parkedCache.length}</span></div>`;
+      _parkedCache.forEach(m => {
+        const row = document.createElement('div');
+        row.className = 'df-row';
+        row.innerHTML = `
+          <span class="df-name">${escHtml(m.text)}</span>
+          <button class="parked-act today" type="button" data-park-today="1">Today</button>
+          <button class="parked-act later" type="button" data-park-plan="1">Someday</button>
+          <button class="parked-act drop" type="button" data-park-drop="1" aria-label="Drop">✕</button>`;
+        row.querySelector('[data-park-today]').addEventListener('click', async () => {
+          await parkedPullIn(m.id, m.text, 'today'); render();
+        });
+        row.querySelector('[data-park-plan]').addEventListener('click', async () => {
+          await parkedPullIn(m.id, m.text, 'someday'); render();
+        });
+        row.querySelector('[data-park-drop]').addEventListener('click', async () => {
+          await parkedDrop(m.id);
+        });
+        sec.appendChild(row);
+      });
+      groups.appendChild(sec);
+    }
     if (!any) {
       const empty = document.createElement('div');
       empty.className = 'planned-empty';
@@ -16586,6 +16832,499 @@ const VOICE = {
       if (t) _ovHabitToggle(t.getAttribute('data-ovh-toggle'), t.getAttribute('data-ovh-dont') === '1');
     });
   })();
+
+  // ====================================================================
+  // DAYFLOW — period check-ins, parked resurfacing, night review
+  //
+  // TRIGGER DISCIPLINE. In 2026-07 the priority-confirm modal was made a
+  // no-op (see maybeShowPriorityConfirm) because it fired on page load, on a
+  // 5-minute interval, and on visibilitychange. Nothing in here may do any of
+  // those three. Every surface below is reached from dfMaybePrompt(), which is
+  // only ever called from a deliberate user action — completing a task or
+  // switching tabs. Each surface fires at most ONCE per day, and dismissing it
+  // burns that day's slot.
+  //
+  // Periods match the buckets the page already uses (morning ends 12:00,
+  // afternoon ends 17:00) and the `section` field on every habit doc.
+  // ====================================================================
+  const DF_GATE_KEY = 'pt-dayflow-v1';
+  // The full day review is a wrap-up, so it waits until the evening is
+  // actually over. Between 17:00 and here, "night" behaves like the other two
+  // periods and only asks about night-section habits — otherwise a 17:01
+  // completion would spend the review on a day that isn't finished.
+  const DF_REVIEW_HOUR = 20;
+  function dfPeriodNow(){
+    const h = new Date().getHours();
+    return h < 12 ? 'morning' : (h < 17 ? 'afternoon' : 'night');
+  }
+  function dfGate(){
+    try {
+      const g = JSON.parse(localStorage.getItem(DF_GATE_KEY) || 'null');
+      if (g && g.d === todayKey()) return g;
+    } catch {}
+    return { d: todayKey(), shown: {} };
+  }
+  function dfWasShown(key){ return !!dfGate().shown[key]; }
+  // Burn the slot the moment a surface OPENS, not when it closes — a reload
+  // mid-modal must not hand out a second showing.
+  function dfMarkShown(key){
+    const g = dfGate();
+    g.shown[key] = 1;
+    try { localStorage.setItem(DF_GATE_KEY, JSON.stringify(g)); } catch {}
+  }
+  const DF_IDS = ['dfPeriodBackdrop', 'dfParkedBackdrop', 'dfNightBackdrop'];
+  function dfAnyOpen(){
+    return DF_IDS.some(id => {
+      const el = document.getElementById(id);
+      return el && el.classList.contains('show');
+    });
+  }
+  function dfShow(id){
+    const bd = document.getElementById(id);
+    if (!bd) return;
+    bd.classList.add('show');
+    bd.setAttribute('aria-hidden', 'false');
+  }
+  function dfHide(id){
+    const bd = document.getElementById(id);
+    if (!bd) return;
+    bd.classList.remove('show');
+    bd.setAttribute('aria-hidden', 'true');
+  }
+  // Today's habit doc, read straight from Firestore so this works whether or
+  // not the Habits tab has ever been opened (its subscriptions are lazy).
+  async function dfHabitDay(k){
+    try {
+      const snap = await getDoc(doc(db, 'health_habit_days', k));
+      const d = snap.exists() ? (snap.data() || {}) : {};
+      return { checks: { ...(d.checks || {}) }, slips: { ...(d.slips || {}) } };
+    } catch { return { checks: {}, slips: {} }; }
+  }
+  // Same field-level merge the Habits page uses. A whole-doc write here would
+  // repeat the 2026-07-28 data loss.
+  async function dfWriteCheck(k, hid, on){
+    try {
+      await setDoc(doc(db, 'health_habit_days', k),
+        { checks: { [hid]: on ? true : deleteField() }, updatedAt: new Date().toISOString() },
+        { merge: true });
+    } catch (e) { console.warn('[dayflow] habit write failed', e); }
+  }
+
+  // ---- Parked tasks (coach_memory) ----------------------------------------
+  // coach_memory stays the source of truth so the server keeps injecting the
+  // right open items into the coach prompt and memory_resolve keeps matching.
+  // Pulling one in creates the task AND resolves the memory in one step.
+  let _parkedCache = [];
+  let _parkedLoaded = false;
+  async function loadParkedMemory(force){
+    if (_parkedLoaded && !force) return _parkedCache;
+    try {
+      const snap = await getDocs(collection(db, 'coach_memory'));
+      const open = [];
+      snap.forEach(d => {
+        const m = d.data() || {};
+        if ((m.status || 'open') === 'open' && String(m.text || '').trim()) {
+          open.push({ id: d.id, text: String(m.text), createdAt: String(m.createdAt || '') });
+        }
+      });
+      open.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      _parkedCache = open;
+      _parkedLoaded = true;
+    } catch (e) { console.warn('[dayflow] parked load failed', e); }
+    return _parkedCache;
+  }
+  async function _parkedResolve(id, why){
+    try {
+      await updateDoc(doc(db, 'coach_memory', id),
+        { status: why === 'dropped' ? 'dropped' : 'scheduled', resolvedAt: new Date().toISOString() });
+    } catch (e) { console.warn('[dayflow] parked resolve failed', e); }
+    _parkedCache = _parkedCache.filter(m => m.id !== id);
+    // Keep the coach panel's own copy honest if it has already loaded.
+    try { _coachMemory = _coachMemory.filter(m => m.id !== id); _coachRenderMemory(); } catch {}
+  }
+  async function parkedDrop(id){
+    await _parkedResolve(id, 'dropped');
+    try { render(); } catch {}
+  }
+  // when: 'today' lands it on the first priority list (same spot as an ECM
+  // push); 'someday' parks it undated in Planned.
+  async function parkedPullIn(id, text, when){
+    const newId = await createPlannedTask(text, when === 'today' ? todayKey() : '', '');
+    if (!newId) return false;
+    if (when === 'today') { try { await plannedAddToList(newId); } catch {} }
+    await _parkedResolve(id, 'scheduled');
+    return true;
+  }
+
+  // ---- Period check-in (morning / afternoon) ------------------------------
+  let _dfPeriodState = null;   // {k, period, habits, checks}
+  // gateKey defaults to the period name; the pre-20:00 night check-in passes
+  // its own so it doesn't spend the full review's slot.
+  async function dfOpenPeriod(period, gateKey){
+    const k = todayKey();
+    const [roster, day] = await Promise.all([_ovHabitRoster(), dfHabitDay(k)]);
+    const habits = roster.filter(h => (h.section || 'morning') === period);
+    if (!habits.length) return false;
+    if (habits.every(h => day.checks[h.id])) return false;   // nothing to ask
+    _dfPeriodState = { k, period, habits, checks: day.checks };
+    const LABEL = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
+    const el = id => document.getElementById(id);
+    if (el('dfPeriodEyebrow')) el('dfPeriodEyebrow').textContent = LABEL[period];
+    if (el('dfPeriodTitle')) el('dfPeriodTitle').textContent = `${LABEL[period]} check-in`;
+    dfRenderPeriod();
+    dfMarkShown(gateKey || period);
+    dfShow('dfPeriodBackdrop');
+    return true;
+  }
+  function dfRenderPeriod(){
+    const st = _dfPeriodState;
+    const body = document.getElementById('dfPeriodBody');
+    if (!st || !body) return;
+    const left = st.habits.filter(h => !st.checks[h.id]).length;
+    const sub = document.getElementById('dfPeriodSub');
+    if (sub) sub.textContent = left
+      ? `${left} left. Tap what you've done.`
+      : 'All clear. Nice.';
+    body.innerHTML = st.habits.map(h => {
+      const ok = !!st.checks[h.id];
+      return `<button class="df-row ${ok ? 'ok' : ''}" type="button" data-df-habit="${escHtml(h.id)}">
+        <span class="df-check">${ok ? HB_CHECK_SVG.replace('<svg', '<svg width="12" height="12"') : ''}</span>
+        <span class="df-name">${escHtml(h.name || h.id)}</span>
+      </button>`;
+    }).join('');
+  }
+  async function dfPeriodToggle(hid){
+    const st = _dfPeriodState;
+    if (!st) return;
+    const on = !st.checks[hid];
+    if (on) st.checks[hid] = true; else delete st.checks[hid];
+    dfRenderPeriod();
+    await dfWriteCheck(st.k, hid, on);
+    _ovWinsCache = null;   // the good-days strip recomputes
+  }
+
+  // ---- Parked resurface ---------------------------------------------------
+  let _dfParkedPick = new Set();
+  async function dfOpenParked(){
+    await loadParkedMemory(true);
+    if (!_parkedCache.length) return false;
+    _dfParkedPick = new Set();
+    const sub = document.getElementById('dfParkedSub');
+    if (sub) sub.textContent = _parkedCache.length === 1
+      ? 'One thing you mentioned never got scheduled.'
+      : `${_parkedCache.length} things you mentioned never got scheduled. Pick what you want now.`;
+    dfRenderParked();
+    dfMarkShown('parked');
+    dfShow('dfParkedBackdrop');
+    return true;
+  }
+  function dfRenderParked(){
+    const body = document.getElementById('dfParkedBody');
+    if (!body) return;
+    // Three at a time — the point is a nudge, not a second backlog to triage.
+    const items = _parkedCache.slice(0, 3);
+    body.innerHTML = items.map(m => {
+      const on = _dfParkedPick.has(m.id);
+      return `<button class="df-row ${on ? 'ok' : ''}" type="button" data-df-park="${escHtml(m.id)}">
+        <span class="df-check">${on ? HB_CHECK_SVG.replace('<svg', '<svg width="12" height="12"') : ''}</span>
+        <span class="df-name">${escHtml(m.text)}</span>
+      </button>`;
+    }).join('');
+    const btn = document.getElementById('dfParkedAdd');
+    if (btn) {
+      const n = _dfParkedPick.size;
+      btn.textContent = n ? `Add ${n} to today` : 'Add selected';
+      btn.disabled = !n;
+    }
+  }
+  async function dfParkedCommit(){
+    const picked = _parkedCache.filter(m => _dfParkedPick.has(m.id));
+    for (const m of picked) { await parkedPullIn(m.id, m.text, 'today'); }
+    dfHide('dfParkedBackdrop');
+    _dfParkedPick = new Set();
+    try { render(); } catch {}
+    if (picked.length) { try { ptToast(`${picked.length} pulled off the parked list`); } catch {} }
+  }
+
+  // ---- Night review (swipeable card stack) --------------------------------
+  let _dfNight = null;   // {k, cards, i, checks, voice, voiceOn}
+  async function dfOpenNight(){
+    const k = todayKey();
+    const [roster, day] = await Promise.all([_ovHabitRoster(), dfHabitDay(k)]);
+    const cards = [];
+    // Habits first — every section, only the ones still unchecked. Don'ts are
+    // clean-by-default and would invert the swipe, so they stay out.
+    roster.filter(h => (h.section || 'morning') !== 'dont' && !day.checks[h.id])
+      .forEach(h => cards.push({
+        kind: 'habit', id: h.id,
+        text: h.name || h.id,
+        meta: ({ morning: 'Morning', afternoon: 'Afternoon', night: 'Night' })[h.section || 'morning'] || ''
+      }));
+    // Then today's still-open tasks. Routine instances belong to the habits
+    // track, so they never double-appear here.
+    try {
+      todos.filter(t => t && !t.done && !t.fromTemplate).forEach(t => {
+        let meta = 'Task';
+        try {
+          const list = (focus5State.lists || []).find(l => (l.taskIds || []).includes(t.id));
+          if (list && list.name) meta = list.name;
+        } catch {}
+        cards.push({ kind: 'task', id: t.id, text: t.text || '', meta });
+      });
+    } catch {}
+    if (!cards.length) return false;
+    _dfNight = { k, cards, i: 0, yes: 0, checks: day.checks, voice: null, voiceOn: false };
+    dfNightRender();
+    dfMarkShown('night');
+    dfShow('dfNightBackdrop');
+    return true;
+  }
+  function dfNightRender(){
+    const st = _dfNight;
+    const stage = document.getElementById('dfNightStage');
+    if (!st || !stage) return;
+    const total = st.cards.length;
+    const cnt = document.getElementById('dfNightCount');
+    const bar = document.getElementById('dfNightBar');
+    if (cnt) cnt.textContent = `${Math.min(st.i + 1, total)} / ${total}`;
+    if (bar) bar.style.width = `${Math.round((st.i / total) * 100)}%`;
+    if (st.i >= total) {
+      if (cnt) cnt.textContent = `${total} / ${total}`;
+      if (bar) bar.style.width = '100%';
+      const missed = total - st.yes;
+      stage.innerHTML = `<div class="nr-done">
+        <div class="nr-text">${st.yes ? `${st.yes} done.` : 'That\'s the day.'}</div>
+        <div class="nr-meta">${missed ? `${missed} left for another day — nothing was deleted.` : 'Clean sweep.'}</div>
+      </div>`;
+      // Stop voice FIRST — dfNightStopVoice restores the drag hint, so
+      // clearing the hint has to come after it.
+      dfNightStopVoice();
+      const hint = document.getElementById('dfNightHint');
+      if (hint) hint.textContent = '';
+      // Swap the three decision controls for a single Close — disabled buttons
+      // that still look tappable read as broken.
+      ['dfNightYes', 'dfNightNo', 'dfNightMic'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.hidden = true;
+      });
+      const close = document.getElementById('dfNightCloseBtn');
+      if (close) close.hidden = false;
+      return;
+    }
+    // Render the live card plus two peeking behind it.
+    stage.innerHTML = st.cards.slice(st.i, st.i + 3).map((c, n) => `
+      <div class="nr-card ${n === 1 ? 'behind-1' : (n === 2 ? 'behind-2' : '')}" ${n === 0 ? 'data-nr-live="1"' : ''}>
+        <span class="nr-stamp yes">Did it</span>
+        <span class="nr-stamp no">Didn't</span>
+        <div class="nr-kind">${c.kind === 'habit' ? 'Habit' : 'Task'}</div>
+        <div class="nr-text">${escHtml(c.text)}</div>
+        <div class="nr-meta">${escHtml(c.meta || '')}</div>
+      </div>`).reverse().join('');
+    dfNightBindSwipe();
+  }
+  // Commit the current card. yes → mark done; either way advance.
+  async function dfNightVerdict(yes){
+    const st = _dfNight;
+    if (!st || st.i >= st.cards.length) return;
+    const c = st.cards[st.i];
+    st.i++;
+    if (yes) st.yes++;
+    dfNightRender();
+    if (!yes) return;
+    if (c.kind === 'habit') {
+      st.checks[c.id] = true;
+      await dfWriteCheck(st.k, c.id, true);
+      _ovWinsCache = null;
+    } else {
+      // toggleTodo carries the done-log, stats and Smartsheet bookkeeping.
+      // _dfBusy stops the completion from re-entering dfMaybePrompt.
+      _dfBusy = true;
+      try { await toggleTodo(c.id); } catch (e) { console.warn('[dayflow] task done failed', e); }
+      _dfBusy = false;
+    }
+  }
+  // Drag-to-decide. Commits past 96px; anything short springs back.
+  function dfNightBindSwipe(){
+    const card = document.querySelector('#dfNightStage .nr-card[data-nr-live="1"]');
+    if (!card) return;
+    const yes = card.querySelector('.nr-stamp.yes');
+    const no = card.querySelector('.nr-stamp.no');
+    let x0 = 0, dx = 0, dragging = false, id = null;
+    const THRESH = 96;
+    const paint = () => {
+      card.style.transform = `translateX(${dx}px) rotate(${dx / 22}deg)`;
+      if (yes) yes.style.opacity = String(Math.max(0, Math.min(1, dx / THRESH)));
+      if (no) no.style.opacity = String(Math.max(0, Math.min(1, -dx / THRESH)));
+    };
+    card.addEventListener('pointerdown', (e) => {
+      dragging = true; id = e.pointerId; x0 = e.clientX; dx = 0;
+      card.classList.add('dragging'); card.classList.remove('settle');
+      try { card.setPointerCapture(id); } catch {}
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (!dragging || e.pointerId !== id) return;
+      dx = e.clientX - x0;
+      paint();
+    });
+    const release = (e) => {
+      if (!dragging || (e && e.pointerId !== id)) return;
+      dragging = false;
+      card.classList.remove('dragging');
+      card.classList.add('settle');
+      try { card.releasePointerCapture(id); } catch {}
+      if (Math.abs(dx) >= THRESH) {
+        const verdict = dx > 0;
+        card.style.transform = `translateX(${dx > 0 ? 700 : -700}px) rotate(${dx / 12}deg)`;
+        card.classList.add('gone');
+        setTimeout(() => dfNightVerdict(verdict), 170);
+      } else {
+        card.style.transform = '';
+        if (yes) yes.style.opacity = '0';
+        if (no) no.style.opacity = '0';
+      }
+    };
+    card.addEventListener('pointerup', release);
+    card.addEventListener('pointercancel', release);
+  }
+  // Voice: a yes/no listener, not dictation. Only ever started by tapping the
+  // mic, and it stops itself when the review closes.
+  function dfNightToggleVoice(){
+    const st = _dfNight;
+    const btn = document.getElementById('dfNightMic');
+    const hint = document.getElementById('dfNightHint');
+    if (!st) return;
+    if (st.voiceOn) { dfNightStopVoice(); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { if (hint) hint.textContent = 'Voice isn\'t available in this browser'; return; }
+    const r = new SR();
+    r.continuous = true; r.interimResults = false; r.lang = 'en-US';
+    r.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue;
+        const said = String(e.results[i][0].transcript || '').toLowerCase();
+        if (/\b(yes|yeah|yep|did|done|got it|check)\b/.test(said)) dfNightVerdict(true);
+        else if (/\b(no|nope|nah|skip|didn'?t|pass)\b/.test(said)) dfNightVerdict(false);
+      }
+    };
+    r.onerror = () => dfNightStopVoice();
+    r.onend = () => { if (st.voiceOn) { try { r.start(); } catch { dfNightStopVoice(); } } };
+    st.voice = r; st.voiceOn = true;
+    try { r.start(); } catch { dfNightStopVoice(); return; }
+    if (btn) btn.classList.add('on');
+    if (hint) hint.textContent = 'Listening — say "yes" or "no"';
+  }
+  function dfNightStopVoice(){
+    const st = _dfNight;
+    const btn = document.getElementById('dfNightMic');
+    const hint = document.getElementById('dfNightHint');
+    if (st) { st.voiceOn = false; if (st.voice) { try { st.voice.stop(); } catch {} } }
+    if (btn) btn.classList.remove('on');
+    if (hint) hint.textContent = 'Drag the card, or use the buttons below';
+  }
+  function dfNightClose(){
+    dfNightStopVoice();
+    dfHide('dfNightBackdrop');
+    _dfNight = null;
+    // Restore the decision controls for the next opening.
+    ['dfNightYes', 'dfNightNo', 'dfNightMic'].forEach(id => {
+      const b = document.getElementById(id);
+      if (b) { b.hidden = false; b.disabled = false; }
+    });
+    const close = document.getElementById('dfNightCloseBtn');
+    if (close) close.hidden = true;
+    const hint = document.getElementById('dfNightHint');
+    if (hint) hint.textContent = 'Drag the card, or use the buttons below';
+    try { render(); } catch {}
+  }
+
+  // ---- The one entry point ------------------------------------------------
+  // Called ONLY from user actions. Never a timer, never page load, never
+  // visibilitychange. Read the header note before adding a caller.
+  let _dfBusy = false;
+  async function dfMaybePrompt(){
+    if (_dfBusy || dfAnyOpen()) return;
+    _dfBusy = true;
+    try {
+      const p = dfPeriodNow();
+      if (p !== 'night') {
+        if (!dfWasShown(p)) await dfOpenPeriod(p);
+      } else if (new Date().getHours() >= DF_REVIEW_HOUR) {
+        if (!dfWasShown('night')) await dfOpenNight();
+      } else if (!dfWasShown('night-habits')) {
+        await dfOpenPeriod('night', 'night-habits');
+      }
+    } catch (e) { console.warn('[dayflow] prompt failed', e); }
+    finally { _dfBusy = false; }
+  }
+  // Open tasks left across the priority chain. Zero means the day's plan is
+  // cleared, which is the only moment worth offering parked work.
+  function dfPriorityOpenCount(){
+    try {
+      const ids = new Set();
+      getPriorityLists().forEach(l => (l.taskIds || []).forEach(id => ids.add(id)));
+      return todos.filter(t => t && !t.done && ids.has(t.id)).length;
+    } catch { return 1; }
+  }
+  // Hooked into task completion. Chain drained + something parked = offer it.
+  async function dfAfterTaskDone(){
+    if (_dfBusy || dfAnyOpen()) return;
+    if (!dfWasShown('parked') && dfPriorityOpenCount() === 0) {
+      _dfBusy = true;
+      let opened = false;
+      try { opened = await dfOpenParked(); }
+      catch (e) { console.warn('[dayflow] parked prompt failed', e); }
+      finally { _dfBusy = false; }
+      if (opened) return;
+    }
+    await dfMaybePrompt();
+  }
+
+  (function wireDayflow(){
+    const on = (id, ev, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener(ev, fn);
+    };
+    // Period check-in
+    on('dfPeriodLater', 'click', () => { dfHide('dfPeriodBackdrop'); _dfPeriodState = null; });
+    on('dfPeriodDone', 'click', () => {
+      dfHide('dfPeriodBackdrop'); _dfPeriodState = null;
+      try { if (_f5HabitsTab || _f5OverviewTab) render(); } catch {}
+    });
+    const pbd = document.getElementById('dfPeriodBackdrop');
+    if (pbd) pbd.addEventListener('click', (e) => {
+      if (e.target === pbd) { dfHide('dfPeriodBackdrop'); _dfPeriodState = null; return; }
+      const t = e.target.closest('[data-df-habit]');
+      if (t) dfPeriodToggle(t.getAttribute('data-df-habit'));
+    });
+    // Parked resurface
+    on('dfParkedSkip', 'click', () => { dfHide('dfParkedBackdrop'); _dfParkedPick = new Set(); });
+    on('dfParkedAdd', 'click', dfParkedCommit);
+    const kbd = document.getElementById('dfParkedBackdrop');
+    if (kbd) kbd.addEventListener('click', (e) => {
+      if (e.target === kbd) { dfHide('dfParkedBackdrop'); _dfParkedPick = new Set(); return; }
+      const t = e.target.closest('[data-df-park]');
+      if (!t) return;
+      const id = t.getAttribute('data-df-park');
+      if (_dfParkedPick.has(id)) _dfParkedPick.delete(id); else _dfParkedPick.add(id);
+      dfRenderParked();
+    });
+    // Night review
+    on('dfNightYes', 'click', () => dfNightVerdict(true));
+    on('dfNightNo', 'click', () => dfNightVerdict(false));
+    on('dfNightMic', 'click', dfNightToggleVoice);
+    on('dfNightCloseBtn', 'click', dfNightClose);
+    const nbd = document.getElementById('dfNightBackdrop');
+    if (nbd) nbd.addEventListener('click', (e) => { if (e.target === nbd) dfNightClose(); });
+    document.addEventListener('keydown', (e) => {
+      if (!_dfNight || !dfAnyOpen()) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); dfNightVerdict(true); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); dfNightVerdict(false); }
+      else if (e.key === 'Escape') { e.preventDefault(); dfNightClose(); }
+    });
+  })();
+  // Manual entry points — the strict gate only governs the automatic showings.
+  window.ptNightReview = () => { dfMarkShown('night'); dfOpenNight(); };
+  window.ptPeriodCheckIn = (p) => dfOpenPeriod(p || dfPeriodNow());
 
   // ---- One-time ECM repair ----
   // ssSync used to dedupe only against the todos loaded for the current day,
@@ -17342,6 +18081,10 @@ const VOICE = {
       _f5TimerTab = false;
       loadPlannedTodos().then(() => { try { if (_f5OverviewTab) render(); } catch {} });
       render();
+      // DAYFLOW: the second (and last) allowed trigger. Opening Overview is
+      // the "how am I doing" moment, so a check-in belongs here. Deliberately
+      // NOT on the Habits tab — that view already shows the same checkboxes.
+      try { dfMaybePrompt(); } catch {}
     });
     strip.appendChild(ovTab);
 
