@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
 import { isTransientDbError, isQuotaError } from './_db-errors.js';
+import { WRITE_MAX_BYTES } from './_state-policy.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -73,15 +74,38 @@ export default async function handler(req, res) {
         try { parsed = JSON.parse(u.value); } catch { parsed = u.value; }
       }
       if (parsed === null || parsed === undefined) {
+        // Deletes are always allowed regardless of size — this is the only way
+        // to clean up a row that got in before the size guard existed.
         await sql`DELETE FROM user_state WHERE user_id = 'me' AND key = ${u.key}`;
       } else {
+        // ----- Size guard (the half of ed0ca46 that never landed) -----
+        // Without this, an oversized value is accepted here and then silently
+        // dropped by every /api/load — it burns a Neon write on every change
+        // and never syncs to another device. Refuse it at the door instead,
+        // and report it as a NON-transient failure so the client poisons the
+        // key and stops retrying rather than pushing 540KB forever.
+        const serialized = JSON.stringify(parsed);
+        const bytes = Buffer.byteLength(serialized, 'utf8');
+        if (bytes > WRITE_MAX_BYTES) {
+          console.warn('sync rejected oversize value', { key: u.key, bytes, max: WRITE_MAX_BYTES });
+          failed.push({
+            key: u.key,
+            error: `Value too large to sync: ${bytes} bytes (max ${WRITE_MAX_BYTES}). ` +
+                   `Shrink the payload or mark the key local-only in sync-client.js SKIP_SYNC.`,
+            transient: false,
+            reason: 'oversize',
+            bytes,
+            max: WRITE_MAX_BYTES
+          });
+          continue;
+        }
         // Empty-clobber guard
         if (await clobbersExistingData(u.key, parsed)) {
           const backupKey = `${u.key}__rejected_${new Date().toISOString().replace(/[:.]/g, '-')}`;
           try {
             await sql`
               INSERT INTO user_state (user_id, key, value, updated_at)
-              VALUES ('me', ${backupKey}, ${JSON.stringify(parsed)}::jsonb, NOW())
+              VALUES ('me', ${backupKey}, ${serialized}::jsonb, NOW())
               ON CONFLICT (user_id, key)
               DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
             `;
@@ -92,7 +116,7 @@ export default async function handler(req, res) {
         }
         await sql`
           INSERT INTO user_state (user_id, key, value, updated_at)
-          VALUES ('me', ${u.key}, ${JSON.stringify(parsed)}::jsonb, NOW())
+          VALUES ('me', ${u.key}, ${serialized}::jsonb, NOW())
           ON CONFLICT (user_id, key)
           DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
         `;

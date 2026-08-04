@@ -23,6 +23,17 @@
     // stale values on bootstrap and fight the live listener.
     'pd-active',
     'pd-collapsed',      // banner expand/collapse is a per-device preference
+    // Google Calendar payload cache (~540KB). Purely derived: calendar.html
+    // refetches it from /api/calendar on every open, and that endpoint is
+    // server-side, so a second device rebuilds it identically without our
+    // help. Syncing it bought nothing and cost a lot — 540KB uploaded on
+    // every calendar sync, and 540KB of /api/load response on all twelve
+    // pages that load this file. It also exceeded the per-row cap, so it
+    // was already being dropped by /api/load and never actually synced.
+    // The user data that DOES need to travel — calendar-gcal-priority-v1,
+    // calendar-gcal-titles-v1, calendar-gcal-notes-v1 — are small id-keyed
+    // maps and still sync normally.
+    'calendar-gcal-cache-v1',
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
@@ -32,6 +43,7 @@
   const pending = new Map();   // key -> value (latest pending write)
   let syncTimer = null;        // single shared timer for both debounce + retry
   let lastSyncedAt = null;
+  let lastSkipped = [];        // keys the last /api/load refused to return
   // Exponential-backoff retry state. retryAttempt starts at 0 and increments
   // each time flushSync hits a transient error (503, network). On success it
   // resets to 0. While > 0 we're in a backoff window — queueSync stops
@@ -182,6 +194,7 @@
         const updatesByKey = new Map(updates.map(u => [u.key, u.value]));
         let poisonedCount = 0;
         let requeuedCount = 0;
+        const structuralFailures = [];
         body.failed.forEach(f => {
           if (!f || !f.key) return;
           const transient = f.transient === true || looksTransient(f.error);
@@ -194,10 +207,14 @@
           } else {
             poisonedNow.add(f.key);
             poisonedCount++;
+            structuralFailures.push(f);
             console.warn('[sync] poisoning key (structural failure):', f.key, f.error);
           }
         });
         if (poisonedCount) savePoisoned(poisonedNow);
+        // A key we just permanently stopped syncing is exactly the thing the
+        // user needs told about — /api/sync now rejects oversize writes here.
+        if (structuralFailures.length) notifySkipped(structuralFailures);
         if (requeuedCount) {
           console.warn('[sync] ' + requeuedCount + ' key(s) failed transiently — will retry with backoff');
           updateSyncIndicator('error');
@@ -231,6 +248,7 @@
     scheduleFlush(0);
   });
   // Debug helpers for the sync poison list.
+  window.warroomSyncSkipped = () => lastSkipped;
   window.warroomSyncPoisoned = () => [...loadPoisoned()];
   window.warroomSyncUnpoison = (key) => {
     const s = loadPoisoned();
@@ -351,16 +369,34 @@
       }
       const body = await res.json();
       const state = body.state || {};
-      // Server now reports any keys it skipped (oversized/erroring). Surface
-      // them to the console + auto-poison them so we don't try to push the
-      // same broken values back up.
-      if (Array.isArray(body.skipped) && body.skipped.length) {
-        console.warn('[sync] server skipped keys on load:', body.skipped);
-        try {
-          const poisonedNow = loadPoisoned();
-          body.skipped.forEach(s => { if (s && s.key) poisonedNow.add(s.key); });
-          savePoisoned(poisonedNow);
-        } catch {}
+      // The server reports any keys it refused to return. These are keys the
+      // user believes are synced and are NOT — so they get a visible signal,
+      // not just a console line nobody reads.
+      //
+      // Only STRUCTURAL skips get poisoned. This used to poison every skipped
+      // key indiscriminately, which is the same class of bug c7e5aa3 fixed on
+      // the sync path: a `total-cap` skip is a property of the whole response,
+      // not of the key, and load.js orders rows size-ASC so the keys dropped
+      // by that cap are the LARGEST ones — the user's real data. Banning those
+      // would have silently disabled sync for exactly the keys that matter,
+      // permanently, with no way back short of warroomSyncUnpoison().
+      lastSkipped = Array.isArray(body.skipped) ? body.skipped : [];
+      if (lastSkipped.length) {
+        const structural = lastSkipped.filter(s => s && s.key && (s.structural === true || s.reason === 'oversize'));
+        const transient  = lastSkipped.filter(s => s && s.key && !(s.structural === true || s.reason === 'oversize'));
+        if (structural.length) {
+          console.warn('[sync] server refused to return these keys — they are NOT syncing:', structural);
+          try {
+            const poisonedNow = loadPoisoned();
+            structural.forEach(s => poisonedNow.add(s.key));
+            savePoisoned(poisonedNow);
+          } catch {}
+        }
+        if (transient.length) {
+          console.warn('[sync] keys dropped from this load for response-budget reasons ' +
+                       '(NOT poisoned — they should return on the next load):', transient);
+        }
+        notifySkipped(lastSkipped);
       }
 
       // Merge cloud state into localStorage. Cloud always wins — track which
@@ -416,17 +452,77 @@
   function updateSyncIndicator(status) {
     const el = document.getElementById('wr-sync-indicator');
     if (!el) return;
+    // Once we know specific keys aren't syncing, routine success must not
+    // repaint the badge green. bootstrap() calls updateSyncIndicator('synced')
+    // a few lines after reporting skips — without this the user gets a
+    // reassuring SYNCED badge while their data silently fails to travel,
+    // which is the exact failure this whole change exists to end.
+    if (skippedNoticeActive && (status === 'synced' || status === 'syncing')) return;
     const colors = {
       synced:  { bg: 'rgba(22,163,74,.85)',  text: 'SYNCED' },
       syncing: { bg: 'rgba(37,99,235,.85)',  text: 'SYNCING' },
       error:   { bg: 'rgba(220,38,38,.85)',  text: 'SYNC ERR' },
-      offline: { bg: 'rgba(107,114,128,.85)',text: 'OFFLINE' }
+      offline: { bg: 'rgba(107,114,128,.85)',text: 'OFFLINE' },
+      partial: { bg: 'rgba(217,119,6,.92)',  text: 'SYNC PARTIAL' }
     };
     const c = colors[status] || colors.synced;
     el.style.background = c.bg;
     el.textContent = c.text;
     el.style.opacity = '1';
+    // 'partial' means specific keys are silently not syncing. That's a
+    // standing condition, not a moment — leave it on screen and clickable
+    // instead of fading it away like a routine status blip.
+    if (status === 'partial') {
+      el.style.pointerEvents = 'auto';
+      el.style.cursor = 'pointer';
+      return;
+    }
+    // Only 'error'/'offline' reach here while a skip notice is up. Show them
+    // — they're real — but keep the badge pinned and clickable so the skip
+    // details stay reachable rather than fading out behind a transient error.
+    if (skippedNoticeActive) return;
+    el.style.pointerEvents = 'none';
+    el.style.cursor = '';
     setTimeout(() => { el.style.opacity = '0'; }, 1500);
+  }
+
+  // ----- Surfacing keys that aren't syncing -----
+  // Before this, an oversized key was dropped by /api/load with nothing but a
+  // server-side console.warn. The client got no signal at all, so the user saw
+  // a green SYNCED badge while a key quietly failed to reach their other
+  // devices. Anything the backend refuses now shows up in the UI.
+  let skippedNoticeActive = false;
+  function describeSkip(s) {
+    if (!s || !s.key) return '(unknown key)';
+    if (s.reason === 'oversize') {
+      const kb = s.bytes ? Math.round(s.bytes / 1024) + 'KB' : 'too large';
+      const cap = s.max ? ', cap ' + Math.round(s.max / 1024) + 'KB' : '';
+      return s.key + ' — ' + kb + cap;
+    }
+    if (s.reason === 'total-cap') return s.key + ' — dropped for response size (should return next load)';
+    return s.key + ' — ' + (s.reason || s.error || 'refused');
+  }
+  function notifySkipped(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    skippedNoticeActive = true;
+    const el = document.getElementById('wr-sync-indicator');
+    if (el) {
+      el.title = 'These keys are NOT syncing across devices:\n' +
+                 list.map(s => '• ' + describeSkip(s)).join('\n') +
+                 '\n\nClick for details.';
+      el.onclick = () => {
+        console.group('[sync] keys not syncing');
+        list.forEach(s => console.warn(describeSkip(s), s));
+        console.groupEnd();
+        alert('These keys are not syncing across devices:\n\n' +
+              list.map(s => '• ' + describeSkip(s)).join('\n'));
+      };
+    }
+    updateSyncIndicator('partial');
+    // Let pages render their own affordance if they want one.
+    try {
+      document.dispatchEvent(new CustomEvent('warroom:sync-skipped', { detail: { skipped: list } }));
+    } catch {}
   }
 
   // Expose manual logout for UI

@@ -1,12 +1,16 @@
 import { neon } from '@neondatabase/serverless';
 import { requireAuth } from './_auth.js';
 import { isTransientDbError, isQuotaError } from './_db-errors.js';
+import { PER_ROW_MAX_BYTES, TOTAL_MAX_BYTES } from './_state-policy.js';
 
-// Vercel serverless functions cap response payloads ~4.5MB. To stay well
-// under that we filter giant rows at the SQL level (Neon never ships them
-// over the wire), then guard cumulative size in JS as a second backstop.
-const PER_ROW_MAX_BYTES = 256 * 1024;     // 256KB per key — anything bigger is almost certainly broken
-const TOTAL_MAX_BYTES = 3 * 1024 * 1024;  // 3MB cumulative envelope
+// Every entry in the `skipped` list carries `structural`, which tells the
+// client whether it may permanently poison the key:
+//   structural: true  → the value itself is the problem (too big, unreadable).
+//                       Retrying pushes the same broken bytes. Safe to poison.
+//   structural: false → the key is fine; it lost a race for the response
+//                       budget. Poisoning it would permanently disable sync
+//                       for a perfectly good key — the exact bug c7e5aa3
+//                       fixed on the sync path and left open on this one.
 
 export default async function handler(req, res) {
   const secret = process.env.SESSION_SECRET;
@@ -24,7 +28,13 @@ export default async function handler(req, res) {
       FROM user_state
       WHERE user_id = 'me' AND octet_length(value::text) > ${PER_ROW_MAX_BYTES}
     `;
-    oversized = sizeRows.map(r => ({ key: r.key, bytes: Number(r.bytes), reason: 'oversize' }));
+    oversized = sizeRows.map(r => ({
+      key: r.key,
+      bytes: Number(r.bytes),
+      reason: 'oversize',
+      max: PER_ROW_MAX_BYTES,
+      structural: true
+    }));
   } catch (e) {
     // If the size probe itself fails, fall through and try the regular query —
     // worst case we'll still error out below with a clear log.
@@ -63,13 +73,22 @@ export default async function handler(req, res) {
       const valStr = JSON.stringify(row.value);
       const bytes = valStr ? Buffer.byteLength(valStr, 'utf8') : 0;
       if (total + bytes > TOTAL_MAX_BYTES) {
-        skipped.push({ key: row.key, bytes, reason: 'total-cap' });
+        // NOT structural: this key is under the per-row cap and is only being
+        // dropped because the cumulative envelope filled up first. Rows are
+        // ordered by size ASC, so the casualties here are the LARGEST keys —
+        // i.e. the user's real data (todos-cache, ui-state), not junk.
+        skipped.push({ key: row.key, bytes, reason: 'total-cap', structural: false });
         continue;
       }
       total += bytes;
       state[row.key] = { value: row.value, updated_at: row.updated_at };
     } catch (e) {
-      skipped.push({ key: row && row.key, error: (e && e.message) ? e.message.slice(0, 240) : 'unknown' });
+      skipped.push({
+        key: row && row.key,
+        reason: 'unreadable',
+        error: (e && e.message) ? e.message.slice(0, 240) : 'unknown',
+        structural: true
+      });
     }
   }
   if (skipped.length) console.warn('load: skipped keys', skipped);

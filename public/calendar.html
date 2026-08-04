@@ -1068,8 +1068,61 @@ function loadGcalCache(){
     }
   }catch(e){}
 }
+// This cache is local-only (see SKIP_SYNC in sync-client.js) — /api/calendar
+// is the source of truth and every device rebuilds it on open. But localStorage
+// is still one ~5MB budget shared by every War Room page, and this single key
+// had grown to 540KB: almost all of it raw Google description HTML, which on
+// meeting invites runs to tens of KB per event over a 7-month horizon.
+//
+// Degrade in stages so the common case stays lossless, and never let a write
+// throw — setItem was unguarded, so a QuotaExceededError escaped syncGcal and
+// killed the render() right after a successful fetch.
+const GCAL_CACHE_MAX_CHARS=256*1024;  // localStorage quota is counted in UTF-16 units, so length is the right measure
+const GCAL_DESC_MAX_CHARS=2000;
+function packGcalCache(events){
+  return JSON.stringify({events,syncedAt:state.syncedAt});
+}
 function saveGcalCache(){
-  localStorage.setItem(GCAL_CACHE_KEY,JSON.stringify({events:state.gcal,syncedAt:state.syncedAt}));
+  let payload=packGcalCache(state.gcal);
+  if(payload.length>GCAL_CACHE_MAX_CHARS){
+    // Stage 1: cap descriptions. 2000 chars covers every realistic description,
+    // so the notes badge, the search haystack and the detail modal keep working.
+    payload=packGcalCache(state.gcal.map(e=>
+      e.description&&e.description.length>GCAL_DESC_MAX_CHARS
+        ?{...e,description:e.description.slice(0,GCAL_DESC_MAX_CHARS)+'…'}
+        :e));
+  }
+  if(payload.length>GCAL_CACHE_MAX_CHARS){
+    // Stage 2: drop descriptions entirely. They return on the next sync.
+    payload=packGcalCache(state.gcal.map(e=>({...e,description:''})));
+  }
+  if(payload.length>GCAL_CACHE_MAX_CHARS){
+    // Stage 3: drop past events, then keep only as many of the soonest as
+    // actually fit. The cache exists to paint the upcoming view before the
+    // network answers; /api/calendar refetches the full window regardless.
+    // The shrink loop is the backstop — stages 1 and 2 are bounded by the
+    // description size, so with enough events (250/calendar × N calendars)
+    // they can both run and still leave an oversized payload.
+    const today=todayCT();
+    let kept=state.gcal.filter(e=>e.date>=today).map(e=>({...e,description:''}))
+      .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+    payload=packGcalCache(kept);
+    while(kept.length&&payload.length>GCAL_CACHE_MAX_CHARS){
+      // Trim proportionally to the overshoot so this converges in a pass or
+      // two; the length-1 floor guarantees it always shrinks and terminates.
+      const target=Math.floor(kept.length*(GCAL_CACHE_MAX_CHARS/payload.length)*0.95);
+      kept=kept.slice(0,Math.max(0,Math.min(kept.length-1,target)));
+      payload=packGcalCache(kept);
+    }
+  }
+  try{
+    localStorage.setItem(GCAL_CACHE_KEY,payload);
+  }catch(e){
+    // Out of quota, or private mode. The cache is an optimisation, not state —
+    // clear it and let the next fetch repaint rather than breaking the sync.
+    console.warn('gcal cache write failed, clearing',e&&e.message);
+    try{localStorage.removeItem(GCAL_CACHE_KEY)}catch{}
+  }
 }
 function loadFilter(){
   // Default to "All" — used to default to "priority" but that hid most events
