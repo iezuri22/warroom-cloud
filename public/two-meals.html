@@ -1496,9 +1496,16 @@ const userCategories = new Map();  // id -> { name, order? }
 // pic uploaded here propagates to Goals canvas and vice versa. Normalized
 // name (lowercased, qty/units stripped) → { name, imageUrl, aliases[] }.
 const ingredientLib = new Map();
-// Grocery: { hidden: Set(normalized names), manual: [{id, text, checked}],
-// checked: Set(slotIdx-itemKey) }. Persisted in meals_grocery singleton.
-let grocery = { hidden: new Set(), manual: [], checked: new Set() };
+// Grocery: { hidden: Set(normalized names), manual: [{id, text, checked,
+// checkedAt}], checked: Set(`${weekKey}|${normalizedName}`), checkedAt:
+// { key: ISO } }. Persisted in the meals_grocery singleton.
+let grocery = { hidden: new Set(), manual: [], checked: new Set(), checkedAt: {} };
+// Checking something off means you bought it. It stays on the list struck
+// through for the rest of the shopping trip, then clears itself.
+const GROC_CHECK_TTL_MS = 18 * 60 * 60 * 1000;
+// Checked keys are scoped to the week you planned, so next week's list starts
+// clean. Once a week is well past, its keys are dead weight.
+const GROC_KEY_MAX_AGE_MS = 28 * 24 * 60 * 60 * 1000;
 // How the grocery list groups: 'aisle' (store categories — the default, it's
 // the order you actually shop in) or 'recipe'. Device-local, not synced.
 const GROC_GROUP_KEY = 'meals-groc-group-v1';
@@ -1846,6 +1853,89 @@ const GROCERY_RULES = [
   re: new RegExp('\\b(?:' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?:e?s)?\\b', 'i'),
 }));
 
+// ---------- Ingredient quantities ----------
+// Rolling "1 tbsp olive oil" and "3 tbsp olive oil" into one line needs the
+// number pulled off the front. Anything unparseable contributes no amount
+// rather than being guessed at — "salt to taste" just adds a source, not a
+// quantity.
+const QTY_FRACTIONS = { '½':.5,'⅓':1/3,'⅔':2/3,'¼':.25,'¾':.75,'⅕':.2,'⅖':.4,'⅗':.6,'⅘':.8,'⅙':1/6,'⅚':5/6,'⅛':.125,'⅜':.375,'⅝':.625,'⅞':.875 };
+const QTY_FRAC_CLASS = '[' + Object.keys(QTY_FRACTIONS).join('') + ']';
+const UNIT_CANON = new Map(Object.entries({
+  tbsp:'tbsp', tbs:'tbsp', tablespoon:'tbsp', tablespoons:'tbsp',
+  tsp:'tsp', teaspoon:'tsp', teaspoons:'tsp',
+  cup:'cup', cups:'cup', oz:'oz', ounce:'oz', ounces:'oz',
+  lb:'lb', lbs:'lb', pound:'lb', pounds:'lb',
+  g:'g', gram:'g', grams:'g', kg:'kg', ml:'ml', l:'l', liter:'l', liters:'l',
+  clove:'clove', cloves:'clove', stick:'stick', sticks:'stick',
+  slice:'slice', slices:'slice', piece:'piece', pieces:'piece',
+  head:'head', heads:'head', can:'can', cans:'can',
+  package:'package', packages:'package', bag:'bag', bags:'bag',
+  box:'box', boxes:'box', bunch:'bunch', bunches:'bunch',
+  sprig:'sprig', sprigs:'sprig', pinch:'pinch', pinches:'pinch',
+  dash:'dash', dashes:'dash',
+}));
+// Abbreviations (tbsp, oz, lb…) read the same in plural; spelled-out units don't.
+const UNIT_PLURAL = { cup:'cups', clove:'cloves', stick:'sticks', slice:'slices',
+  piece:'pieces', head:'heads', can:'cans', package:'packages', bag:'bags',
+  box:'boxes', bunch:'bunches', sprig:'sprigs', pinch:'pinches', dash:'dashes' };
+
+// "2 cloves garlic, minced" → { qty: 2, unit: 'clove' }. Either may be null.
+function parseQty(text){
+  let t = String(text || '').toLowerCase().trim();
+  let qty = null;
+  let m;
+  if ((m = /^(\d+)\s+(\d+)\/(\d+)/.exec(t))) {            // 1 1/2
+    qty = +m[1] + (+m[2] / +m[3]); t = t.slice(m[0].length);
+  } else if ((m = /^(\d+)\/(\d+)/.exec(t))) {             // 1/2
+    qty = +m[1] / +m[2]; t = t.slice(m[0].length);
+  } else if ((m = /^(\d+(?:\.\d+)?)/.exec(t))) {          // 2, 1.5, 1½
+    qty = +m[1]; t = t.slice(m[0].length);
+    const f = new RegExp('^' + QTY_FRAC_CLASS).exec(t);
+    if (f) { qty += QTY_FRACTIONS[f[0]]; t = t.slice(1); }
+  } else if ((m = new RegExp('^' + QTY_FRAC_CLASS).exec(t))) {
+    qty = QTY_FRACTIONS[m[0]]; t = t.slice(1);
+  }
+  t = t.replace(/^\s*[-–—]\s*\d+(?:\.\d+)?/, '');         // "2-3 lbs" → keep the 2
+  t = t.replace(/^\s*\([^)]*\)/, '').trim();              // "1 (14 oz) can" → "can"
+  const um = /^([a-z]+)\.?/.exec(t);
+  return { qty, unit: (um && UNIT_CANON.get(um[1])) || null };
+}
+
+// 1.5 → "1 1/2". Recipes read in fractions, so sums should too.
+function fmtQty(n){
+  const FR = [[.125,'1/8'],[.25,'1/4'],[1/3,'1/3'],[.375,'3/8'],[.5,'1/2'],
+              [.625,'5/8'],[2/3,'2/3'],[.75,'3/4'],[.875,'7/8']];
+  const whole = Math.floor(n + 1e-9), frac = n - whole;
+  if (frac < .02) return String(whole);
+  for (const [v, s] of FR) if (Math.abs(frac - v) < .02) return whole ? `${whole} ${s}` : s;
+  return String(Math.round(n * 100) / 100);
+}
+
+// Combined amount for a set of ingredient lines. Quantities only add up
+// within the same unit — "4 tbsp + 1/4 cup" is honest, converting between
+// them isn't worth getting wrong.
+function mergedAmount(texts){
+  const byUnit = new Map();
+  for (const t of texts) {
+    const { qty, unit } = parseQty(t);
+    if (qty == null) continue;
+    const k = unit || '';
+    byUnit.set(k, (byUnit.get(k) || 0) + qty);
+  }
+  if (!byUnit.size) return '';
+  return [...byUnit.entries()]
+    .map(([u, n]) => fmtQty(n) + (u ? ' ' + ((n > 1 && UNIT_PLURAL[u]) || u) : ''))
+    .join(' + ');
+}
+
+// Item identity for the grocery list — what decides whether two lines are the
+// same thing to buy. normalizeIngredientName is shared with Goals so it stays
+// as it is, but a few plural units slip past its unit-stripping, which would
+// split "2 heads broccoli" from "1 head broccoli" into two lines.
+function grocNameFor(text){
+  return normalizeIngredientName(text).replace(/^(heads|bunches|pinches|dashes)\s+/, '').trim();
+}
+
 const _grocCatCache = new Map();
 // Ingredient line → category id. Matches against the raw line *and* the
 // normalized name, so quantities and prep notes ("2 cloves garlic, minced")
@@ -2024,12 +2114,59 @@ function drawCategories(){
 }
 
 // ---------- Grocery state ----------
+// ---------- Grocery check expiry ----------
+// A ticked item stays visible (struck through) so you can see what you've
+// already grabbed, then clears itself once the trip is well over.
+function grocCheckAge(iso){
+  const t = Date.parse(iso || '');
+  return isFinite(t) ? Date.now() - t : null;
+}
+function grocIsCleared(iso){
+  const age = grocCheckAge(iso);
+  return age != null && age >= GROC_CHECK_TTL_MS;
+}
+function grocSetChecked(key, on){
+  if (on) { grocery.checked.add(key); grocery.checkedAt[key] = nowISO(); }
+  else    { grocery.checked.delete(key); delete grocery.checkedAt[key]; }
+}
+// Drops keys from weeks long gone, keys left over from the old
+// `${sectionIdx}|name` scheme, and any checkedAt orphaned from checked.
+// Returns true when something changed so the caller can persist.
+function pruneGroceryChecks(){
+  let changed = false;
+  const cutoff = Date.now() - GROC_KEY_MAX_AGE_MS;
+  for (const key of [...grocery.checked]) {
+    const wk = String(key).split('|')[0];
+    const t = /^\d{4}-\d{2}-\d{2}$/.test(wk) ? Date.parse(wk + 'T00:00:00') : NaN;
+    if (!isFinite(t) || t < cutoff) {
+      grocery.checked.delete(key); delete grocery.checkedAt[key]; changed = true;
+    } else if (!grocery.checkedAt[key]) {
+      // Checked with no stamp (shouldn't happen) — start its clock now rather
+      // than letting it sit on the list forever.
+      grocery.checkedAt[key] = nowISO(); changed = true;
+    }
+  }
+  for (const key of Object.keys(grocery.checkedAt)) {
+    if (!grocery.checked.has(key)) { delete grocery.checkedAt[key]; changed = true; }
+  }
+  // Manual one-offs stay restorable for a while after they clear, then go for
+  // good rather than piling up in the Bought chips forever.
+  const before = grocery.manual.length;
+  grocery.manual = grocery.manual.filter(m => {
+    const age = m.checked ? grocCheckAge(m.checkedAt) : null;
+    return !(age != null && age >= GROC_KEY_MAX_AGE_MS);
+  });
+  if (grocery.manual.length !== before) changed = true;
+  return changed;
+}
 function subscribeGrocery(){
   onSnapshot(groceryDoc, (snap) => {
     const d = snap.exists() ? (snap.data() || {}) : {};
     grocery.hidden  = new Set(Array.isArray(d.hidden)  ? d.hidden  : []);
     grocery.manual  = Array.isArray(d.manual) ? d.manual : [];
     grocery.checked = new Set(Array.isArray(d.checked) ? d.checked : []);
+    grocery.checkedAt = (d.checkedAt && typeof d.checkedAt === 'object') ? d.checkedAt : {};
+    if (pruneGroceryChecks()) scheduleSaveGrocery();
     if (document.getElementById('grocBg')?.classList.contains('open')) {
       try { renderGrocery(); } catch {}
     }
@@ -2045,6 +2182,7 @@ function scheduleSaveGrocery(){
         hidden: [...grocery.hidden],
         manual: grocery.manual,
         checked: [...grocery.checked],
+        checkedAt: grocery.checkedAt,
         updatedAt: nowISO()
       }, { merge: true });
     } catch (e) { console.warn('[grocery] save failed', e); }
@@ -5093,9 +5231,12 @@ function wireCookStepEdits(body, step){
 // ---------- Grocery v2 ----------
 // Skipped ingredients (pantry-style) are stored by normalized name in
 // grocery.hidden — globally hidden across all weeks. Manual items live in
-// grocery.manual as { id, text, checked }. Checked state for recipe-derived
-// items keys on `${slotIdx}|${normalizedName}` so unchecking carries over
-// across recipes that share an ingredient.
+// grocery.manual as { id, text, checked, checkedAt }. Recipe-derived items
+// key on `${weekKey}|${normalizedName}`: one entry per ingredient per week,
+// so the same ingredient in two recipes is one thing to buy — one checkbox,
+// one merged line in the aisle view — and next week starts clean.
+// Ticking an item stamps grocery.checkedAt; 18 hours later it drops off the
+// list into the restorable Bought chips at the bottom.
 function openGrocery(){
   document.getElementById('grocBg').classList.add('open');
   renderGrocery();
@@ -5121,8 +5262,8 @@ function renderGrocery(){
       recipeTitle: merged.title,
       items: ings.map(it => ({
         text: it.text || '',
-        normalized: normalizeIngredientName(it.text || ''),
-        hidden: grocery.hidden.has(normalizeIngredientName(it.text || '')),
+        normalized: grocNameFor(it.text || ''),
+        hidden: grocery.hidden.has(grocNameFor(it.text || '')),
       }))
     });
   };
@@ -5134,33 +5275,66 @@ function renderGrocery(){
     }
   });
 
-  // Flatten to one shopping list. `key` stays `${sectionIdx}|${normalized}`
-  // so checked state saved before aisle sorting existed still lines up.
-  const seenKeys = new Set();
-  const recipeItems = [];
+  // One key per ingredient per week: the same ingredient in two recipes is
+  // one thing to buy, so it shares one checkbox and merges into one line.
+  // Scoping to the week keeps next week's list from inheriting these ticks.
+  const keyFor = (normalized) => `${viewWeekKey}|${normalized}`;
+
+  const byKey = new Map();
+  // Dedupe only within a recipe — one recipe listing the same line twice is a
+  // duplicate, but two recipes each wanting "1 tsp salt" really do need 2 tsp.
+  const seenInSection = new Set();
   sections.forEach((s, si) => s.items.forEach(it => {
     if (it.hidden) return;
-    const key = `${si}|${it.normalized}`;
-    // One recipe listing the exact same line twice would otherwise render two
-    // checkboxes sharing a key — they'd disagree until the next re-render.
-    const dedupe = key + '||' + it.text;
-    if (seenKeys.has(dedupe)) return;
-    seenKeys.add(dedupe);
-    recipeItems.push({
-      kind: 'recipe', key, text: it.text, normalized: it.normalized,
-      from: s.title, fromRecipe: s.recipeTitle,
-      checked: grocery.checked.has(key),
-      cat: groceryCategoryFor(it.text),
-    });
-  }));
-  const manualItems = grocery.manual.map(m => ({
-    kind: 'manual', id: m.id, text: m.text, normalized: normalizeIngredientName(m.text),
-    from: 'Added', checked: !!m.checked, cat: groceryCategoryFor(m.text),
+    if (seenInSection.has(`${si}||${it.text}`)) return;
+    seenInSection.add(`${si}||${it.text}`);
+    const key = keyFor(it.normalized);
+    let g = byKey.get(key);
+    if (!g) {
+      g = { kind: 'recipe', key, normalized: it.normalized, texts: [], froms: [],
+            recipes: [], cat: groceryCategoryFor(it.text) };
+      byKey.set(key, g);
+    }
+    g.texts.push(it.text);
+    if (!g.froms.includes(s.title)) g.froms.push(s.title);
+    if (!g.recipes.includes(s.recipeTitle)) g.recipes.push(s.recipeTitle);
   }));
 
+  // Merged display text. A single source keeps its original line verbatim
+  // (prep notes and all); several sources collapse to summed amount + name.
+  for (const g of byKey.values()) {
+    if (g.texts.length === 1) {
+      g.text = g.texts[0];
+    } else {
+      const amount = mergedAmount(g.texts);
+      g.text = (amount ? amount + ' ' : '') + g.normalized;
+      g.mergedFrom = g.texts;
+    }
+    g.checked = grocery.checked.has(g.key);
+    g.clearedAt = g.checked ? grocery.checkedAt[g.key] : null;
+  }
+
+  const allRecipeItems = [...byKey.values()];
+  const allManualItems = grocery.manual.map(m => ({
+    kind: 'manual', id: m.id, key: 'm:' + m.id, text: m.text,
+    normalized: grocNameFor(m.text), froms: ['Added'], recipes: [],
+    checked: !!m.checked, clearedAt: m.checked ? m.checkedAt : null,
+    cat: groceryCategoryFor(m.text),
+  }));
+
+  // Anything past the 18h window drops out of the shopping list and shows up
+  // as a restore chip at the bottom instead.
+  const isCleared = (it) => it.checked && grocIsCleared(it.clearedAt);
+  const clearedItems = [...allRecipeItems, ...allManualItems].filter(isCleared);
+  const recipeItems  = allRecipeItems.filter(it => !isCleared(it));
+  const manualItems  = allManualItems.filter(it => !isCleared(it));
+
   const itemLi = (it, showFrom) => {
-    const tag = showFrom ? `<span class="groc-from"${it.fromRecipe ? ` title="${attr(it.fromRecipe)}"` : ''}>${esc(it.from)}</span>` : '';
-    const main = `<span class="groc-main"><span class="groc-text">${esc(it.text)}</span>${tag}</span>`;
+    const tags = showFrom
+      ? it.froms.map(f => `<span class="groc-from">${esc(f)}</span>`).join('')
+      : '';
+    const title = it.mergedFrom ? ` title="${attr(it.mergedFrom.join('  •  '))}"` : '';
+    const main = `<span class="groc-main"><span class="groc-text"${title}>${esc(it.text)}</span>${tags}</span>`;
     return it.kind === 'manual'
       ? `<li class="grocery-item${it.checked ? ' checked' : ''}" data-manual-id="${attr(it.id)}">
            <input type="checkbox" data-cb ${it.checked ? 'checked' : ''}>
@@ -5208,21 +5382,39 @@ function renderGrocery(){
       ? `<div class="grocery-section">Manual items <span class="groc-count">${manualItems.length}</span></div>
          <ul class="grocery-list">${manualItems.map(it => itemLi(it, false)).join('')}</ul>`
       : '';
-    const bySection = new Map();
-    recipeItems.forEach(it => {
-      if (!bySection.has(it.from)) bySection.set(it.from, []);
-      bySection.get(it.from).push(it);
-    });
+    // By recipe keeps each recipe's own lines verbatim — no merging here,
+    // that's what the aisle view is for. Rows still share the per-week key,
+    // so ticking a shared ingredient in one recipe ticks it in the other.
     const recipeHtml = sections.length
       ? sections.map((s) => {
-          const items = bySection.get(s.title) || [];
+          const seen = new Set();
+          const rows = [];
+          s.items.forEach(it => {
+            const key = keyFor(it.normalized);
+            const dedupe = key + '||' + it.text;
+            if (it.hidden || seen.has(dedupe)) return;
+            seen.add(dedupe);
+            const checked = grocery.checked.has(key);
+            if (checked && grocIsCleared(grocery.checkedAt[key])) return;
+            rows.push({ kind: 'recipe', key, text: it.text, normalized: it.normalized,
+                        froms: [], checked });
+          });
           const hiddenCount = s.items.filter(it => it.hidden).length;
           return `<div class="grocery-section">${esc(s.title)} <span class="groc-count">${esc(s.recipeTitle)}${hiddenCount ? ` · ${hiddenCount} skipped` : ''}</span></div>
-            ${items.length ? `<ul class="grocery-list">${items.map(it => itemLi(it, false)).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">All items skipped for this section.</div>'}`;
+            ${rows.length ? `<ul class="grocery-list">${rows.map(it => itemLi(it, false)).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">Nothing left to get for this one.</div>'}`;
         }).join('')
       : '<div class="empty-msg">No mains in this week\'s slots yet. Manual items still work above.</div>';
     listHtml = manualHtml + recipeHtml;
   }
+
+  // Bought & cleared — tick something by mistake and notice a day later and
+  // you can still put it back, same as the skipped chips below.
+  const clearedHtml = clearedItems.length
+    ? `<div class="grocery-section" style="margin-top:18px">✅ Bought <span class="groc-count">cleared after 18h · ${clearedItems.length}</span></div>
+       <div style="display:flex;flex-wrap:wrap;gap:6px">${clearedItems.map(it => `
+         <button class="tb-btn" data-act="uncheck" data-key="${attr(it.key)}" style="font-size:11px;padding:4px 9px;border-radius:99px">${esc(it.normalized || it.text)} ↩</button>
+       `).join('')}</div>`
+    : '';
 
   // Pantry / hidden ingredients restore section.
   const hiddenList = [...grocery.hidden];
@@ -5233,7 +5425,9 @@ function renderGrocery(){
        `).join('')}</div>`
     : '';
 
-  body.innerHTML = headHtml + listHtml + hiddenHtml;
+  const keepScroll = body.scrollTop;
+  body.innerHTML = headHtml + listHtml + clearedHtml + hiddenHtml;
+  body.scrollTop = keepScroll;
 
   // Group-by toggle
   body.querySelectorAll('.groc-mode').forEach(btn => btn.addEventListener('click', () => {
@@ -5262,7 +5456,11 @@ function renderGrocery(){
     const id = li.getAttribute('data-manual-id');
     li.querySelector('[data-cb]')?.addEventListener('change', e => {
       const m = grocery.manual.find(x => x.id === id);
-      if (m) { m.checked = e.target.checked; li.classList.toggle('checked', e.target.checked); scheduleSaveGrocery(); }
+      if (!m) return;
+      m.checked = e.target.checked;
+      m.checkedAt = e.target.checked ? nowISO() : null;
+      li.classList.toggle('checked', e.target.checked);
+      scheduleSaveGrocery();
     });
     li.querySelector('[data-act="m-del"]')?.addEventListener('click', () => {
       grocery.manual = grocery.manual.filter(x => x.id !== id);
@@ -5271,15 +5469,16 @@ function renderGrocery(){
     });
   });
 
-  // Recipe-item handlers
-  body.querySelectorAll('[data-key]').forEach(li => {
+  // Recipe-item handlers (li only — the Bought chips also carry a data-key)
+  body.querySelectorAll('li[data-key]').forEach(li => {
     const key = li.getAttribute('data-key');
     const norm = li.getAttribute('data-normalized');
     li.querySelector('[data-cb]')?.addEventListener('change', e => {
-      if (e.target.checked) grocery.checked.add(key);
-      else grocery.checked.delete(key);
-      li.classList.toggle('checked', e.target.checked);
+      grocSetChecked(key, e.target.checked);
       scheduleSaveGrocery();
+      // A shared ingredient can have a second row in the By recipe view — a
+      // full re-render is what keeps them agreeing.
+      renderGrocery();
     });
     li.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
       if (norm) grocery.hidden.add(norm);
@@ -5287,6 +5486,19 @@ function renderGrocery(){
       renderGrocery();
     });
   });
+
+  // Put a cleared item back on the list
+  body.querySelectorAll('[data-act="uncheck"]').forEach(btn => btn.addEventListener('click', () => {
+    const key = btn.getAttribute('data-key');
+    if (key.startsWith('m:')) {
+      const m = grocery.manual.find(x => 'm:' + x.id === key);
+      if (m) { m.checked = false; m.checkedAt = null; }
+    } else {
+      grocSetChecked(key, false);
+    }
+    scheduleSaveGrocery();
+    renderGrocery();
+  }));
 
   // Unskip
   body.querySelectorAll('[data-act="unskip"]').forEach(btn => btn.addEventListener('click', () => {
