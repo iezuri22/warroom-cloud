@@ -5520,6 +5520,11 @@
   .ovs-dhead { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
   .ovs-verdict { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-dim); }
   .ovs-verdict.win { color: var(--green); }
+  .ovs-gohabits {
+    margin-left: auto; border: 1px solid var(--border-strong); background: var(--surface);
+    border-radius: 99px; padding: 4px 11px; font-size: 11px; font-weight: 700;
+    color: var(--ink-mid); cursor: pointer; font-family: inherit; flex-shrink: 0;
+  }
   .ovs-dsec { background: var(--fill); border-radius: 12px; padding: 9px 11px; margin-bottom: 8px; }
   .ovs-dtitle { font-size: 12px; font-weight: 800; margin-bottom: 5px; }
   .ovs-dtitle i { font-style: normal; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-left: 4px; }
@@ -5539,6 +5544,9 @@
   .ovw-line { display: flex; align-items: baseline; gap: 8px; }
   .ovw-title { font-size: 13.5px; font-weight: 800; color: var(--ink); }
   .ovw-meta { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--ink-mid); }
+  .ovw-cal { display: inline-flex; color: var(--ink-dim); margin-left: 8px; }
+  .ovh-foot { display: flex; gap: 8px; }
+  .ovh-foot #ovHabitsCal { margin-right: auto; }
   .ovw-squares { display: flex; gap: 4px; margin-top: 9px; }
   .ovw-sq {
     flex: 1; aspect-ratio: 1; max-width: 26px; border-radius: 7px;
@@ -5550,6 +5558,50 @@
   .ovw-sq.half { background: rgba(30,158,106,.18); color: #1A7A54; }
   .ovw-sq.full { background: var(--green); color: #fff; }
   .ovw-sq.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Row push/delete actions */
+  .ov-row { cursor: pointer; }
+  .ov-row.open { background: var(--fill); border-radius: 10px; padding-left: 6px; padding-right: 6px; }
+  .ov-acts {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 8px 6px 9px; border-bottom: 1px solid var(--border);
+  }
+  .ov-acts-lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-dim); }
+  .ov-act {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 5px 11px; font-size: 11.5px; font-weight: 700; color: var(--ink-mid);
+    cursor: pointer; font-family: inherit;
+  }
+  .ov-act.del { margin-left: auto; color: var(--red); border-color: rgba(220,75,62,.35); }
+  .ov-act.del.arm { background: var(--red); color: #fff; border-color: var(--red); }
+  /* Habit check-off sheet */
+  .ovh-modal { max-width: 440px; }
+  .ovh-meter {
+    font-size: 13px; font-weight: 800; background: var(--fill); border-radius: 12px;
+    padding: 10px 13px; margin-bottom: 12px;
+  }
+  .ovh-meter i { font-style: normal; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-dim); margin-left: 6px; }
+  .ovh-meter.hit i { color: var(--green); }
+  .ovh-sec {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--ink-dim); margin: 12px 0 4px;
+  }
+  .ovh-row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    border: none; background: transparent; padding: 8px 2px;
+    font-family: inherit; font-size: 14px; font-weight: 500; color: var(--ink);
+    cursor: pointer; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .ovh-check {
+    width: 22px; height: 22px; border-radius: 8px; border: 1.5px solid var(--border-strong);
+    background: var(--surface); flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center; color: var(--on-accent);
+  }
+  .ovh-row.ok .ovh-check { background: var(--green); border-color: var(--green); }
+  .ovh-row.dont.ok .ovh-check { background: var(--green); border-color: var(--green); }
+  .ovh-name { flex: 1; }
+  .ovh-row.dont:not(.ok) .ovh-name { color: var(--red); }
+  .ovh-state { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-dim); }
+  .ovh-row.dont:not(.ok) .ovh-state { color: var(--red); }
   @media (max-width: 640px) {
     .ov-go { padding: 6px 10px; font-size: 11.5px; }
     .ov-mode button { padding: 6px 13px; }
@@ -6218,12 +6270,28 @@
   </div>
 </div>
 
+<!-- Habit check-off — opened from a good-days strip date; writes the same
+     health_habit_days docs the Habits page reads. -->
+<div class="priority-overflow-backdrop" id="ovHabitsBackdrop" aria-hidden="true">
+  <div class="priority-overflow ovh-modal" role="dialog" aria-modal="true" aria-labelledby="ovHabitsTitle">
+    <div class="pof-head">
+      <div class="pof-title" id="ovHabitsTitle">Habits</div>
+      <div class="pof-sub">Tap to check off — don'ts stay clean unless you mark a slip.</div>
+    </div>
+    <div class="pof-body" id="ovHabitsBody"></div>
+    <div class="pof-foot ovh-foot">
+      <button class="pof-cancel" id="ovHabitsCal" type="button">Calendar</button>
+      <button class="pof-cancel" id="ovHabitsClose" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- Planned-priority daily knock — fires once per day while anything planned
      is due, and keeps firing each day until it's listed, re-dated, or deleted. -->
 <div class="priority-overflow-backdrop" id="plannedPromptBackdrop" aria-hidden="true">
   <div class="priority-overflow planned-prompt" role="dialog" aria-modal="true" aria-labelledby="plannedPromptTitle" style="max-width:560px">
     <div class="pof-head">
-      <div class="pof-title" id="plannedPromptTitle">Planned for today</div>
+      <div class="pof-title" id="plannedPromptTitle">Due this week</div>
       <div class="pof-sub" id="plannedPromptSub"></div>
     </div>
     <div class="pof-body" id="plannedPromptBody"></div>
@@ -6282,7 +6350,7 @@
 
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, orderBy, writeBatch, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, query, where, orderBy, writeBatch, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
     authDomain: "tv-todos.firebaseapp.com",
@@ -13328,9 +13396,18 @@ const VOICE = {
     bd.addEventListener('click', (e) => { if (e.target === bd) closeEcmInbox(); });
   })();
   // ---- Daily knock ----
+  // The daily knock shows the WEEK ahead, not just today — the user plans in
+  // weeks; overdue and today still sort first.
+  function plannedDueWeek(){
+    const end = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return dkey(d); })();
+    return _plannedCache.filter(p =>
+      !p.done && typeof p.plannedFor === 'string' && p.plannedFor.length > 0 && p.plannedFor <= end
+      && !_inAnyFocus5List(p.id)
+    ).sort((a, b) => a.plannedFor.localeCompare(b.plannedFor));
+  }
   function maybeShowPlannedPrompt(){
     try {
-      if (!plannedDue().length) return;
+      if (!plannedDueWeek().length) return;
       if ((localStorage.getItem('planned-prompt-day') || '') === todayKey()) return;
       openPlannedPrompt();
     } catch {}
@@ -13350,10 +13427,10 @@ const VOICE = {
     if (!bd) return;
     const body = document.getElementById('plannedPromptBody');
     if (!body) return;
-    const due = plannedDue();
+    const due = plannedDueWeek();
     const sub = document.getElementById('plannedPromptSub');
     if (sub) sub.textContent = due.length
-      ? `${due.length} planned priorit${due.length === 1 ? 'y is' : 'ies are'} due. Put them on the list, push the date, or let them go — otherwise I'll knock again tomorrow.`
+      ? `${due.length} item${due.length === 1 ? '' : 's'} due within the week. List them, push the date, or let them go — I'll knock again tomorrow.`
       : 'All handled.';
     body.innerHTML = '';
     due.forEach(p => body.appendChild(_plannedRowEl(p)));
@@ -13386,6 +13463,8 @@ const VOICE = {
   // Checked-off tasks leave the cards — the ✓ browser is the archive. A row
   // lingers struck-through briefly so a mis-tap is undoable in place.
   const _ovJustDone = new Map(); // id -> ts of the check-off
+  let _ovRowOpen = null;         // task id whose push/delete action row is open
+  let _ovDelArm = null;          // id armed for delete (second tap confirms)
 
   function _ovCollect(extraSeen){
     const today = todayKey();
@@ -13426,21 +13505,80 @@ const VOICE = {
       return new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
     } catch { return ds; }
   }
+  // Quick reschedule targets — the "push it" menu. Personal-side only: an
+  // ECM task's Smartsheet due date is the team's; this moves it on YOUR page.
+  function _ovPushDates(){
+    const t = new Date();
+    const mk = days => { const d = new Date(t); d.setDate(t.getDate() + days); return dkey(d); };
+    const nextMonDays = ((8 - t.getDay()) % 7) || 7;
+    return [
+      { label: 'Tomorrow', ds: mk(1) },
+      { label: '+3 days', ds: mk(3) },
+      { label: 'Next wk', ds: mk(nextMonDays) },
+      { label: '+2 wks', ds: mk(nextMonDays + 7) }
+    ];
+  }
+  function _ovActsHTML(id){
+    return `<div class="ov-acts">
+      <span class="ov-acts-lbl">Push</span>
+      ${_ovPushDates().map(o => `<button class="ov-act" type="button" data-ov-push="${escHtml(id)}|${o.ds}">${o.label}</button>`).join('')}
+      <button class="ov-act del ${_ovDelArm === id ? 'arm' : ''}" type="button" data-ov-del="${escHtml(id)}">${_ovDelArm === id ? 'Sure?' : 'Delete'}</button>
+    </div>`;
+  }
+  async function _ovPushTask(id, ds){
+    const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
+    const patch = { plannedFor: ds, date: ds, planned: true };
+    try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch (e) { console.warn('push failed', e); return; }
+    if (t) Object.assign(t, patch);
+    (focus5State.lists || []).forEach(l => {
+      const i = (l.taskIds || []).findIndex(x => String(x) === String(id));
+      if (i >= 0) l.taskIds.splice(i, 1);
+    });
+    saveFocus5();
+    if (t && !_plannedCache.find(x => x.id === id)) _plannedCache.push(t);
+    _ovRowOpen = null; _ovDelArm = null;
+    try { render(); } catch {}
+  }
+  async function _ovDeleteTask(id){
+    const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
+    try {
+      if (t && t.smartsheetRowId) {
+        // Hard-deleting an ECM-linked task is futile — ssSync recreates any
+        // open sheet row it can't find. Dismiss it locally instead (done,
+        // WITHOUT the smartsheet status push a toggleTodo would fire).
+        await updateDoc(doc(db, 'tv_todos', id), { done: true, completedAt: new Date().toISOString(), ecmAccepted: true });
+        Object.assign(t, { done: true });
+      } else {
+        await deleteDoc(doc(db, 'tv_todos', id));
+        todos = todos.filter(x => x.id !== id);
+      }
+    } catch (e) { console.warn('delete failed', e); return; }
+    _plannedCache = _plannedCache.filter(x => x.id !== id);
+    (focus5State.lists || []).forEach(l => {
+      const i = (l.taskIds || []).findIndex(x => String(x) === String(id));
+      if (i >= 0) l.taskIds.splice(i, 1);
+    });
+    saveFocus5();
+    _ovRowOpen = null; _ovDelArm = null;
+    try { render(); } catch {}
+  }
   function _ovRowHTML(t, chip){
     const done = !!t.done;
-    return `<div class="ov-row ${done ? 'done' : ''}">
+    const open = _ovRowOpen === t.id;
+    return `<div class="ov-row ${done ? 'done' : ''} ${open ? 'open' : ''}" data-ov-open="${escHtml(t.id)}">
       <button class="ov-check ${done ? 'on' : ''}" type="button" data-ov-done="${escHtml(t.id)}" aria-label="${done ? 'Mark open' : 'Mark done'}">${done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
       ${chip ? `<span class="ov-daychip today">${escHtml(chip)}</span>` : ''}
       <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}</span>
       ${t.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
-    </div>`;
+    </div>${open ? _ovActsHTML(t.id) : ''}`;
   }
   function _ovWeekRowHTML(p){
-    return `<div class="ov-row wk">
+    const open = _ovRowOpen === p.id;
+    return `<div class="ov-row wk ${open ? 'open' : ''}" data-ov-open="${escHtml(p.id)}">
       <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
       <span class="ov-text">${escHtml(p.text || '')}</span>
       ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
-    </div>`;
+    </div>${open ? _ovActsHTML(p.id) : ''}`;
   }
   // Meal slots for the week — resolved against meals_recipes with our own
   // little cache (the banner's resolver is closed over in its IIFE).
@@ -13503,6 +13641,105 @@ const VOICE = {
     const prio = getPriorityLists().filter(l => !l.routine);
     return prio[0] || (focus5State.lists || []).find(l => !l.routine) || null;
   }
+  // ---- Habit check-off sheet — tap a strip date, tick your habits ----
+  // Writes the SAME data the Habits page reads: health_habit_days/{day}
+  // {checks:{id:true}} for positives, {slips:{id:true}} for don'ts, always
+  // field-merged; un-checking deletes the field (never writes false).
+  let _ovHabitsState = null;  // {k, roster, checks, slips}
+  async function _ovHabitsOpen(k){
+    const bd = document.getElementById('ovHabitsBackdrop');
+    if (!bd) return;
+    bd.classList.add('show');
+    bd.setAttribute('aria-hidden', 'false');
+    const title = document.getElementById('ovHabitsTitle');
+    if (title) title.textContent = new Date(k + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const body = document.getElementById('ovHabitsBody');
+    if (body) body.innerHTML = '<div class="ov-empty">Loading…</div>';
+    try {
+      const [roster, daySnap] = await Promise.all([
+        _ovHabitRoster(),
+        getDoc(doc(db, 'health_habit_days', k))
+      ]);
+      const d = daySnap.exists() ? (daySnap.data() || {}) : {};
+      _ovHabitsState = { k, roster, checks: { ...(d.checks || {}) }, slips: { ...(d.slips || {}) } };
+      _ovHabitsRender();
+    } catch (e) {
+      console.warn('habit sheet load failed', e);
+      if (body) body.innerHTML = '<div class="ov-empty">Couldn\'t load habits.</div>';
+    }
+  }
+  function _ovHabitsClose(){
+    const bd = document.getElementById('ovHabitsBackdrop');
+    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+    _ovHabitsState = null;
+    _ovWinsCache = null;              // strip + today square recompute
+    try { if (_f5OverviewTab) render(); } catch {}
+  }
+  function _ovHabitsRender(){
+    const body = document.getElementById('ovHabitsBody');
+    const st = _ovHabitsState;
+    if (!body || !st) return;
+    const cfg = _ovWinCfg();
+    const today = todayKey();
+    const applicable = st.roster.filter(h => !(h.section === 'dont' && st.k < (h.since || today)));
+    const doneCt = applicable.filter(h =>
+      h.section === 'dont' ? !st.slips[h.id] : !!st.checks[h.id]).length;
+    const pct = applicable.length ? Math.round((doneCt / applicable.length) * 100) : 0;
+    const hit = applicable.length && (doneCt / applicable.length) >= cfg.habit;
+    const SEC_LABELS = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night', dont: "Don'ts — clean unless you slipped" };
+    let html = `<div class="ovh-meter ${hit ? 'hit' : ''}">${doneCt}/${applicable.length} · ${pct}% <i>${hit ? 'bar cleared' : `bar ${Math.round(cfg.habit * 100)}%`}</i></div>`;
+    ['morning', 'afternoon', 'night', 'dont'].forEach(sec => {
+      const hs = applicable.filter(h => (h.section || 'morning') === sec);
+      if (!hs.length) return;
+      html += `<div class="ovh-sec">${SEC_LABELS[sec]}</div>`;
+      hs.forEach(h => {
+        const isDont = h.section === 'dont';
+        const ok = isDont ? !st.slips[h.id] : !!st.checks[h.id];
+        html += `<button class="ovh-row ${ok ? 'ok' : ''} ${isDont ? 'dont' : ''}" type="button" data-ovh-toggle="${escHtml(h.id)}" data-ovh-dont="${isDont ? 1 : 0}">
+          <span class="ovh-check">${ok ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>
+          <span class="ovh-name">${escHtml(h.name || h.id)}</span>
+          ${isDont ? `<span class="ovh-state">${ok ? 'clean' : 'slipped'}</span>` : ''}
+        </button>`;
+      });
+    });
+    body.innerHTML = html;
+  }
+  async function _ovHabitToggle(hid, isDont){
+    const st = _ovHabitsState;
+    if (!st) return;
+    const stamp = new Date().toISOString();
+    try {
+      if (isDont) {
+        const slipping = !st.slips[hid];
+        if (slipping) st.slips[hid] = true; else delete st.slips[hid];
+        await setDoc(doc(db, 'health_habit_days', st.k),
+          { slips: { [hid]: slipping ? true : deleteField() }, updatedAt: stamp }, { merge: true });
+      } else {
+        const on = !st.checks[hid];
+        if (on) st.checks[hid] = true; else delete st.checks[hid];
+        await setDoc(doc(db, 'health_habit_days', st.k),
+          { checks: { [hid]: on ? true : deleteField() }, updatedAt: stamp }, { merge: true });
+      }
+    } catch (e) { console.warn('habit toggle failed', e); }
+    _ovHabitsRender();
+  }
+  (function wireOvHabits(){
+    const bd = document.getElementById('ovHabitsBackdrop');
+    if (!bd) return;
+    document.getElementById('ovHabitsClose').addEventListener('click', _ovHabitsClose);
+    // The old day-tap destination stays one tap away: jump to the calendar
+    // with this day's drill-down already open.
+    document.getElementById('ovHabitsCal').addEventListener('click', () => {
+      const k = _ovHabitsState && _ovHabitsState.k;
+      _ovHabitsClose();
+      openOvStats(k || null);
+    });
+    bd.addEventListener('click', (e) => { if (e.target === bd) { _ovHabitsClose(); return; }
+      const t = e.target.closest('[data-ovh-toggle]');
+      if (t) _ovHabitToggle(t.getAttribute('data-ovh-toggle'), t.getAttribute('data-ovh-dont') === '1');
+    });
+  })();
+
   // Good-days strip on the Overview — the calendar's front-page presence.
   // One fetch per day (or when thresholds change); taps open the full modal.
   function _ovWinsEnsure(){
@@ -13524,7 +13761,7 @@ const VOICE = {
         if (k === today) endRun = win ? run : (squares.length ? endRun : 0);
         else endRun = run;
         elapsed++;
-        squares.push({ d, cls: s.cls, today: k === today });
+        squares.push({ d, k, cls: s.cls, today: k === today });
       }
       _ovWinsCache = {
         stamp, wins, elapsed,
@@ -13604,9 +13841,10 @@ const VOICE = {
         <div class="ovw-line">
           <span class="ovw-title">${w.label}</span>
           <span class="ovw-meta">${w.wins}/${w.elapsed} good days${w.streak > 1 ? ` · ${w.streak} streak` : ''}</span>
+          <span class="ovw-cal" title="Open calendar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
         </div>
         <div class="ovw-squares">${w.squares.map(s =>
-          `<span class="ovw-sq ${s.cls}${s.today ? ' today' : ''}">${s.d}</span>`).join('')}</div>`;
+          `<span class="ovw-sq ${s.cls}${s.today ? ' today' : ''}" data-ovw-day="${s.k}" title="Open this day">${s.d}</span>`).join('')}</div>`;
     } else {
       winsCard.innerHTML = '<div class="ovw-line"><span class="ovw-title">Good days</span><span class="ovw-meta">…</span></div>';
     }
@@ -13689,6 +13927,10 @@ const VOICE = {
         const text = (inp.value || '').trim();
         if (!text) return;
         inp.value = '';
+        // Blur first: render() defers while a text input holds focus
+        // (_isPersonalEditing), which kept the new row invisible until the
+        // next blur. The rebuild's rAF refocuses the row for serial adds.
+        inp.blur();
         await _ovQuickAdd(key, text);
       });
     });
@@ -13732,6 +13974,10 @@ const VOICE = {
         render();
         return;
       }
+      // A strip DATE opens the calendar on that day; the habit sheet is one
+      // tap further (Check habits in the day detail) and loops back.
+      const sq = e.target.closest('[data-ovw-day]');
+      if (sq) { openOvStats(sq.getAttribute('data-ovw-day')); return; }
       const go = e.target.closest('[data-ov-go]');
       if (go) {
         const dest = go.getAttribute('data-ov-go');
@@ -13759,12 +14005,39 @@ const VOICE = {
           _ovJustDone.set(String(id), Date.now());
           setTimeout(() => {
             _ovJustDone.delete(String(id));
+            // Today's win state may have changed — let the strip recompute.
+            _ovWinsCache = null;
             try { if (_f5OverviewTab) render(); } catch {}
           }, 1400);
         } else {
           _ovJustDone.delete(String(id));
         }
         toggleTodo(id);
+        return;
+      }
+      const pushBtn = e.target.closest('[data-ov-push]');
+      if (pushBtn) {
+        const [id, ds] = pushBtn.getAttribute('data-ov-push').split('|');
+        _ovPushTask(id, ds);
+        return;
+      }
+      const delBtn = e.target.closest('[data-ov-del]');
+      if (delBtn) {
+        const id = delBtn.getAttribute('data-ov-del');
+        if (_ovDelArm === id) { _ovDeleteTask(id); }
+        else {
+          // Re-render so any previously armed button drops back to "Delete".
+          _ovDelArm = id;
+          render();
+        }
+        return;
+      }
+      const rowEl = e.target.closest('[data-ov-open]');
+      if (rowEl) {
+        const id = rowEl.getAttribute('data-ov-open');
+        _ovDelArm = null;
+        _ovRowOpen = _ovRowOpen === id ? null : id;
+        render();
         return;
       }
       if (e.target.closest('[data-ov-inbox]')) { try { openEcmInbox(); } catch {} return; }
@@ -13815,9 +14088,38 @@ const VOICE = {
   }
   let _ovStatsMonth = null;   // Date, first of the viewed month
   let _ovStatsLast = null;    // {data, y, m, selKey} — for re-render + day detail
+  let _ovStatsPendingSel = null; // day to pre-select on next open (habit sheet → Calendar)
   let _ovWinsCache = null;    // Overview strip: {stamp, wins, elapsed, streak, squares}
   let _ovWinsBusy = false;
   function _ovStatsKey(y, m, d){ return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+  // The Habits page's roster — config doc once it exists, else a mirror of
+  // its hardcoded defaults (kept in sync with DEFAULT_HABITS in
+  // daily-goals.html). Shared by the stats scorer and the check-off sheet.
+  const OV_DEFAULT_HABITS = [
+    { id: 'bible', name: 'Read Bible', section: 'morning' },
+    { id: 'bedclean', name: 'Make bed + clean', section: 'morning' },
+    { id: 'pray', name: 'Pray', section: 'morning' },
+    { id: 'journal', name: 'Journal', section: 'morning' },
+    { id: 'stretch', name: 'Stretch / PT', section: 'morning' },
+    { id: 'vitamins', name: 'Take vitamins', section: 'afternoon' },
+    { id: 'workout', name: 'Workout', section: 'afternoon' },
+    { id: 'cook', name: 'Home-cooked meal', section: 'afternoon' },
+    { id: 'finances', name: 'Review finances', section: 'afternoon' },
+    { id: 'read', name: 'Read', section: 'night' },
+    { id: 'teeth', name: 'Brush teeth', section: 'night' },
+    { id: 'shower', name: 'Shower', section: 'night' },
+    { id: 'noexplicit', name: 'No explicit content', section: 'dont', since: '2026-07-28' },
+    { id: 'noyoutube', name: 'No YouTube', section: 'dont', since: '2026-07-28' }
+  ];
+  async function _ovHabitRoster(){
+    try {
+      const cfgSnap = await getDoc(doc(db, 'health_config', 'habits'));
+      if (cfgSnap.exists() && Array.isArray((cfgSnap.data() || {}).habits) && cfgSnap.data().habits.length) {
+        return cfgSnap.data().habits.filter(h => h && h.id);
+      }
+    } catch {}
+    return OV_DEFAULT_HABITS;
+  }
   async function _ovStatsData(y, m){
     const dim = new Date(y, m + 1, 0).getDate();
     const start = _ovStatsKey(y, m, 1), end = _ovStatsKey(y, m, dim);
@@ -13838,30 +14140,10 @@ const VOICE = {
         p.tasks.push({ text: String(t.text || '').slice(0, 70), done: !!t.done });
       });
     } catch (e) { console.warn('stats tasks query failed', e); }
-    // Habits: config doc for the roster, one small collection for the days.
-    // The config doc only exists once habits are edited on the Habits page —
-    // until then that page runs on its hardcoded defaults, so we mirror them
-    // (kept in sync with DEFAULT_HABITS in daily-goals.html).
-    const OV_DEFAULT_HABITS = [
-      { id: 'bible', name: 'Read Bible', section: 'morning' },
-      { id: 'bedclean', name: 'Make bed + clean', section: 'morning' },
-      { id: 'pray', name: 'Pray', section: 'morning' },
-      { id: 'journal', name: 'Journal', section: 'morning' },
-      { id: 'stretch', name: 'Stretch / PT', section: 'morning' },
-      { id: 'vitamins', name: 'Take vitamins', section: 'afternoon' },
-      { id: 'workout', name: 'Workout', section: 'afternoon' },
-      { id: 'cook', name: 'Home-cooked meal', section: 'afternoon' },
-      { id: 'finances', name: 'Review finances', section: 'afternoon' },
-      { id: 'read', name: 'Read', section: 'night' },
-      { id: 'teeth', name: 'Brush teeth', section: 'night' },
-      { id: 'shower', name: 'Shower', section: 'night' },
-      { id: 'noexplicit', name: 'No explicit content', section: 'dont', since: '2026-07-28' },
-      { id: 'noyoutube', name: 'No YouTube', section: 'dont', since: '2026-07-28' }
-    ];
+    // Habits: shared roster (config doc or mirrored defaults), one small
+    // collection for the days.
     try {
-      const cfgSnap = await getDoc(doc(db, 'health_config', 'habits'));
-      const habits = (cfgSnap.exists() && Array.isArray((cfgSnap.data() || {}).habits) && cfgSnap.data().habits.length)
-        ? cfgSnap.data().habits.filter(h => h && h.id) : OV_DEFAULT_HABITS;
+      const habits = await _ovHabitRoster();
       if (habits.length) {
         const daysSnap = await getDocs(collection(db, 'health_habit_days'));
         const dayDocs = {};
@@ -13982,7 +14264,7 @@ const VOICE = {
     const missedH = p.hl.filter(h => !h.ok).map(h => escHtml(h.name) + (h.slipped ? ' (slipped)' : ''));
     const doneH = p.hl.filter(h => h.ok).map(h => escHtml(h.name));
     host.innerHTML = `
-      <div class="ovs-dhead"><b>${dayName}</b><span class="ovs-verdict ${s.taskOk || s.habitOk ? 'win' : ''}">${verdict}</span></div>
+      <div class="ovs-dhead"><b>${dayName}</b><span class="ovs-verdict ${s.taskOk || s.habitOk ? 'win' : ''}">${verdict}</span><button class="ovs-gohabits" id="ovsGoHabits" type="button">Check habits</button></div>
       <div class="ovs-dsec">
         <div class="ovs-dtitle">Tasks ${p.tt ? `${p.td}/${p.tt} · ${taskPct}%` : '— none that day'} ${p.tt ? `<i class="${s.taskOk ? 'hit' : 'miss'}">${s.taskOk ? 'bar cleared' : `bar ${Math.round(cfg.task * 100)}%`}</i>` : ''}</div>
         ${taskRows}
@@ -13992,23 +14274,34 @@ const VOICE = {
         ${missedH.length ? `<div class="ovs-drow"><span class="ovs-mark">✗</span>Missed: ${missedH.join(' · ')}</div>` : ''}
         ${doneH.length ? `<div class="ovs-drow ok"><span class="ovs-mark">✓</span>${doneH.join(' · ')}</div>` : ''}
       </div>`;
+    // Calendar ⇄ habit sheet loop: this jumps over, the sheet's Calendar
+    // button jumps back with the same day selected.
+    const gh = document.getElementById('ovsGoHabits');
+    if (gh) gh.addEventListener('click', () => { closeOvStats(); _ovHabitsOpen(k); });
   }
+  let _ovStatsReq = 0;
   async function _ovStatsGo(delta){
     const cur = _ovStatsMonth || new Date();
     const next = new Date(cur.getFullYear(), cur.getMonth() + delta, 1);
     _ovStatsMonth = next;
+    const req = ++_ovStatsReq;
     const body = document.getElementById('ovStatsBody');
     if (body) body.innerHTML = '<div class="ov-empty">Loading…</div>';
     const data = await _ovStatsData(next.getFullYear(), next.getMonth());
-    _ovStatsLast = { data, y: next.getFullYear(), m: next.getMonth(), selKey: null };
+    // Fast paging can leave an older fetch resolving last — newest click wins.
+    if (req !== _ovStatsReq) return;
+    const sel = _ovStatsPendingSel && data.perDay[_ovStatsPendingSel] ? _ovStatsPendingSel : null;
+    _ovStatsPendingSel = null;
+    _ovStatsLast = { data, y: next.getFullYear(), m: next.getMonth(), selKey: sel };
     _ovStatsRender(data, next.getFullYear(), next.getMonth());
   }
-  function openOvStats(){
+  function openOvStats(selKey){
     const bd = document.getElementById('ovStatsBackdrop');
     if (!bd) return;
     bd.classList.add('show');
     bd.setAttribute('aria-hidden', 'false');
     _ovStatsMonth = null;
+    _ovStatsPendingSel = selKey || null;
     _ovStatsGo(0);
   }
   function closeOvStats(){
