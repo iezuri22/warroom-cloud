@@ -4327,14 +4327,11 @@
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;vertical-align:middle"><polyline points="6 9 12 15 18 9"/></svg>
         <span class="more-dot" id="moreTabDot"></span>
       </button>
+      <!-- Starred has no tab of its own — the team's ★ notes, @mentions and
+           mini-deadlines all live inside the Deadlines page now. The counter
+           stays in the DOM so updateStarredCount() keeps working. -->
+      <span id="starredCount" style="display:none"></span>
       <div class="more-menu" id="moreMenu" hidden>
-        <!-- Starred is back in the nav: it's where the team's ★ notes and
-             @mentions live, and the "Mentioned" filter there is how a teammate
-             finds what they were tagged on. -->
-        <button type="button" class="view-tab more-item" data-view="starred">
-          Starred
-          <span class="view-tab-ct" id="starredCount"></span>
-        </button>
         <button type="button" class="view-tab more-item" data-view="activity">
           Activity
           <span class="view-tab-ct" id="activityCount"></span>
@@ -5024,17 +5021,67 @@ async function unstarRow(rowId){
     toast("Couldn't unstar.", 'err');
   }
 }
+// The mention box accepts free text, so a date typed there ("2026-07-28")
+// used to be stored as if it were a person — it then showed up as a bogus
+// teammate AND the intended deadline was lost. Treat date-shaped entries as
+// dates everywhere: they never count as names, and _starDue falls back to one
+// so stars tagged that way still surface in Deadlines.
+function _isDateLike(s){ return /^\d{4}-\d{2}-\d{2}$/.test(String(s || '').trim()); }
 // Names tagged on a given star (the @mentions picked in the star modal).
 function _starMentions(rowId){
   const s = stars[String(rowId)];
-  return (s && Array.isArray(s.mentions)) ? s.mentions.map(m => String(m || '').trim()).filter(Boolean) : [];
+  if (!s || !Array.isArray(s.mentions)) return [];
+  return s.mentions.map(m => String(m || '').trim()).filter(m => m && !_isDateLike(m));
 }
-// Everyone tagged on ANY star — powers the Starred view's "Mentioned"
-// dropdown so a teammate can narrow the list to just their own tags.
+// The star's "get it moving by" date — the real field first, else a date the
+// user typed into the mention box.
+function _starDue(rowId){
+  const s = stars[String(rowId)];
+  if (!s) return '';
+  if (s.due) return s.due;
+  const fromMention = (Array.isArray(s.mentions) ? s.mentions : []).map(m => String(m || '').trim()).find(_isDateLike);
+  return fromMention || '';
+}
+// Everyone tagged on ANY star — powers the "Mentioned" dropdown so a
+// teammate can narrow the list to just their own tags.
 function _allStarMentions(){
   const set = new Set();
   Object.keys(stars).forEach(rid => _starMentions(rid).forEach(m => set.add(m)));
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+// @chips for a Mentioned cell. The name currently filtered on goes amber so
+// you can see WHY a row matched.
+function _mentChipsHTML(names){
+  if (!names || !names.length) return '<span style="color:var(--w30);font-weight:600">—</span>';
+  return names.map(m => `<span class="ment-chip${m === filterMention ? ' on' : ''}">@${escHtml(m)}</span>`).join('');
+}
+// Shared "Mentioned" filter bar (Deadlines page). Rendered even when the
+// result is empty so filtering to someone with no tags can always be undone.
+function _mentionBarHTML(){
+  const names = _allStarMentions();
+  if (!names.length) return '';
+  return `
+    <div class="star-filter-bar">
+      <label class="sfb-lbl" for="mentionSelect">Mentioned</label>
+      <select id="mentionSelect" class="sfb-select" title="Show only items where this person is tagged on the star">
+        <option value="">Anyone</option>
+        ${names.map(n => `<option value="${escHtml(n)}" ${n === filterMention ? 'selected' : ''}>@${escHtml(n)}</option>`).join('')}
+      </select>
+      ${filterMention ? `<button type="button" class="sfb-clear" data-mention-clear>Clear</button>` : ''}
+    </div>`;
+}
+function _wireMentionBar(list){
+  const sel = document.getElementById('mentionSelect');
+  if (sel) sel.addEventListener('change', () => {
+    filterMention = sel.value;
+    try { localStorage.setItem('ecm-mention-filter', filterMention); } catch {}
+    render();
+  });
+  (list || document).querySelectorAll('[data-mention-clear]').forEach(b => b.addEventListener('click', () => {
+    filterMention = '';
+    try { localStorage.setItem('ecm-mention-filter', ''); } catch {}
+    render();
+  }));
 }
 function starBtnHTML(r){
   const on = !!stars[String(r.id)];
@@ -5687,7 +5734,7 @@ function openStarModal(rowId){
       <input type="date" class="sm-mention-input sm-due" value="${escHtml(existing.due || '')}">
       <label class="sm-label">Mention teammates <span class="sm-hint">(optional)</span></label>
       <div class="sm-mentions" data-sm-mentions></div>
-      <input class="sm-mention-input" placeholder="Type a name + Enter, or pick below" autocomplete="off">
+      <input class="sm-mention-input sm-mention-text" placeholder="Type a name + Enter, or pick below" autocomplete="off">
       <div class="sm-suggest" data-sm-suggest></div>
       <div class="sm-actions">
         ${wasStarred ? `<button class="sm-btn sm-unstar" data-sm-unstar>Unstar</button>` : '<span></span>'}
@@ -5720,41 +5767,65 @@ function openStarModal(rowId){
       .filter(n => !q || n.toLowerCase().includes(q));
     host.innerHTML = candidates.length
       ? candidates.map(n => `<button type="button" class="sm-suggest-pill" data-sm-add="${escHtml(n)}">+ ${escHtml(n)}</button>`).join('')
-      : (q ? `<button type="button" class="sm-suggest-pill custom" data-sm-add-custom="${escHtml(filter)}">+ Mention "${escHtml(filter)}"</button>` : '');
+      : (q
+          ? (_isDateLike(filter.trim())
+              ? `<button type="button" class="sm-suggest-pill custom" data-sm-add-custom="${escHtml(filter)}">⏳ Set deadline ${escHtml(filter.trim())}</button>`
+              : `<button type="button" class="sm-suggest-pill custom" data-sm-add-custom="${escHtml(filter)}">+ Mention "${escHtml(filter)}"</button>`)
+          : '');
     host.querySelectorAll('[data-sm-add]').forEach(b => {
       b.addEventListener('click', () => {
         const name = b.getAttribute('data-sm-add');
         if (!mentions.includes(name)) mentions.push(name);
-        wrap.querySelector('.sm-mention-input').value = '';
+        wrap.querySelector('.sm-mention-text').value = '';
         renderChips();
         renderSuggest();
       });
     });
     host.querySelectorAll('[data-sm-add-custom]').forEach(b => {
       b.addEventListener('click', () => {
-        const name = (b.getAttribute('data-sm-add-custom') || '').trim();
-        if (name && !mentions.includes(name)) mentions.push(name);
-        wrap.querySelector('.sm-mention-input').value = '';
+        addMentionOrDate(b.getAttribute('data-sm-add-custom') || '');
+        wrap.querySelector('.sm-mention-text').value = '';
         renderChips();
         renderSuggest();
       });
     });
+  };
+  // A YYYY-MM-DD typed into the mention box is a DEADLINE, not a person.
+  // It used to be stored as a bogus teammate and the intended date was lost
+  // (so the star never reached the Deadlines page) — route it to the
+  // "Get it moving by" field instead.
+  const addMentionOrDate = (raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return;
+    if (_isDateLike(v)) {
+      const dueEl = wrap.querySelector('.sm-due');
+      if (dueEl) dueEl.value = v;
+      try { toast(`That's a date — set as the deadline (${v}), not a mention.`, 'ok'); } catch {}
+      return;
+    }
+    const roster = _starRosterCandidates();
+    const lower = v.toLowerCase();
+    // Exact name wins; otherwise an UNAMBIGUOUS prefix resolves to the real
+    // teammate, so "Talh" + Enter tags Talha instead of inventing "@Talh".
+    // Anything else is kept verbatim (mentioning someone off-roster is valid).
+    const prefixHits = roster.filter(n => n.toLowerCase().startsWith(lower));
+    const name = roster.find(n => n.toLowerCase() === lower)
+      || (prefixHits.length === 1 ? prefixHits[0] : v);
+    if (!mentions.includes(name)) mentions.push(name);
   };
   renderChips();
   renderSuggest();
   // Input behavior: typing filters suggestions; Enter promotes the typed
   // value into a chip (matching an existing name if there is one, otherwise
   // saving the raw text — same as picking a custom suggestion).
-  const inp = wrap.querySelector('.sm-mention-input');
+  const inp = wrap.querySelector('.sm-mention-text');
   inp.addEventListener('input', () => renderSuggest(inp.value));
   inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const v = inp.value.trim();
       if (!v) return;
-      const exact = _starRosterCandidates().find(n => n.toLowerCase() === v.toLowerCase());
-      const name = exact || v;
-      if (!mentions.includes(name)) mentions.push(name);
+      addMentionOrDate(v);
       inp.value = '';
       renderChips();
       renderSuggest();
@@ -8116,11 +8187,10 @@ function render(){
     renderAcknowledge();
     return;
   }
-  // Starred view — team-shared bookmarks.
-  if (currentView === 'starred') {
-    renderStarred();
-    return;
-  }
+  // (No 'starred' branch — that view folded into Deadlines and nothing can
+  // select it any more. currentView isn't persisted, so there's no stale
+  // state to catch; an unreachable branch here is what made the old Starred
+  // page invisible for weeks.)
   // Dev / Reports view used to have a custom layout (renderDevReports).
   // It now uses the same row UI as the All / Non-Dev views — the only
   // difference is what applyFilters() includes.
@@ -11147,7 +11217,7 @@ function _progPrioListHTML(program, compact){
         <span class="pd star" title="Starred">★</span>
         <span class="st-dot" style="background:${statusDotVar(r.status)}"></span>
         <span class="t ${_rowClosed(r) ? 'done' : ''}">${escHtml(r.task || '')}</span>
-        ${_miniDueChip(meta.due)}
+        ${_miniDueChip(_starDue(r.id))}
         ${r.owner ? `<span class="n">${escHtml(ownerFirstName(r.owner))}</span>` : ''}
         ${compact ? '' : `<span class="prog-prio-tools"><button type="button" data-prog-star-edit="${escHtml(String(r.id))}" title="Edit note / deadline / unstar">edit</button></span>`}
       </div>
@@ -11793,10 +11863,12 @@ function _extraDeadlineEntries(){
     if (p.due) entries.push({ kind: 'due', src: 'prio', id: p._id, program: p.program || '', title: p.title || '', iso: p.due, note: p.note || '' });
   });
   Object.entries(stars || {}).forEach(([rid, meta]) => {
-    if (!meta || !meta.due) return;
+    if (!meta) return;
+    const due = _starDue(rid);      // real field, or a date typed into mentions
+    if (!due) return;
     const r = rows.find(x => String(x.id) === String(rid));
     if (!r || _rowClosed(r)) return;
-    entries.push({ kind: 'due', src: 'star', rowId: rid, program: r.program || '', title: r.task || '', iso: meta.due, note: meta.note || '' });
+    entries.push({ kind: 'due', src: 'star', rowId: rid, program: r.program || '', title: r.task || '', iso: due, note: meta.note || '' });
   });
   entries.push(..._noteTokenDeadlines());
   // Countdown entries by date; "since" count-ups sink below them.
@@ -11848,6 +11920,9 @@ function renderDeadlines(){
     const q = filterSearch.toLowerCase();
     pool = pool.filter(r => _wkSearchMatch(r, q));
   }
+  // "Mentioned" scopes the WHOLE page — hard deadlines, mini-deadlines and the
+  // starred list — to items whose star tags that person.
+  if (filterMention) pool = pool.filter(r => _starMentions(r.id).includes(filterMention));
   const open = pool.filter(r => !_rowClosed(r));
   const closed = pool.filter(_rowClosed);
   // Overdue screams first, then soonest; undated hard flags sink to the
@@ -11863,14 +11938,35 @@ function renderDeadlines(){
     return d && _wkDaysFromToday(d) < 0;
   }).length;
   // Lighter commitments: priority/star mini-deadlines + note ⏳/⏱ timers.
-  const extras = _extraDeadlineEntries();
+  let extras = _extraDeadlineEntries();
+  if (filterMention) {
+    extras = extras.filter(x => x.src === 'star' && _starMentions(x.rowId).includes(filterMention));
+  }
+  // Starred tasks with NO date — they'd never surface anywhere else, and this
+  // page absorbed the old standalone Starred tab. Dated stars are already in
+  // the mini-deadline table above, so they're excluded here (no duplicates).
+  const starredUndated = rows
+    .filter(r => (r.task || '').trim() && stars[String(r.id)] && !_rowClosed(r) && !_starDue(r.id))
+    .filter(r => !filterMention || _starMentions(r.id).includes(filterMention))
+    .filter(r => !filterOwner || r.owner === filterOwner)
+    .sort((a, b) => (Date.parse((stars[String(b.id)] || {}).starredAt || 0) || 0) -
+                    (Date.parse((stars[String(a.id)] || {}).starredAt || 0) || 0));
   const miniDueCt = extras.filter(x => x.kind === 'due').length;
-  if (metaEl) metaEl.textContent = `${open.length} hard deadline${open.length === 1 ? '' : 's'}${overdueCt ? ` · ${overdueCt} overdue` : ''}${miniDueCt ? ` · ${miniDueCt} mini` : ''}`;
+  if (metaEl) {
+    metaEl.textContent = filterMention
+      ? `@${filterMention} · ${open.length + miniDueCt + starredUndated.length} item${(open.length + miniDueCt + starredUndated.length) === 1 ? '' : 's'}`
+      : `${open.length} hard deadline${open.length === 1 ? '' : 's'}${overdueCt ? ` · ${overdueCt} overdue` : ''}${miniDueCt ? ` · ${miniDueCt} mini` : ''}${starredUndated.length ? ` · ${starredUndated.length} starred` : ''}`;
+  }
   const visible = _ddlShowClosed ? [...open, ...closed] : open;
-  if (!visible.length && !extras.length) {
-    list.innerHTML = `
-      <div class="empty">No hard deadlines${pool.length ? ' in this view' : ''} yet.<br>
-      <span style="font-weight:500;color:var(--w55)">Open a task's drawer and tap the <strong>🔒 lock</strong> next to its due date to make it a hard commitment — it shows up here and the owner gets Notion email reminders as it approaches. Priority mini-deadlines and note ⏳ timers land here too.</span></div>`;
+  const mentionBar = _mentionBarHTML();
+  if (!visible.length && !extras.length && !starredUndated.length) {
+    // Keep the filter bar so a mention with no matches can always be undone.
+    list.innerHTML = mentionBar + `
+      <div class="empty">${filterMention
+        ? `Nothing here tags <strong>@${escHtml(filterMention)}</strong> right now.`
+        : `No hard deadlines${pool.length ? ' in this view' : ''} yet.<br>
+      <span style="font-weight:500;color:var(--w55)">Open a task's drawer and tap the <strong>🔒 lock</strong> next to its due date to make it a hard commitment — it shows up here and the owner gets Notion email reminders as it approaches. Priority mini-deadlines, note ⏳ timers and starred tasks land here too.</span>`}</div>`;
+    _wireMentionBar(list);
     return;
   }
   const leftCell = (r) => {
@@ -11948,6 +12044,7 @@ function renderDeadlines(){
         <td class="ddl-status">${srcBadge[x.src] || ''}</td>
         <td class="ddl-task"><span class="tt-title" title="${escHtml(x.title)}">${escHtml(x.title)}</span>${x.note ? `<span class="ddl-mini-sub">“${escHtml(x.note)}”</span>` : ''}</td>
         <td class="ddl-prog c-prog"><span style="color:${pc.fg};font-weight:700">${escHtml(x.program || '—')}</span></td>
+        <td class="c-ment">${_mentChipsHTML(x.src === 'star' ? _starMentions(x.rowId) : [])}</td>
         <td class="ddl-due">${escHtml(fmtAbsoluteDate(x.iso) || x.iso)}</td>
         ${leftTD}
       </tr>`;
@@ -11962,12 +12059,44 @@ function renderDeadlines(){
           <thead><tr>
             <th style="width:100px">Source</th><th>What</th>
             <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-ment th-wrap" style="width:118px" title="Teammates tagged on the star">Mentioned</th>
             <th style="width:78px">Date</th><th style="width:80px">Left</th>
           </tr></thead>
           <tbody>${extras.map(extraRow).join('')}</tbody>
         </table>
       </div>` : '';
-  list.innerHTML = `<div class="ddl-wrap">${mainHTML}${extrasHTML}</div>`;
+  // Starred, no date yet — the old Starred tab lives here now.
+  const starredHTML = starredUndated.length ? `
+      <div class="ddl-head-row" style="margin-top:22px">
+        <span class="ddl-title">Starred — no date yet</span>
+        <span class="ddl-sub">Team bookmarks without a "get it moving by" date · click a row to open it, or edit the star to give it one</span>
+      </div>
+      <div class="ddl-scroll">
+        <table class="ddl-table">
+          <thead><tr>
+            <th class="c-status" style="width:92px">Status</th><th>Task</th>
+            <th class="c-prog" style="width:104px">Program</th>
+            <th class="c-ment th-wrap" style="width:118px" title="Teammates tagged on the star">Mentioned</th>
+            <th class="c-ticket" style="width:96px">Starred</th>
+            <th class="c-owner" style="width:86px">Owner</th>
+          </tr></thead>
+          <tbody>${starredUndated.map((r, i) => {
+            const meta = stars[String(r.id)] || {};
+            const pc2 = programColor(r.program);
+            return `
+              <tr class="ddl-row ${i % 2 ? 'even' : ''} ${isExpandedRow(r.id) ? 'expanded' : ''}" data-id="${escHtml(String(r.id))}" data-ddl-row="${escHtml(String(r.id))}">
+                <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+                <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span>${meta.note ? `<span class="ddl-mini-sub">“${escHtml(meta.note)}”</span>` : ''}</td>
+                <td class="ddl-prog c-prog"><span style="color:${pc2.fg};font-weight:700">${escHtml(r.program || '—')}</span></td>
+                <td class="c-ment">${_mentChipsHTML(_starMentions(r.id))}</td>
+                <td class="tt-created-td c-ticket"><span title="Starred ${escHtml(fmtAbsoluteDate(meta.starredAt) || '')}">★ ${escHtml(timeAgo(meta.starredAt) || '—')}</span></td>
+                <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
+              </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>` : '';
+  list.innerHTML = mentionBar + `<div class="ddl-wrap">${mainHTML}${extrasHTML}${starredHTML}</div>`;
+  _wireMentionBar(list);
   const closedToggle = list.querySelector('#ddlClosedToggle');
   if (closedToggle) closedToggle.addEventListener('click', () => { _ddlShowClosed = !_ddlShowClosed; render(); });
   list.querySelectorAll('[data-ddl-row]').forEach(tr => {
@@ -11987,109 +12116,9 @@ function renderDeadlines(){
   }));
 }
 
-function renderStarred(){
-  const list = document.getElementById('list');
-  const metaEl = document.getElementById('metaCount');
-  let pool = _applyColFilters(rows.filter(r => (r.task || '').trim() && stars[String(r.id)]));
-  if (filterOwner) pool = pool.filter(r => r.owner === filterOwner);
-  if (filterSearch) {
-    const q = filterSearch.toLowerCase();
-    pool = pool.filter(r => _wkSearchMatch(r, q));
-  }
-  // "Mentioned" narrows to stars tagging one person. Built from ALL stars (not
-  // the filtered pool) so the dropdown never loses the option you're on.
-  const mentionNames = _allStarMentions();
-  if (filterMention) pool = pool.filter(r => _starMentions(r.id).includes(filterMention));
-  pool.sort((a, b) =>
-    (Date.parse((stars[String(b.id)] || {}).starredAt || 0) || 0) -
-    (Date.parse((stars[String(a.id)] || {}).starredAt || 0) || 0));
-  if (metaEl) metaEl.textContent = filterMention ? `${pool.length} tagging @${filterMention}` : `${pool.length} starred`;
-  // The bar renders even when the result is empty — otherwise filtering to
-  // someone with no tags would remove the only control that can undo it.
-  const mentionBarHTML = mentionNames.length ? `
-    <div class="star-filter-bar">
-      <label class="sfb-lbl" for="mentionSelect">Mentioned</label>
-      <select id="mentionSelect" class="sfb-select" title="Show only starred tasks tagging this person">
-        <option value="">Anyone</option>
-        ${mentionNames.map(n => `<option value="${escHtml(n)}" ${n === filterMention ? 'selected' : ''}>@${escHtml(n)}</option>`).join('')}
-      </select>
-      ${filterMention ? `<button type="button" class="sfb-clear" data-mention-clear>Clear</button>` : ''}
-    </div>` : '';
-  const wireMentionBar = () => {
-    const sel = document.getElementById('mentionSelect');
-    if (sel) sel.addEventListener('change', () => {
-      filterMention = sel.value;
-      try { localStorage.setItem('ecm-mention-filter', filterMention); } catch {}
-      render();
-    });
-    list.querySelectorAll('[data-mention-clear]').forEach(b => b.addEventListener('click', () => {
-      filterMention = '';
-      try { localStorage.setItem('ecm-mention-filter', ''); } catch {}
-      render();
-    }));
-  };
-  if (!pool.length) {
-    list.innerHTML = mentionBarHTML + `<div class="empty">${
-      filterMention
-        ? `No starred tasks tag <strong>@${escHtml(filterMention)}</strong> right now.`
-        : `Nothing starred${filterOwner || filterSearch ? ' in this view' : ' yet'}. Tap the <strong>★</strong> on any task — on any tab — to keep it here for quick reference.`
-    }</div>`;
-    wireMentionBar();
-    return;
-  }
-  // Grid layout — star note rides in the Task cell; edits/unstar in the panel.
-  const bodyRows = pool.map((r, i) => {
-    const pcol = programColor(r.program);
-    const starMeta = stars[String(r.id)] || {};
-    const noteBits = [
-      starMeta.note ? `“${starMeta.note}”` : '',
-      (Array.isArray(starMeta.mentions) && starMeta.mentions.length) ? starMeta.mentions.map(m => '@' + m).join(' ') : ''
-    ].filter(Boolean).join(' · ');
-    const noteFlag = noteBits
-      ? `<span class="tt-flags" title="${escHtml(noteBits)}">📝</span>`
-      : '';
-    const cls = ['ddl-row', i % 2 ? 'even' : '', _rowClosed(r) ? 'closed' : '', isExpandedRow(r.id) ? 'expanded' : ''].filter(Boolean).join(' ');
-    const starInfo = starMeta.starredAt;
-    return `
-      <tr class="${cls}" data-id="${escHtml(String(r.id))}" data-star-row="${escHtml(String(r.id))}">
-        <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
-        <td class="ddl-task"><span class="tt-taskcell"><span class="tt-title" title="${escHtml(r.task)}">${escHtml(r.task)}</span>${noteFlag}${r.deletion ? '<span class="sub-del-badge" title="Marked for deletion in Smartsheets">DEL</span>' : ''}</span></td>
-        <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
-        ${_ageCellTD(r)}
-        <td class="tt-created-td c-ticket"><span title="Starred ${escHtml(fmtAbsoluteDate(starInfo) || '')}">★ ${escHtml(timeAgo(starInfo) || fmtAbsoluteDate(starInfo) || '—')}</span></td>
-        <td class="c-ment">${(function(){
-          const ms = _starMentions(r.id);
-          if (!ms.length) return '<span style="color:var(--w30);font-weight:600">—</span>';
-          return ms.map(m => `<span class="ment-chip${m === filterMention ? ' on' : ''}">@${escHtml(m)}</span>`).join('');
-        })()}</td>
-        <td class="ddl-owner c-owner"><span title="${escHtml(r.owner || '')}">${r.owner ? `<span class="tt-owner-dot" style="background:${ownerColor(r.owner)}"></span>` : ''}<span class="tt-owner-name">${escHtml(ownerFirstName(r.owner) || '—')}</span></span></td>
-      </tr>`;
-  }).join('');
-  list.innerHTML = mentionBarHTML + `
-    <div class="ddl-wrap">
-      <div class="ddl-scroll">
-        <table class="ddl-table">
-          <thead><tr>
-            <th class="c-status" style="width:92px">Status${_thFilterBtn('status')}</th><th>Task</th>
-            <th class="c-prog" style="width:104px">Program${_thFilterBtn('program')}</th>
-            ${AGE_TH()}
-            <th class="c-ticket" style="width:96px">Starred</th>
-            <th class="c-ment th-wrap" style="width:118px" title="Teammates tagged on the star">Mentioned</th>
-            <th class="c-owner" style="width:86px">Owner${_thFilterBtn('owner')}</th>
-          </tr></thead>
-          <tbody>${bodyRows}</tbody>
-        </table>
-      </div>
-    </div>`;
-  wireMentionBar();
-  list.querySelectorAll('[data-star-row]').forEach(tr => {
-    const id = tr.getAttribute('data-star-row');
-    tr.addEventListener('click', (e) => {
-      if (e.target.closest('button, a, input, select, textarea')) return;
-      setExpanded(id);
-    });
-  });
-}
+// renderStarred() was removed — the Starred list, its @mention chips and
+// the Mentioned filter all live inside renderDeadlines() now, so the team
+// has one page for "what's committed and who's tagged" instead of two.
 
 // ============= Tech Support tab render =============
 // Sub-Type="Tech Support" rows on their own tab. Filter chips for the 4
@@ -13061,7 +13090,7 @@ document.querySelectorAll('.view-tab').forEach(b => {
 // other tabs get .active by exact data-view match (the legacy behavior).
 // The More trigger lights up (and takes the inner view's name) when one of
 // its menu views is current.
-const MORE_VIEWS = { starred: 'Starred', activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
+const MORE_VIEWS = { activity: 'Activity', visits: 'In-Person', transcripts: 'Transcripts' };
 function syncViewTabActive(){
   document.querySelectorAll('.view-tab').forEach(x => {
     if (!x.dataset.view) return; // More trigger handled below
