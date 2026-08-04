@@ -944,9 +944,30 @@
     display:flex;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);
     font-size:14px;
   }
-  .grocery-item input[type=checkbox]{ width:18px;height:18px;cursor:pointer }
-  .grocery-item.checked{ opacity:.5;text-decoration:line-through }
+  .grocery-item input[type=checkbox]{ width:18px;height:18px;cursor:pointer;flex:none }
+  .grocery-item.checked{ opacity:.5 }
+  /* Strike the item text only. A row-level line-through would paint straight
+     through the meal chip too — flex items get blockified, so they can't opt
+     out of an inherited decoration. */
+  .grocery-item.checked .groc-text{ text-decoration:line-through }
+  .grocery-item .groc-main{ flex:1 1 auto;min-width:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap }
+  .grocery-item .mini{ flex:none;white-space:nowrap }
   .grocery-section{ font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--w55);margin:14px 0 4px;font-weight:800 }
+  .groc-count{ color:var(--muted);font-size:11px;font-weight:600;text-transform:none;letter-spacing:0 }
+  /* Which meal an item came from — kept small so the aisle view still reads
+     as one shopping list rather than a merged pile of recipes. */
+  .grocery-item .groc-from{
+    font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;
+    color:var(--w55);background:var(--w04);border:1px solid var(--line);
+    border-radius:99px;padding:2px 7px;white-space:nowrap;
+  }
+  .groc-modes{ display:flex;gap:6px;margin:0 0 14px }
+  .groc-mode{
+    padding:6px 11px;border-radius:99px;background:var(--w04);border:1px solid var(--line);
+    color:var(--w70);font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+  }
+  .groc-mode:hover{ color:var(--ink) }
+  .groc-mode.on{ background:var(--accent);border-color:transparent;color:#fff }
 
   /* Empty / loading */
   .empty-msg{ text-align:center;color:var(--muted);padding:40px 16px;font-size:14px }
@@ -1478,6 +1499,13 @@ const ingredientLib = new Map();
 // Grocery: { hidden: Set(normalized names), manual: [{id, text, checked}],
 // checked: Set(slotIdx-itemKey) }. Persisted in meals_grocery singleton.
 let grocery = { hidden: new Set(), manual: [], checked: new Set() };
+// How the grocery list groups: 'aisle' (store categories — the default, it's
+// the order you actually shop in) or 'recipe'. Device-local, not synced.
+const GROC_GROUP_KEY = 'meals-groc-group-v1';
+let grocGroupMode = (() => {
+  try { return localStorage.getItem(GROC_GROUP_KEY) === 'recipe' ? 'recipe' : 'aisle'; }
+  catch { return 'aisle'; }
+})();
 // Track recipe whose Cook walkthrough is open — used to scope writes and
 // re-render after recipe_meta snapshot updates.
 let cookOpenRid = null;
@@ -1696,6 +1724,142 @@ function normalizeIngredientName(text){
   t = t.replace(/^(of|the|a|an)\s+/, '');
   t = t.replace(/,.*$/, '').replace(/\bto taste\b.*$/, '').trim();
   return t;
+}
+
+// ---------- Grocery aisle sorting ----------
+// A list you can actually shop from is grouped by where things sit in the
+// store, not by which recipe asked for them. Categories render in this order
+// because that's roughly the walk: perimeter first, then the middle aisles.
+const GROCERY_CATEGORIES = [
+  { id:'produce',   icon:'🥬', label:'Fresh produce' },
+  { id:'meat',      icon:'🥩', label:'Meat & seafood' },
+  { id:'dairy',     icon:'🥛', label:'Dairy & eggs' },
+  { id:'bakery',    icon:'🍞', label:'Bakery' },
+  { id:'frozen',    icon:'🧊', label:'Frozen' },
+  { id:'pantry',    icon:'🥫', label:'Pantry & dry goods' },
+  { id:'sauces',    icon:'🫙', label:'Sauces & condiments' },
+  { id:'spices',    icon:'🧂', label:'Spices & seasoning' },
+  { id:'drinks',    icon:'🥤', label:'Drinks' },
+  { id:'household', icon:'🧻', label:'Household' },
+  { id:'other',     icon:'🛒', label:'Other' },
+];
+
+// Rules run top to bottom, first hit wins. The OVERRIDES block exists purely
+// for names a broader rule below would file in the wrong aisle: coconut milk
+// is canned, not dairy; onion powder is a spice, not produce; olive oil is
+// pantry, not the olive jar; ice cream is frozen, not cream.
+const GROCERY_RULES = [
+  // — Overrides —
+  ['frozen',  ['ice cream','frozen yogurt','frozen','popsicle','sorbet','gelato','ice cube','puff pastry','phyllo']],
+  // Bakery first among the rest: 'flour tortilla' has to beat pantry's 'flour'.
+  ['bakery',  ['corn tortilla','flour tortilla','cheesecake','pizza dough','pizza crust']],
+  ['pantry',  ['oil','vinegar','flour','soup','coconut milk','coconut cream','condensed milk','evaporated milk',
+               'peanut butter','almond butter','cashew butter','nut butter','apple butter',
+               'breadcrumb','bread crumb','panko','crouton',
+               'chicken broth','beef broth','vegetable broth','veggie broth','bone broth',
+               'chicken stock','beef stock','vegetable stock','fish stock','bouillon',
+               'cream of mushroom','cream of chicken','cream of celery',
+               'tomato paste','tomato sauce','tomato puree','crushed tomato','diced tomato','canned tomato',
+               'stewed tomato','sun dried tomato','sun-dried tomato',
+               'baking powder','baking soda','cocoa powder','cacao powder','protein powder',
+               'chocolate chip','dark chocolate','milk chocolate','white chocolate',
+               'dried cranberry','dried cranberries','dried apricot','dried fruit',
+               'shredded coconut','coconut flake','egg noodle','applesauce','apple sauce',
+               'cornstarch','corn starch','corn syrup','cornmeal','corn meal','popcorn',
+               'canned corn','creamed corn',
+               'canned tuna','can tuna','cans tuna','tuna in water','tuna pouch',
+               'potato chip','tortilla chip','corn chip','pita chip','veggie chip']],
+  ['spices',  ['garlic powder','onion powder','chili powder','chile powder','chilli powder','curry powder',
+               'mustard powder','dry mustard','mustard seed','ginger powder','ground ginger','ground cinnamon',
+               'ground cumin','ground coriander','garlic salt','onion salt','celery salt','sea salt','kosher salt',
+               'lemon pepper','cayenne pepper','black pepper','white pepper','red pepper flake','chili flake',
+               'chilli flake','crushed red pepper','pepper flake','peppercorn',
+               'italian seasoning','taco seasoning','cajun seasoning','creole seasoning','jerk seasoning',
+               'poultry seasoning','old bay','everything bagel','five spice','garam masala','pumpkin pie spice',
+               'vanilla extract','almond extract','dried oregano','dried basil','dried thyme','dried parsley',
+               'dried dill','dried rosemary','dried mint','dried herb','bay leaf','bay leaves']],
+  ['sauces',  ['fish sauce','salad dressing','soy sauce','oyster sauce','hot sauce','pasta sauce','bbq sauce',
+               'barbecue sauce','enchilada sauce','taco sauce','sweet chili sauce','buffalo sauce','tartar sauce',
+               'steak sauce','cranberry sauce','curry paste']],
+  ['drinks',  ['orange juice','apple juice','cranberry juice','grape juice','pineapple juice','tomato juice',
+               'coconut water','apple cider','ginger ale','root beer','lemonade','limeade','iced tea','sweet tea',
+               'soda','club soda','seltzer','sparkling water','tonic water']],
+  ['produce', ['fresh basil','fresh thyme','fresh rosemary','fresh oregano','fresh sage','fresh mint','fresh dill',
+               'fresh parsley','fresh cilantro','fresh ginger','fresh herb','lemon juice','lime juice',
+               'lemon zest','lime zest','orange zest']],
+  ['dairy',   ['pepper jack','cream cheese','sour cream','cottage cheese','heavy cream','half and half',
+               'whipping cream','buttermilk','goat cheese','goat milk','blue cheese']],
+
+  // — Main aisles —
+  ['produce', ['onion','shallot','garlic','leek','scallion','green onion','spring onion','tomato','potato',
+               'sweet potato','yam','carrot','celery','cucumber','zucchini','courgette','squash','butternut',
+               'pumpkin','eggplant','aubergine','bell pepper','banana pepper','poblano','jalapeno','jalapeño',
+               'serrano','habanero','anaheim','shishito','chili pepper','lettuce','romaine','iceberg','spinach',
+               'kale','arugula','cabbage','bok choy','broccoli','broccolini','cauliflower','brussels sprout',
+               'asparagus','green bean','snap pea','snow pea','pea','corn','mushroom','avocado','lemon','lime',
+               'orange','clementine','mandarin','grapefruit','apple','banana','grape','strawberry','strawberries',
+               'blueberry','blueberries','raspberry','raspberries','blackberry','blackberries','cranberry',
+               'cranberries','cherry','cherries','peach','pear','plum','apricot','mango','pineapple','kiwi',
+               'melon','watermelon','cantaloupe','papaya','pomegranate','fig','coconut','ginger','turnip','radish',
+               'beet','beetroot','parsnip','rutabaga','artichoke','okra','fennel','endive','chard','collard',
+               'watercress','sprout','microgreen','jicama','plantain','chayote','salad','slaw','coleslaw',
+               'herb','cilantro','parsley','basil','mint','dill','chive','thyme','rosemary','sage','tarragon',
+               'lemongrass','produce']],
+  ['meat',    ['chicken','beef','steak','pork','bacon','sausage','ham','prosciutto','pancetta','salami',
+               'pepperoni','chorizo','turkey','lamb','veal','duck','brisket','rib','chuck','sirloin','ribeye',
+               'tenderloin','thigh','drumstick','wing','cutlet','mince','oxtail','goat','hot dog','bratwurst',
+               'kielbasa','andouille','meatball','deli meat','bologna','pastrami','shrimp','prawn','salmon',
+               'tuna','cod','tilapia','halibut','trout','snapper','mahi','catfish','sardine','anchovy','crab',
+               'lobster','scallop','mussel','clam','oyster','squid','calamari','octopus','fish','seafood','jerky']],
+  ['dairy',   ['milk','cream','butter','margarine','ghee','cheese','cheddar','mozzarella','parmesan','parmigiano',
+               'pecorino','feta','ricotta','gouda','brie','swiss','provolone','monterey jack','gruyere','havarti',
+               'asiago','mascarpone','halloumi','queso','cotija','yogurt','yoghurt','egg','kefir','creme fraiche',
+               'crème fraîche','oat milk','almond milk','soy milk','cashew milk']],
+  ['bakery',  ['bread','baguette','roll','bun','tortilla','pita','naan','bagel','croissant','muffin','brioche',
+               'sourdough','ciabatta','focaccia','crumpet','pretzel','pie crust','cake','doughnut','donut','wrap',
+               'flatbread','challah','biscuit','dough']],
+  ['sauces',  ['ketchup','catsup','mustard','mayo','mayonnaise','aioli','tamari','worcestershire','sriracha',
+               'tabasco','sambal','gochujang','harissa','chimichurri','pesto','hummus','guacamole','tzatziki',
+               'salsa','ranch','dressing','vinaigrette','marinara','alfredo','teriyaki','hoisin','ponzu','mirin',
+               'miso','relish','pickle','pickled','olive','caper','horseradish','chutney','sauce','dip',
+               'marinade','glaze','spread']],
+  ['spices',  ['salt','pepper','paprika','cumin','coriander','turmeric','cinnamon','nutmeg','clove','oregano',
+               'cayenne','curry','allspice','cardamom','saffron','anise','fenugreek','sumac','zaatar','marjoram',
+               'seasoning','spice','extract']],
+  ['pantry',  ['rice','pasta','spaghetti','penne','macaroni','fettuccine','linguine','rigatoni','farfalle','orzo',
+               'lasagna','noodle','ramen','couscous','quinoa','farro','barley','bulgur','oat','oatmeal','granola',
+               'cereal','flour','sugar','polenta','grit','tapioca','gelatin','yeast','cocoa','chocolate','honey',
+               'maple syrup','syrup','molasses','jam','jelly','preserve','marmalade','tahini','bean','chickpea',
+               'garbanzo','lentil','can','canned','broth','stock','nut','almond','walnut','pecan','cashew',
+               'peanut','pistachio','macadamia','hazelnut','seed','sesame','sunflower','chia','flax','raisin',
+               'cracker','chip','marshmallow','vanilla','shortening','lard','baking']],
+  ['drinks',  ['juice','soda','cola','sparkling water','seltzer','club soda','tonic','water','coffee','espresso',
+               'tea','beer','wine','sake','cider','kombucha','lemonade','smoothie','gatorade','milkshake']],
+  ['household',['paper towel','toilet paper','napkin','foil','parchment','plastic wrap','cling film','ziploc',
+               'freezer bag','trash bag','garbage bag','dish soap','detergent','sponge','bleach','cleaner',
+               'disinfectant','laundry','shampoo','conditioner','toothpaste','deodorant','soap','tissue',
+               'paper plate','battery','light bulb','skewer','toothpick','straw']],
+].map(([id, terms]) => ({
+  id,
+  // Word-boundary match, tolerating a trailing plural so "tomato" hits
+  // "tomatoes" and "bell pepper" hits "bell peppers".
+  re: new RegExp('\\b(?:' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?:e?s)?\\b', 'i'),
+}));
+
+const _grocCatCache = new Map();
+// Ingredient line → category id. Matches against the raw line *and* the
+// normalized name, so quantities and prep notes ("2 cloves garlic, minced")
+// can't hide the food. Unknown items fall through to 'other' rather than
+// being guessed at.
+function groceryCategoryFor(text){
+  const raw = String(text || '').toLowerCase().trim();
+  if (!raw) return 'other';
+  if (_grocCatCache.has(raw)) return _grocCatCache.get(raw);
+  const hay = raw + ' | ' + normalizeIngredientName(raw);
+  let found = 'other';
+  for (const rule of GROCERY_RULES) { if (rule.re.test(hay)) { found = rule.id; break; } }
+  _grocCatCache.set(raw, found);
+  return found;
 }
 // Library lookup priority (matters when many entries could match):
 //   1. Exact normalized-name match  — "sriracha" → entry "sriracha"
@@ -4970,39 +5134,95 @@ function renderGrocery(){
     }
   });
 
-  // Manual items
-  const manualHtml = `
-    <div class="grocery-section">Manual items <span style="color:var(--muted);font-size:11px;font-weight:600;text-transform:none">${grocery.manual.length}</span></div>
-    ${grocery.manual.length ? `<ul class="grocery-list">${grocery.manual.map(m => `
-      <li class="grocery-item${m.checked ? ' checked' : ''}" data-manual-id="${attr(m.id)}">
-        <input type="checkbox" data-cb ${m.checked ? 'checked' : ''}>
-        <span>${esc(m.text)}</span>
-        <span style="flex:1"></span>
-        <button class="mini danger" data-act="m-del" title="Delete">✕</button>
-      </li>`).join('')}</ul>` : ''}
-    <div style="display:flex;gap:8px;margin-top:8px">
+  // Flatten to one shopping list. `key` stays `${sectionIdx}|${normalized}`
+  // so checked state saved before aisle sorting existed still lines up.
+  const seenKeys = new Set();
+  const recipeItems = [];
+  sections.forEach((s, si) => s.items.forEach(it => {
+    if (it.hidden) return;
+    const key = `${si}|${it.normalized}`;
+    // One recipe listing the exact same line twice would otherwise render two
+    // checkboxes sharing a key — they'd disagree until the next re-render.
+    const dedupe = key + '||' + it.text;
+    if (seenKeys.has(dedupe)) return;
+    seenKeys.add(dedupe);
+    recipeItems.push({
+      kind: 'recipe', key, text: it.text, normalized: it.normalized,
+      from: s.title, fromRecipe: s.recipeTitle,
+      checked: grocery.checked.has(key),
+      cat: groceryCategoryFor(it.text),
+    });
+  }));
+  const manualItems = grocery.manual.map(m => ({
+    kind: 'manual', id: m.id, text: m.text, normalized: normalizeIngredientName(m.text),
+    from: 'Added', checked: !!m.checked, cat: groceryCategoryFor(m.text),
+  }));
+
+  const itemLi = (it, showFrom) => {
+    const tag = showFrom ? `<span class="groc-from"${it.fromRecipe ? ` title="${attr(it.fromRecipe)}"` : ''}>${esc(it.from)}</span>` : '';
+    const main = `<span class="groc-main"><span class="groc-text">${esc(it.text)}</span>${tag}</span>`;
+    return it.kind === 'manual'
+      ? `<li class="grocery-item${it.checked ? ' checked' : ''}" data-manual-id="${attr(it.id)}">
+           <input type="checkbox" data-cb ${it.checked ? 'checked' : ''}>
+           ${main}
+           <button class="mini danger" data-act="m-del" title="Delete">✕</button>
+         </li>`
+      : `<li class="grocery-item${it.checked ? ' checked' : ''}" data-key="${attr(it.key)}" data-normalized="${attr(it.normalized)}">
+           <input type="checkbox" data-cb ${it.checked ? 'checked' : ''}>
+           ${main}
+           <button class="mini" data-act="skip" title="Hide this ingredient from future grocery lists (e.g. you always have it in pantry)">🚫 Skip</button>
+         </li>`;
+  };
+
+  // Group-by toggle + the add bar, both pinned to the top of the modal.
+  const headHtml = `
+    <div class="groc-modes">
+      <button class="groc-mode${grocGroupMode === 'aisle' ? ' on' : ''}" data-mode="aisle">🛒 By aisle</button>
+      <button class="groc-mode${grocGroupMode === 'recipe' ? ' on' : ''}" data-mode="recipe">📖 By recipe</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:4px">
       <input type="text" id="grocManualInput" class="cl-search" placeholder="+ Add an item (e.g. milk, paper towels)…" style="margin-bottom:0;flex:1">
       <button class="tb-btn primary" id="grocManualAdd" style="background:var(--accent);color:#fff;border:none;white-space:nowrap">+ Add</button>
     </div>`;
 
-  // Recipe sections + per-item skip button.
-  const recipeHtml = sections.length
-    ? sections.map((s, si) => {
-        const visibleItems = s.items.filter(it => !it.hidden);
-        const hiddenCount = s.items.length - visibleItems.length;
-        return `<div class="grocery-section">${esc(s.title)} <span style="color:var(--muted);font-size:11px;font-weight:600;text-transform:none">${esc(s.recipeTitle)}${hiddenCount ? ` · ${hiddenCount} skipped` : ''}</span></div>
-          ${visibleItems.length ? `<ul class="grocery-list">${visibleItems.map((it) => {
-            const key = `${si}|${it.normalized}`;
-            const checked = grocery.checked.has(key);
-            return `<li class="grocery-item${checked ? ' checked' : ''}" data-key="${attr(key)}" data-normalized="${attr(it.normalized)}">
-              <input type="checkbox" data-cb ${checked ? 'checked' : ''}>
-              <span>${esc(it.text)}</span>
-              <span style="flex:1"></span>
-              <button class="mini" data-act="skip" title="Hide this ingredient from future grocery lists (e.g. you always have it in pantry)">🚫 Skip</button>
-            </li>`;
-          }).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">All items skipped for this section.</div>'}`;
-      }).join('')
-    : '<div class="empty-msg">No mains in this week\'s slots yet. Manual items still work below.</div>';
+  let listHtml;
+  if (grocGroupMode === 'aisle') {
+    // Sorted into store sections, alphabetical inside each so repeats of the
+    // same ingredient across recipes land next to each other.
+    const all = [...recipeItems, ...manualItems];
+    const byCat = new Map();
+    all.forEach(it => {
+      if (!byCat.has(it.cat)) byCat.set(it.cat, []);
+      byCat.get(it.cat).push(it);
+    });
+    listHtml = all.length
+      ? GROCERY_CATEGORIES.filter(c => byCat.has(c.id)).map(c => {
+          const items = byCat.get(c.id).sort((a, b) => (a.normalized || a.text).localeCompare(b.normalized || b.text));
+          const left = items.filter(i => !i.checked).length;
+          return `<div class="grocery-section">${c.icon} ${esc(c.label)} <span class="groc-count">${left ? `${left} to get` : 'all set'} · ${items.length}</span></div>
+            <ul class="grocery-list">${items.map(it => itemLi(it, true)).join('')}</ul>`;
+        }).join('')
+      : `<div class="empty-msg">Nothing to shop for yet — fill this week's slots or add an item above.</div>`;
+  } else {
+    const manualHtml = manualItems.length
+      ? `<div class="grocery-section">Manual items <span class="groc-count">${manualItems.length}</span></div>
+         <ul class="grocery-list">${manualItems.map(it => itemLi(it, false)).join('')}</ul>`
+      : '';
+    const bySection = new Map();
+    recipeItems.forEach(it => {
+      if (!bySection.has(it.from)) bySection.set(it.from, []);
+      bySection.get(it.from).push(it);
+    });
+    const recipeHtml = sections.length
+      ? sections.map((s) => {
+          const items = bySection.get(s.title) || [];
+          const hiddenCount = s.items.filter(it => it.hidden).length;
+          return `<div class="grocery-section">${esc(s.title)} <span class="groc-count">${esc(s.recipeTitle)}${hiddenCount ? ` · ${hiddenCount} skipped` : ''}</span></div>
+            ${items.length ? `<ul class="grocery-list">${items.map(it => itemLi(it, false)).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">All items skipped for this section.</div>'}`;
+        }).join('')
+      : '<div class="empty-msg">No mains in this week\'s slots yet. Manual items still work above.</div>';
+    listHtml = manualHtml + recipeHtml;
+  }
 
   // Pantry / hidden ingredients restore section.
   const hiddenList = [...grocery.hidden];
@@ -5013,7 +5233,14 @@ function renderGrocery(){
        `).join('')}</div>`
     : '';
 
-  body.innerHTML = manualHtml + recipeHtml + hiddenHtml;
+  body.innerHTML = headHtml + listHtml + hiddenHtml;
+
+  // Group-by toggle
+  body.querySelectorAll('.groc-mode').forEach(btn => btn.addEventListener('click', () => {
+    grocGroupMode = btn.getAttribute('data-mode');
+    try { localStorage.setItem(GROC_GROUP_KEY, grocGroupMode); } catch {}
+    renderGrocery();
+  }));
 
   // Manual add
   const inp = document.getElementById('grocManualInput');
