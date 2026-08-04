@@ -477,6 +477,8 @@
   }
   .modal-head h2{ margin:0;font-size:16px;font-weight:800 }
   .modal-head .spacer{ flex:1 }
+  /* Header actions stay on one line — the title is what should wrap. */
+  .modal-head .tb-btn{ white-space:nowrap;flex:none }
   .modal-body{ flex:1;overflow:auto;padding:18px 20px }
 
   /* Picker grid */
@@ -1305,6 +1307,7 @@
     <div class="modal-head">
       <h2>🛒 Grocery list — both meals</h2>
       <span class="spacer"></span>
+      <button class="tb-btn" id="grocShare">📤 Share</button>
       <button class="tb-btn" id="grocClose">Close</button>
     </div>
     <div class="modal-body" id="grocBody"></div>
@@ -5241,8 +5244,9 @@ function openGrocery(){
   document.getElementById('grocBg').classList.add('open');
   renderGrocery();
 }
-function renderGrocery(){
-  const body = document.getElementById('grocBody');
+// Everything the list is made of, worked out once so the rendered modal and
+// the shared text can't drift apart.
+function groceryModel(){
   // Grocery follows the week being viewed — you shop for the week you planned.
   const wk = mealWeeks.get(viewWeekKey) || { slots: [], sides: [] };
   const slots = Array.isArray(wk.slots) ? wk.slots : [];
@@ -5329,6 +5333,99 @@ function renderGrocery(){
   const recipeItems  = allRecipeItems.filter(it => !isCleared(it));
   const manualItems  = allManualItems.filter(it => !isCleared(it));
 
+  return { sections, keyFor, recipeItems, manualItems, clearedItems };
+}
+
+// Group items into the aisle sections they render under, in shelf order.
+function groceryByAisle(items){
+  const byCat = new Map();
+  items.forEach(it => {
+    if (!byCat.has(it.cat)) byCat.set(it.cat, []);
+    byCat.get(it.cat).push(it);
+  });
+  return GROCERY_CATEGORIES.filter(c => byCat.has(c.id)).map(c => ({
+    cat: c,
+    items: byCat.get(c.id).sort((a, b) =>
+      (a.normalized || a.text).localeCompare(b.normalized || b.text)),
+  }));
+}
+
+// Plain-text version of the list for sharing. Grouped the way you're
+// currently looking at it, and only what's still to get — a list you send
+// someone is a list of things to buy, not a record of what you already have.
+function groceryListText(){
+  const { sections, keyFor, recipeItems, manualItems } = groceryModel();
+  const todo = it => !it.checked;
+  const lines = [`🛒 Grocery list · Week of ${weekDateRange(viewWeekKey)}`, ''];
+
+  if (grocGroupMode === 'aisle') {
+    const groups = groceryByAisle([...recipeItems, ...manualItems].filter(todo));
+    for (const { cat, items } of groups) {
+      lines.push(`${cat.icon} ${cat.label.toUpperCase()}`);
+      items.forEach(it => lines.push(`• ${it.text}`));
+      lines.push('');
+    }
+  } else {
+    const manual = manualItems.filter(todo);
+    if (manual.length) {
+      lines.push('ADDED');
+      manual.forEach(it => lines.push(`• ${it.text}`));
+      lines.push('');
+    }
+    sections.forEach((s) => {
+      const seen = new Set();
+      const rows = [];
+      s.items.forEach(it => {
+        const key = keyFor(it.normalized);
+        if (it.hidden || seen.has(key + '||' + it.text)) return;
+        seen.add(key + '||' + it.text);
+        if (!grocery.checked.has(key)) rows.push(it.text);
+      });
+      if (!rows.length) return;
+      lines.push(`${s.title.toUpperCase()} — ${s.recipeTitle}`);
+      rows.forEach(t => lines.push(`• ${t}`));
+      lines.push('');
+    });
+  }
+
+  // Only the header survived — nothing left to buy.
+  if (lines.length <= 2) return null;
+  return lines.join('\n').trim() + '\n';
+}
+
+async function shareGroceryList(btn){
+  const text = groceryListText();
+  const flash = (msg) => {
+    const was = btn.textContent;
+    btn.textContent = msg;
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = was; btn.disabled = false; }, 1600);
+  };
+  if (!text) { flash('Nothing to send'); return; }
+  // navigator.share is the good path on a phone — it opens the OS sheet so
+  // the list can go straight to Messages. Everywhere else, clipboard.
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Grocery list', text });
+      return;
+    } catch (e) {
+      if (e?.name === 'AbortError') return;   // user dismissed the sheet
+      console.warn('[grocery] share failed, falling back to clipboard', e);
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    flash('✓ Copied');
+  } catch (e) {
+    console.warn('[grocery] clipboard failed', e);
+    flash('Copy failed');
+  }
+}
+
+function renderGrocery(){
+  const body = document.getElementById('grocBody');
+  const { sections, keyFor, recipeItems, manualItems, clearedItems } = groceryModel();
+
   const itemLi = (it, showFrom) => {
     const tags = showFrom
       ? it.froms.map(f => `<span class="groc-from">${esc(f)}</span>`).join('')
@@ -5363,17 +5460,11 @@ function renderGrocery(){
   if (grocGroupMode === 'aisle') {
     // Sorted into store sections, alphabetical inside each so repeats of the
     // same ingredient across recipes land next to each other.
-    const all = [...recipeItems, ...manualItems];
-    const byCat = new Map();
-    all.forEach(it => {
-      if (!byCat.has(it.cat)) byCat.set(it.cat, []);
-      byCat.get(it.cat).push(it);
-    });
-    listHtml = all.length
-      ? GROCERY_CATEGORIES.filter(c => byCat.has(c.id)).map(c => {
-          const items = byCat.get(c.id).sort((a, b) => (a.normalized || a.text).localeCompare(b.normalized || b.text));
+    const groups = groceryByAisle([...recipeItems, ...manualItems]);
+    listHtml = groups.length
+      ? groups.map(({ cat, items }) => {
           const left = items.filter(i => !i.checked).length;
-          return `<div class="grocery-section">${c.icon} ${esc(c.label)} <span class="groc-count">${left ? `${left} to get` : 'all set'} · ${items.length}</span></div>
+          return `<div class="grocery-section">${cat.icon} ${esc(cat.label)} <span class="groc-count">${left ? `${left} to get` : 'all set'} · ${items.length}</span></div>
             <ul class="grocery-list">${items.map(it => itemLi(it, true)).join('')}</ul>`;
         }).join('')
       : `<div class="empty-msg">Nothing to shop for yet — fill this week's slots or add an item above.</div>`;
@@ -5528,6 +5619,7 @@ document.getElementById('cookBg').addEventListener('click', e => {
   if (e.target.id === 'cookBg') { e.currentTarget.classList.remove('open'); cookOpenRid = null; }
 });
 document.getElementById('grocClose').addEventListener('click', () => document.getElementById('grocBg').classList.remove('open'));
+document.getElementById('grocShare').addEventListener('click', e => shareGroceryList(e.currentTarget));
 document.getElementById('grocBg').addEventListener('click', e => { if (e.target.id === 'grocBg') e.currentTarget.classList.remove('open'); });
 document.getElementById('groceryBtn').addEventListener('click', openGrocery);
 // ⚡ Chef iQ — (re)connect to EZ Recipes so recipe links get discovered.
