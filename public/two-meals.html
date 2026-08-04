@@ -5337,17 +5337,25 @@ function groceryModel(){
 }
 
 // Group items into the aisle sections they render under, in shelf order.
+// Ticked items sink to the bottom of their aisle and a finished aisle drops
+// below the ones still to walk — standing in the store, the next thing to
+// grab should be near the top, not buried under what's already in the cart.
 function groceryByAisle(items){
   const byCat = new Map();
   items.forEach(it => {
     if (!byCat.has(it.cat)) byCat.set(it.cat, []);
     byCat.get(it.cat).push(it);
   });
-  return GROCERY_CATEGORIES.filter(c => byCat.has(c.id)).map(c => ({
+  const groups = GROCERY_CATEGORIES.filter(c => byCat.has(c.id)).map(c => ({
     cat: c,
     items: byCat.get(c.id).sort((a, b) =>
+      (a.checked ? 1 : 0) - (b.checked ? 1 : 0) ||
       (a.normalized || a.text).localeCompare(b.normalized || b.text)),
   }));
+  // Only the done aisles move; among themselves they keep shelf order, so
+  // the list never reshuffles into something unrecognisable.
+  const done = g => g.items.every(i => i.checked);
+  return [...groups.filter(g => !done(g)), ...groups.filter(done)];
 }
 
 // Plain-text version of the list for sharing. Grouped the way you're
@@ -5422,7 +5430,18 @@ async function shareGroceryList(btn){
   }
 }
 
+// Ticking a row strikes it through straight away, then the list reflows a
+// beat later. Without the pause the row vanishes from under your thumb the
+// instant you tap it, and the next tap lands on whatever slid up to take its
+// place — the worst possible thing on a phone in a supermarket aisle.
+let _grocReflowTimer = null;
+function grocReflowSoon(){
+  if (_grocReflowTimer) clearTimeout(_grocReflowTimer);
+  _grocReflowTimer = setTimeout(() => { _grocReflowTimer = null; renderGrocery(); }, 260);
+}
+
 function renderGrocery(){
+  if (_grocReflowTimer) { clearTimeout(_grocReflowTimer); _grocReflowTimer = null; }
   const body = document.getElementById('grocBody');
   const { sections, keyFor, recipeItems, manualItems, clearedItems } = groceryModel();
 
@@ -5469,9 +5488,10 @@ function renderGrocery(){
         }).join('')
       : `<div class="empty-msg">Nothing to shop for yet — fill this week's slots or add an item above.</div>`;
   } else {
+    const manualSorted = [...manualItems].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
     const manualHtml = manualItems.length
       ? `<div class="grocery-section">Manual items <span class="groc-count">${manualItems.length}</span></div>
-         <ul class="grocery-list">${manualItems.map(it => itemLi(it, false)).join('')}</ul>`
+         <ul class="grocery-list">${manualSorted.map(it => itemLi(it, false)).join('')}</ul>`
       : '';
     // By recipe keeps each recipe's own lines verbatim — no merging here,
     // that's what the aisle view is for. Rows still share the per-week key,
@@ -5490,6 +5510,8 @@ function renderGrocery(){
             rows.push({ kind: 'recipe', key, text: it.text, normalized: it.normalized,
                         froms: [], checked });
           });
+          // Same sink as the aisle view — what's left to get stays on top.
+          rows.sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
           const hiddenCount = s.items.filter(it => it.hidden).length;
           return `<div class="grocery-section">${esc(s.title)} <span class="groc-count">${esc(s.recipeTitle)}${hiddenCount ? ` · ${hiddenCount} skipped` : ''}</span></div>
             ${rows.length ? `<ul class="grocery-list">${rows.map(it => itemLi(it, false)).join('')}</ul>` : '<div class="empty-msg" style="padding:10px 0">Nothing left to get for this one.</div>'}`;
@@ -5552,6 +5574,7 @@ function renderGrocery(){
       m.checkedAt = e.target.checked ? nowISO() : null;
       li.classList.toggle('checked', e.target.checked);
       scheduleSaveGrocery();
+      grocReflowSoon();
     });
     li.querySelector('[data-act="m-del"]')?.addEventListener('click', () => {
       grocery.manual = grocery.manual.filter(x => x.id !== id);
@@ -5566,10 +5589,11 @@ function renderGrocery(){
     const norm = li.getAttribute('data-normalized');
     li.querySelector('[data-cb]')?.addEventListener('change', e => {
       grocSetChecked(key, e.target.checked);
+      li.classList.toggle('checked', e.target.checked);
       scheduleSaveGrocery();
       // A shared ingredient can have a second row in the By recipe view — a
       // full re-render is what keeps them agreeing.
-      renderGrocery();
+      grocReflowSoon();
     });
     li.querySelector('[data-act="skip"]')?.addEventListener('click', () => {
       if (norm) grocery.hidden.add(norm);
