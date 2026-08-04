@@ -291,10 +291,6 @@ function personalToText(p) {
     out.push('Calendar (next 7 days):');
     cap(p.calendar, 30).forEach(e => out.push(`- ${e.date || ''} ${e.time || ''} ${String(e.summary || '').slice(0, 80)}`.trim()));
   }
-  if (Array.isArray(p.dayBlocks) && p.dayBlocks.length) {
-    out.push('Time blocks already scheduled:');
-    cap(p.dayBlocks, 20).forEach(b => out.push(`- ${b.date || ''} ${b.start || ''}-${b.end || ''} ${String(b.label || '').slice(0, 60)}`.trim()));
-  }
   return out.join('\n');
 }
 
