@@ -2882,7 +2882,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 <div class="tabs">
   <!-- Mobile-only current-tab label (drawer trigger) -->
   <div class="tab current-mobile" id="mobileTabLabel" onclick="toggleNavDrawer()">Personal</div>
-  <div class="tab" data-tab="habits" onclick="switchTab('habits')">Habits</div>
   <div class="tab active" data-tab="todos" onclick="switchTab('todos')">Personal</div>
   <div class="tab" data-tab="calendar" onclick="switchTab('calendar')">Calendar</div>
   <div class="tab" data-tab="plan" onclick="switchTab('plan')" style="display:none">Today's Plan</div>
@@ -2938,7 +2937,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     </button>
   </div>
   <div class="nav-drawer-list" id="navDrawerList">
-    <button class="nav-drawer-item" data-tab="habits" onclick="navDrawerSwitch('habits')"><span class="dot"></span>Habits</button>
     <button class="nav-drawer-item active" data-tab="todos" onclick="navDrawerSwitch('todos')"><span class="dot"></span>Personal</button>
     <button class="nav-drawer-item" data-tab="calendar" onclick="navDrawerSwitch('calendar')"><span class="dot"></span>Calendar</button>
     <button class="nav-drawer-item" data-tab="goals" onclick="navDrawerSwitch('goals')"><span class="dot"></span>Goals</button>
@@ -3006,11 +3004,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <!-- TODOS VIEW (default) -->
   <div class="todos-view" id="todosView">
     <iframe id="todosFrame" src="about:blank" allow="microphone" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
-  </div>
-
-  <!-- HABITS VIEW (Daily Goals + health hub — same iframe pattern as Learning) -->
-  <div class="habits-view" id="habitsView" style="display:none">
-    <iframe id="habitsFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
   </div>
 
   <!-- ECM VIEW -->
@@ -3712,7 +3705,8 @@ function init(){
   }
   // Migrate retired tabs (Brain Dump, Watch Queue, Sprint, Analytics) so they
   // don't land on a missing view. Sprint + Analytics merged into Personal.
-  if(ui.tab === 'coach' || ui.tab === 'youtube' || ui.tab === 'sprint' || ui.tab === 'analytics'){
+  // Habits folded into Personal — it's a tab in the focus strip there now.
+  if(ui.tab === 'coach' || ui.tab === 'youtube' || ui.tab === 'sprint' || ui.tab === 'analytics' || ui.tab === 'habits'){
     ui.tab = 'todos';
     saveUiState({tab:'todos'});
   }
@@ -4785,7 +4779,7 @@ window.addEventListener('message', (ev) => {
 
 // --- Fullscreen (cast-friendly: hide top nav) ---
 function broadcastFullscreenToFrames(on){
-  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame','habitsFrame'];
+  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     if (!f || !f.contentWindow) return;
@@ -4831,7 +4825,7 @@ function lofiState(){
 function lofiBroadcast(msg){
   // Belt-and-suspenders: send to all loaded iframes; only the personal-todos
   // engine acts on these messages (others ignore unknown types).
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame','habitsFrame'];
+  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage(msg, '*'); } catch {}
@@ -5782,6 +5776,10 @@ function updateMobileTabLabel(tab){
 }
 
 function switchTab(tab){
+  // Habits moved INTO Personal (its own tab in the focus strip there). Saved
+  // ui-state and old deep links can still say 'habits' — send them to Personal
+  // rather than a blank screen.
+  if(tab==='habits') tab='todos';
   currentTab=tab;
   saveUiState({tab});
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
@@ -5797,15 +5795,13 @@ function switchTab(tab){
   if(focusViewEl) focusViewEl.style.display=tab==='focus'?'':'none';
   const todosViewEl=document.getElementById('todosView');
   if(todosViewEl) todosViewEl.style.display=tab==='todos'?'':'none';
-  const habitsViewEl=document.getElementById('habitsView');
-  if(habitsViewEl) habitsViewEl.style.display=tab==='habits'?'':'none';
   const ecmViewEl=document.getElementById('ecmView');
   if(ecmViewEl) ecmViewEl.style.display=tab==='ecm'?'':'none';
   const learningViewEl=document.getElementById('learningView');
   if(learningViewEl) learningViewEl.style.display=tab==='learning'?'':'none';
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
   // Mark body so we can target full-iframe tabs in CSS (hide FAB, allow full width)
-  document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board'||tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm'||tab==='learning'||tab==='meals'||tab==='habits');
+  document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board'||tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm'||tab==='learning'||tab==='meals');
   if(tab==='plan'){ try{ render(); }catch(e){} }
   if(tab==='goals'){
     const frame=document.getElementById('goalsFrame');
@@ -5835,12 +5831,6 @@ function switchTab(tab){
     const frame=document.getElementById('todosFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('personal-todos.html'))){
       frame.src='/personal-todos.html?embed=1';
-    }
-  }
-  if(tab==='habits'){
-    const frame=document.getElementById('habitsFrame');
-    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('daily-goals.html'))){
-      frame.src='/daily-goals.html?embed=1';
     }
   }
   if(tab==='calendar'){
@@ -6571,7 +6561,7 @@ function saveSmartsheetsSettings(){
   const status = document.getElementById('ssStatus');
   if (status) status.textContent = 'Saved. Open Personal and tap the Smartsheets sync button to pull.';
   // Tell personal-todos iframe to refresh its config
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame','habitsFrame'];
+  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:smartsheets-config-changed' }, '*'); } catch {}
@@ -11118,10 +11108,6 @@ _pdRender();
      Tap → switchTab(). The hamburger drawer is still available for
      secondary actions (Notes, Music, Fullscreen, etc.) via the "More" tab. -->
 <nav class="mobile-tabbar" id="mobileTabbar" aria-label="Main">
-  <button class="mtb-tab" data-mtb="habits" onclick="switchTab('habits')" aria-label="Habits">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg>
-    <span>Habits</span>
-  </button>
   <button class="mtb-tab" data-mtb="todos" onclick="switchTab('todos')" aria-label="Personal">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     <span>Personal</span>
@@ -11183,7 +11169,7 @@ _pdRender();
     width:6px; height:6px; border-radius:50%; background:#4ADE80;
   }
   /* Shrink iframes so they don't extend behind the bottom tab bar */
-  #goalsFrame, #boardFrame, #focusFrame, #todosFrame, #ecmFrame, #calendarFrame, #mealsFrame, #learningFrame, #habitsFrame{
+  #goalsFrame, #boardFrame, #focusFrame, #todosFrame, #ecmFrame, #calendarFrame, #mealsFrame, #learningFrame{
     height:calc(100vh - 70px - env(safe-area-inset-bottom)) !important;
     min-height:calc(100vh - 70px - env(safe-area-inset-bottom)) !important;
   }
