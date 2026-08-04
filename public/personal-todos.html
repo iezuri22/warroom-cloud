@@ -6077,6 +6077,32 @@
   .tmr-hero.running .tmr-clock { color: var(--accent); }
   .tmr-hero.over .tmr-clock { color: var(--red); }
   .tmr-what { font-size: 13px; font-weight: 700; color: var(--ink-mid); margin-top: 8px; min-height: 18px; }
+  .tmr-share { font-size: 11.5px; color: var(--ink-dim); margin-top: 5px; }
+  /* split sheet */
+  .tsp-total {
+    display: flex; align-items: baseline; gap: 8px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border); margin-bottom: 4px;
+  }
+  .tsp-total b { font-size: 26px; font-weight: 800; color: var(--ink); letter-spacing: -.5px; }
+  .tsp-total span { font-size: 12px; color: var(--ink-dim); font-weight: 600; }
+  .tsp-row { display: flex; align-items: center; gap: 9px; padding: 11px 0; border-top: 1px solid var(--border); }
+  .tsp-row:first-of-type { border-top: none; }
+  .tsp-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tsp-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+  .tsp-in {
+    width: 74px; flex-shrink: 0; text-align: right;
+    border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface);
+    padding: 8px 9px; font-family: inherit; font-size: 14px; color: var(--ink); outline: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .tsp-in:focus { border-color: var(--accent); }
+  .tsp-unit { font-size: 11.5px; font-weight: 700; color: var(--ink-dim); width: 26px; flex-shrink: 0; }
+  .tsp-foot {
+    margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border);
+    font-size: 12.5px; font-weight: 700; color: var(--ink-mid);
+  }
+  .tsp-foot.over { color: var(--red); }
+  .tsp-foot.exact { color: var(--green); }
   .tmr-what .tw-proj { color: var(--ink); }
   .tmr-what .tw-task { color: var(--ink-dim); font-weight: 600; }
   .tmr-acts { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
@@ -6783,6 +6809,22 @@
       <button class="pof-cancel" id="tmrTargetsAdd" type="button">+ Project</button>
       <button class="pof-cancel" id="tmrTargetsCancel" type="button">Cancel</button>
       <button class="pc-ok" id="tmrTargetsSave" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Split a finished session — the elapsed time is the budget, you decide
+     how much of it each project actually took. -->
+<div class="priority-overflow-backdrop" id="tmrSplitBackdrop" aria-hidden="true">
+  <div class="priority-overflow" role="dialog" aria-modal="true" aria-labelledby="tmrSplitTitle" style="max-width:460px">
+    <div class="pof-head">
+      <div class="pof-title" id="tmrSplitTitle">How did that time go?</div>
+      <div class="pof-sub" id="tmrSplitSub">Divide it between the projects you had on the clock.</div>
+    </div>
+    <div class="pof-body" id="tmrSplitBody"></div>
+    <div class="pof-foot">
+      <button class="pof-cancel" id="tmrSplitEven" type="button">Even split</button>
+      <button class="pc-ok" id="tmrSplitSave" type="button">Log it</button>
     </div>
   </div>
 </div>
@@ -14228,16 +14270,25 @@ const VOICE = {
   }
 
   // ---- durations ----
-  // Accepts "2h", "1h30", "1h 30m", "90m", "90", "1.5h". 0 means "not set".
+  // Targets are thought about in HOURS, so a bare number means hours: "2" is
+  // two hours, "1.5" is ninety minutes. Minutes still work when you say so
+  // ("90m", "45 min"), as do "2h", "1h30" and "1h 30m". Stored as minutes.
+  // 0 means "not set".
   function tmrParseDur(s){
     const t = String(s ?? '').trim().toLowerCase();
     if (!t) return 0;
     const hm = t.match(/^(\d+(?:\.\d+)?)\s*h(?:\s*(\d+)\s*m?)?$/);
     if (hm) return Math.max(0, Math.round(Number(hm[1]) * 60 + (Number(hm[2]) || 0)));
-    const m = t.match(/^(\d+(?:\.\d+)?)\s*m(?:in)?$/);
+    const m = t.match(/^(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?$/);
     if (m) return Math.max(0, Math.round(Number(m[1])));
     const n = Number(t);
-    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 60) : 0;
+  }
+  // What to put back in an hours input: "2", "1.5", "0.75" — never "90".
+  function tmrFmtHoursInput(mins){
+    const h = Math.max(0, Number(mins) || 0) / 60;
+    if (!h) return '';
+    return String(Math.round(h * 100) / 100);
   }
   function tmrFmtMins(mins){
     const m = Math.max(0, Math.round(mins));
@@ -14255,11 +14306,21 @@ const VOICE = {
 
   // ---- ledger reads ----
   const tmrLiveSecs = () => tmrRun ? Math.max(0, (Date.now() - tmrRun.startedAt) / 1000) : 0;
+  const tmrRunProjs = () => (tmrRun && Array.isArray(tmrRun.projs)) ? tmrRun.projs : [];
+  const tmrRunning = projId => tmrRunProjs().includes(projId);
+  // One clock can cover several projects at once, so a running project's live
+  // share is only its slice of the elapsed time — the same even split the stop
+  // sheet pre-fills. Showing each project the FULL elapsed would let a 2-hour
+  // block read as 4 hours of work across the bars.
+  const tmrLiveShare = () => {
+    const n = tmrRunProjs().length;
+    return n ? tmrLiveSecs() / n : 0;
+  };
   function tmrStored(projId, k){ return Math.round(((tmrDays.get(k) || {}).totals || {})[projId] || 0); }
   // Stored seconds plus whatever the running clock has earned but not committed.
   function tmrSecs(projId, k){
     let s = tmrStored(projId, k);
-    if (tmrRun && tmrRun.proj === projId && tmrRun.dayKey === k) s += tmrLiveSecs();
+    if (tmrRun && tmrRun.dayKey === k && tmrRunning(projId)) s += tmrLiveShare();
     return s;
   }
   function tmrWeekSecs(projId, k){
@@ -14273,8 +14334,18 @@ const VOICE = {
     const t = tmrTargetsOf(id);
     return !!(t.dayGoal || t.dayLimit || t.weekGoal || t.weekLimit);
   }
+  // Targets whose project no longer exists — a board that was deleted or
+  // renamed away, or a target written on another device with a different board
+  // set. They're inert but must stay VISIBLE, or you'd have config you can
+  // neither see nor clear.
+  function tmrOrphanTargets(){
+    const known = new Set(tmrProjects().map(p => p.id));
+    return Object.keys(tmrCfg.targets || {})
+      .filter(id => !known.has(id) && tmrHasTargets(id))
+      .map(id => ({ id, label: id, color: '#8A8A8A', board: false, orphan: true }));
+  }
   function tmrTrackedProjects(){
-    return tmrProjects().filter(p => tmrHasTargets(p.id));
+    return [...tmrProjects().filter(p => tmrHasTargets(p.id)), ...tmrOrphanTargets()];
   }
 
   // ---- writes ----
@@ -14331,10 +14402,10 @@ const VOICE = {
   function tmrStart(projId, taskId, taskName){
     if (!projId) return;
     tmrEnsureSubs();
-    // One clock at a time — the per-task stopwatch and this share the ledger.
+    // The per-task stopwatch writes the same ledger, so it can't run alongside.
     if (activeTimerId) { try { stopTimer(false); } catch {} }
-    if (tmrRun) { tmrStop(false); }
-    tmrRun = { proj: projId, taskId: taskId || '', taskName: taskName || '', startedAt: Date.now(), dayKey: todayKey() };
+    if (tmrRun) { tmrStop(false, { silent: true }); }
+    tmrRun = { projs: [projId], taskId: taskId || '', taskName: taskName || '', startedAt: Date.now(), dayKey: todayKey() };
     tmrSaveRun();
     _tmrAlerted.clear();
     if (tmrTicker) clearInterval(tmrTicker);
@@ -14343,25 +14414,177 @@ const VOICE = {
     render();
     tmrPaintCapsule();
   }
-  async function tmrStop(doRender = true){
+  // Tapping a project chip while the clock runs adds it to the session (or
+  // drops it back off). Dropping the last one stops the clock.
+  function tmrToggleProj(projId){
+    if (!projId) return;
+    if (!tmrRun) { tmrStart(projId, '', ''); return; }
+    const projs = tmrRunProjs();
+    if (!projs.includes(projId)){
+      tmrRun.projs = [...projs, projId];
+      tmrSaveRun();
+      _tmrAlerted.clear();     // shares just shrank; let the nudges re-arm
+      render();
+      tmrPaintCapsule();
+      return;
+    }
+    if (projs.length === 1) { tmrStop(); return; }
+    tmrRun.projs = projs.filter(p => p !== projId);
+    tmrSaveRun();
+    _tmrAlerted.clear();
+    render();
+    tmrPaintCapsule();
+  }
+  // Stopping a multi-project session hands you the split sheet: the elapsed
+  // time is the budget, and you decide how much of it each project took.
+  // `silent` (the task-stopwatch handover, a resumed overnight clock) skips
+  // the sheet and banks the even split.
+  async function tmrStop(doRender = true, opts){
     if (!tmrRun) return;
     const run = tmrRun;
     const secs = tmrLiveSecs();
+    const projs = tmrRunProjs();
     tmrRun = null;
     tmrSaveRun();
     if (tmrTicker){ clearInterval(tmrTicker); tmrTicker = null; }
     try { playStop(); } catch {}
     tmrPaintCapsule();
     if (doRender) render();
-    if (secs >= 1){
-      await tmrCredit(run.proj, secs, {
+    if (secs < 1 || !projs.length) return;
+    if (projs.length > 1 && !(opts && opts.silent)){
+      tmrOpenSplit(run, secs, projs);
+      return;
+    }
+    const share = secs / projs.length;
+    await tmrCommitSplit(run, projs.map(p => ({ proj: p, secs: share })));
+    if (doRender) render();
+  }
+  // One place that writes a finished session, however it was divided.
+  async function tmrCommitSplit(run, parts){
+    let credited = 0;
+    for (const part of parts){
+      if (!part || !(part.secs >= 1)) continue;
+      credited += part.secs;
+      await tmrCredit(part.proj, part.secs, {
         dayKey: run.dayKey, taskId: run.taskId, taskName: run.taskName,
         startedAt: new Date(run.startedAt).toISOString()
       });
-      // The attached task keeps its own running total too.
-      if (run.taskId) await tmrCreditTask(run.taskId, secs);
-      if (doRender) render();
     }
+    // The attached task keeps its own running total too — it gets whatever
+    // was actually logged, not the raw elapsed.
+    if (run.taskId && credited >= 1) await tmrCreditTask(run.taskId, credited);
+  }
+
+  // ---- split sheet ----
+  // Held in localStorage as well as memory: tmrStop has already cleared the
+  // running session by the time this opens, so a reload mid-split would
+  // otherwise drop the time on the floor.
+  const TMR_PENDING_KEY = 'personal-timer-pending-v1';
+  let _tmrSplit = null;   // {run, totalMins, parts:[{proj, mins}]}
+  // Whole minutes that still add up to the total — the remainder goes to the
+  // first few rather than leaving the sheet off by one.
+  function tmrEvenParts(totalMins, projs){
+    const base = Math.floor(totalMins / projs.length);
+    const rem = totalMins - base * projs.length;
+    return projs.map((p, i) => ({ proj: p, mins: base + (i < rem ? 1 : 0) }));
+  }
+  function tmrOpenSplit(run, secs, projs){
+    const totalMins = Math.max(1, Math.round(secs / 60));
+    _tmrSplit = { run, totalMins, parts: tmrEvenParts(totalMins, projs) };
+    try { localStorage.setItem(TMR_PENDING_KEY, JSON.stringify(_tmrSplit)); } catch {}
+    tmrRenderSplit();
+    const bd = document.getElementById('tmrSplitBackdrop');
+    if (bd){ bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
+  }
+  function tmrCloseSplit(){
+    const bd = document.getElementById('tmrSplitBackdrop');
+    if (bd){ bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
+    _tmrSplit = null;
+    try { localStorage.removeItem(TMR_PENDING_KEY); } catch {}
+  }
+  function tmrSplitAssigned(){
+    return (_tmrSplit ? _tmrSplit.parts : []).reduce((a, p) => a + (Number(p.mins) || 0), 0);
+  }
+  function tmrRenderSplit(){
+    const body = document.getElementById('tmrSplitBody');
+    const s = _tmrSplit;
+    if (!body || !s) return;
+    const sub = document.getElementById('tmrSplitSub');
+    if (sub) sub.textContent = s.run.taskName
+      ? `“${s.run.taskName}” — divide the time between the projects on the clock.`
+      : 'Divide it between the projects you had on the clock.';
+    body.innerHTML = `
+      <div class="tsp-total"><b>${tmrFmtMins(s.totalMins)}</b><span>on the clock</span></div>
+      ${s.parts.map((p, i) => {
+        const meta = tmrProjMeta(p.proj);
+        return `<div class="tsp-row">
+          <span class="dot" style="background:${escHtml(meta.color)}"></span>
+          <span class="tsp-name">${escHtml(meta.label)}</span>
+          <input class="tsp-in" data-tsp="${i}" value="${p.mins ? escHtml(tmrFmtMins(p.mins)) : '0'}" autocomplete="off" aria-label="Time on ${escHtml(meta.label)}">
+        </div>`;
+      }).join('')}
+      <div class="tsp-foot" id="tmrSplitFoot"></div>`;
+    tmrPaintSplitFoot();
+  }
+  function tmrPaintSplitFoot(){
+    const foot = document.getElementById('tmrSplitFoot');
+    const save = document.getElementById('tmrSplitSave');
+    const s = _tmrSplit;
+    if (!foot || !s) return;
+    const used = tmrSplitAssigned();
+    const left = s.totalMins - used;
+    foot.classList.toggle('over', left < 0);
+    foot.classList.toggle('exact', left === 0);
+    foot.textContent = left === 0 ? `All ${tmrFmtMins(s.totalMins)} accounted for.`
+      : left > 0 ? `${tmrFmtMins(left)} left to assign — anything you leave over just won't be logged.`
+      : `${tmrFmtMins(-left)} more than you actually worked.`;
+    // Zeroing everything is a real answer — you started the clock by mistake.
+    // It must stay clickable or the sheet becomes a room with no door.
+    if (save){
+      save.disabled = left < 0;
+      save.textContent = used < 1 ? 'Discard' : 'Log it';
+    }
+  }
+  (function wireTmrSplit(){
+    const bd = document.getElementById('tmrSplitBackdrop');
+    if (!bd) return;
+    const body = document.getElementById('tmrSplitBody');
+    // Deliberately NOT dismissable by backdrop or Escape — every path out of
+    // this sheet logs the session, so stopped time can't vanish.
+    body.addEventListener('input', e => {
+      const f = e.target.closest('[data-tsp]');
+      if (!f || !_tmrSplit) return;
+      _tmrSplit.parts[Number(f.getAttribute('data-tsp'))].mins = tmrParseDur(f.value);
+      tmrPaintSplitFoot();
+    });
+    document.getElementById('tmrSplitEven').addEventListener('click', () => {
+      if (!_tmrSplit) return;
+      _tmrSplit.parts = tmrEvenParts(_tmrSplit.totalMins, _tmrSplit.parts.map(p => p.proj));
+      tmrRenderSplit();
+    });
+    document.getElementById('tmrSplitSave').addEventListener('click', async () => {
+      const s = _tmrSplit;
+      if (!s) return;
+      const parts = s.parts.map(p => ({ proj: p.proj, secs: (Number(p.mins) || 0) * 60 }));
+      tmrCloseSplit();
+      await tmrCommitSplit(s.run, parts);
+      render();
+      const logged = parts.filter(p => p.secs >= 60);
+      ptToast(logged.length
+        ? 'Logged ' + logged.map(p => `${tmrFmtSecsShort(p.secs)} ${tmrProjMeta(p.proj).label}`).join(' · ')
+        : 'Nothing logged.');
+    });
+  })();
+  // A split left open when the page went away comes back on the next load.
+  function tmrResumeSplit(){
+    let pend = null;
+    try { pend = JSON.parse(localStorage.getItem(TMR_PENDING_KEY) || 'null'); } catch {}
+    if (!pend || !pend.run || !Array.isArray(pend.parts) || !pend.parts.length) return;
+    tmrEnsureSubs();
+    _tmrSplit = pend;
+    tmrRenderSplit();
+    const bd = document.getElementById('tmrSplitBackdrop');
+    if (bd){ bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
   }
   async function tmrCreditTask(taskId, secs){
     const t = todos.find(x => x.id === taskId);
@@ -14392,36 +14615,48 @@ const VOICE = {
       if (pill) pill.textContent = tmrFmtClock(tmrLiveSecs());
     } catch {}
   }
+  // "ECM + VitalTouch" — what the session is currently pointed at.
+  function tmrRunLabel(){
+    const projs = tmrRunProjs();
+    if (!projs.length) return '';
+    if (projs.length <= 2) return projs.map(p => tmrProjMeta(p).label).join(' + ');
+    return `${tmrProjMeta(projs[0]).label} +${projs.length - 1} more`;
+  }
   // One nudge per crossing, per project, per day. Limits are the point of the
-  // feature — silently sailing past one would make it decorative.
+  // feature — silently sailing past one would make it decorative. With several
+  // projects on the clock each is judged on its provisional share.
   function tmrCheckAlerts(){
     if (!tmrRun) return;
-    const t = tmrTargetsOf(tmrRun.proj);
-    const label = tmrProjMeta(tmrRun.proj).label;
     // Blowing a limit is the one thing worth interrupting for — that alone
     // speaks. Approaching it, or finishing a goal, is a quiet toast.
-    const fire = (kind, msg, loud) => {
-      const key = `${tmrRun.proj}|${tmrRun.dayKey}|${kind}`;
+    const fire = (proj, kind, msg, loud) => {
+      const key = `${proj}|${tmrRun.dayKey}|${kind}`;
       if (_tmrAlerted.has(key)) return;
       _tmrAlerted.add(key);
       ptToast(msg);
       if (loud) { try { speak(msg); } catch {} }
     };
-    const dayMin = tmrSecs(tmrRun.proj, tmrRun.dayKey) / 60;
-    const weekMin = tmrWeekSecs(tmrRun.proj, tmrRun.dayKey) / 60;
-    if (t.dayLimit && dayMin >= t.dayLimit) fire('dayLimit', `${label} is past today's ${tmrFmtMins(t.dayLimit)} limit.`, true);
-    else if (t.dayLimit && dayMin >= t.dayLimit * 0.8) fire('dayLimit80', `${label} — ${tmrFmtMins(t.dayLimit - dayMin)} left on today's limit.`);
-    if (t.weekLimit && weekMin >= t.weekLimit) fire('weekLimit', `${label} is past this week's ${tmrFmtMins(t.weekLimit)} limit.`, true);
-    if (t.dayGoal && dayMin >= t.dayGoal) fire('dayGoal', `${label} — today's ${tmrFmtMins(t.dayGoal)} goal is done.`);
-    if (t.weekGoal && weekMin >= t.weekGoal) fire('weekGoal', `${label} — this week's ${tmrFmtMins(t.weekGoal)} goal is done.`);
+    for (const proj of tmrRunProjs()){
+      const t = tmrTargetsOf(proj);
+      const label = tmrProjMeta(proj).label;
+      const dayMin = tmrSecs(proj, tmrRun.dayKey) / 60;
+      const weekMin = tmrWeekSecs(proj, tmrRun.dayKey) / 60;
+      if (t.dayLimit && dayMin >= t.dayLimit) fire(proj, 'dayLimit', `${label} is past today's ${tmrFmtMins(t.dayLimit)} limit.`, true);
+      else if (t.dayLimit && dayMin >= t.dayLimit * 0.8) fire(proj, 'dayLimit80', `${label} — ${tmrFmtMins(t.dayLimit - dayMin)} left on today's limit.`);
+      if (t.weekLimit && weekMin >= t.weekLimit) fire(proj, 'weekLimit', `${label} is past this week's ${tmrFmtMins(t.weekLimit)} limit.`, true);
+      if (t.dayGoal && dayMin >= t.dayGoal) fire(proj, 'dayGoal', `${label} — today's ${tmrFmtMins(t.dayGoal)} goal is done.`);
+      if (t.weekGoal && weekMin >= t.weekGoal) fire(proj, 'weekGoal', `${label} — this week's ${tmrFmtMins(t.weekGoal)} goal is done.`);
+    }
   }
-  // Is the running project over one of its limits right now?
+  // Is anything on the clock over one of its limits right now?
   function tmrRunOver(){
     if (!tmrRun) return false;
-    const t = tmrTargetsOf(tmrRun.proj);
-    if (t.dayLimit && tmrSecs(tmrRun.proj, tmrRun.dayKey) / 60 >= t.dayLimit) return true;
-    if (t.weekLimit && tmrWeekSecs(tmrRun.proj, tmrRun.dayKey) / 60 >= t.weekLimit) return true;
-    return false;
+    return tmrRunProjs().some(proj => {
+      const t = tmrTargetsOf(proj);
+      if (t.dayLimit && tmrSecs(proj, tmrRun.dayKey) / 60 >= t.dayLimit) return true;
+      if (t.weekLimit && tmrWeekSecs(proj, tmrRun.dayKey) / 60 >= t.weekLimit) return true;
+      return false;
+    });
   }
   function tmrPaintCapsule(){
     const cap = document.getElementById('tmrCapsule');
@@ -14436,9 +14671,9 @@ const VOICE = {
       const race = document.getElementById('raceRestoreBtn');
       cap.classList.toggle('stacked', !!(race && !race.hidden));
     } catch {}
-    const meta = tmrProjMeta(tmrRun.proj);
+    const label = tmrRunLabel();
     const txt = document.getElementById('tmrCapText');
-    if (txt) txt.textContent = tmrRun.taskName ? `${meta.label} · ${tmrRun.taskName}` : meta.label;
+    if (txt) txt.textContent = tmrRun.taskName ? `${label} · ${tmrRun.taskName}` : label;
     const tm = document.getElementById('tmrCapTime');
     if (tm) tm.textContent = tmrFmtClock(tmrLiveSecs());
   }
@@ -14448,7 +14683,11 @@ const VOICE = {
   function tmrResume(){
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(TMR_RUN_KEY) || 'null'); } catch {}
-    if (!saved || !saved.proj || !saved.startedAt) return;
+    if (!saved || !saved.startedAt) return;
+    // Sessions used to carry a single `proj`; lift those into the array shape.
+    if (!Array.isArray(saved.projs)) saved.projs = saved.proj ? [saved.proj] : [];
+    delete saved.proj;
+    if (!saved.projs.length) return;
     const elapsed = (Date.now() - saved.startedAt) / 1000;
     if (elapsed > 8 * 3600){
       try { localStorage.removeItem(TMR_RUN_KEY); } catch {}
@@ -14470,15 +14709,21 @@ const VOICE = {
     const wrap = document.createElement('div');
     wrap.className = 'tmr-wrap';
     const running = !!tmrRun;
-    const meta = running ? tmrProjMeta(tmrRun.proj) : null;
+    const runProjs = tmrRunProjs();
     const over = tmrRunOver();
     const isToday = tmrDate === todayKey();
 
+    // With more than one project on the clock, say what each is provisionally
+    // earning — the split sheet is where it gets settled for real.
+    const shareNote = running && runProjs.length > 1
+      ? `<div class="tmr-share">Even split so far — ${tmrFmtSecsShort(tmrLiveShare())} each. You'll divide it when you stop.</div>`
+      : '';
     let html = `<div class="tmr-hero ${running ? (over ? 'over' : 'running') : ''}">
       <div class="tmr-clock" id="tmrClock">${tmrFmtClock(running ? tmrLiveSecs() : 0)}</div>
       <div class="tmr-what">${running
-        ? `<span class="tw-proj">${escHtml(meta.label)}</span>${tmrRun.taskName ? ` <span class="tw-task">· ${escHtml(tmrRun.taskName)}</span>` : ''}`
+        ? `<span class="tw-proj">${escHtml(tmrRunLabel())}</span>${tmrRun.taskName ? ` <span class="tw-task">· ${escHtml(tmrRun.taskName)}</span>` : ''}`
         : 'Pick a project below to start the clock'}</div>
+      ${shareNote}
       <div class="tmr-acts">
         ${running
           ? `<button class="tmr-btn stop" type="button" data-tmr-stop="1">Stop</button>
@@ -14488,13 +14733,15 @@ const VOICE = {
       </div>
     </div>`;
 
-    // Project chips — today's total on each, tap to start / switch.
+    // Project chips — today's total on each. Tapping one while the clock runs
+    // adds it to the session rather than switching, so a block that covers
+    // three projects is one clock, not three.
     const projs = tmrProjects();
     html += `<div class="tmr-sec">
-      <div class="tmr-sechead">Projects<span class="sp"></span>${running ? '' : '<span style="text-transform:none;letter-spacing:0;font-weight:600">tap to start</span>'}</div>
+      <div class="tmr-sechead">Projects<span class="sp"></span><span style="text-transform:none;letter-spacing:0;font-weight:600">${running ? 'tap to add or drop' : 'tap to start'}</span></div>
       <div class="tmr-chips">${projs.map(p => {
         const s = tmrSecs(p.id, todayKey());
-        const on = running && tmrRun.proj === p.id;
+        const on = tmrRunning(p.id);
         return `<button class="tmr-chip ${on ? 'on' : ''}" type="button" data-tmr-proj="${escHtml(p.id)}">
           <span class="dot" style="background:${escHtml(p.color)}"></span>${escHtml(p.label)}${s >= 30 ? `<span class="amt">${tmrFmtSecsShort(s)}</span>` : ''}
         </button>`;
@@ -14541,7 +14788,7 @@ const VOICE = {
 
   function tmrTargetRowHTML(p){
     const t = tmrTargetsOf(p.id);
-    const live = tmrRun && tmrRun.proj === p.id;
+    const live = tmrRunning(p.id);
     const daySec = tmrSecs(p.id, todayKey());
     const weekSec = tmrWeekSecs(p.id, todayKey());
     const meter = (label, secs, mins, kind) => {
@@ -14573,7 +14820,7 @@ const VOICE = {
         <span class="dot" style="background:${escHtml(p.color)}"></span>${escHtml(p.label)}
         ${live ? '<span class="live">running</span>' : ''}
         <span class="sp"></span>
-        <button class="tmr-tedit" type="button" data-tmr-proj="${escHtml(p.id)}" title="${live ? 'Stop' : 'Start'} this project">${live ? '■' : '▶'}</button>
+        <button class="tmr-tedit" type="button" data-tmr-proj="${escHtml(p.id)}" title="${live ? 'Take this off the clock' : 'Put this on the clock'}">${live ? '■' : '▶'}</button>
       </div>
       ${rows}
     </div>`;
@@ -14595,12 +14842,7 @@ const VOICE = {
         return;
       }
       const proj = e.target.closest('[data-tmr-proj]');
-      if (proj){
-        const id = proj.getAttribute('data-tmr-proj');
-        if (tmrRun && tmrRun.proj === id) tmrStop();
-        else tmrStart(id, '', '');
-        return;
-      }
+      if (proj){ tmrToggleProj(proj.getAttribute('data-tmr-proj')); return; }
       if (e.target.closest('[data-tmr-stop]')){ tmrStop(); return; }
       if (e.target.closest('[data-tmr-attach]')){ tmrOpenAttach(); return; }
       if (e.target.closest('[data-tmr-targets]')){ tmrOpenTargets(); return; }
@@ -14627,7 +14869,6 @@ const VOICE = {
     const running = !!tmrRun;
     const over = tmrRunOver();
     if (running) card.classList.add(over ? 'over' : 'running');
-    const meta = running ? tmrProjMeta(tmrRun.proj) : null;
     // One bar per tracked project — day scope if it has a day target, else
     // week. Three at most; the Timer tab has the full picture.
     const bars = tmrTrackedProjects().map(p => {
@@ -14657,7 +14898,7 @@ const VOICE = {
       <div class="ovt-line">
         <span class="ovt-title">Timer</span>
         <span class="ovt-what">${running
-          ? escHtml(meta.label) + (tmrRun.taskName ? ' · ' + escHtml(tmrRun.taskName) : '')
+          ? escHtml(tmrRunLabel()) + (tmrRun.taskName ? ' · ' + escHtml(tmrRun.taskName) : '')
           : 'Not running — tap to start'}</span>
         ${running ? `<span class="ovt-time" id="ovTimerTime">${tmrFmtClock(tmrLiveSecs())}</span>` : ''}
       </div>
@@ -14700,7 +14941,7 @@ const VOICE = {
     const bd = document.getElementById('tmrLogBackdrop');
     if (!body || !bd) return;
     document.getElementById('tmrLogTitle').textContent = 'Attach a task';
-    body.innerHTML = `<div class="tmt-hint">Time still lands on <b>${escHtml(tmrProjMeta(tmrRun.proj).label)}</b>; the task gets it too.</div>
+    body.innerHTML = `<div class="tmt-hint">Time still lands on <b>${escHtml(tmrRunLabel())}</b>; the task gets it too.</div>
       ${tmrRun.taskId ? '<button class="hb-ghost" type="button" data-tmr-pick="" style="margin-bottom:8px">Detach the current task</button>' : ''}
       ${pool.length ? pool.map(t => `<button class="tmr-lrow" type="button" data-tmr-pick="${escHtml(t.id)}" style="width:100%;background:none;border:none;border-top:1px solid var(--border);text-align:left;cursor:pointer;font-family:inherit">
         <span class="tmr-lwhat">${escHtml(t.text || '(untitled)')}</span>
@@ -14723,7 +14964,7 @@ const VOICE = {
             ${projs.map(p => `<option value="${escHtml(p.id)}">${escHtml(p.label)}</option>`).join('')}
           </select>
         </div>
-        <div class="tmt-fld"><label>How long</label><input id="tmrLogAmt" placeholder="45m, 1h30" autocomplete="off"></div>
+        <div class="tmt-fld"><label>Hours</label><input id="tmrLogAmt" placeholder="1.5 — or 45m" autocomplete="off"></div>
       </div>
       <div class="tmt-fld" style="margin-top:8px"><label>Note (optional)</label><input id="tmrLogNote" placeholder="What was it?" autocomplete="off"></div>`;
     bd.dataset.mode = 'log';
@@ -14759,7 +15000,7 @@ const VOICE = {
       const a = document.getElementById('tmrLogAmt');
       const n = document.getElementById('tmrLogNote');
       const mins = tmrParseDur(a && a.value);
-      if (!mins){ ptToast('How long? Try “45m” or “1h30”.'); return; }
+      if (!mins){ ptToast('How many hours? Try “1.5” — or “45m”.'); return; }
       const projId = p && p.value;
       tmrCloseLog();
       await tmrCredit(projId, mins * 60, {
@@ -14797,21 +15038,29 @@ const VOICE = {
     const seen = new Set(boards.map(b => b.id));
     const extras = w.extra.filter(p => p && p.id && !seen.has(p.id))
       .map(p => ({ id: p.id, label: p.label || p.id, color: p.color || '#7C63E8', board: false }));
-    const rows = [...boards, ...extras];
-    body.innerHTML = `<div class="tmt-hint">Enter time as <b>2h</b>, <b>1h30</b>, <b>90m</b> — or leave blank to stop tracking it.</div>` +
+    extras.forEach(p => seen.add(p.id));
+    // Targets left behind by a board that's gone (or that came from a device
+    // with a different board set) get a row too, so they can be cleared out
+    // instead of sitting in the config forever.
+    const orphans = Object.keys(w.targets)
+      .filter(id => !seen.has(id) && ['dayGoal','dayLimit','weekGoal','weekLimit'].some(k => w.targets[id] && w.targets[id][k] > 0))
+      .map(id => ({ id, label: id, color: '#8A8A8A', board: false, orphan: true }));
+    const rows = [...boards, ...extras, ...orphans];
+    body.innerHTML = `<div class="tmt-hint">In <b>hours</b> — <b>2</b> is two hours, <b>1.5</b> is ninety minutes. Say <b>45m</b> if you'd rather use minutes. Blank stops tracking it.</div>` +
       rows.map(p => {
         const t = w.targets[p.id] || {};
-        const f = (key, label) => `<div class="tmt-fld"><label>${label}</label><input data-tmt="${escHtml(p.id)}|${key}" value="${t[key] ? escHtml(tmrFmtMins(t[key])) : ''}" placeholder="—" autocomplete="off"></div>`;
+        const f = (key, label) => `<div class="tmt-fld"><label>${label}</label><input data-tmt="${escHtml(p.id)}|${key}" value="${escHtml(tmrFmtHoursInput(t[key]))}" placeholder="—" autocomplete="off"></div>`;
         return `<div class="tmt-row">
           <div class="tmt-head">
             <span class="dot" style="background:${escHtml(p.color)}"></span>
-            ${p.board ? escHtml(p.label) : `<input class="hb-in" data-tmt-name="${escHtml(p.id)}" value="${escHtml(p.label)}" style="flex:1;padding:5px 8px;font-size:13px">`}
+            ${(p.board || p.orphan) ? escHtml(p.label) : `<input class="hb-in" data-tmt-name="${escHtml(p.id)}" value="${escHtml(p.label)}" style="flex:1;padding:5px 8px;font-size:13px">`}
+            ${p.orphan ? '<span class="hb-tag">no project</span>' : ''}
             <span class="sp"></span>
             ${p.board ? '' : `<button class="hb-mini" type="button" data-tmt-del="${escHtml(p.id)}">✕</button>`}
           </div>
           <div class="tmt-grid">
-            ${f('dayGoal', 'Goal / day')}${f('dayLimit', 'Limit / day')}
-            ${f('weekGoal', 'Goal / week')}${f('weekLimit', 'Limit / week')}
+            ${f('dayGoal', 'Goal / day · hrs')}${f('dayLimit', 'Limit / day · hrs')}
+            ${f('weekGoal', 'Goal / week · hrs')}${f('weekLimit', 'Limit / week · hrs')}
           </div>
         </div>`;
       }).join('');
@@ -14905,6 +15154,7 @@ const VOICE = {
   // Kick the timer back to life after a reload, and keep the ledger honest
   // when the page comes back from the background.
   tmrResume();
+  tmrResumeSplit();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     tmrPaintCapsule();
@@ -14912,12 +15162,12 @@ const VOICE = {
       // The clock crossed midnight while we were away — bank the first day's
       // share and carry on under today's date.
       const run = tmrRun;
+      const projs = tmrRunProjs();
       const cut = hbAddDays(hbParseKey(run.dayKey), 1); cut.setHours(0, 0, 0, 0);
       const firstDaySecs = Math.max(0, (cut.getTime() - run.startedAt) / 1000);
-      tmrCredit(run.proj, firstDaySecs, {
-        dayKey: run.dayKey, taskId: run.taskId, taskName: run.taskName,
-        startedAt: new Date(run.startedAt).toISOString()
-      });
+      // Yesterday's share is banked on an even split — there's nobody awake to
+      // divide it, and the sheet only makes sense for the part you were there for.
+      tmrCommitSplit(run, projs.map(p => ({ proj: p, secs: firstDaySecs / projs.length })));
       tmrRun = { ...run, startedAt: cut.getTime(), dayKey: todayKey() };
       tmrSaveRun();
       _tmrAlerted.clear();
