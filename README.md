@@ -1,4 +1,36 @@
-# War Room Cloud
+# War Room
+
+Turns meeting discussion into owned, tracked work — then keeps it in sync with the system of
+record a team already uses.
+
+**Live:** https://warroom-cloud.vercel.app
+
+## What it does
+
+- **Bidirectional Smartsheet sync.** Reads and writes against existing Smartsheet workspaces
+  rather than replacing them, so adopting it costs a team nothing.
+- **Claude-powered extraction.** Parses meeting discussion into structured action items with
+  owners and due dates, closing the gap between a meeting ending and work being assigned.
+- **Google Calendar integration** with a full OAuth connect / callback / disconnect lifecycle,
+  feeding a generated daily dashboard and a scoped daily task list.
+- **Automated deadline reminders** and a sync engine that keeps external and internal state aligned.
+
+## Stack
+
+Vercel serverless functions · Neon Postgres · Anthropic Claude · Smartsheet API · Google OAuth
+
+| Path | Purpose |
+|---|---|
+| `api/smartsheets.js` | Smartsheet read/write sync |
+| `api/assistant.js` | Claude extraction and summarization |
+| `api/google-auth.js`, `google-callback.js`, `google-disconnect.js` | Calendar OAuth lifecycle |
+| `api/sync.js`, `load.js` | State reconciliation between local and Neon |
+| `api/_auth.js`, `login.js`, `me.js` | Session auth |
+| `schema.sql` | Postgres schema |
+
+---
+
+## Implementation notes
 
 Cross-device synced version of War Room. Deployed to Vercel, backed by Neon Postgres.
 
