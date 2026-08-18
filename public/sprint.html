@@ -931,9 +931,8 @@ body { display:flex; flex-direction:column; position:relative }
       <div id="nextTaskLectureNext" style="margin-bottom:10px"></div>
       <div id="nextTaskLectureList"></div>
       <div id="nextTaskLectureEmpty" style="display:none;font-size:12px;color:rgba(255,255,255,.5);padding:12px 14px;border:1px dashed rgba(255,255,255,.12);border-radius:10px;text-align:center">
-        No lectures on today's queue.
-        <a href="/learning.html" target="_blank" style="color:#7eb6ff;text-decoration:none;font-weight:600">Open Learning</a> to set a section deadline,
-        or <button id="nextTaskRefreshLec" type="button" style="background:transparent;border:none;color:#7eb6ff;font-family:inherit;font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;padding:0">refresh</button> if you just made changes.
+        No lectures on today's queue — a section needs a deadline before it
+        paces anything. <button id="nextTaskRefreshLec" type="button" style="background:transparent;border:none;color:#7eb6ff;font-family:inherit;font-size:12px;font-weight:600;text-decoration:underline;cursor:pointer;padding:0">Refresh</button> if you just made changes.
       </div>
     </div>
     <!-- PRIORITIES SECTION -->
@@ -1027,11 +1026,11 @@ body { display:flex; flex-direction:column; position:relative }
   let sprintTookFullscreen = false;    // true if THIS sprint forced fullscreen
   const RING_CIRC = 565.48; // 2 * π * 90
   const PAUSE_KEY = 'sprint-paused-v1';
-  // Active-sprint state mirrored to localStorage so OTHER tabs/pages can:
-  //   - see that a sprint is running (Learning page shows a banner)
-  //   - update the running task name without restarting the timer
-  //     (Learning's Keep-Going modal: "watch this next lecture" → no new tab)
-  // Sprint tab listens for storage events on this key and reacts to task changes.
+  // Active-sprint state mirrored to localStorage so OTHER tabs/pages can see
+  // that a sprint is running, and can swap the running task name without
+  // restarting the timer. This tab listens for storage events on the key and
+  // reacts to task changes. (The Learning page's Keep-Going modal was the
+  // original writer; the shell and a second sprint tab still are.)
   const ACTIVE_KEY = 'sprint-active-v1';
   function saveActive(){
     try {
@@ -1047,8 +1046,8 @@ body { display:flex; flex-direction:column; position:relative }
   function clearActive(){
     try { localStorage.removeItem(ACTIVE_KEY); } catch {}
   }
-  // Cross-tab: when Learning's Keep-Going modal swaps the running task name,
-  // it writes ACTIVE_KEY. We pick that up here without restarting the timer.
+  // Cross-tab: when another tab swaps the running task name it writes
+  // ACTIVE_KEY. We pick that up here without restarting the timer.
   // (storage events only fire on OTHER tabs, so our own saveActive calls are safe.)
   window.addEventListener('storage', (e) => {
     if (e.key !== ACTIVE_KEY) return;
@@ -1946,7 +1945,7 @@ body { display:flex; flex-direction:column; position:relative }
       pausedAt: now,
     });
     // Pausing means we're no longer "actively" sprinting — drop the mirror so
-    // Learning's banner clears. (loadPaused → resume restores active state.)
+    // other tabs stop showing a live sprint. (loadPaused → resume restores it.)
     clearActive();
     renderResumeBanner();
     // Drop fullscreen on pause so user can reach other War Room tabs.
@@ -2020,7 +2019,7 @@ body { display:flex; flex-direction:column; position:relative }
   // Slide-in panel that lets you swap the running sprint to a different
   // lecture or priority WITHOUT restarting the timer. Reads:
   //   • learning-cache-v1   — courses tree + today's lecture queue (published
-  //                            by learning.html on every render)
+  //                            by this page's own Firestore module, below)
   //   • personal-todos-cache — open priorities (published by personal-todos.html)
   // Click an item to switch the sprint task. The "Done" pill on the current
   // task completes its source (lecture done / priority done) AND auto-picks
@@ -2127,7 +2126,7 @@ body { display:flex; flex-direction:column; position:relative }
   }
   // Build a small render helper for a lecture card — shared between the
   // "Next in current section" tile and the today's-queue list.
-  // Color scheme mirrors learning.html's lecture-due pill:
+  // Color scheme carried over from the retired Learning page's due pill:
   //   today    → orange (urgent)
   //   tomorrow → blue
   //   soon     → muted blue
@@ -2149,12 +2148,11 @@ body { display:flex; flex-direction:column; position:relative }
       : esc(it.sectionTitle || it.courseTitle);
     // "Not today" pill only on lectures currently labeled Today. Click consumes
     // today's bucket for that lecture's section so it (and any remaining
-    // unfinished today-lectures from the same section) re-label as Tomorrow,
-    // without needing to bounce to Learning to click the section button.
+    // unfinished today-lectures from the same section) re-label as Tomorrow.
     const showNotToday = it.dueCls === 'today';
     // Done checkbox — writes directly to learning_courses Firestore. Marks
     // the lecture as done in the source data, drains it from the drawer.
-    const doneBtn = `<button type="button" data-act="complete-lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" title="Mark this lecture complete (saves to Learning)"
+    const doneBtn = `<button type="button" data-act="complete-lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" title="Mark this lecture complete"
       style="width:24px;height:24px;border-radius:50%;border:2px solid rgba(255,255,255,.18);background:transparent;color:transparent;cursor:pointer;flex:0 0 auto;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .12s" onclick="event.stopPropagation()" onmouseover="this.style.borderColor='#86efac';this.style.color='#86efac'" onmouseout="this.style.borderColor='rgba(255,255,255,.18)';this.style.color='transparent'">✓</button>`;
     return `
       <div class="nt-item" data-kind="lecture" data-course="${esc(it.courseId)}" data-section="${esc(it.sectionId)}" data-sub-index="${it.subIndex}" data-sub-id="${esc(it.subId || '')}"
@@ -2276,7 +2274,7 @@ body { display:flex; flex-direction:column; position:relative }
     const refPri = document.getElementById('nextTaskRefreshPri');
     if (refPri) refPri.onclick = (e) => { e.stopPropagation(); renderNextTaskDrawer(); };
     // Per-row "✕ not today" button. Marks that lecture's section as today-
-    // consumed in localStorage (key matches learning.html's todaysPlannedFor)
+    // consumed in localStorage (key inherited from the Learning page)
     // and optimistically rewrites the cache so the drawer re-renders without
     // the affected lecture(s). User can also do this from Learning, but the
     // sprint drawer is where they hit the wrong label first.
@@ -2486,16 +2484,24 @@ body { display:flex; flex-direction:column; position:relative }
       }
     } catch (e) { console.warn('live source completion failed', e); }
   }
-  // Queue a learning-lecture completion. learning.html doesn't expose a
-  // localStorage write queue (yet) — we tack one on here and have learning.html
-  // drain it. Pattern mirrors `sprint-pending-completions` for personal-todos.
+  // Fallback for a lecture completion raised before the module script at the
+  // bottom has defined __sprintData.markLectureDone (the direct Firestore
+  // write). This used to push onto `sprint-pending-learning-completions` for
+  // learning.html to drain; that page is retired, so a queued completion would
+  // just be a lost one. Retry against markLectureDone instead, and update the
+  // local cache immediately either way.
   function completeLearningSubsection(ids){
     if (!ids || !ids.courseId || !ids.sectionId) return;
-    const QKEY = 'sprint-pending-learning-completions';
-    let queue = [];
-    try { queue = JSON.parse(localStorage.getItem(QKEY) || '[]') || []; } catch {}
-    queue.push({ courseId: ids.courseId, sectionId: ids.sectionId, subId: ids.subId || '', subIndex: ids.subIndex, completedAt: Date.now() });
-    try { localStorage.setItem(QKEY, JSON.stringify(queue.slice(-50))); } catch {}
+    if (ids.subIndex != null) {
+      let tries = 0;
+      const flush = () => {
+        const d = window.__sprintData;
+        if (d && d.markLectureDone) { d.markLectureDone(ids.courseId, ids.sectionId, ids.subIndex); return; }
+        if (++tries < 20) setTimeout(flush, 250);
+        else console.warn('[sprint] lecture completion dropped — markLectureDone never arrived', ids);
+      };
+      flush();
+    }
     // Optimistic local-cache update so the picker won't re-show this lecture.
     try {
       const raw = localStorage.getItem('learning-cache-v1');
@@ -3059,17 +3065,14 @@ body { display:flex; flex-direction:column; position:relative }
   // Compute the back target from ?from=… (or document.referrer fallback) and
   // navigate there. Critically: also works when the back-link is hidden,
   // which it is whenever sprint is running embedded inside the daily-planner
-  // shell iframe — that's the case where learning.html → sprint.html replaces
-  // the learning iframe with sprint, so we still need a way to bounce back.
+  // shell iframe, where the parent swaps a tab's iframe for sprint — so we
+  // still need a way to bounce back.
   // Returns true if navigation kicked off.
   function _navigateBackIfFrom(){
     try {
       const FROM_MAP = {
-        learning: '/learning.html',
         personal: '/personal-todos.html',
         ecm:      '/ecm.html',
-        goals:    '/goals-canvas.html',
-        board:    '/goal-board.html',
         calendar: '/calendar.html',
         focus:    '/focus-session.html',
         warroom:  '/daily-planner.html',
@@ -3086,11 +3089,8 @@ body { display:flex; flex-direction:column; position:relative }
             const r = new URL(document.referrer);
             if (r.origin === location.origin) {
               const path = r.pathname;
-              if (/\/learning\.html\b/.test(path))            target = FROM_MAP.learning;
-              else if (/\/personal-todos\.html\b/.test(path)) target = FROM_MAP.personal;
+              if (/\/personal-todos\.html\b/.test(path))    target = FROM_MAP.personal;
               else if (/\/ecm\.html\b/.test(path))            target = FROM_MAP.ecm;
-              else if (/\/goals-canvas\.html\b/.test(path))   target = FROM_MAP.goals;
-              else if (/\/goal-board\.html\b/.test(path))     target = FROM_MAP.board;
               else if (/\/calendar\.html\b/.test(path))       target = FROM_MAP.calendar;
               else if (/\/focus-session\.html\b/.test(path))  target = FROM_MAP.focus;
             }
@@ -3638,27 +3638,21 @@ body { display:flex; flex-direction:column; position:relative }
   renderResumeBanner();
   renderSuggestions();
 
-  // Prime the next-task drawer caches by background-loading the source pages
-  // in hidden iframes. learning.html → writes `learning-cache-v1`,
-  // personal-todos.html → writes `personal-todos-cache` + `personal-focus-5-v1`.
-  // The drawer's existing `storage` event listener will pick them up the
-  // moment the iframes finish their first render, so users who open sprint
-  // in a new tab (NOT inside the daily-planner shell) still see their real
-  // lectures + priorities instead of the "No lectures / No priorities"
-  // placeholder. Skipped when sprint itself is embedded — the shell already
-  // has both pages mounted so adding more iframes here would be wasteful.
-  // (Removed: hidden iframe primer + 1.5s cache poll. The Firestore module
-  // script at the bottom of sprint.html is now the sole source of truth —
-  // it subscribes to learning_courses + tv_todos directly and dispatches
+  // The next-task drawer used to be primed by background-loading the source
+  // pages in hidden iframes and polling their caches. That's long gone: the
+  // Firestore module script at the bottom of this page is the sole source of
+  // truth — it subscribes to learning_courses + tv_todos directly, writes
+  // `learning-cache-v1` / `personal-todos-cache` itself, and dispatches
   // `sprint:caches-updated` whenever data lands. The drawer listens for that
   // event AND reads `window.__sprintData` for immediate access without
-  // needing localStorage roundtrips.)
+  // needing localStorage roundtrips. It's why retiring the Learning page left
+  // the lecture drawer working — sprint never depended on it for data.
 
   // Auto-restore an in-progress sprint. The active sprint state is mirrored
-  // to localStorage so OTHER pages (Learning banner, daily-planner) can see
-  // it, but a fresh sprint.html load used to drop the running timer on the
-  // floor — clicking the Learning banner would land the user on an empty Play
-  // screen. Now we replay the state and resume the timer in place.
+  // to localStorage so OTHER pages (daily-planner) can see it, but a fresh
+  // sprint.html load used to drop the running timer on the floor — landing
+  // the user on an empty Play screen. Now we replay the state and resume the
+  // timer in place.
   (function autoRestoreActiveSprint(){
     try {
       const raw = localStorage.getItem(ACTIVE_KEY);
@@ -3745,7 +3739,7 @@ body { display:flex; flex-direction:column; position:relative }
     // Hide the back link when embedded (race mode or iframe) — the parent
     // shell handles its own nav. Otherwise pick the back target based on
     // where the user came from so they land back in the right context:
-    //   1. ?from=learning|personal|ecm|goals|board|calendar|focus → that page
+    //   1. ?from=personal|ecm|calendar|focus → that page
     //   2. document.referrer (same-origin) → use the actual previous page
     //   3. fallback → War Room (/daily-planner.html)
     // Same-tab navigation from any page now round-trips back via this link.
@@ -3757,11 +3751,8 @@ body { display:flex; flex-direction:column; position:relative }
           bl.style.display = 'none';
         } else {
           const FROM_MAP = {
-            learning: { href: '/learning.html', label: 'Learning' },
             personal: { href: '/personal-todos.html', label: 'Personal' },
             ecm:      { href: '/ecm.html', label: 'ECM' },
-            goals:    { href: '/goals-canvas.html', label: 'Goals' },
-            board:    { href: '/goal-board.html', label: 'Board' },
             calendar: { href: '/calendar.html', label: 'Calendar' },
             focus:    { href: '/focus-session.html', label: 'Focus' },
             warroom:  { href: '/daily-planner.html', label: 'War Room' },
@@ -3775,11 +3766,8 @@ body { display:flex; flex-direction:column; position:relative }
                 const r = new URL(document.referrer);
                 if (r.origin === location.origin) {
                   const path = r.pathname;
-                  if (/\/learning\.html\b/.test(path))            target = FROM_MAP.learning;
-                  else if (/\/personal-todos\.html\b/.test(path)) target = FROM_MAP.personal;
+                  if (/\/personal-todos\.html\b/.test(path))    target = FROM_MAP.personal;
                   else if (/\/ecm\.html\b/.test(path))            target = FROM_MAP.ecm;
-                  else if (/\/goals-canvas\.html\b/.test(path))   target = FROM_MAP.goals;
-                  else if (/\/goal-board\.html\b/.test(path))     target = FROM_MAP.board;
                   else if (/\/calendar\.html\b/.test(path))       target = FROM_MAP.calendar;
                   else if (/\/focus-session\.html\b/.test(path))  target = FROM_MAP.focus;
                 }
@@ -3859,8 +3847,9 @@ body { display:flex; flex-direction:column; position:relative }
      Direct Firestore reader for the next-task drawer. Subscribes to
      learning_courses + tv_todos using the SAME firebaseConfig the other
      pages use, builds the same cache shapes the drawer expects, and writes
-     them to localStorage. No more relying on learning.html/personal-todos.html
-     to render in a hidden iframe — we read the data ourselves and dispatch a
+     them to localStorage. Nothing else has to be open — we read the data
+     ourselves (this is the only remaining reader of learning_courses since
+     the Learning page was retired) and dispatch a
      `sprint:caches-updated` event so the drawer re-renders immediately.
 ====================================================================== -->
 <script type="module">
@@ -3881,7 +3870,7 @@ body { display:flex; flex-direction:column; position:relative }
   const courses = new Map();   // learning_courses id → doc
   const todos = [];            // tv_todos docs
 
-  // ---- helpers (mirror learning.html so the cache shape matches) ----
+  // ---- helpers (cache shape inherited from the retired Learning page) ----
   function todayISO(){
     const d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -3924,8 +3913,7 @@ body { display:flex; flex-direction:column; position:relative }
     try { if (localStorage.getItem(consumedKey) === '1') return doneTodayIndices; } catch {}
     // Deadline-day override: if the section is due today (or past), every
     // unfinished lecture is due today — there's no tomorrow to push to.
-    // Mirrors the same fix in learning.html so the sprint drawer doesn't
-    // disagree with the Learning page.
+    // Carried over from the Learning page's own pacing fix.
     if (section.deadline <= today) {
       const all = new Set(doneTodayIndices);
       for (let i = 0; i < subs.length; i++) if (!subs[i].done) all.add(i);
@@ -4020,7 +4008,7 @@ body { display:flex; flex-direction:column; position:relative }
         if (!s.deadline) continue;
         // Book chapters surface as a single "Pages X–Y" queue item per
         // chapter — they don't have lecture sub-items, just a page count.
-        // Mirrors the page-range label used in learning.html's todayQueue.
+        // Page-range label carried over from the Learning page's todayQueue.
         if (isBook) {
           const total = s.totalPages || 0;
           const read  = Math.min(s.pagesRead || 0, total);
@@ -4231,8 +4219,8 @@ body { display:flex; flex-direction:column; position:relative }
   };
 </script>
 
-<!-- Shared lofi player. Same script learning.html (and every other page)
-     uses, so all pages run identical music behavior with shared state. -->
+<!-- Shared lofi player. Same script every other page uses, so all pages
+     run identical music behavior with shared state. -->
 <script defer src="/lofi-player.js"></script>
 
 </body>

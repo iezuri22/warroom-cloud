@@ -567,30 +567,8 @@
 
   /* Mini list-strip below the pill — only shown when not in focus mode AND
      there's more than 1 list. Lets user switch lists without entering. */
-  /* ===== Today's Learning banner ===== */
-  .learning-banner{
-    margin:8px 18px 14px; padding:13px 16px;
-    background:var(--surface);
-    border:none; box-shadow:var(--shadow-card); border-radius:var(--radius);
-    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
-    cursor:pointer; transition:.15s;
-    font-family:inherit
-  }
-  .learning-banner:hover{ border-color:rgba(167,139,250,.4); background:var(--surface-2) }
-  .learning-banner .lb-icon{ font-size:22px; flex:0 0 auto }
-  .learning-banner .lb-main{ flex:1; min-width:0 }
-  .learning-banner .lb-head{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--purple); font-weight:700; margin-bottom:4px }
-  .learning-banner .lb-line{ display:block; font-size:14px; font-weight:500; color:var(--ink); line-height:1.4 }
-  .learning-banner .lb-line .strong{ color:var(--purple); font-weight:600 }
-  .learning-banner .lb-go{
-    font-size:11px; padding:6px 12px; background:rgba(167,139,250,.14);
-    border:none; border-radius:99px;
-    color:var(--purple); font-weight:600; text-decoration:none
-  }
-  .learning-banner.empty{ display:none !important }
-
-  /* This week's meals — same quiet card language as the learning banner,
-     green identity. Populated from the Meals page's Firestore week doc. */
+  /* This week's meals — a quiet card above the list, green identity.
+     Populated from the Meals page's Firestore week doc. */
   .meals-banner{
     margin:0 18px 14px; padding:13px 16px;
     background:var(--surface);
@@ -732,7 +710,7 @@
   .parked-act.today { color: var(--accent) }
   .parked-act.later { color: var(--ink-mid) }
   .parked-act.drop { color: var(--ink-dim); font-size: 13px; letter-spacing: 0 }
-  /* ECM inbox entry — a quiet card-button, same language as the meals/learning banners */
+  /* ECM inbox entry — a quiet card-button, same language as the meals banner */
   .planned-ecm-inbox {
     display: flex; align-items: center; gap: 14px;
     width: 100%; text-align: left;
@@ -4091,7 +4069,6 @@
       <div class="pt-goals-row" id="ptGoalsRow"></div>
       <div id="filterBarSlot"></div>
     </div>
-    <div id="learningBanner" class="learning-banner" style="display:none"></div>
     <div id="mealsBanner" class="meals-banner" style="display:none"></div>
     <div class="list" id="list"></div>
     <div class="freq-opts" id="freqOpts"></div>
@@ -4541,10 +4518,11 @@
   }
   const PERIOD_LABEL = { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' };
   const PERIOD_COLOR = { morning: '#FFD60A', afternoon: 'var(--accent)', evening: '#5AC8FA' };
-  // ---- Job categories (derived from Board page boards) ----
-  // The user's boards on the Board page (localStorage['goal-board-v2']) are
-  // the source of truth. Each board becomes a job: id=board.id, label=board.name,
-  // color=board.color. Manage by going to the Board page (gear icon links there).
+  // ---- Job categories (boards) ----
+  // localStorage['goal-board-v2'] is the source of truth. Each board becomes a
+  // job: id=board.id, label=board.name, color=board.color. The Board page that
+  // used to own this store is retired — saveJobsList() below is now the only
+  // editor, so jobs are managed from Personal's own settings.
   const BOARDS_KEY = 'goal-board-v2';
   // LEGACY_JOBS retained ONLY so old Personal tasks tagged with 'ezrk', 'vt',
   // 'work', 'bha', 'personal' (or pre-unification 'govtech', 'vitaltouch')
@@ -4575,10 +4553,10 @@
     } catch {}
     return LEGACY_JOBS.slice();
   }
-  // Write JOBS back to BOARDS_KEY — preserves card data the Board page owns,
-  // only updates name/color/hideFromAll and applies adds/deletes/reorders.
-  // Also records deletedBoardIds so the Board page's ensureDomainBoards()
-  // doesn't auto-resurrect a domain board the user explicitly removed.
+  // Write JOBS back to BOARDS_KEY — preserves the cards/goals the retired
+  // Board page left behind, only updates name/color/hideFromAll and applies
+  // adds/deletes/reorders. deletedBoardIds is still recorded so a tombstoned
+  // board stays dead for the other readers (sprint, wallpaper).
   function saveJobsList(jobs) {
     try {
       const raw = localStorage.getItem(BOARDS_KEY);
@@ -13710,8 +13688,8 @@ const VOICE = {
   // Snooze = 2 hours; Got it = until tomorrow.
   function loadBoardGoals(){
     // Merge two sources: top-level quarterly goals (quarterly-goals-v1) +
-    // board-attached goals (goal-board-v2). Match the Goals page so the
-    // reminder reflects exactly what you'd see there.
+    // board-attached goals (goal-board-v2). Both stores outlived the pages
+    // that used to edit them, so this reminder is now their main surface.
     try {
       const raw = localStorage.getItem(BOARDS_KEY);
       if (!raw) return [];
@@ -13777,7 +13755,7 @@ const VOICE = {
       return Array.from(boardById.values()).filter(b => b.goals.length > 0);
     } catch { return []; }
   }
-  // Pretty short day label from an ISO date (matches Goals page WED/THU/etc.)
+  // Pretty short day label from an ISO date — WED/THU/etc.
   function _grDayLabel(iso){
     if (!iso) return '';
     try {
@@ -14724,125 +14702,11 @@ const VOICE = {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         try { drainEcmPriorityPushes(); } catch {}
-        try { drainGoalsPriorityPushes(); } catch {}
-        try { renderLearningBanner(); } catch {}
       }
     });
 
-    // ===== Today's Learning banner ============================================
-    // Pulls learning_courses (and books, same collection), finds sections/
-    // chapters with deadlines, and shows today's pacing target as a single
-    // banner above the priority lists. Click → opens the Learning page.
-    let _learningCourses = [];
     function _ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-    function _todayLocalISO(){ return _ymd(new Date()); }
-    function _lectureDoneToday(u){
-      if (!u || !u.done || !u.doneAt) return false;
-      try { return _ymd(new Date(u.doneAt)) === _todayLocalISO(); }
-      catch { return false; }
-    }
-    // For a course section: today's NET remaining lectures = perDay target
-    // minus whatever was already finished today. Zero means the day is done.
-    function _learningCourseRemainingToday(section){
-      if (!section.deadline) return null;
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const due = new Date(section.deadline + 'T12:00:00');
-      const days = Math.ceil((due - today) / 86400000);
-      if (days <= 0) return null;
-      const subs = section.subsections || [];
-      const totalRem = subs.filter(u => !u.done).length;
-      if (totalRem <= 0) return null;
-      const perDay = Math.ceil(totalRem / days);
-      const doneToday = subs.filter(_lectureDoneToday).length;
-      const remToday = Math.max(0, perDay - doneToday);
-      return { perDay, doneToday, remToday, unit: remToday === 1 ? 'lecture' : 'lectures' };
-    }
-    // For a book chapter: surface the daily page target. Skip when the
-    // chapter is fully read; we don't track pages-read-today (no field
-    // for that), so we always show the daily target.
-    function _learningBookRemainingToday(section){
-      if (!section.deadline) return null;
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const due = new Date(section.deadline + 'T12:00:00');
-      const days = Math.ceil((due - today) / 86400000);
-      if (days <= 0) return null;
-      const total = section.totalPages || 0;
-      const read = section.pagesRead || 0;
-      const rem = total - read;
-      if (rem <= 0) return null;
-      const perDay = Math.ceil(rem / days);
-      return { perDay, remToday: perDay, unit: 'pages' };
-    }
-    function renderLearningBanner(){
-      const el = document.getElementById('learningBanner');
-      if (!el) return;
-      const lines = [];
-      for (const c of _learningCourses) {
-        const isBook = (c.type || 'course') === 'book';
-        for (const s of (c.sections || [])) {
-          if (isBook) {
-            const r = _learningBookRemainingToday(s);
-            if (r) lines.push({ course: c, section: s, ...r, isBook: true });
-          } else {
-            const r = _learningCourseRemainingToday(s);
-            if (!r) continue;
-            // Skip sections where today's target is already met — that's
-            // the whole point of this banner: only surface what's left.
-            if (r.remToday <= 0) continue;
-            lines.push({ course: c, section: s, ...r, isBook: false });
-          }
-        }
-      }
-      if (!lines.length) { el.style.display = 'none'; el.classList.add('empty'); return; }
-      el.classList.remove('empty');
-      el.style.display = 'flex';
-      const items = lines.slice(0, 3).map(({ section, remToday, unit, isBook }) => {
-        const prefix = isBook ? '📖' : '🎓';
-        return `<span class="strong">${prefix} ${remToday} ${unit}</span> of ${escapeHtml(section.title || (isBook ? 'a chapter' : 'a section'))}`;
-      });
-      const more = lines.length > 3 ? ` <span style="opacity:.65">+ ${lines.length - 3} more</span>` : '';
-      el.innerHTML = `
-        <span class="lb-icon">📚</span>
-        <span class="lb-main">
-          <span class="lb-head">Today's Learning</span>
-          <span class="lb-line">${items.join(' · ')}${more}</span>
-        </span>
-        <a href="#" class="lb-go" data-act="open-learning">Open →</a>`;
-      // Inside the daily-planner shell the page lives in an iframe — a
-      // plain href would only swap the iframe's URL while the SHELL tab
-      // stays on Personal. postMessage tells the parent to flip its
-      // active tab to Learning. Fall back to top-level nav when we're
-      // standalone (no parent / same window).
-      const openLearning = (e) => {
-        if (e) { e.preventDefault(); e.stopPropagation(); }
-        try {
-          if (window.parent && window.parent !== window) {
-            window.parent.postMessage({ type: 'warroom:switch-tab', tab: 'learning' }, '*');
-            return;
-          }
-        } catch {}
-        window.location.href = '/learning.html';
-      };
-      el.onclick = openLearning;
-      const goLink = el.querySelector('[data-act="open-learning"]');
-      if (goLink) goLink.onclick = openLearning;
-    }
     function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-    function _subscribeLearning(){
-      try {
-        onSnapshot(collection(db, 'learning_courses'), (snap) => {
-          const next = [];
-          snap.forEach(d => next.push({ id: d.id, ...(d.data() || {}) }));
-          _learningCourses = next;
-          renderLearningBanner();
-        }, (err) => console.warn('[learning banner] subscribe error', err));
-      } catch (e) { console.warn('[learning banner] init failed', e); }
-    }
-    _subscribeLearning();
-    // Re-render around midnight so the "today's count" recomputes.
-    setInterval(renderLearningBanner, 5 * 60 * 1000);
 
     // ===== This week's meals banner ==========================================
     // Mirrors the Meals page (two-meals.html): week doc keyed by the SUNDAY
@@ -14921,58 +14785,6 @@ const VOICE = {
     // Re-check the week key periodically so Sunday flips to the new week doc.
     setInterval(_subscribeMealsWeek, 10 * 60 * 1000);
 
-    // ===== Goals canvas → Personal priority push queue =====
-    // The Goals board (goals-canvas.html) writes directly to tv_todos with a
-    // `goalBulletId` field, then drops a push doc here so the cascade logic
-    // puts the new todo at the top of the first priority list. Same pattern
-    // as the ECM drain — kept separate so the two flows can't interfere.
-    let _goalsPushDrainBusy = false;
-    let _goalsPushLastDrain = 0;
-    async function drainGoalsPriorityPushes(){
-      if (_goalsPushDrainBusy) return;
-      if (Date.now() - _goalsPushLastDrain < 15000) return;
-      _goalsPushDrainBusy = true;
-      _goalsPushLastDrain = Date.now();
-      try {
-        const snap = await getDocs(collection(db, 'goals_priority_pushes'));
-        if (snap.empty) return;
-        let landed = 0;
-        for (const d of snap.docs) {
-          const p = d.data() || {};
-          try {
-            if (!p.todoId) { await deleteDoc(d.ref); continue; }
-            // Find the todo Goals canvas already created (it stamped goalBulletId).
-            let todo = todos.find(t => t.id === p.todoId);
-            if (!todo) {
-              const ds = await getDoc(doc(db, 'tv_todos', p.todoId));
-              if (ds.exists()) {
-                todo = { id: ds.id, ...(ds.data() || {}) };
-                if (!todos.find(t => t.id === todo.id)) todos.push(todo);
-              }
-            }
-            if (!todo) {
-              // Goals doc must have been rolled back — drop the push and move on.
-              await deleteDoc(d.ref);
-              continue;
-            }
-            addToToday(todo.id, 0);
-            await deleteDoc(d.ref);
-            landed++;
-          } catch (e) {
-            console.warn('[goals push] failed for', p && p.text, e);
-          }
-        }
-        if (landed) {
-          console.log('[goals push] landed ' + landed + ' bullet(s) at the top of priorities');
-          try { await ensureWorkTasksLoaded(); } catch {}
-          try { render(); } catch {}
-        }
-      } catch (e) {
-        console.warn('[goals push] drain failed', e);
-      } finally {
-        _goalsPushDrainBusy = false;
-      }
-    }
     // Load the working set — but ONLY after sync-client.js has pulled cloud
     // state into localStorage. Running before hydration would read an empty
     // store and then save that emptiness back over the user's real data.
@@ -14983,8 +14795,6 @@ const VOICE = {
       // initial todo load has a chance to land first (dedupe still holds
       // either way via the Firestore query).
       setTimeout(() => { try { drainEcmPriorityPushes(); } catch {} }, 1500);
-      // Same drain for the Goals canvas push queue.
-      setTimeout(() => { try { drainGoalsPriorityPushes(); } catch {} }, 1700);
       // Load the planned ledger, auto-promote anything due (top of First
       // Priority, pinned), then knock for whatever's left.
       setTimeout(() => {
