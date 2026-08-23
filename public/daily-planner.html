@@ -2082,8 +2082,6 @@ body.fullscreen .tabs{
   backdrop-filter:saturate(180%) blur(20px);
 }
 body.fullscreen .main{padding:0 !important;max-width:none !important}
-body.fullscreen #goalsView iframe,
-body.fullscreen #boardView iframe,
 body.fullscreen #focusView iframe,
 body.fullscreen #todosView iframe,
 body.fullscreen #calendarView iframe{
@@ -2885,9 +2883,7 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="tab active" data-tab="todos" onclick="switchTab('todos')">Personal</div>
   <div class="tab" data-tab="calendar" onclick="switchTab('calendar')">Calendar</div>
   <div class="tab" data-tab="plan" onclick="switchTab('plan')" style="display:none">Today's Plan</div>
-  <div class="tab" data-tab="goals" onclick="switchTab('goals')">Goals</div>
   <div class="tab" data-tab="meals" onclick="switchTab('meals')">Meals</div>
-  <div class="tab" data-tab="learning" onclick="switchTab('learning')">Learning</div>
   <div class="tab" data-tab="ecm" onclick="switchTab('ecm')">ECM<span class="ecm-sync-dot" id="ecmSyncDot" title="" hidden></span></div>
   <!-- Food tab retired 2026 — recipe content lives as a board inside the Goals canvas now. -->
 
@@ -2939,8 +2935,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <div class="nav-drawer-list" id="navDrawerList">
     <button class="nav-drawer-item active" data-tab="todos" onclick="navDrawerSwitch('todos')"><span class="dot"></span>Personal</button>
     <button class="nav-drawer-item" data-tab="calendar" onclick="navDrawerSwitch('calendar')"><span class="dot"></span>Calendar</button>
-    <button class="nav-drawer-item" data-tab="goals" onclick="navDrawerSwitch('goals')"><span class="dot"></span>Goals</button>
-    <button class="nav-drawer-item" data-tab="learning" onclick="navDrawerSwitch('learning')"><span class="dot"></span>Learning</button>
     <button class="nav-drawer-item" data-tab="ecm" onclick="navDrawerSwitch('ecm')"><span class="dot"></span>ECM<span class="ecm-sync-dot" id="ecmDrawerSyncDot" style="display:none;margin-left:auto;width:6px;height:6px;border-radius:50%;background:#4ADE80"></span></button>
     <!-- Food drawer entry retired — use the Food board inside Goals. -->
 
@@ -2981,19 +2975,9 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 </aside>
 
 <div class="main">
-  <!-- GOALS VIEW -->
-  <div class="goals-view" id="goalsView" style="display:none">
-    <iframe id="goalsFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
-  </div>
-
   <!-- MEALS VIEW (🎯 Two Meals) -->
   <div class="meals-view" id="mealsView" style="display:none">
     <iframe id="mealsFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
-  </div>
-
-  <!-- BOARD VIEW -->
-  <div class="board-view" id="boardView" style="display:none">
-    <iframe id="boardFrame" src="about:blank" style="width:100%;border:none;background:var(--bg);border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
   </div>
 
   <!-- FOCUS VIEW -->
@@ -3009,13 +2993,6 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   <!-- ECM VIEW -->
   <div class="ecm-view" id="ecmView" style="display:none">
     <iframe id="ecmFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
-  </div>
-
-  <!-- LEARNING VIEW (same iframe pattern as ECM so the shell's music engine
-       stays alive when the user opens Learning — was a full window.location
-       nav before, which killed the player). -->
-  <div class="learning-view" id="learningView" style="display:none">
-    <iframe id="learningFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
   </div>
 
   <!-- CALENDAR VIEW -->
@@ -3703,10 +3680,11 @@ function init(){
     ui.tab = 'plan';
     saveUiState({tab:'plan'});
   }
-  // Migrate retired tabs (Brain Dump, Watch Queue, Sprint, Analytics) so they
-  // don't land on a missing view. Sprint + Analytics merged into Personal.
-  // Habits folded into Personal — it's a tab in the focus strip there now.
-  if(ui.tab === 'coach' || ui.tab === 'youtube' || ui.tab === 'sprint' || ui.tab === 'analytics' || ui.tab === 'habits'){
+  // Migrate retired tabs so they don't land on a missing view. Brain Dump,
+  // Watch Queue, Sprint and Analytics merged into Personal; Habits folded in
+  // as a tab in its focus strip; Goals, Board and Learning were retired with
+  // their pages. switchTab() guards these too, for deep links.
+  if(ui.tab === 'coach' || ui.tab === 'youtube' || ui.tab === 'sprint' || ui.tab === 'analytics' || ui.tab === 'habits' || ui.tab === 'goals' || ui.tab === 'board' || ui.tab === 'learning'){
     ui.tab = 'todos';
     saveUiState({tab:'todos'});
   }
@@ -4779,7 +4757,7 @@ window.addEventListener('message', (ev) => {
 
 // --- Fullscreen (cast-friendly: hide top nav) ---
 function broadcastFullscreenToFrames(on){
-  const frames = ['goalsFrame','boardFrame','focusFrame','todosFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
+  const frames = ['focusFrame','todosFrame','calendarFrame','ecmFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     if (!f || !f.contentWindow) return;
@@ -4825,7 +4803,7 @@ function lofiState(){
 function lofiBroadcast(msg){
   // Belt-and-suspenders: send to all loaded iframes; only the personal-todos
   // engine acts on these messages (others ignore unknown types).
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
+  const frames = ['todosFrame','focusFrame','calendarFrame','ecmFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage(msg, '*'); } catch {}
@@ -5770,25 +5748,24 @@ function closeNavDrawer(){
 }
 function navDrawerSwitch(tab){closeNavDrawer();switchTab(tab)}
 function updateMobileTabLabel(tab){
-  var map={plan:"Today's Plan",todos:'Personal',goals:'Goals',board:'Board',calendar:'Calendar',focus:'Focus'};
+  var map={plan:"Today's Plan",todos:'Personal',calendar:'Calendar',focus:'Focus',meals:'Meals',ecm:'ECM'};
   var el=document.getElementById('mobileTabLabel');if(el)el.textContent=map[tab]||tab;
   document.querySelectorAll('#navDrawerList .nav-drawer-item').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});
 }
 
 function switchTab(tab){
-  // Habits moved INTO Personal (its own tab in the focus strip there). Saved
-  // ui-state and old deep links can still say 'habits' — send them to Personal
-  // rather than a blank screen.
-  if(tab==='habits') tab='todos';
+  // Habits moved INTO Personal (its own tab in the focus strip there), and
+  // Goals / Board / Learning were retired outright. Saved ui-state and old
+  // deep links can still name any of them — send them to Personal rather
+  // than a blank screen.
+  if(tab==='habits'||tab==='goals'||tab==='board'||tab==='learning') tab='todos';
   currentTab=tab;
   saveUiState({tab});
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   updateMobileTabLabel(tab);
   document.getElementById('planView').style.display=tab==='plan'?'':'none';
-  document.getElementById('goalsView').style.display=tab==='goals'?'':'none';
   const mealsViewEl=document.getElementById('mealsView');
   if(mealsViewEl) mealsViewEl.style.display=tab==='meals'?'':'none';
-  document.getElementById('boardView').style.display=tab==='board'?'':'none';
   const calendarViewEl=document.getElementById('calendarView');
   if(calendarViewEl) calendarViewEl.style.display=tab==='calendar'?'':'none';
   const focusViewEl=document.getElementById('focusView');
@@ -5797,18 +5774,10 @@ function switchTab(tab){
   if(todosViewEl) todosViewEl.style.display=tab==='todos'?'':'none';
   const ecmViewEl=document.getElementById('ecmView');
   if(ecmViewEl) ecmViewEl.style.display=tab==='ecm'?'':'none';
-  const learningViewEl=document.getElementById('learningView');
-  if(learningViewEl) learningViewEl.style.display=tab==='learning'?'':'none';
   document.querySelector('.add-plan').style.display=tab==='plan'?'':'none';
   // Mark body so we can target full-iframe tabs in CSS (hide FAB, allow full width)
-  document.body.classList.toggle('iframe-tab',tab==='goals'||tab==='board'||tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm'||tab==='learning'||tab==='meals');
+  document.body.classList.toggle('iframe-tab',tab==='focus'||tab==='todos'||tab==='calendar'||tab==='ecm'||tab==='meals');
   if(tab==='plan'){ try{ render(); }catch(e){} }
-  if(tab==='goals'){
-    const frame=document.getElementById('goalsFrame');
-    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('goals-canvas.html'))){
-      frame.src='/goals-canvas.html?embed=1';
-    }
-  }
   if(tab==='meals'){
     const frame=document.getElementById('mealsFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('two-meals.html'))){
@@ -5819,12 +5788,6 @@ function switchTab(tab){
     const frame=document.getElementById('focusFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('focus-session.html'))){
       frame.src='/focus-session.html?embed=1';
-    }
-  }
-  if(tab==='board'){
-    const frame=document.getElementById('boardFrame');
-    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('goal-board.html'))){
-      frame.src='/goal-board.html?embed=1';
     }
   }
   if(tab==='todos'){
@@ -5843,12 +5806,6 @@ function switchTab(tab){
     const frame=document.getElementById('ecmFrame');
     if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('ecm.html'))){
       frame.src='/ecm.html?embed=1';
-    }
-  }
-  if(tab==='learning'){
-    const frame=document.getElementById('learningFrame');
-    if(frame&&(frame.src==='about:blank'||frame.src==='' || !frame.src.includes('learning.html'))){
-      frame.src='/learning.html?embed=1';
     }
   }
   if(typeof mobileNavUpdateActive==='function')mobileNavUpdateActive(tab);
@@ -6561,7 +6518,7 @@ function saveSmartsheetsSettings(){
   const status = document.getElementById('ssStatus');
   if (status) status.textContent = 'Saved. Open Personal and tap the Smartsheets sync button to pull.';
   // Tell personal-todos iframe to refresh its config
-  const frames = ['todosFrame','goalsFrame','boardFrame','focusFrame','calendarFrame','ecmFrame','learningFrame','mealsFrame'];
+  const frames = ['todosFrame','focusFrame','calendarFrame','ecmFrame','mealsFrame'];
   frames.forEach(id => {
     const f = document.getElementById(id);
     try { f && f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:smartsheets-config-changed' }, '*'); } catch {}
@@ -7639,7 +7596,7 @@ function updateCalBadge(){
 }
 
 // --- Mobile bottom nav (tab switcher) ---
-const MN_TAB_IDS={plan:'mnPlan',calendar:'mnCalendar',todos:'mnTodos',goals:'mnGoals',analytics:'mnAnalytics'};
+const MN_TAB_IDS={plan:'mnPlan',calendar:'mnCalendar',todos:'mnTodos',analytics:'mnAnalytics'};
 function mobileNavUpdateActive(tab){
   Object.values(MN_TAB_IDS).forEach(id=>{
     const el=document.getElementById(id);
@@ -8906,10 +8863,6 @@ body.iframe-tab .main > div{margin:0}
   <button onclick="mobileNavTo('todos')" id="mnTodos" aria-label="Personal">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
     <span>Personal</span>
-  </button>
-  <button onclick="mobileNavTo('goals')" id="mnGoals" aria-label="Goals">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-    <span>Goals</span>
   </button>
   <button onclick="mobileNavTo('analytics')" id="mnAnalytics" aria-label="Analytics">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -11104,7 +11057,7 @@ _pdRender();
 
 <!-- ============ MOBILE BOTTOM TAB BAR ============
      iOS-style fixed bar — only renders on mobile (CSS-hidden on desktop).
-     Order matches the desktop top tabs: Personal · Calendar · Goals · ECM.
+     Order matches the desktop top tabs: Personal · Calendar · Meals · ECM.
      Tap → switchTab(). The hamburger drawer is still available for
      secondary actions (Notes, Music, Fullscreen, etc.) via the "More" tab. -->
 <nav class="mobile-tabbar" id="mobileTabbar" aria-label="Main">
@@ -11119,10 +11072,6 @@ _pdRender();
   <button class="mtb-tab" data-mtb="meals" onclick="switchTab('meals')" aria-label="Meals">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>
     <span>Meals</span>
-  </button>
-  <button class="mtb-tab" data-mtb="learning" onclick="switchTab('learning')" aria-label="Learning">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-    <span>Learning</span>
   </button>
   <button class="mtb-tab" data-mtb="ecm" onclick="switchTab('ecm')" aria-label="ECM">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
@@ -11169,7 +11118,7 @@ _pdRender();
     width:6px; height:6px; border-radius:50%; background:#4ADE80;
   }
   /* Shrink iframes so they don't extend behind the bottom tab bar */
-  #goalsFrame, #boardFrame, #focusFrame, #todosFrame, #ecmFrame, #calendarFrame, #mealsFrame, #learningFrame{
+  #focusFrame, #todosFrame, #ecmFrame, #calendarFrame, #mealsFrame{
     height:calc(100vh - 70px - env(safe-area-inset-bottom)) !important;
     min-height:calc(100vh - 70px - env(safe-area-inset-bottom)) !important;
   }
