@@ -23,6 +23,11 @@
     --accent:#F07E28;
   }
   *{box-sizing:border-box}
+  /* `hidden` has to beat class-level display rules. Any element whose class
+     sets a display (.slots is display:grid) otherwise stays on screen when the
+     view switches — that's why the slot cards leaked into the category, Past
+     weeks and Meal prep panes. */
+  [hidden]{ display:none !important }
   html,body{
     margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);
     font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -1112,6 +1117,7 @@
     <div class="slots" id="slots"></div>
     <div class="history" id="history" hidden></div>
     <div id="catView" hidden></div>
+    <div id="prepView" hidden></div>
   </div>
 </div>
 
@@ -1170,6 +1176,132 @@
   </div>
 </div>
 <style>
+  /* ---------- Meal prep view ----------
+     A whole-pane section, not a modal: this is a plan you work through over a
+     weekend, so it gets the same real estate the category grid gets. Cook
+     steps and shop items are checkable and their state is per-week, because
+     the PLAN repeats every week but your progress through it doesn't. */
+  #prepView .pv-head{ margin-bottom:18px }
+  #prepView .pv-title{ font-size:20px;font-weight:800;color:var(--ink) }
+  #prepView .pv-meta{ font-size:13px;color:var(--muted);margin-top:2px }
+  #prepView .pv-wk{ display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap }
+  #prepView .pv-wk .lbl{ font-size:13px;font-weight:700;color:var(--ink) }
+  #prepView .pv-wk .now{
+    font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;
+    color:var(--accent);background:rgba(240,126,40,.12);padding:3px 8px;border-radius:99px;
+  }
+  #prepView h3.pv-h{
+    font-size:12px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;
+    color:var(--w55);margin:26px 0 10px;
+  }
+  #prepView .pv-stats{ display:flex;flex-wrap:wrap;gap:8px }
+  #prepView .pv-stat{
+    flex:1 1 120px;background:var(--bg-elev);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;
+  }
+  #prepView .pv-stat .n{
+    display:block;font-size:22px;font-weight:800;color:var(--ink);
+    line-height:1.1;font-variant-numeric:tabular-nums;
+  }
+  #prepView .pv-stat .l{
+    display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--muted);font-weight:700;margin-top:5px;
+  }
+  #prepView .pv-note{
+    font-size:13px;color:var(--muted);line-height:1.6;margin:10px 0 0;max-width:70ch;
+  }
+  /* Components — each one opens the real recipe walkthrough. */
+  #prepView .pv-comps{ display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px }
+  #prepView .pv-comp{
+    background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;
+    padding:13px 14px;cursor:pointer;transition:border-color .12s,transform .12s;
+  }
+  #prepView .pv-comp:hover{ border-color:var(--accent);transform:translateY(-2px) }
+  #prepView .pv-comp .y{
+    display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;
+    font-weight:800;color:var(--accent);margin-bottom:6px;
+  }
+  #prepView .pv-comp .t{ font-size:14px;font-weight:700;color:var(--ink);line-height:1.3 }
+  #prepView .pv-comp .d{ font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:5px }
+  #prepView .pv-comp .go{ font-size:11px;color:var(--accent);font-weight:700;margin-top:8px;display:block }
+  /* Cook session rail */
+  #prepView .pv-prog{
+    display:flex;align-items:center;gap:10px;margin:0 0 10px;
+  }
+  #prepView .pv-bar{
+    flex:1;height:6px;background:var(--w08);border-radius:99px;overflow:hidden;
+  }
+  #prepView .pv-bar i{ display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .2s }
+  #prepView .pv-prog .pct{ font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums }
+  #prepView .pv-step{
+    display:grid;grid-template-columns:26px 56px 1fr;gap:0 12px;align-items:start;
+    padding:11px 12px;border:1px solid var(--line);border-top:none;background:var(--bg-elev);
+  }
+  #prepView .pv-step:first-of-type{ border-top:1px solid var(--line);border-radius:10px 10px 0 0 }
+  #prepView .pv-step:last-of-type{ border-radius:0 0 10px 10px }
+  #prepView .pv-step.oven{ background:rgba(240,126,40,.07) }
+  #prepView .pv-step.done .txt{ opacity:.45;text-decoration:line-through }
+  #prepView .pv-step .box{
+    width:19px;height:19px;border:2px solid var(--line2);border-radius:5px;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+    font-size:12px;color:transparent;margin-top:1px;flex:none;
+  }
+  #prepView .pv-step.done .box{ background:var(--accent);border-color:var(--accent);color:#fff }
+  #prepView .pv-step .t{
+    font-size:12.5px;font-weight:800;color:var(--accent);
+    font-variant-numeric:tabular-nums;padding-top:2px;
+  }
+  #prepView .pv-step.oven .t{ color:var(--accent) }
+  #prepView .pv-step .txt{ font-size:13.5px;line-height:1.5;color:var(--ink) }
+  #prepView .pv-step .sub{ display:block;font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.45 }
+  /* Week grid */
+  #prepView .pv-scroll{ overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--bg-elev) }
+  #prepView table{ border-collapse:collapse;width:100%;min-width:660px;font-size:12.5px }
+  #prepView th,#prepView td{ text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top }
+  #prepView thead th{
+    font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);
+    font-weight:800;background:var(--w03);white-space:nowrap;
+  }
+  #prepView tbody th{ font-weight:800;color:var(--ink);white-space:nowrap;width:1% }
+  #prepView tbody tr:last-child th,#prepView tbody tr:last-child td{ border-bottom:none }
+  #prepView td.fresh{ color:var(--accent);font-weight:700 }
+  #prepView td .fz{
+    display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--muted);font-weight:700;margin-top:3px;
+  }
+  /* Shop list */
+  #prepView .pv-aisles{ display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px }
+  #prepView .pv-aisle{ background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:12px 14px 13px }
+  #prepView .pv-aisle .ah{
+    font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;
+    color:var(--w55);padding-bottom:8px;margin-bottom:9px;border-bottom:1px solid var(--line);
+  }
+  #prepView .pv-item{
+    display:flex;gap:9px;align-items:baseline;padding:4px 0;cursor:pointer;font-size:13px;line-height:1.4;
+  }
+  #prepView .pv-item .box{
+    width:15px;height:15px;border:2px solid var(--line2);border-radius:4px;flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:transparent;
+    align-self:center;
+  }
+  #prepView .pv-item.done .box{ background:var(--accent);border-color:var(--accent);color:#fff }
+  #prepView .pv-item.done .q,#prepView .pv-item.done .n{ opacity:.42;text-decoration:line-through }
+  #prepView .pv-item .q{ font-size:11.5px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums;min-width:42px;flex:none }
+  /* Callout + dials */
+  #prepView .pv-call{
+    border-left:3px solid var(--accent);background:rgba(240,126,40,.08);
+    border-radius:0 10px 10px 0;padding:14px 16px;
+  }
+  #prepView .pv-call b{ display:block;font-size:13.5px;color:var(--ink);margin-bottom:6px }
+  #prepView .pv-call p{ font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 8px }
+  #prepView .pv-call p:last-child{ margin-bottom:0 }
+  #prepView .pv-dials{ display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px }
+  #prepView .pv-dial{ background:var(--bg-elev);border:1px solid var(--line);border-radius:10px;padding:12px 14px }
+  #prepView .pv-dial b{ display:block;font-size:13px;color:var(--ink);margin-bottom:4px;line-height:1.35 }
+  #prepView .pv-dial span{ font-size:12.5px;color:var(--muted);line-height:1.5 }
+  @media (max-width:640px){
+    #prepView .pv-step{ grid-template-columns:26px 46px 1fr;gap:0 8px }
+  }
   #catList{ display:flex;flex-direction:column;gap:6px }
   .cat-row{
     display:flex;align-items:center;gap:10px;padding:9px 12px;
@@ -2313,6 +2445,714 @@ function subscribeRecipes(){
   }, (err) => console.warn('[recipes] snapshot err', err));
 }
 
+// ---------- Built-in recipes ----------
+// Recipes written by hand here instead of pulled from EZ. Seeding targets the
+// same two docs an EZ import lands in — meals_recipes for the card, picker and
+// grocery list, goals_canvas_recipe_meta.cookSteps for the Cook walkthrough —
+// so nothing downstream needs to know where they came from.
+//
+// The flat `steps` array the recipe doc needs is derived from cookSteps (main
+// text + its substeps joined into one self-contained line), so there's only
+// one copy of the instructions to keep straight.
+const BUILTIN_RECIPES = [
+  {
+    rid: 'builtin-steak-sweet-potato-bowl',
+    title: 'Steak & Sweet Potato Bowl with Mushroom-Spinach and Guac',
+    tags: ['Dinner', 'High protein'],
+    ingredients: [
+      { text: '1 lb sweet potatoes, cut into 1/2-inch cubes' },
+      { text: '1 tbsp olive oil' },
+      { text: '1 tsp smoked paprika' },
+      { text: '1 NY strip steak, 1 inch thick (about 12 oz)' },
+      { text: '8 oz cremini mushrooms, sliced' },
+      { text: '3 oz baby spinach' },
+      { text: '1/2 cup low-sodium beef broth' },
+      { text: '1 tbsp butter' },
+      { text: '1 egg (optional)' },
+      { text: '1/2 cup guacamole' },
+      { text: '1 lime' },
+      { text: 'Kosher salt' },
+      { text: 'Black pepper' },
+      { text: 'Hot sauce (optional)' },
+    ],
+    // Order matters here — everything is timed to land at once.
+    cookSteps: [
+      {
+        text: 'Sweet potatoes first, they take the longest. Toss the 1/2" cubes in oil, salt and smoked paprika, then roast at 400°F for about 18 minutes, shaking the pan at the halfway point.',
+        tip: 'Cubes crisp better than wedges for a bowl — more flat faces meeting the pan.',
+        stepIngredients: [
+          { name: 'Sweet potatoes', amount: '1 lb' },
+          { name: 'Olive oil', amount: '1 tbsp' },
+          { name: 'Smoked paprika', amount: '1 tsp' },
+          { name: 'Kosher salt', amount: 'to taste' },
+        ],
+        substeps: [],
+      },
+      {
+        text: 'Salt the steak while the potatoes are roasting, then sear it in cast iron.',
+        tip: 'Pull it at 130°F internal for medium-rare — it climbs a few more degrees while it rests.',
+        stepIngredients: [
+          { name: 'NY strip steak', amount: '1 inch thick' },
+          { name: 'Kosher salt', amount: 'to taste' },
+          { name: 'Black pepper', amount: 'to taste' },
+        ],
+        substeps: [
+          { text: 'Pat the steak bone dry, then salt it. The dry surface is what gets you a crust — any moisture left on it steams instead of browning.' },
+          { text: 'Sear in hot cast iron, about 4 minutes a side for a 1" strip.' },
+          { text: 'Rest it 8 minutes. Non-negotiable — slicing early dumps the juice onto the board.' },
+        ],
+      },
+      {
+        text: "Mushrooms into the same pan, in the beef fat. Don't touch them for 3 minutes, then toss until browned.",
+        tip: 'Salt them at the end. Salting early pulls the water out and they steam instead of brown.',
+        stepIngredients: [
+          { name: 'Cremini mushrooms', amount: '8 oz, sliced' },
+          { name: 'Kosher salt', amount: 'to taste' },
+        ],
+        substeps: [],
+      },
+      {
+        text: 'Spinach in — it wilts in about 60 seconds. Pull everything out of the pan.',
+        tip: 'Squeeze lime over the spinach: it brightens it, and the vitamin C helps you absorb the iron.',
+        stepIngredients: [
+          { name: 'Baby spinach', amount: '3 oz' },
+          { name: 'Lime', amount: '1/2' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Deglaze with about 1/2 cup broth, scraping up the fond. Reduce hard until it's down to roughly 2 tbsp and syrupy, then off the heat, swirl in a knob of butter. That's your sauce.",
+        tip: 'Use low-sodium broth — store-bought runs 500–900mg a cup, and the broth is where nearly all the sodium in this bowl lives. Put your salt on the steak where you actually taste it.',
+        stepIngredients: [
+          { name: 'Low-sodium beef broth', amount: '1/2 cup' },
+          { name: 'Butter', amount: '1 tbsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Egg, optional. Fried in the leftover fat, runny yolk. You're already at 40g+ protein from the steak, so this is really about the yolk acting as a second sauce — skip it if you want a cleaner plate.",
+        tip: '',
+        stepIngredients: [{ name: 'Egg', amount: '1' }],
+        substeps: [],
+      },
+      {
+        text: 'Assemble: sweet potato base, then the mushrooms and spinach, then the steak sliced against the grain, then the pan sauce over the steak.',
+        tip: 'Guac goes on last, on the side, off the heat — hot sauce poured over guacamole just turns it into warm avocado. Its fat is also what lets you absorb the beta-carotene from the sweet potato and the vitamin K from the spinach.',
+        stepIngredients: [
+          { name: 'Guacamole', amount: '1/2 cup' },
+          { name: 'Hot sauce', amount: 'optional' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-sheet-pan-cod-white-beans',
+    title: 'Sheet-Pan Cod with Burst Tomatoes, White Beans & Olives',
+    tags: ['Dinner', 'Healthy'],
+    ingredients: [
+      { text: '4 cod fillets, about 6 oz each' },
+      { text: '1 (15 oz) can cannellini beans, drained and rinsed' },
+      { text: '1 pint cherry tomatoes' },
+      { text: '1/2 cup Castelvetrano olives, pitted and torn' },
+      { text: '3 tbsp olive oil' },
+      { text: '4 garlic cloves, thinly sliced' },
+      { text: '1 lemon' },
+      { text: '2 tbsp chopped fresh parsley' },
+      { text: '1/2 tsp red pepper flakes' },
+      { text: 'Kosher salt' },
+      { text: 'Black pepper' },
+    ],
+    cookSteps: [
+      {
+        text: "Heat the oven to 425°F. Toss the tomatoes, beans, olives, sliced garlic, 2 tbsp of the oil, the red pepper flakes and a good pinch of salt straight onto a sheet pan. Roast 15 minutes, until the tomatoes start to burst.",
+        tip: "Give the beans room. Crowded on the pan they steam; spread out, some of them blister and go creamy inside.",
+        stepIngredients: [
+          { name: 'Cherry tomatoes', amount: '1 pint' },
+          { name: 'Cannellini beans', amount: '1 can, drained' },
+          { name: 'Castelvetrano olives', amount: '1/2 cup' },
+          { name: 'Garlic', amount: '4 cloves, sliced' },
+          { name: 'Olive oil', amount: '2 tbsp' },
+          { name: 'Red pepper flakes', amount: '1/2 tsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Pat the cod dry and salt it, then nestle the fillets down into the pan among the burst tomatoes. Drizzle the last tablespoon of oil over the fish.",
+        tip: "Nestling instead of laying it on top matters — down in the juices the cod poaches gently instead of drying out in the oven's direct heat.",
+        stepIngredients: [
+          { name: 'Cod fillets', amount: '4, about 6 oz each' },
+          { name: 'Olive oil', amount: '1 tbsp' },
+          { name: 'Kosher salt', amount: 'to taste' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Back into the oven for 10–12 minutes, until the cod flakes at the thickest part and reads 130–135°F.",
+        tip: "Cod goes from perfect to chalky in about two minutes. Pull it the moment it flakes — carryover heat finishes it on the pan.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Off the heat: squeeze half the lemon over everything, scatter the parsley, and crush a spoonful of the beans into the pan juices with the back of a spoon.",
+        tip: "Crushing a few beans is what thickens the tomato juice into an actual sauce — no cream, no butter, no flour.",
+        stepIngredients: [
+          { name: 'Lemon', amount: '1/2' },
+          { name: 'Fresh parsley', amount: '2 tbsp, chopped' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-lentil-roasted-veg-bowl',
+    title: 'Lemon-Herb Lentil Bowl with Roasted Vegetables & Tahini',
+    tags: ['Lunch', 'Healthy'],
+    ingredients: [
+      { text: '1 cup French green lentils (du Puy)' },
+      { text: '3 cups low-sodium vegetable broth' },
+      { text: '1 lb carrots, cut into 1-inch chunks' },
+      { text: '1 red onion, cut into wedges' },
+      { text: '1 head broccoli, cut into florets' },
+      { text: '3 tbsp olive oil' },
+      { text: '1 tsp ground cumin' },
+      { text: '2 tbsp tahini' },
+      { text: '1 lemon' },
+      { text: '1 garlic clove, grated' },
+      { text: '1/4 cup chopped fresh parsley' },
+      { text: '2 oz feta, crumbled (optional)' },
+      { text: 'Kosher salt' },
+      { text: 'Black pepper' },
+    ],
+    cookSteps: [
+      {
+        text: "Lentils on first. Simmer them in the broth for 20–25 minutes, until tender but still holding their shape, then drain off whatever broth is left.",
+        tip: "Green du Puy lentils hold together; red ones collapse into dal. For a bowl you want the ones that stay intact.",
+        stepIngredients: [
+          { name: 'French green lentils', amount: '1 cup' },
+          { name: 'Low-sodium vegetable broth', amount: '3 cups' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "While the lentils go, roast the vegetables at 425°F for about 25 minutes total — but they go on the pan in stages.",
+        tip: "One pan, staggered, not two pans. Different vegetables want different times, not different trays.",
+        stepIngredients: [
+          { name: 'Carrots', amount: '1 lb, in chunks' },
+          { name: 'Red onion', amount: '1, in wedges' },
+          { name: 'Broccoli', amount: '1 head, florets' },
+          { name: 'Olive oil', amount: '2 tbsp' },
+          { name: 'Ground cumin', amount: '1 tsp' },
+        ],
+        substeps: [
+          { text: "Carrots and red onion first, tossed with 2 tbsp oil, the cumin and salt. They need the full 25 minutes to get sweet." },
+          { text: "Add the broccoli at the 10-minute mark. It only wants 15 — any longer and the florets go to ash." },
+        ],
+      },
+      {
+        text: "Tahini-lemon sauce: whisk the tahini with the juice of half the lemon, the grated garlic, a pinch of salt, and 2–3 tbsp warm water.",
+        tip: "It will seize and look broken the second the lemon hits. Keep whisking and add water a splash at a time — it comes back smooth and pourable.",
+        stepIngredients: [
+          { name: 'Tahini', amount: '2 tbsp' },
+          { name: 'Lemon', amount: '1/2' },
+          { name: 'Garlic', amount: '1 clove, grated' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Build it: lentils on the bottom, roasted vegetables over the top, tahini spooned across, then the parsley, the feta and the rest of the lemon.",
+        tip: "Dress the lentils with a little oil and salt while they're still warm. Warm legumes absorb seasoning; cold ones just wear it.",
+        stepIngredients: [
+          { name: 'Fresh parsley', amount: '1/4 cup' },
+          { name: 'Feta', amount: '2 oz (optional)' },
+          { name: 'Lemon', amount: '1/2' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-greek-chicken-farro-bowl',
+    title: 'Greek Chicken & Farro Bowl with Cucumber-Yogurt',
+    tags: ['Dinner', 'Healthy', 'High protein'],
+    ingredients: [
+      { text: '1 lb boneless, skinless chicken thighs' },
+      { text: '1 cup pearled farro' },
+      { text: '2 1/2 cups low-sodium chicken broth' },
+      { text: '1 cup plain Greek yogurt' },
+      { text: '1/2 English cucumber, grated' },
+      { text: '2 tbsp olive oil' },
+      { text: '2 garlic cloves, grated' },
+      { text: '1 tsp dried oregano' },
+      { text: '1 lemon' },
+      { text: '1 cup cherry tomatoes, halved' },
+      { text: '1/4 red onion, thinly sliced' },
+      { text: '2 tbsp chopped fresh dill' },
+      { text: '2 oz feta, crumbled' },
+      { text: 'Kosher salt' },
+      { text: 'Black pepper' },
+    ],
+    cookSteps: [
+      {
+        text: "Marinate the thighs in the olive oil, the juice of half the lemon, one grated garlic clove, the oregano and salt. 20 minutes is enough — that's exactly how long the farro takes.",
+        tip: "Thighs, not breasts, if this is going in the fridge as leftovers. Thighs stay juicy through a second heating; breasts turn to rope.",
+        stepIngredients: [
+          { name: 'Chicken thighs', amount: '1 lb' },
+          { name: 'Olive oil', amount: '2 tbsp' },
+          { name: 'Lemon', amount: '1/2' },
+          { name: 'Garlic', amount: '1 clove, grated' },
+          { name: 'Dried oregano', amount: '1 tsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Farro into the broth, simmer 25–30 minutes until it's chewy-tender, then drain.",
+        tip: "Check the bag for pearled vs whole. Whole farro at 25 minutes is still gravel — it needs closer to an hour and a soak.",
+        stepIngredients: [
+          { name: 'Pearled farro', amount: '1 cup' },
+          { name: 'Low-sodium chicken broth', amount: '2 1/2 cups' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Cucumber-yogurt while that goes: grate the cucumber, wring it dry in a towel, then stir it into the yogurt with the second garlic clove, the dill and a pinch of salt.",
+        tip: "Squeezing the cucumber is the entire difference between tzatziki and cucumber soup. Wring it harder than feels reasonable.",
+        stepIngredients: [
+          { name: 'Greek yogurt', amount: '1 cup' },
+          { name: 'English cucumber', amount: '1/2, grated' },
+          { name: 'Fresh dill', amount: '2 tbsp' },
+          { name: 'Garlic', amount: '1 clove, grated' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Sear the chicken in a hot pan, 5–6 minutes a side, until it reads 165°F. Rest 5 minutes, then slice.",
+        tip: "Shake the excess marinade off before it hits the pan — the yogurt-free marinade still carries enough liquid to steam the thighs instead of browning them.",
+        stepIngredients: [{ name: 'Chicken thighs', amount: 'marinated' }],
+        substeps: [],
+      },
+      {
+        text: "Build: farro base, sliced chicken over it, tomatoes and red onion, a big spoonful of the cucumber-yogurt, then feta and the rest of the lemon.",
+        tip: "Salt the tomatoes and onion on their own for a few minutes first. They release juice that works as a second dressing.",
+        stepIngredients: [
+          { name: 'Cherry tomatoes', amount: '1 cup, halved' },
+          { name: 'Red onion', amount: '1/4, sliced' },
+          { name: 'Feta', amount: '2 oz' },
+          { name: 'Lemon', amount: '1/2' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-overnight-oats-berries-chia',
+    title: 'Overnight Oats with Berries, Chia & Greek Yogurt',
+    tags: ['Breakfast', 'Healthy'],
+    ingredients: [
+      { text: '1/2 cup old-fashioned rolled oats' },
+      { text: '1/2 cup plain Greek yogurt' },
+      { text: '1/2 cup milk or unsweetened almond milk' },
+      { text: '1 tbsp chia seeds' },
+      { text: '1 tsp honey or maple syrup' },
+      { text: '1/4 tsp vanilla extract' },
+      { text: '1 pinch kosher salt' },
+      { text: '3/4 cup mixed berries' },
+      { text: '2 tbsp chopped walnuts or almonds' },
+      { text: '1 tbsp nut butter (optional)' },
+    ],
+    cookSteps: [
+      {
+        text: "Into a jar: oats, yogurt, milk, chia, honey, vanilla and a pinch of salt. Stir it properly — chia clumps if you just shake the jar.",
+        tip: "The pinch of salt isn't optional. Without it this tastes flat and you end up adding more honey to fix a problem that wasn't sweetness.",
+        stepIngredients: [
+          { name: 'Rolled oats', amount: '1/2 cup' },
+          { name: 'Greek yogurt', amount: '1/2 cup' },
+          { name: 'Milk', amount: '1/2 cup' },
+          { name: 'Chia seeds', amount: '1 tbsp' },
+          { name: 'Honey', amount: '1 tsp' },
+          { name: 'Vanilla extract', amount: '1/4 tsp' },
+          { name: 'Kosher salt', amount: '1 pinch' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Lid on, into the fridge, at least 4 hours — overnight is better. The chia needs that long to gel and thicken the whole thing.",
+        tip: "Make three jars at once. They hold 4 days in the fridge and the texture is actually better on day two.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "In the morning, top with the berries and nuts, plus a spoonful of nut butter if you want it to hold you past 11am.",
+        tip: "Berries go on in the morning, not the night before — left in overnight they bleed and turn the whole jar grey.",
+        stepIngredients: [
+          { name: 'Mixed berries', amount: '3/4 cup' },
+          { name: 'Walnuts or almonds', amount: '2 tbsp, chopped' },
+          { name: 'Nut butter', amount: '1 tbsp (optional)' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-sweet-potatoes',
+    title: 'Batch Sheet-Pan Sweet Potatoes (Sunday prep)',
+    tags: ['Meal prep', 'Healthy'],
+    ingredients: [
+      { text: '4 lb sweet potatoes, cut into 1-inch cubes' },
+      { text: '3 tbsp olive oil' },
+      { text: '2 tsp kosher salt' },
+      { text: '2 tsp smoked paprika' },
+      { text: '1 tsp garlic powder' },
+    ],
+    cookSteps: [
+      {
+        text: "Heat the oven to 425°F with racks in the upper and lower thirds. Cut 4 lb of sweet potatoes into 1-inch cubes — deliberately bigger than you'd cut for a single dinner.",
+        tip: "Big cubes survive reheating. Small ones are great on night one and mush by Wednesday. Leave the skin on too — it's fiber, it holds the cube together, and peeling 4 lb is twenty minutes you never get back.",
+        stepIngredients: [{ name: 'Sweet potatoes', amount: '4 lb' }],
+        substeps: [],
+      },
+      {
+        text: "Toss with the oil, salt, smoked paprika and garlic powder, then spread across TWO sheet pans.",
+        tip: "Two pans is the whole recipe. One crowded pan steams — pale, wet cubes that go slimy in the fridge by day two. Spread out, they actually roast.",
+        stepIngredients: [
+          { name: 'Olive oil', amount: '3 tbsp' },
+          { name: 'Kosher salt', amount: '2 tsp' },
+          { name: 'Smoked paprika', amount: '2 tsp' },
+          { name: 'Garlic powder', amount: '1 tsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Roast 30–35 minutes total.",
+        tip: "",
+        stepIngredients: [],
+        substeps: [
+          { text: "At 15 minutes, swap the pans between the upper and lower racks — the bottom rack browns faster." },
+          { text: "Shake each pan as you swap it so the cubes turn onto a new face." },
+          { text: "Pull them when the edges are browned and a corner cube gives easily to a fork." },
+        ],
+      },
+      {
+        text: "Cool completely on the pan, uncovered, before anything goes into a container. Then lid and refrigerate — they hold 5 days.",
+        tip: "Warm potatoes steam inside a sealed container. Lid them hot and you open it Tuesday to condensation and mush. This step is boring and it's the one that decides whether the batch survives the week.",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-boiled-eggs',
+    title: 'A Dozen Batch Boiled Eggs (steamed, easy-peel)',
+    tags: ['Meal prep', 'Breakfast'],
+    ingredients: [
+      { text: '12 large eggs' },
+      { text: 'Ice, for the ice bath' },
+    ],
+    cookSteps: [
+      {
+        text: "Bring an inch of water to a hard boil in a lidded pot. Lower all 12 eggs in on a steamer basket and put the lid on.",
+        tip: "Steam them, don't boil them. Eggs lowered into steam crack far less than eggs dropped into rolling water, and they peel cleanly even when the eggs are fresh — the membrane releases instead of tearing the white apart.",
+        stepIngredients: [{ name: 'Eggs', amount: '12 large' }],
+        substeps: [],
+      },
+      {
+        text: "13 minutes for a firm yolk that isn't chalky. 11 minutes if you want the center still a little jammy.",
+        tip: "Set an actual timer. The gap between perfect and a grey-green ring around the yolk is about three minutes.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Straight into an ice bath, 5 minutes minimum.",
+        tip: "The ice bath isn't really about cooling — it contracts the egg away from the shell. Skip it and you'll spend Monday morning picking shell fragments out of your breakfast.",
+        stepIngredients: [{ name: 'Ice', amount: 'for the bath' }],
+        substeps: [],
+      },
+      {
+        text: "Store them UNPEELED in the fridge. They keep a full week.",
+        tip: "Peeled eggs dry out and take on fridge smells within two days. Left in the shell they hold the whole week — peel each one the morning you eat it.",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-chipotle-chicken',
+    title: 'Big-Batch Shredded Chipotle Chicken',
+    tags: ['Meal prep', 'High protein'],
+    ingredients: [
+      { text: '3 lb boneless, skinless chicken thighs' },
+      { text: '2 limes' },
+      { text: '3 tbsp olive oil' },
+      { text: '1 tbsp kosher salt' },
+      { text: '2 tsp ground cumin' },
+      { text: '2 tsp dried oregano' },
+      { text: '1 tsp garlic powder' },
+      { text: '2 chipotle peppers in adobo, minced, plus 1 tbsp of the sauce' },
+      { text: '1/2 cup low-sodium chicken broth' },
+    ],
+    cookSteps: [
+      {
+        text: "Marinate the thighs in the lime juice, oil, salt, cumin, oregano, garlic powder and minced chipotle. 30 minutes minimum, overnight if you can.",
+        tip: "This is your own stove-to-oven method scaled up to a batch. 30 minutes is the floor — below that the acid hasn't done anything yet.",
+        stepIngredients: [
+          { name: 'Chicken thighs', amount: '3 lb' },
+          { name: 'Limes', amount: '2' },
+          { name: 'Olive oil', amount: '3 tbsp' },
+          { name: 'Ground cumin', amount: '2 tsp' },
+          { name: 'Dried oregano', amount: '2 tsp' },
+          { name: 'Chipotle in adobo', amount: '2 peppers + 1 tbsp sauce' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Sear in an oven-safe pan over high heat, 2–3 minutes a side — in batches, and only for color. You are not cooking them through here.",
+        tip: "Batches, not all at once. Three pounds of thighs in one pan drops the pan temperature and they poach in their own liquid instead of browning.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "All the thighs back into the pan with the broth, then into a 375°F oven for 15–20 minutes, until they read 165°F.",
+        tip: "",
+        stepIngredients: [{ name: 'Low-sodium chicken broth', amount: '1/2 cup' }],
+        substeps: [],
+      },
+      {
+        text: "Rest 5 minutes, then shred with two forks right there in the pan, in the juices.",
+        tip: "Shred it IN the liquid, never on a cutting board. The shreds drink the pan juices back up, and that's the entire reason it's still good on day four instead of dry and stringy.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Cool, then portion into containers. Keeps 4 days in the fridge, 3 months in the freezer.",
+        tip: "Freeze it in the juices too. A portion frozen dry reheats into sawdust.",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-cilantro-lime-rice',
+    title: 'Batch Cilantro-Lime Rice',
+    tags: ['Meal prep'],
+    ingredients: [
+      { text: '3 cups long-grain white rice' },
+      { text: '4 1/2 cups water or low-sodium broth' },
+      { text: '2 tbsp olive oil' },
+      { text: '2 limes' },
+      { text: '1 cup chopped fresh cilantro' },
+      { text: '1 1/2 tsp kosher salt' },
+    ],
+    cookSteps: [
+      {
+        text: "Rinse the rice in a strainer until the water running off it is clear — usually about a minute.",
+        tip: "Rinsing carries off the loose surface starch. Skip it on a batch this size and the whole thing sets into one solid block in the fridge.",
+        stepIngredients: [{ name: 'Long-grain white rice', amount: '3 cups' }],
+        substeps: [],
+      },
+      {
+        text: "Rice, water, salt and 1 tbsp of the oil into a pot. Bring to a boil, then drop to the lowest heat, lid on, 18 minutes. Don't lift the lid.",
+        tip: "Every look under the lid costs you steam, and steam is what's cooking the top layer. Lifting it twice gets you crunchy rice on top and scorched rice on the bottom.",
+        stepIngredients: [
+          { name: 'Water or low-sodium broth', amount: '4 1/2 cups' },
+          { name: 'Kosher salt', amount: '1 1/2 tsp' },
+          { name: 'Olive oil', amount: '1 tbsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Off the heat, lid still on, 10 more minutes. Then fluff with a fork.",
+        tip: "That off-heat rest is where the grains finish and separate. Fluffing the second it comes off the boil is how you get gluey rice.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Fold in the lime juice, the cilantro and the last tablespoon of oil while the rice is still warm.",
+        tip: "Warm rice absorbs the lime; cold rice just gets wet. Same rule as the lentils — season everything while it's warm.",
+        stepIngredients: [
+          { name: 'Limes', amount: '2' },
+          { name: 'Fresh cilantro', amount: '1 cup, chopped' },
+          { name: 'Olive oil', amount: '1 tbsp' },
+        ],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-gain-oat-pb-smoothie',
+    title: 'Weight-Gain Oat & Peanut Butter Smoothie',
+    tags: ['Breakfast', 'High protein'],
+    ingredients: [
+      { text: '1 cup whole milk' },
+      { text: '1 cup plain Greek yogurt' },
+      { text: '1/2 cup old-fashioned rolled oats' },
+      { text: '2 tbsp peanut butter' },
+      { text: '1 large banana, frozen' },
+      { text: '1 tbsp honey' },
+      { text: '1 tbsp chia seeds' },
+      { text: '1/4 tsp ground cinnamon' },
+      { text: '1 pinch kosher salt' },
+    ],
+    cookSteps: [
+      {
+        text: "Oats into the blender dry, on their own. Blitz for 20 seconds until they're flour.",
+        tip: "Blending the oats dry first is the difference between a smoothie and a gritty one. Once liquid is in the jar, whole oats never fully break down.",
+        stepIngredients: [{ name: 'Rolled oats', amount: '1/2 cup' }],
+        substeps: [],
+      },
+      {
+        text: "Everything else in — milk, yogurt, peanut butter, frozen banana, honey, chia, cinnamon, salt — and blend a full 60 seconds.",
+        tip: "Frozen banana, not ice. Ice makes it cold by watering it down, which defeats the entire purpose here. Frozen banana gets you the same thick and cold while adding calories instead of diluting them.",
+        stepIngredients: [
+          { name: 'Whole milk', amount: '1 cup' },
+          { name: 'Greek yogurt', amount: '1 cup' },
+          { name: 'Peanut butter', amount: '2 tbsp' },
+          { name: 'Banana', amount: '1 large, frozen' },
+          { name: 'Honey', amount: '1 tbsp' },
+          { name: 'Chia seeds', amount: '1 tbsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Drink it between meals, not with one.",
+        tip: "Roughly 850 calories and about 45g of protein. Liquid calories don't blunt appetite the way solid food does — that's what makes this the easiest 850 in your day, but only while it's an addition rather than a replacement.",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-taco-beef',
+    title: 'Batch Taco-Spiced Ground Beef',
+    tags: ['Meal prep', 'High protein'],
+    ingredients: [
+      { text: '2 lb ground beef, 85/15' },
+      { text: '1 tbsp chili powder' },
+      { text: '2 tsp ground cumin' },
+      { text: '1 tsp garlic powder' },
+      { text: '1 tsp onion powder' },
+      { text: '1 tsp kosher salt' },
+      { text: '1/2 tsp black pepper' },
+      { text: '1/2 cup water' },
+    ],
+    cookSteps: [
+      {
+        text: "Hot, dry pan. Beef in, broken into big chunks — then leave it alone for a full 4 minutes.",
+        tip: "85/15, not 93/7. You want the fat here: it's calories, it's flavour, and it's the reason the beef is still good on day three instead of dry crumbs.",
+        stepIngredients: [{ name: 'Ground beef', amount: '2 lb, 85/15' }],
+        substeps: [],
+      },
+      {
+        text: "Now break it down and keep cooking, 8–10 minutes, until the liquid has cooked off and the beef starts frying in its own fat.",
+        tip: "There's a moment where the pan goes from wet to properly sizzling. That's browning starting — everything before it is grey boiled beef.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Spices in for 30 seconds, then the water. Scrape the bottom of the pan and let it reduce down to nothing.",
+        tip: "Blooming the spices in the hot fat before any water hits is the whole difference between this and a seasoning packet.",
+        stepIngredients: [
+          { name: 'Chili powder', amount: '1 tbsp' },
+          { name: 'Ground cumin', amount: '2 tsp' },
+          { name: 'Garlic powder', amount: '1 tsp' },
+          { name: 'Onion powder', amount: '1 tsp' },
+          { name: 'Water', amount: '1/2 cup' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "Cool, then portion — and keep the fat in the container with it. 4 days in the fridge, 3 months frozen.",
+        tip: "Draining the fat off feels virtuous and costs you both the calories you're chasing and the thing keeping it moist.",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+  {
+    rid: 'builtin-prep-roast-veg',
+    title: 'Batch Roasted Broccoli & Peppers',
+    tags: ['Meal prep', 'Healthy'],
+    ingredients: [
+      { text: '2 lb broccoli florets' },
+      { text: '3 bell peppers, cut into strips' },
+      { text: '3 tbsp olive oil' },
+      { text: '1 tsp kosher salt' },
+      { text: '1/2 tsp black pepper' },
+      { text: '1/2 tsp garlic powder' },
+      { text: '1 lemon' },
+    ],
+    cookSteps: [
+      {
+        text: "Oven at 425°F. Toss the broccoli and peppers with the oil, salt, pepper and garlic powder, then spread over one large sheet pan — two if it looks crowded.",
+        tip: "This goes in on the last oven slot of the session, while everything else is already cooling. It needs the least attention of anything you cook today.",
+        stepIngredients: [
+          { name: 'Broccoli florets', amount: '2 lb' },
+          { name: 'Bell peppers', amount: '3, in strips' },
+          { name: 'Olive oil', amount: '3 tbsp' },
+        ],
+        substeps: [],
+      },
+      {
+        text: "15–20 minutes. Don't stir it.",
+        tip: "Every toss resets the browning. The charred edges are the entire point, and they only form where a piece sits undisturbed against hot metal.",
+        stepIngredients: [],
+        substeps: [],
+      },
+      {
+        text: "Squeeze the lemon over the pan the second it comes out, while everything is still hot.",
+        tip: "Acid on hot vegetables gets absorbed. Acid on cold vegetables just sits on top and makes them wet.",
+        stepIngredients: [{ name: 'Lemon', amount: '1' }],
+        substeps: [],
+      },
+      {
+        text: "Cool completely, then container. Holds 5 days and reheats better than most vegetables have any right to.",
+        tip: "",
+        stepIngredients: [],
+        substeps: [],
+      },
+    ],
+  },
+];
+
+// Bump the version suffix whenever BUILTIN_RECIPES changes so devices that
+// already seeded pick the new content up on their next load.
+const BUILTIN_SEED_KEY = 'meals-builtin-seed-v4';
+let _metaSnapLanded = false;
+let _builtinSeedRan = false;
+
+// Idempotent on purpose. The recipe doc is merged, and every user-facing edit
+// (title, image, ingredient/step overrides) lives in recipe_meta, which always
+// wins in recipeWithMeta — so re-seeding can't stomp an edit. cookSteps are the
+// one field seeding shares with the Cook editor, so they're only written when
+// the recipe has none yet.
+async function seedBuiltinRecipes(){
+  if (_builtinSeedRan || !_metaSnapLanded) return;
+  _builtinSeedRan = true;
+  try { if (localStorage.getItem(BUILTIN_SEED_KEY) === '1') { console.log('[recipes] built-ins already seeded'); return; } } catch {}
+  console.log('[recipes] seeding', BUILTIN_RECIPES.length, 'built-in recipe(s)');
+  for (const b of BUILTIN_RECIPES) {
+    try {
+      await setDoc(doc(recipesCol, b.rid), {
+        title: b.title,
+        img: b.img || '',
+        tags: b.tags || [],
+        ingredients: b.ingredients || [],
+        steps: b.cookSteps.map(s =>
+          [s.text, ...(s.substeps || []).map(ss => ss.text)].join(' ')),
+        link: b.link || '',
+        builtIn: true,
+        seededAt: nowISO()
+      }, { merge: true });
+      if (!Array.isArray(recipeMeta.get(b.rid)?.cookSteps)) {
+        await setDoc(doc(recipeMetaCol, b.rid), {
+          cookSteps: b.cookSteps,
+          cookStepsUpdatedAt: nowISO()
+        }, { merge: true });
+      }
+    } catch (e) { console.warn('[recipes] seed failed for', b.rid, e); }
+  }
+  try { localStorage.setItem(BUILTIN_SEED_KEY, '1'); } catch {}
+}
+
 function subscribeRecipeMeta(){
   onSnapshot(recipeMetaCol, (snap) => {
     // Track whether the OPEN recipe's meta actually changed in this snapshot
@@ -2324,6 +3164,10 @@ function subscribeRecipeMeta(){
       else recipeMeta.set(ch.doc.id, ch.doc.data() || {});
       if (cookOpenRid && ch.doc.id === cookOpenRid) openRecipeChanged = true;
     });
+    // Built-in seeding waits for this snapshot so it can tell "no cookSteps
+    // yet" from "we just haven't loaded them".
+    _metaSnapLanded = true;
+    seedBuiltinRecipes();
     renderAll();
     // Only touch the open cook view when (a) it's actually open, (b) the
     // current recipe's meta changed in this snapshot, AND (c) we don't have
@@ -2865,9 +3709,11 @@ function renderAll(){
   const isWeek = currentView === 'week';
   const isPast = currentView === 'past-weeks';
   const isCat  = currentView.startsWith('category:');
+  const isPrep = currentView === 'meal-prep';
   document.getElementById('slots').hidden = !isWeek;
   document.getElementById('history').hidden = !(isWeek || isPast);
   document.getElementById('catView').hidden = !isCat;
+  document.getElementById('prepView').hidden = !isPrep;
   document.getElementById('contentHint').hidden = !isWeek;
   if (isWeek) {
     renderSlots();
@@ -2876,6 +3722,8 @@ function renderAll(){
     renderHistory();  // full per-recipe history list, takes the whole pane
   } else if (isCat) {
     renderCategoryView();
+  } else if (isPrep) {
+    renderPrepView();
   }
   // Keep the Let's Cook list fresh when EZ data arrives or recipe_meta
   // changes (step counts depend on both).
@@ -2903,6 +3751,9 @@ function renderSidebar(){
   const items = [];
   items.push({ key: 'week',       label: '🎯 This week', count: null });
   items.push({ key: 'past-weeks', label: '🕒 Past weeks', count: pastCount });
+  // Prep sits with the week views, not the category list — it's a mode of
+  // working through the week, not a way of filtering recipes.
+  items.push({ key: 'meal-prep', label: '🍱 Meal prep', count: null });
   for (const L of LABELS) {
     items.push({ key: 'category:' + L, label: L, count: catCounts.get(L) || 0 });
   }
@@ -2915,6 +3766,241 @@ function renderSidebar(){
   list.querySelectorAll('[data-view]').forEach(el => el.addEventListener('click', () => {
     setCurrentView(el.getAttribute('data-view'));
   }));
+}
+
+// ---------- Meal prep plan ----------
+// The plan is a repeating TEMPLATE, not a one-off document: the six batches
+// and the Sunday running order are the same every week, so they live here in
+// code. What changes week to week is how far through it you are, and that
+// lives in Firestore keyed by weekKey (see prepWeeks below). Components point
+// at real recipe ids so tapping one opens its actual walkthrough rather than
+// re-stating the steps in a second place that can drift.
+const PREP_PLAN = {
+  targets: [
+    { n: '3,200', l: 'Calories / day' },
+    { n: '160g',  l: 'Protein / day' },
+    { n: '2:30',  l: 'Sunday session' },
+    { n: '6',     l: 'Batches' },
+  ],
+  intro: "Six batches on Sunday, assembled into 21 meals. Built for a surplus at ~175 lb: an estimated 2,700 maintenance plus 500, which should put on about half a pound a week. Tap any component to open its walkthrough.",
+  components: [
+    { rid: 'builtin-prep-sweet-potatoes',     y: '4 lb → 7 portions',      d: 'Dinner base and breakfast filler. Two trays, 1-inch cubes, skin on.' },
+    { rid: 'builtin-prep-boiled-eggs',        y: '18 eggs → all week',     d: 'Two to three every morning. Stored in the shell, peeled the day you eat them.' },
+    { rid: 'builtin-prep-chipotle-chicken',   y: '3 lb → 7 lunches',       d: 'The lunch protein, every day. Shredded into its own juices so it survives to day four.' },
+    { rid: 'builtin-prep-cilantro-lime-rice', y: '3 cups dry → 9 cooked',  d: 'The calorie floor. Rice is the cheapest surplus you have access to.' },
+    { rid: 'builtin-prep-taco-beef',          y: '2 lb → 5 dinners',       d: 'Second protein, so lunch and dinner are not the same meal twice.' },
+    { rid: 'builtin-prep-roast-veg',          y: '2 lb + 3 peppers',       d: 'Goes in on the last oven slot while everything else cools.' },
+  ],
+  // Oven changes are flagged because the oven is the bottleneck the whole
+  // session is scheduled around.
+  session: [
+    { t: '0:00', oven: true,  x: 'Oven to 425°F. Chicken into its marinade first — it needs 30 minutes and everything else can wait on it.' },
+    { t: '0:10', x: 'Cube 4 lb sweet potatoes, toss, spread over TWO sheet pans.', s: 'One crowded pan steams instead of roasting. This is the step the batch lives or dies on.' },
+    { t: '0:20', oven: true,  x: 'Sweet potatoes in, both racks — 30–35 min.', s: 'Same moment: rice rinsed and on burner one, eggs into the steamer on burner two.' },
+    { t: '0:35', x: 'Eggs out into the ice bath. Rice off the heat, lid on, resting.' },
+    { t: '0:40', x: 'Brown the 2 lb of ground beef on burner three.' },
+    { t: '0:55', oven: true,  x: 'Sweet potatoes out to cool. Oven DOWN to 375°F.', s: 'Leave them uncovered until cold or they steam themselves in the container.' },
+    { t: '1:00', x: 'Sear the chicken thighs in batches, 2–3 min a side, colour only.' },
+    { t: '1:10', oven: true,  x: 'Chicken into the oven with the broth — 15–20 min.' },
+    { t: '1:15', x: 'Fluff the rice, fold in lime and cilantro while warm. Cut the broccoli and peppers.' },
+    { t: '1:30', oven: true,  x: 'Chicken out to rest. Oven BACK UP to 425°F. Shred it in its own juices.' },
+    { t: '1:35', oven: true,  x: 'Broccoli and peppers in — 15–20 min.' },
+    { t: '1:45', x: 'Build 3 overnight-oats jars. Bag 4 smoothie kits.', s: 'Oats, peanut butter, chia and a frozen banana each — mornings become add milk and yogurt.' },
+    { t: '1:55', x: 'Vegetables out. Everything cooling at once.' },
+    { t: '2:05', x: 'Portion into containers. Thu–Sat chicken, beef and rice go to the FREEZER, not the fridge.' },
+    { t: '2:30', x: "Done. Kitchen's a disaster; the week isn't." },
+  ],
+  week: [
+    { d:'Sun', b:'Smoothie + 2 eggs',  l:'Burrito bowl', dn:'Beef, sweet potato, veg, avocado', s:'PB toast' },
+    { d:'Mon', b:'Oats jar + 3 eggs',  l:'Burrito bowl', dn:'Beef, sweet potato, veg, avocado', s:'Trail mix' },
+    { d:'Tue', b:'Smoothie + 2 eggs',  l:'Burrito bowl', dn:'Beef, rice, veg, avocado',         s:'Yogurt + honey' },
+    { d:'Wed', b:'Oats jar + 3 eggs',  l:'Burrito bowl', dn:'Beef, sweet potato, veg, avocado', s:'PB toast' },
+    { d:'Thu', b:'Smoothie + 2 eggs',  l:'Burrito bowl', lf:true, dn:'Blackened Salmon w/ Broccoli', fresh:true, s:'Trail mix' },
+    { d:'Fri', b:'Oats jar + 3 eggs',  l:'Burrito bowl', lf:true, dn:'Beef, rice, veg', df:true,     s:'PB toast' },
+    { d:'Sat', b:'Smoothie + 2 eggs',  l:'Burrito bowl', lf:true, dn:'Steak & Sweet Potato Bowl', fresh:true, s:'Yogurt + honey' },
+  ],
+  bowl: "The burrito bowl is the same build all seven days: 1½ cups rice, 5 oz chipotle chicken, ½ cup black beans, ¼ cup guacamole, a handful of cheese, salsa. Vary it with hot sauce, lime or pickled onion rather than by changing the components. Thursday and Saturday are cooked fresh on purpose — that's where a 7-day prep normally collapses into takeout.",
+  safety: {
+    head: 'Cooked chicken and rice keep four days refrigerated. Not seven.',
+    body: [
+      "This is the one part of the plan that isn't a preference. Cooked rice especially — B. cereus spores survive cooking and multiply at fridge temperature.",
+      "So on Sunday night four containers go in the FREEZER: three chicken-and-rice lunches and one beef-and-rice dinner. Move each to the fridge the night before. Sweet potatoes, roasted veg and in-shell eggs hold the full week fine.",
+      "No freezer space? A 15-minute Wednesday reset — fresh rice, one more tray of chicken — gets the same result with more dishes.",
+    ],
+  },
+  shop: [
+    { a:'Fresh produce', items:[
+      {q:'4 lb',t:'Sweet potatoes'},{q:'2 lb',t:'Broccoli'},{q:'3',t:'Bell peppers'},
+      {q:'4',t:'Bananas (freeze them)'},{q:'4',t:'Avocados'},{q:'4',t:'Limes'},
+      {q:'1',t:'Bunch cilantro'},{q:'1',t:'Red onion'}] },
+    { a:'Meat & seafood', items:[
+      {q:'3 lb',t:'Chicken thighs, boneless skinless'},{q:'2 lb',t:'Ground beef, 85/15'},
+      {q:'3',t:'Salmon fillets (Thu)'},{q:'1',t:'NY strip steak (Sat)'}] },
+    { a:'Dairy & eggs', items:[
+      {q:'18',t:'Large eggs'},{q:'1 qt',t:'Whole milk'},{q:'64 oz',t:'Plain Greek yogurt'},
+      {q:'8 oz',t:'Shredded Monterey Jack'},{q:'1',t:'Butter'}] },
+    { a:'Pantry & dry goods', items:[
+      {q:'2 lb',t:'Long-grain white rice'},{q:'18 oz',t:'Rolled oats'},{q:'1 jar',t:'Peanut butter'},
+      {q:'2 cans',t:'Black beans'},{q:'1 can',t:'Chipotle peppers in adobo'},
+      {q:'1 bag',t:'Trail mix or mixed nuts'},{q:'1',t:'Honey'},{q:'1',t:'Chia seeds'},{q:'1 loaf',t:'Bread'}] },
+    { a:'Sauces & condiments', items:[
+      {q:'1',t:'Salsa'},{q:'1',t:'Guacamole, or make it'},{q:'1',t:'Hot sauce'},{q:'1',t:'Olive oil, if low'}] },
+    { a:'Spices & seasoning', items:[
+      {q:'—',t:'Smoked paprika'},{q:'—',t:'Ground cumin'},{q:'—',t:'Chili powder'},
+      {q:'—',t:'Dried oregano'},{q:'—',t:'Garlic powder'},{q:'—',t:'Kosher salt'}] },
+  ],
+  dials: [
+    { h:'Weigh in twice a week, same time', p:'Morning, before eating. Watch the two-week trend and never a single day — water and salt swing daily weight by several pounds.' },
+    { h:'Not up after two weeks? Add 300.', p:"Don't rebuild the plan. A second smoothie, or 2 more tbsp of peanut butter and an extra cup of rice. Re-check in two weeks." },
+    { h:'Gaining faster than 1 lb a week?', p:"That's more fat than muscle at this rate. Pull ~300 back out — drop the snack first, keep the protein where it is." },
+    { h:'Lift, or the surplus has nowhere to go', p:'Calories decide whether you gain; resistance training decides what you gain. Without it a surplus this size is mostly fat.' },
+    { h:'Appetite is the real bottleneck', p:"If you can't finish the food, drink calories between meals rather than with them, and lean on oil, nut butter and full-fat dairy over bigger volumes." },
+    { h:'The 2,700 maintenance number is a guess', p:'It assumes moderate activity and knows nothing about your height, build or job. The scale is the only thing that tells you the truth.' },
+  ],
+};
+
+// Per-week progress through the plan. One doc per weekKey:
+// { weekKey, done: { 'c3': true, 's0-2': true }, updatedAt }. Keyed by week so
+// ticking off Sunday's cook session doesn't carry into next week's.
+const prepWeeksCol = collection(db, 'meals_prep_weeks');
+const prepWeeks = new Map();
+function subscribePrepWeeks(){
+  onSnapshot(prepWeeksCol, (snap) => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') prepWeeks.delete(ch.doc.id);
+      else prepWeeks.set(ch.doc.id, ch.doc.data() || {});
+    });
+    renderAll();
+  }, (err) => console.warn('[prep] snapshot err', err));
+}
+function prepDone(){
+  return (prepWeeks.get(viewWeekKey) || {}).done || {};
+}
+async function togglePrepDone(key){
+  const cur = prepDone();
+  const next = { ...cur };
+  if (next[key]) delete next[key]; else next[key] = true;
+  // Optimistic: paint immediately, let the snapshot confirm.
+  prepWeeks.set(viewWeekKey, { ...(prepWeeks.get(viewWeekKey) || {}), done: next });
+  renderPrepView();
+  try {
+    await setDoc(doc(prepWeeksCol, viewWeekKey),
+      { weekKey: viewWeekKey, done: next, updatedAt: nowISO() }, { merge: true });
+  } catch (e) { console.warn('[prep] save failed', e); }
+}
+
+function renderPrepView(){
+  const el = document.getElementById('prepView');
+  if (!el || currentView !== 'meal-prep') return;
+  const done = prepDone();
+  const P = PREP_PLAN;
+
+  const cookTotal = P.session.length;
+  const cookDone  = P.session.filter((_, i) => done['c' + i]).length;
+  const pct = cookTotal ? Math.round((cookDone / cookTotal) * 100) : 0;
+
+  const stats = P.targets.map(t =>
+    `<div class="pv-stat"><span class="n">${esc(t.n)}</span><span class="l">${esc(t.l)}</span></div>`).join('');
+
+  const comps = P.components.map(c => {
+    const r = lookupRecipe(c.rid);
+    const title = r ? recipeWithMeta(r).title : c.rid;
+    return `<div class="pv-comp" data-prep-rid="${attr(c.rid)}">
+      <span class="y">${esc(c.y)}</span>
+      <div class="t">${esc(title)}</div>
+      <div class="d">${esc(c.d)}</div>
+      <span class="go">${r ? '🍴 Open walkthrough →' : 'Recipe not loaded yet'}</span>
+    </div>`;
+  }).join('');
+
+  const steps = P.session.map((st, i) => {
+    const isDone = !!done['c' + i];
+    return `<div class="pv-step${st.oven ? ' oven' : ''}${isDone ? ' done' : ''}" data-prep-key="c${i}">
+      <div class="box" aria-hidden="true">✓</div>
+      <div class="t">${esc(st.t)}</div>
+      <div class="txt">${esc(st.x)}${st.s ? `<span class="sub">${esc(st.s)}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+
+  const rows = P.week.map(d => `
+    <tr>
+      <th scope="row">${esc(d.d)}</th>
+      <td>${esc(d.b)}</td>
+      <td>${esc(d.l)}${d.lf ? '<span class="fz">from freezer</span>' : ''}</td>
+      <td class="${d.fresh ? 'fresh' : ''}">${d.fresh ? 'Cook fresh — ' : ''}${esc(d.dn)}${d.df ? '<span class="fz">from freezer</span>' : ''}</td>
+      <td>${esc(d.s)}</td>
+    </tr>`).join('');
+
+  const aisles = P.shop.map((sec, si) => `
+    <div class="pv-aisle">
+      <div class="ah">${esc(sec.a)}</div>
+      ${sec.items.map((it, ii) => {
+        const k = `s${si}-${ii}`;
+        return `<div class="pv-item${done[k] ? ' done' : ''}" data-prep-key="${k}">
+          <div class="box" aria-hidden="true">✓</div>
+          <span class="q">${esc(it.q)}</span><span class="n">${esc(it.t)}</span>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+
+  const shopTotal = P.shop.reduce((n, s) => n + s.items.length, 0);
+  const shopDone  = P.shop.reduce((n, s, si) => n + s.items.filter((_, ii) => done[`s${si}-${ii}`]).length, 0);
+
+  el.innerHTML = `
+    <div class="pv-head">
+      <div class="pv-title">🍱 Meal prep</div>
+      <div class="pv-meta">${cookDone}/${cookTotal} cook steps · ${shopDone}/${shopTotal} shopped</div>
+      <div class="pv-wk">
+        <button class="tb-btn" data-pv-wk="-1" title="Previous week">‹</button>
+        <span class="lbl">Week of ${esc(weekDateRange(viewWeekKey))}</span>
+        <button class="tb-btn" data-pv-wk="1" title="Next week">›</button>
+        ${viewWeekKey === isoWeekKey() ? '<span class="now">This week</span>' : '<button class="tb-btn" data-pv-wk="0">Today</button>'}
+      </div>
+    </div>
+    <div class="pv-stats">${stats}</div>
+    <p class="pv-note">${esc(P.intro)}</p>
+
+    <h3 class="pv-h">Six components</h3>
+    <div class="pv-comps">${comps}</div>
+
+    <h3 class="pv-h">Sunday, start to finish</h3>
+    <div class="pv-prog"><div class="pv-bar"><i style="width:${pct}%"></i></div><span class="pct">${pct}%</span></div>
+    ${steps}
+
+    <h3 class="pv-h">The week</h3>
+    <div class="pv-scroll"><table>
+      <thead><tr><th>Day</th><th>Breakfast ·&nbsp;~950</th><th>Lunch ·&nbsp;~1,000</th><th>Dinner ·&nbsp;~1,000</th><th>Snack ·&nbsp;~300</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <p class="pv-note">${esc(P.bowl)}</p>
+
+    <h3 class="pv-h">The four-day rule</h3>
+    <div class="pv-call">
+      <b>${esc(P.safety.head)}</b>
+      ${P.safety.body.map(t => `<p>${esc(t)}</p>`).join('')}
+    </div>
+
+    <h3 class="pv-h">The shop</h3>
+    <div class="pv-aisles">${aisles}</div>
+
+    <h3 class="pv-h">Correcting it</h3>
+    <div class="pv-dials">${P.dials.map(d =>
+      `<div class="pv-dial"><b>${esc(d.h)}</b><span>${esc(d.p)}</span></div>`).join('')}</div>
+    <p class="pv-note">General nutrition guidance, not medical or dietetic advice.</p>
+  `;
+
+  el.querySelectorAll('[data-pv-wk]').forEach(b => b.addEventListener('click', () => {
+    const d = +b.getAttribute('data-pv-wk');
+    viewWeekKey = d === 0 ? isoWeekKey() : shiftWeekKey(viewWeekKey, d);
+    renderAll();
+  }));
+  el.querySelectorAll('[data-prep-key]').forEach(n =>
+    n.addEventListener('click', () => togglePrepDone(n.getAttribute('data-prep-key'))));
+  el.querySelectorAll('[data-prep-rid]').forEach(n =>
+    n.addEventListener('click', () => {
+      const rid = n.getAttribute('data-prep-rid');
+      if (lookupRecipe(rid)) openCook(rid);
+    }));
 }
 
 // ---------- Category view ----------
@@ -5709,6 +6795,7 @@ subscribeRecipeMeta();
 subscribeIngredientLib();
 subscribeRecipes();
 subscribeGrocery();
+subscribePrepWeeks();
 // Skip EZ entirely once you've disconnected — recipes flow in via the
 // subscribeRecipes mirror.
 if (!isEzDisconnected()) loadEz();
