@@ -3949,6 +3949,12 @@
   /* Day-focus "Today" chip + markers on today's dedicated programs */
   .prog-chip.today-chip { font-weight: 900; color: var(--amber, #FFC15A); border-color: rgba(255,193,90,.32) }
   .prog-chip.today-chip.active { background: rgba(255,193,90,.16); border-color: rgba(255,193,90,.5); color: var(--amber, #FFC15A) }
+  /* Deadlines scope chip — the old top-level page. Orange to match the lock
+     language used on hard-deadline rows everywhere else. */
+  .prog-chip.ddl-chip { font-weight: 900; color: var(--orange); border-color: rgba(255,138,61,.30) }
+  .prog-chip.ddl-chip svg { vertical-align: -1px; margin-right: 3px }
+  .prog-chip.ddl-chip.active { background: rgba(255,138,61,.16); border-color: rgba(255,138,61,.5); color: var(--orange) }
+  .prog-chip.ddl-chip.is-overdue .ct { color: var(--orange); opacity: 1 }
   .prog-chip.is-today { border-color: rgba(255,193,90,.4) }
   .prog-chip .today-star { color: var(--amber, #FFC15A); font-size: 10px; line-height: 1 }
   .prog-today-note {
@@ -4309,9 +4315,9 @@
     <span id="weeklyCount" style="display:none"></span>
     <button type="button" class="view-tab" data-view="programs">
       <span class="vt-full">Programs</span><span class="vt-short">Progs</span>
-    </button>
-    <button type="button" class="view-tab" data-view="deadlines">
-      🔒<span class="vt-full"> Deadlines</span><span class="vt-short"> Due</span>
+      <!-- Deadlines folded into this hub as a scope chip, so its badge rides
+           here: the count is open commitments + mini-deadlines, and it goes
+           amber-pulsing the moment one of them is late. -->
       <span class="view-tab-ct" id="deadlinesCount"></span>
     </button>
     <button type="button" class="view-tab" data-view="notif">
@@ -4908,7 +4914,7 @@ function subscribePriorities(){
       updateWeeklyCount();
       // Re-render anywhere priorities are visible: the Programs hub, the
       // priority dots on All-view rows, and Deadlines (mini-deadlines).
-      if (typeof render === 'function' && (currentView === 'programs' || currentView === 'deadlines' || (rows.length && currentView === 'all'))) render();
+      if (typeof render === 'function' && (currentView === 'programs' || (rows.length && currentView === 'all'))) render();
       updateDeadlinesCount();
     } catch {}
   }, err => console.error('priorities snapshot error', err));
@@ -7795,7 +7801,7 @@ function subscribeProgramNotes(){
     snap.forEach(d => { next[d.id] = d.data() || {}; });
     programNotes = next;
     // Deadlines shows note ⏳/⏱ timers, so it follows note edits too.
-    try { if (typeof render === 'function' && (currentView === 'programs' || currentView === 'deadlines')) render(); } catch {}
+    try { if (typeof render === 'function' && currentView === 'programs') render(); } catch {}
     try { updateDeadlinesCount(); } catch {}
   }, err => console.error('program notes snapshot error', err));
 }
@@ -8172,12 +8178,11 @@ function render(){
     renderWeekly();
     return;
   }
-  // Deadlines view — every hard-deadline commitment in one table.
-  if (currentView === 'deadlines') {
-    renderDeadlines();
-    return;
-  }
-  // Programs view — the per-program one-pager.
+  // (No 'deadlines' branch — that page folded into the Programs hub as the
+  // '__deadlines__' scope chip, exactly as Starred folded into it before.
+  // currentView isn't persisted and nothing can select 'deadlines' any more,
+  // so an unreachable branch here would only be somewhere for a bug to hide.)
+  // Programs view — the per-program one-pager, and the deadlines page.
   if (currentView === 'programs') {
     renderPrograms();
     return;
@@ -11571,7 +11576,7 @@ function renderPrograms(){
   const progs = allPrograms();
   const openCount = p => named.filter(r => r.program === p && !_rowClosed(r)).length;
   const totalOpen = named.filter(r => !_rowClosed(r)).length;
-  if (_progSel !== '__all__' && _progSel !== '__today__' && (!_progSel || !progs.includes(_progSel))) {
+  if (_progSel !== '__all__' && _progSel !== '__today__' && _progSel !== '__deadlines__' && (!_progSel || !progs.includes(_progSel))) {
     const f = _dayFocusTodayCfg();
     _progSel = f.programs.find(p => progs.includes(p))
       || progs.slice().sort((a, b) => openCount(b) - openCount(a))[0] || '';
@@ -11590,9 +11595,16 @@ function renderPrograms(){
   // Always show the "★ Today" chip so it's discoverable every day — on a day
   // with no dedication it opens a "set it up" state rather than vanishing.
   const todayChip = `<button type="button" class="prog-chip today-chip ${_progSel === '__today__' ? 'active' : ''}" data-prog-pick="__today__" title="Today's focus — ${escHtml(dayLbl)}">★ Today${_dayFocusHasContent() ? `<span class="ct">${todayProgs.length}</span>` : ''}</button>`;
+  // Deadlines is a scope of this hub rather than a tab of its own — every
+  // hard commitment, mini-deadline and undated star across all programs, one
+  // chip along from ★ Today. Always rendered, even at zero: it's the only
+  // door to that page now, so it can't be allowed to disappear.
+  const ddlCt = _deadlineCounts();
+  const ddlChip = `<button type="button" class="prog-chip ddl-chip ${_progSel === '__deadlines__' ? 'active' : ''} ${ddlCt.overdue ? 'is-overdue' : ''}" data-prog-pick="__deadlines__" title="Hard deadlines, mini-deadlines and undated stars${ddlCt.overdue ? ` — ${ddlCt.overdue} overdue` : ''}">${HARD_LOCK_ICON}Deadlines${ddlCt.total ? `<span class="ct">${ddlCt.total}</span>` : ''}</button>`;
   const chipsHTML = `
     <button type="button" class="prog-chip all-chip ${_progSel === '__all__' ? 'active' : ''}" data-prog-pick="__all__">All programs<span class="ct">${totalOpen}</span></button>
     ${todayChip}
+    ${ddlChip}
     ` + progs.map(p => {
     const c = programColor(p);
     const active = p === _progSel;
@@ -11609,6 +11621,14 @@ function renderPrograms(){
       <div class="prog-chips">${chipsHTML}</div>
       <button type="button" class="prog-reorder-btn" data-prog-order title="Set the order programs appear in everywhere">⇅ Reorder</button>
     </div>`;
+  // ---- Deadlines: the former top-level page, now a scope of this hub ----
+  // renderDeadlines paints the chips bar itself so the strip survives the
+  // handoff and every other chip stays one click away.
+  if (_progSel === '__deadlines__') {
+    renderDeadlines(chipsBarHTML);
+    _wireProgramShared(list);
+    return;
+  }
   // ---- ★ Today: each dedicated program rendered as its own full sheet ----
   // (Same anatomy as the individual program page, stacked — the user wanted
   // Today to read like the program pages, not compact cards.)
@@ -11892,24 +11912,36 @@ function _gotoProgramPage(program){
   }
   render();
 }
-function updateDeadlinesCount(){
-  const el = document.getElementById('deadlinesCount');
-  if (!el) return;
+// One source of truth for "how much is committed and how much is late".
+// The hidden #deadlinesCount badge, the Programs tab's overdue dot and the
+// Deadlines chip in the program strip all read it.
+// Mini-deadlines (priority/star/note countdowns) count toward both — the user
+// put them there to be held to them. "Since" count-ups don't.
+function _deadlineCounts(){
   const open = rows.filter(r => (r.task || '').trim() && isHardRow(r) && !_rowClosed(r));
   const overdue = open.filter(r => {
     const d = _parseDateOnly(r.dueDate);
     return d && _wkDaysFromToday(d) < 0;
   });
-  // Mini-deadlines (priority/star/note countdowns) count too — the user put
-  // them there to be held to them. "Since" count-ups don't.
   let mini = [];
   try { mini = _extraDeadlineEntries().filter(x => x.kind === 'due'); } catch {}
   const miniOverdue = mini.filter(x => { const d = _noteDays(x.iso); return d != null && d < 0; });
-  const total = open.length + mini.length;
-  el.textContent = total ? String(total) : '';
-  el.classList.toggle('has-new', overdue.length > 0 || miniOverdue.length > 0);
+  return { total: open.length + mini.length, overdue: overdue.length + miniOverdue.length };
 }
-function renderDeadlines(){
+// Drives the badge on the Programs tab — Deadlines has no tab of its own, so
+// this is how a commitment coming due is visible from every other view.
+function updateDeadlinesCount(){
+  const { total, overdue } = _deadlineCounts();
+  const el = document.getElementById('deadlinesCount');
+  if (!el) return;
+  el.textContent = total ? String(total) : '';   // :empty hides it at zero
+  el.classList.toggle('has-new', overdue > 0);
+}
+// Renders inside the Programs hub, so it takes that page's chips bar and
+// paints it above its own content — the chip strip has to stay put when you
+// land here, or there's no way back out to a program.
+function renderDeadlines(chromeHTML){
+  const chrome = chromeHTML || '';
   const list = document.getElementById('list');
   const metaEl = document.getElementById('metaCount');
   let pool = rows.filter(r => (r.task || '').trim() && isHardRow(r));
@@ -11961,7 +11993,7 @@ function renderDeadlines(){
   const mentionBar = _mentionBarHTML();
   if (!visible.length && !extras.length && !starredUndated.length) {
     // Keep the filter bar so a mention with no matches can always be undone.
-    list.innerHTML = mentionBar + `
+    list.innerHTML = chrome + mentionBar + `
       <div class="empty">${filterMention
         ? `Nothing here tags <strong>@${escHtml(filterMention)}</strong> right now.`
         : `No hard deadlines${pool.length ? ' in this view' : ''} yet.<br>
@@ -12095,7 +12127,7 @@ function renderDeadlines(){
           }).join('')}</tbody>
         </table>
       </div>` : '';
-  list.innerHTML = mentionBar + `<div class="ddl-wrap">${mainHTML}${extrasHTML}${starredHTML}</div>`;
+  list.innerHTML = chrome + mentionBar + `<div class="ddl-wrap">${mainHTML}${extrasHTML}${starredHTML}</div>`;
   _wireMentionBar(list);
   const closedToggle = list.querySelector('#ddlClosedToggle');
   if (closedToggle) closedToggle.addEventListener('click', () => { _ddlShowClosed = !_ddlShowClosed; render(); });
