@@ -3719,6 +3719,10 @@ const BUILTIN_RECIPES = [
 const BUILTIN_SEED_KEY = 'meals-builtin-seed-v11';
 let _metaSnapLanded = false;
 let _builtinSeedRan = false;
+// A reseed that doesn't finish must not mark itself done. Attempts are capped
+// so a permanently failing write (offline, rules change) can't spin forever.
+let _builtinSeedAttempts = 0;
+const BUILTIN_SEED_MAX_ATTEMPTS = 3;
 
 // Idempotent on purpose. The recipe doc is merged, and every user-facing edit
 // (title, image, ingredient/step overrides) lives in recipe_meta, which always
@@ -3729,7 +3733,10 @@ async function seedBuiltinRecipes(){
   if (_builtinSeedRan || !_metaSnapLanded) return;
   _builtinSeedRan = true;
   try { if (localStorage.getItem(BUILTIN_SEED_KEY) === '1') { console.log('[recipes] built-ins already seeded'); return; } } catch {}
-  console.log('[recipes] seeding', BUILTIN_RECIPES.length, 'built-in recipe(s)');
+  _builtinSeedAttempts += 1;
+  console.log('[recipes] seeding', BUILTIN_RECIPES.length,
+    `built-in recipe(s) — attempt ${_builtinSeedAttempts}/${BUILTIN_SEED_MAX_ATTEMPTS}`);
+  const failed = [];
   for (const b of BUILTIN_RECIPES) {
     try {
       await setDoc(doc(recipesCol, b.rid), {
@@ -3757,9 +3764,31 @@ async function seedBuiltinRecipes(){
           cookStepsUpdatedAt: nowISO()
         }, { merge: true });
       }
-    } catch (e) { console.warn('[recipes] seed failed for', b.rid, e); }
+    } catch (e) {
+      failed.push(b.rid);
+      console.warn('[recipes] seed failed for', b.rid, e);
+    }
+  }
+  // The done-flag is the LAST thing to happen, and only after a clean sweep.
+  // It used to be set unconditionally, so a partial run — one rejected write,
+  // or the tab closed mid-loop — marked itself finished and the new content
+  // never reached the device. Re-running costs nothing: the recipe doc is
+  // merged and cookSteps are version-gated, so an already-seeded recipe is a
+  // no-op on the retry.
+  if (failed.length) {
+    console.warn(`[recipes] seed incomplete — ${failed.length} of ${BUILTIN_RECIPES.length} failed:`, failed);
+    if (_builtinSeedAttempts < BUILTIN_SEED_MAX_ATTEMPTS) {
+      _builtinSeedRan = false;
+      const wait = 2000 * _builtinSeedAttempts;
+      console.log(`[recipes] retrying the seed in ${wait}ms`);
+      setTimeout(() => { seedBuiltinRecipes(); }, wait);
+    } else {
+      console.warn('[recipes] giving up this session; the seed will run again on next load');
+    }
+    return;
   }
   try { localStorage.setItem(BUILTIN_SEED_KEY, '1'); } catch {}
+  console.log('[recipes] seed complete —', BUILTIN_RECIPES.length, 'recipe(s)');
 }
 
 function subscribeRecipeMeta(){
