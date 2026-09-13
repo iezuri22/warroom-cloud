@@ -420,7 +420,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-13.6.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-13.7.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -436,6 +436,12 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="sub" id="photoSheetSub"></div>
     <div class="eyebrow" style="margin-bottom:6px">Angle</div>
     <div class="chips" id="angleChips"></div>
+    <div class="eyebrow" style="margin:10px 0 6px">Date taken</div>
+    <div class="row" style="gap:8px">
+      <input type="date" id="photoDate" style="flex:1">
+      <button class="btn sm" id="photoDateToday">Today</button>
+    </div>
+    <div class="dim" id="photoDateHint" style="font-size:12px;margin-top:6px">Pick an earlier date to add an old or pre-op photo.</div>
     <input type="file" id="photoFile" accept="image/*" capture="environment" class="hide">
     <div class="row" style="margin-top:10px;gap:8px">
       <button class="btn full primary" id="photoTake">📷 Camera</button>
@@ -700,6 +706,7 @@ function fmt(k,withYear){const d=parseKey(k);return MONTHS[d.getMonth()]+' '+d.g
 function fmtLong(k){const d=parseKey(k);return DOWS[d.getDay()]+', '+MONTHS[d.getMonth()]+' '+d.getDate();}
 function inRange(k,start,end){return k>=start&&k<=end;}
 function dayLabel(n){return n<0?('Day '+n):('Day '+n);}
+function dayTag(k){ const n=dayOf(k); return n<0 ? ('Pre-op · '+(-n)+'d before') : ('Day '+n); }
 function humanGap(n){
   if(n<=0) return 'now';
   if(n===1) return '1 day';
@@ -1158,7 +1165,7 @@ async function renderGallery(){
   const dates=Object.keys(byDate).sort().reverse();
   let html='';
   for(const d of dates){
-    html+=`<div class="gal-date"><span class="d">Day ${dayOf(d)}</span><span class="s">${fmtLong(d)}</span></div><div class="thumbs">`;
+    html+=`<div class="gal-date"><span class="d">${esc(dayTag(d))}</span><span class="s">${fmtLong(d)}</span></div><div class="thumbs">`;
     for(const p of byDate[d]){
       const u=await photoUrl(p.id);
       const al=angleLabel(p.angle);
@@ -1177,10 +1184,10 @@ async function renderCompare(){
   const base=baselinePhoto(angleFilter);
   if(!cmpL||!pool.some(p=>p.id===cmpL)) cmpL=base?base.id:pool[0].id;
   if(!cmpR||!pool.some(p=>p.id===cmpR)) cmpR=pool[pool.length-1].id;
-  const opt=(sel)=>pool.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>Day ${dayOf(p.date)} · ${fmt(p.date)} · ${esc(angleLabel(p.angle))}</option>`).join('');
+  const opt=(sel)=>pool.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(dayTag(p.date))} · ${fmt(p.date,p.date.slice(0,4)!==todayKey().slice(0,4))} · ${esc(angleLabel(p.angle))}</option>`).join('');
   const side=async(id,which)=>{
     const p=pool.find(x=>x.id===id); const u=p?await photoUrl(p.id):null;
-    return `<div class="side"><select data-act="cmp" data-side="${which}">${opt(id)}</select><div class="frame">${u?`<img src="${u}" alt="">`:'Pick a photo'}</div><div class="cap">${p?('Day '+dayOf(p.date)+(base&&base.id===p.id?' · baseline':'')):''}</div></div>`;
+    return `<div class="side"><select data-act="cmp" data-side="${which}">${opt(id)}</select><div class="frame">${u?`<img src="${u}" alt="">`:'Pick a photo'}</div><div class="cap">${p?(dayTag(p.date)+(base&&base.id===p.id?' · baseline':'')):''}</div></div>`;
   };
   el.innerHTML=(await side(cmpL,'L'))+(await side(cmpR,'R'));
 }
@@ -1229,7 +1236,7 @@ function renderLog(){
   $('#log').innerHTML=keys.slice(0,60).map(k=>{
     const r=state.days[k]; const n=photosOn(k).length;
     const txt=(r.note&&r.note.trim())?r.note.trim():(r.symptoms&&r.symptoms.length?r.symptoms.join(', '):'—');
-    return `<button class="logrow" data-act="goto" data-k="${k}"><span class="day">Day ${dayOf(k)}</span><span class="txt"><span class="dt">${fmt(k)}</span>${esc(txt)}</span><span class="ic">${r.flag?'⚠️':''}${r.checkin?'✅':''}${n?'📷'+n:''}</span></button>`;
+    return `<button class="logrow" data-act="goto" data-k="${k}"><span class="day">${dayOf(k)<0?'Pre-op':'Day '+dayOf(k)}</span><span class="txt"><span class="dt">${fmt(k)}</span>${esc(txt)}</span><span class="ic">${r.flag?'⚠️':''}${r.checkin?'✅':''}${n?'📷'+n:''}</span></button>`;
   }).join('');
 }
 
@@ -1254,9 +1261,15 @@ function doCheckin(k){
   toast(cad.every===1?'Check-in logged. Same time tomorrow.':'Check-in logged. Next one in '+cad.every+' days.');
 }
 
+let photoDateKey=null;
+function describePhotoDate(){
+  const k=photoDateKey||selectedKey; const n=photosOn(k).length;
+  $('#photoSheetSub').textContent=dayTag(k)+' · '+fmtLong(k)+(n?' · '+n+' already on this day':'');
+}
 async function openPhotoSheet(){
-  const k=selectedKey;
-  $('#photoSheetSub').textContent='Day '+dayOf(k)+' · '+fmtLong(k)+' · '+(photosOn(k).length? photosOn(k).length+' already today':'same light, same spot');
+  const k=selectedKey; photoDateKey=k;
+  const inp=$('#photoDate'); inp.value=k; inp.max=todayKey(); inp.min='2015-01-01';
+  describePhotoDate();
   if(!openPhotoSheet.angle) openPhotoSheet.angle='front';
   $('#angleChips').innerHTML=ANGLES.map(a=>`<button class="chip ${openPhotoSheet.angle===a.id?'on':''}" data-angle="${a.id}">${esc(a.label)}</button>`).join('');
   $('#photoSheet').classList.add('open');
@@ -1272,7 +1285,7 @@ async function openLightbox(id){
 async function showLb(){
   const p=lbList[lbIdx]; if(!p) return;
   $('#lbImg').src=(await photoUrl(p.id))||'';
-  $('#lbTitle').textContent='Day '+dayOf(p.date)+' · '+fmt(p.date)+' · '+(angleLabel(p.angle));
+  $('#lbTitle').textContent=dayTag(p.date)+' · '+fmt(p.date,p.date.slice(0,4)!==todayKey().slice(0,4))+' · '+angleLabel(p.angle);
 }
 
 function exportNotes(){
@@ -1307,7 +1320,8 @@ document.addEventListener('change',async e=>{
   if(t.dataset&&t.dataset.act==='cmp'){ if(t.dataset.side==='L') cmpL=t.value; else cmpR=t.value; await renderCompare(); return; }
   if(t.id==='photoFile'||t.id==='photoFileLib'){
     const f=t.files&&t.files[0]; t.value=''; if(!f) return;
-    try{ await addPhoto(f,selectedKey,openPhotoSheet.angle||'front'); closePhotoSheet(); toast('Photo saved · +'+XP.photo+' XP'); renderAll(); }
+    const dateKey=(photoDateKey&&photoDateKey<=todayKey())?photoDateKey:selectedKey;
+    try{ await addPhoto(f,dateKey,openPhotoSheet.angle||'front'); closePhotoSheet(); toast('Photo saved · '+dayTag(dateKey)+' · +'+XP.photo+' XP'); renderAll(); }
     catch(err){ console.error(err); toast('Could not save that photo'); }
   }
 });
@@ -1320,6 +1334,8 @@ $('#addPhotoBtn2').addEventListener('click',openPhotoSheet);
 $('#photoTake').addEventListener('click',()=>$('#photoFile').click());
 $('#photoPick').addEventListener('click',()=>$('#photoFileLib').click());
 $('#photoCancel').addEventListener('click',closePhotoSheet);
+$('#photoDate').addEventListener('change',e=>{ if(e.target.value&&e.target.value<=todayKey()){ photoDateKey=e.target.value; describePhotoDate(); } });
+$('#photoDateToday').addEventListener('click',()=>{ photoDateKey=todayKey(); $('#photoDate').value=photoDateKey; describePhotoDate(); });
 $('#photoSheet').addEventListener('click',e=>{ if(e.target.id==='photoSheet') closePhotoSheet(); });
 $('#lbClose').addEventListener('click',()=>$('#lightbox').classList.remove('open'));
 $('#lbPrev').addEventListener('click',()=>{ lbIdx=(lbIdx-1+lbList.length)%lbList.length; showLb(); });
