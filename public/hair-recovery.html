@@ -420,7 +420,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-13.4.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-13.5.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -672,13 +672,13 @@ const BADGES = [
 ];
 
 const ANGLES = [
-  {id:'front',   label:'Front'},
-  {id:'hairline',label:'Hairline'},
-  {id:'left',    label:'Left temple'},
-  {id:'right',   label:'Right temple'},
-  {id:'top',     label:'Top'},
-  {id:'donor',   label:'Donor'}
+  {id:'front', label:'Front'},
+  {id:'right', label:'Right'},
+  {id:'left',  label:'Left'}
 ];
+// Angles that existed before the list was trimmed — kept so older photos still get a label.
+const LEGACY_ANGLES = {hairline:'Hairline', top:'Top', donor:'Donor'};
+function angleLabel(id){ const a=ANGLES.find(x=>x.id===id); return a?a.label:(LEGACY_ANGLES[id]||id); }
 const SYMPTOMS = ['Swelling','Itching','Redness','Pain','Numbness','Pimples','Tightness','Bleeding'];
 const RED_FLAGS = ['Redness that spreads beyond the grafted area','Pus or yellow discharge','Fever','Pain that gets worse instead of better','Swelling that is clearly one-sided'];
 
@@ -1125,7 +1125,7 @@ function renderDay(){
 async function renderMiniThumbs(k){
   const box=$('#checkinBox'); const list=photosOn(k); if(!list.length) return;
   let html='<div class="mini-thumbs">';
-  for(const p of list){ const u=await photoUrl(p.id); const al=(ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle; html+=`<button class="mt" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="">`:''}<span>${esc(al)}</span></button>`; }
+  for(const p of list){ const u=await photoUrl(p.id); const al=angleLabel(p.angle); html+=`<button class="mt" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="">`:''}<span>${esc(al)}</span></button>`; }
   html+='</div>';
   if($('#checkinBox')!==box) return;
   const done=box.querySelector('.checkin-done'), reqs=box.querySelector('.checkin-req');
@@ -1155,7 +1155,7 @@ async function renderGallery(){
   $('#angleFilter').innerHTML=chips.map(a=>`<button class="chip sm ${angleFilter===a.id?'on':''}" data-act="filter" data-a="${a.id}">${esc(a.label)}</button>`).join('');
   const list=photosMeta.filter(p=>angleFilter==='all'||p.angle===angleFilter);
   const base=baselinePhoto(angleFilter);
-  if(!list.length){ $('#gallery').innerHTML='<div class="empty">No photos yet. Same spot, same light, same angles each time: front, hairline, both temples, top, donor. Day 5 becomes the baseline.</div>'; return; }
+  if(!list.length){ $('#gallery').innerHTML='<div class="empty">No photos yet. Same spot, same light, same three angles each time: front, right, left. Day 5 becomes the baseline.</div>'; return; }
   const byDate={}; list.forEach(p=>{(byDate[p.date]=byDate[p.date]||[]).push(p);});
   const dates=Object.keys(byDate).sort().reverse();
   let html='';
@@ -1163,7 +1163,7 @@ async function renderGallery(){
     html+=`<div class="gal-date"><span class="d">Day ${dayOf(d)}</span><span class="s">${fmtLong(d)}</span></div><div class="thumbs">`;
     for(const p of byDate[d]){
       const u=await photoUrl(p.id);
-      const al=(ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle;
+      const al=angleLabel(p.angle);
       html+=`<button class="thumb ${u?'':'pending'}" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="${esc(al)} day ${dayOf(d)}">`:'<span class="wait">Still on your other device<br>opens the app there to sync</span>'}<span class="lab">${esc(al)}</span>${base&&base.id===p.id?'<span class="base">Baseline</span>':''}</button>`;
     }
     html+='</div>';
@@ -1179,7 +1179,7 @@ async function renderCompare(){
   const base=baselinePhoto(angleFilter);
   if(!cmpL||!pool.some(p=>p.id===cmpL)) cmpL=base?base.id:pool[0].id;
   if(!cmpR||!pool.some(p=>p.id===cmpR)) cmpR=pool[pool.length-1].id;
-  const opt=(sel)=>pool.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>Day ${dayOf(p.date)} · ${fmt(p.date)} · ${esc((ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle)}</option>`).join('');
+  const opt=(sel)=>pool.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>Day ${dayOf(p.date)} · ${fmt(p.date)} · ${esc(angleLabel(p.angle))}</option>`).join('');
   const side=async(id,which)=>{
     const p=pool.find(x=>x.id===id); const u=p?await photoUrl(p.id):null;
     return `<div class="side"><select data-act="cmp" data-side="${which}">${opt(id)}</select><div class="frame">${u?`<img src="${u}" alt="">`:'Pick a photo'}</div><div class="cap">${p?('Day '+dayOf(p.date)+(base&&base.id===p.id?' · baseline':'')):''}</div></div>`;
@@ -1274,7 +1274,7 @@ async function openLightbox(id){
 async function showLb(){
   const p=lbList[lbIdx]; if(!p) return;
   $('#lbImg').src=(await photoUrl(p.id))||'';
-  $('#lbTitle').textContent='Day '+dayOf(p.date)+' · '+fmt(p.date)+' · '+((ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle);
+  $('#lbTitle').textContent='Day '+dayOf(p.date)+' · '+fmt(p.date)+' · '+(angleLabel(p.angle));
 }
 
 function exportNotes(){
