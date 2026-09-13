@@ -289,6 +289,13 @@ textarea:focus,input:focus,select:focus{border-color:var(--accent);outline:none}
 @media(min-width:600px){.thumbs{grid-template-columns:repeat(4,1fr)}}
 .thumb{position:relative;aspect-ratio:3/4;border-radius:12px;overflow:hidden;background:var(--card-2);border:none;padding:0;cursor:pointer}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb.pending{border:1px dashed var(--border-strong)}
+.thumb .wait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:10.5px;font-weight:700;color:var(--dim);padding:8px;line-height:1.3}
+.mini-thumbs{display:flex;gap:6px;margin:0 0 12px;overflow-x:auto;scrollbar-width:none}
+.mini-thumbs::-webkit-scrollbar{display:none}
+.mini-thumbs .mt{width:56px;height:74px;border-radius:10px;overflow:hidden;flex-shrink:0;background:var(--card-2);border:none;padding:0;cursor:pointer;position:relative}
+.mini-thumbs .mt img{width:100%;height:100%;object-fit:cover;display:block}
+.mini-thumbs .mt span{position:absolute;left:0;right:0;bottom:0;font-size:8.5px;font-weight:800;text-transform:uppercase;background:rgba(0,0,0,.55);color:#fff;padding:2px 0;text-align:center}
 .thumb .lab{position:absolute;left:6px;bottom:6px;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;background:rgba(0,0,0,.55);color:#fff;padding:3px 6px;border-radius:6px}
 .thumb .base{position:absolute;right:6px;top:6px;font-size:10px;font-weight:800;background:var(--accent);color:var(--on-accent);padding:3px 6px;border-radius:6px}
 .compare{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
@@ -412,7 +419,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Data lives on this device; notes and check-ins also sync with your War Room account, photos never leave the phone.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -451,6 +458,43 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 
 <div class="toast" id="toast"></div>
 
+<script type="module">
+// Cloud copy of every photo so the gallery is the same on the phone and the
+// desktop. Firebase Storage on this project needs the pay-as-you-go plan
+// (uploads fail with storage/quota-exceeded), so each photo is stored as a
+// base64 JPEG inside a Firestore document instead — same project the rest
+// of War Room uses. Photos are downscaled to 1200px (~150–300KB) to stay
+// well under Firestore's 1MB document limit.
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, doc, setDoc, getDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+const app = initializeApp({
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos"
+});
+const db = getFirestore(app);
+const COL = 'hair_recovery_photos';
+const toDataUrl = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+window.__hrCloud = {
+  async put(id, meta, blob){
+    const b64 = await toDataUrl(blob);
+    await setDoc(doc(db, COL, id), { id, date: meta.date, angle: meta.angle, ts: meta.ts, w: meta.w || null, h: meta.h || null, bytes: blob.size, b64 });
+    return true;
+  },
+  async get(id){
+    const snap = await getDoc(doc(db, COL, id));
+    if(!snap.exists()) return null;
+    const d = snap.data();
+    const blob = await (await fetch(d.b64)).blob();
+    return { blob, date: d.date, angle: d.angle, ts: d.ts, w: d.w, h: d.h };
+  },
+  async remove(id){
+    try { await deleteDoc(doc(db, COL, id)); }
+    catch(e){ console.warn('[recovery] cloud delete failed', e.code || e.message); }
+  }
+};
+document.dispatchEvent(new Event('hr:cloud-ready'));
+</script>
 <script>
 (function(){
 'use strict';
@@ -783,26 +827,63 @@ function idb(mode,fn){
     const req=fn(st); tx.oncomplete=()=>res(req&&req.result); tx.onerror=()=>rej(tx.error);
   });
 }
+// photosMeta = the synced list (state.photos, which rides the account sync)
+// merged with whatever blobs this device holds in IndexedDB. A photo can be
+// local-only (taken here, not uploaded yet), cloud-only (taken elsewhere),
+// or both.
 async function loadPhotoMeta(){
-  try{
-    const all=await idb('readonly',st=>st.getAll());
-    photosMeta=(all||[]).map(p=>({id:p.id,date:p.date,angle:p.angle,ts:p.ts})).sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts);
-  }catch(e){ photosMeta=(state.photos||[]).slice(); }
-  state.photos=photosMeta.map(p=>({id:p.id,date:p.date,angle:p.angle,ts:p.ts}));
+  let local=[]; try{ local=(await idb('readonly',st=>st.getAll()))||[]; }catch(e){}
+  const byId=new Map();
+  (state.photos||[]).forEach(p=>byId.set(p.id,{id:p.id,date:p.date,angle:p.angle,ts:p.ts,cloud:!!p.cloud,local:false}));
+  local.forEach(p=>{ const m=byId.get(p.id)||{id:p.id,date:p.date,angle:p.angle,ts:p.ts,cloud:false}; m.local=true; byId.set(p.id,m); });
+  photosMeta=[...byId.values()].sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts);
+  state.photos=photosMeta.map(p=>({id:p.id,date:p.date,angle:p.angle,ts:p.ts,cloud:p.cloud}));
 }
 async function photoUrl(id){
   if(urlCache.has(id)) return urlCache.get(id);
-  try{
-    const rec=await idb('readonly',st=>st.get(id));
-    if(!rec||!rec.blob) return null;
-    const u=URL.createObjectURL(rec.blob); urlCache.set(id,u); return u;
-  }catch(e){return null;}
+  const meta=photosMeta.find(p=>p.id===id);
+  if(meta&&meta.local){
+    try{
+      const rec=await idb('readonly',st=>st.get(id));
+      if(rec&&rec.blob){ const u=URL.createObjectURL(rec.blob); urlCache.set(id,u); return u; }
+    }catch(e){}
+  }
+  // Taken on another device: pull it from the cloud once and cache it here.
+  if(meta&&meta.cloud&&window.__hrCloud){
+    try{
+      const c=await window.__hrCloud.get(id);
+      if(c&&c.blob){
+        try{ await idb('readwrite',st=>st.put({id,date:c.date||meta.date,angle:c.angle||meta.angle,ts:c.ts||meta.ts,blob:c.blob,w:c.w,h:c.h})); meta.local=true; clearTimeout(photoUrl._st); photoUrl._st=setTimeout(renderSettings,300); }catch(e){}
+        const u=URL.createObjectURL(c.blob); urlCache.set(id,u); return u;
+      }
+    }catch(e){ console.warn('[recovery] cloud fetch failed', id, e.code||e.message); }
+  }
+  return null;
 }
+// Upload every local photo that has no cloud copy yet. Runs at boot, after
+// each new photo, and when the cloud module finishes loading.
+let _syncing=false;
+async function syncPendingPhotos(){
+  if(_syncing||!window.__hrCloud) return; _syncing=true;
+  let changed=0;
+  try{
+    for(const p of photosMeta.filter(x=>x.local&&!x.cloud)){
+      try{
+        const rec=await idb('readonly',st=>st.get(p.id)); if(!rec||!rec.blob) continue;
+        await window.__hrCloud.put(p.id,{date:p.date,angle:p.angle,ts:p.ts,w:rec.w,h:rec.h},rec.blob);
+        p.cloud=true; changed++;
+        state.photos=photosMeta.map(x=>({id:x.id,date:x.date,angle:x.angle,ts:x.ts,cloud:x.cloud})); saveState();
+      }catch(e){ console.warn('[recovery] photo upload failed', p.id, e.code||e.message); }
+    }
+  }finally{ _syncing=false; }
+  if(changed){ renderSettings(); renderGallery(); renderCompare(); }
+}
+document.addEventListener('hr:cloud-ready',()=>{ if(state) syncPendingPhotos(); });
 function downscale(file){
   return new Promise((res,rej)=>{
     const img=new Image(); const u=URL.createObjectURL(file);
     img.onload=()=>{
-      const MAX=1600; let w=img.naturalWidth,h=img.naturalHeight; const s=Math.min(1,MAX/Math.max(w,h)); w=Math.round(w*s);h=Math.round(h*s);
+      const MAX=1200; let w=img.naturalWidth,h=img.naturalHeight; const s=Math.min(1,MAX/Math.max(w,h)); w=Math.round(w*s);h=Math.round(h*s);
       const c=document.createElement('canvas'); c.width=w;c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
       URL.revokeObjectURL(u);
       c.toBlob(b=>b?res({blob:b,w,h}):rej(new Error('encode failed')),'image/jpeg',.86);
@@ -817,10 +898,14 @@ async function addPhoto(file,date,angle){
   await idb('readwrite',st=>st.put({id,date,angle,ts:Date.now(),blob,w,h}));
   try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
   await loadPhotoMeta(); saveState();
+  syncPendingPhotos();
 }
 async function deletePhoto(id){
-  await idb('readwrite',st=>st.delete(id));
+  const meta=photosMeta.find(p=>p.id===id);
+  try{ await idb('readwrite',st=>st.delete(id)); }catch(e){}
   if(urlCache.has(id)){URL.revokeObjectURL(urlCache.get(id));urlCache.delete(id);}
+  state.photos=(state.photos||[]).filter(p=>p.id!==id);
+  if(meta&&meta.cloud&&window.__hrCloud) window.__hrCloud.remove(id);
   await loadPhotoMeta(); saveState();
 }
 
@@ -931,6 +1016,7 @@ function renderDay(){
       </div>`;
   }
   $('#checkinBox').innerHTML=html;
+  renderMiniThumbs(k);
 
   // care checklist
   const tasks=tasksFor(k); let care='';
@@ -980,6 +1066,16 @@ function renderDay(){
     </div>`;
 }
 
+async function renderMiniThumbs(k){
+  const box=$('#checkinBox'); const list=photosOn(k); if(!list.length) return;
+  let html='<div class="mini-thumbs">';
+  for(const p of list){ const u=await photoUrl(p.id); const al=(ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle; html+=`<button class="mt" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="">`:''}<span>${esc(al)}</span></button>`; }
+  html+='</div>';
+  if($('#checkinBox')!==box) return;
+  const done=box.querySelector('.checkin-done'), reqs=box.querySelector('.checkin-req');
+  (reqs||done)?.insertAdjacentHTML(reqs?'afterend':'beforebegin',html);
+}
+
 function renderUnlocks(){
   const tk=todayKey(); const t=utcDays(tk); const d0=utcDays(DAY0);
   const sorted=UNLOCKS.slice().sort((a,b)=>a.d.localeCompare(b.d));
@@ -1012,7 +1108,7 @@ async function renderGallery(){
     for(const p of byDate[d]){
       const u=await photoUrl(p.id);
       const al=(ANGLES.find(a=>a.id===p.angle)||{}).label||p.angle;
-      html+=`<button class="thumb" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="${esc(al)} day ${dayOf(d)}">`:''}<span class="lab">${esc(al)}</span>${base&&base.id===p.id?'<span class="base">Baseline</span>':''}</button>`;
+      html+=`<button class="thumb ${u?'':'pending'}" data-act="open" data-id="${p.id}">${u?`<img src="${u}" alt="${esc(al)} day ${dayOf(d)}">`:'<span class="wait">Still on your other device<br>opens the app there to sync</span>'}<span class="lab">${esc(al)}</span>${base&&base.id===p.id?'<span class="base">Baseline</span>':''}</button>`;
     }
     html+='</div>';
   }
@@ -1088,7 +1184,7 @@ function renderSettings(){
     <div class="set-row"><div><div class="l">Prednol last day</div><div class="h">Sheet says early days only. Set the real last day.</div></div><input type="date" data-set="prednolEnd" value="${esc(state.settings.prednolEnd)}"></div>
     <div class="set-row"><div><div class="l">RIF last day</div><div class="h">On the grafts. Set to Tue, Sep 15.</div></div><input type="date" data-set="rifEnd" value="${esc(state.settings.rifEnd)}"></div>
     <div class="set-row"><div><div class="l">Donor topicals last day</div><div class="h">Fusidas / Hametol on the donor area.</div></div><input type="date" data-set="topicalsEnd" value="${esc(state.settings.topicalsEnd)}"></div>
-    <div class="set-row"><div><div class="l">Photos on this device</div><div class="h">${photosMeta.length} stored locally · never uploaded</div></div><button class="btn sm" data-act="export">Export notes</button></div>`;
+    <div class="set-row"><div><div class="l">Photos</div><div class="h">${photosMeta.length} total · ${photosMeta.filter(p=>p.cloud).length} in the cloud · ${photosMeta.filter(p=>p.local).length} on this device${photosMeta.some(p=>p.local&&!p.cloud)?' · '+photosMeta.filter(p=>p.local&&!p.cloud).length+' waiting to upload':''}</div></div><button class="btn sm" data-act="export">Export notes</button></div>`;
 }
 
 /* =====================================================================
@@ -1214,6 +1310,7 @@ async function boot(){
   try{ await openDb(); }catch(e){ console.warn('IndexedDB unavailable',e); }
   await loadPhotoMeta();
   renderAll();
+  syncPendingPhotos();
   // re-render at midnight so the day rolls over without a reload
   const now=new Date(); const mid=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,5);
   setTimeout(()=>{ selectedKey=todayKey(); renderAll(); },mid-now);
