@@ -250,6 +250,19 @@ textarea:focus,input:focus,select:focus{border-color:var(--accent);outline:none}
 .ul .mini i{display:block;height:100%;background:var(--accent)}
 .ul.open .mini i{background:var(--green)}
 
+/* ---------- stops ---------- */
+.stop{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border)}
+.stop:first-child{border-top:0}
+.stop .ic{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:var(--card-2);color:var(--dim);font-weight:800}
+.stop.past .ic{background:var(--green-soft);color:var(--green)}
+.stop.soon .ic{background:var(--accent-soft);color:var(--accent)}
+.stop .n{font-size:13.5px;font-weight:700;flex:1;min-width:0}
+.stop.past .n{color:var(--dim);text-decoration:line-through}
+.stop .t{font-size:12px;color:var(--mid);margin-top:1px;font-weight:500}
+.stop .w{font-size:12px;font-weight:800;flex-shrink:0;text-align:right}
+.stop.past .w{color:var(--green)}
+.stop.soon .w{color:var(--accent)}
+
 /* ---------- timeline ---------- */
 .tl{position:relative;padding-left:26px}
 .tl::before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:2px;background:var(--border-strong)}
@@ -261,6 +274,11 @@ textarea:focus,input:focus,select:focus{border-color:var(--accent);outline:none}
 .tli .r{font-size:11.5px;font-weight:700;color:var(--dim)}
 .tli .p{font-size:12.5px;color:var(--mid);margin-top:3px;line-height:1.45}
 .tli.future{opacity:.62}
+.tli.done{cursor:pointer}
+.tli.collapsed{padding:4px 0 8px}
+.tli.collapsed .h{font-size:13px;color:var(--mid)}
+.tli.collapsed .r{font-size:11px}
+.tli .chev{margin-left:auto;font-size:12px;color:var(--dim)}
 .tli.now .h{color:var(--accent)}
 
 /* ---------- photos ---------- */
@@ -344,6 +362,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   <button class="desk" data-view="today" data-target="careCard">Care</button>
   <button class="desk" data-view="today" data-target="notesCard">Notes</button>
   <button data-view="unlocks" data-target="secUnlocks">Unlocks</button>
+  <button class="desk" data-view="unlocks" data-target="secStops">Stop</button>
   <button class="desk" data-view="unlocks" data-target="secBadges">Badges</button>
   <button data-view="photos" data-target="secPhotos">Photos</button>
   <button class="desk" data-view="photos" data-target="secCompare">Compare</button>
@@ -370,6 +389,8 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   <section class="col" data-sec="unlocks">
     <div class="sec-title" id="secUnlocks"><h2>Unlocks</h2><span class="sub" id="unlockSub"></span></div>
     <div class="unlocks" id="unlocks"></div>
+    <div class="sec-title" id="secStops"><h2>You can stop</h2><span class="sub" id="stopSub"></span></div>
+    <div class="card" id="stops"></div>
     <div class="sec-title" id="secBadges"><h2>Badges</h2><span class="sub" id="badgeSub"></span></div>
     <div class="badges" id="badges"></div>
   </section>
@@ -521,7 +542,7 @@ const WASH_FOAM_STEPS = [
 const WASH_MASSAGE_STEPS = [
   'Prescribed foam shampoo, lathered in the palm.',
   'Fingertip massage in small circles on the grafted area, light pressure. This lifts remaining crusts.',
-  'Rinse with warm water. Shower is fine now, keep the pressure gentle.',
+  'Rinse in a gentle shower: lukewarm, lowest pressure, let the water run down over the grafts instead of pointing the head at them. A couple of minutes, then pat dry.',
   'Any lying position is fine from today.'
 ];
 const CARE = [
@@ -545,7 +566,7 @@ const UNLOCKS = [
   {id:'alcohol',  name:'Alcohol',                 d:'2026-09-16', ico:'🍺', why:'Off-limits while on the antibiotic (ends Sep 15).'},
   {id:'walk',     name:'Running / walking',       d:'2026-09-19', ico:'🚶', why:'Light cardio is fine after day 10.'},
   {id:'sleep',    name:'Sleep in any position',   d:'2026-09-19', ico:'🛏️', why:'Until then: on your back, head elevated.'},
-  {id:'shower',   name:'Normal shower',           d:'2026-09-22', ico:'🚿', why:'Gentle shower from Sep 19 (day 11). Normal water pressure on the grafts from day 14, once the crusts are gone.'},
+  {id:'shower',   name:'Normal shower',           d:'2026-09-22', ico:'🚿', why:'Gentle shower from Sep 19 (day 11): lukewarm, low pressure, water running down over the grafts rather than a jet aimed at them, a couple of minutes, pat dry. Normal pressure from day 14, once the crusts are gone.'},
   {id:'shampoo',  name:'Any shampoo',             d:'2026-09-29', ico:'🧴', why:'Prescribed foam shampoo for the first 3 weeks.'},
   {id:'sea',      name:'Sea swimming',            d:'2026-09-29', ico:'🌊', why:'Salt water off-limits for 3 weeks.'},
   {id:'sport',    name:'Strenuous sport / lifting', d:'2026-10-08', ico:'🏋️', why:'One month. Sweat and blood pressure spikes stress the grafts.'},
@@ -554,6 +575,23 @@ const UNLOCKS = [
   {id:'pool',     name:'Pool',                    d:'2026-11-08', ico:'🏊', why:'Chlorine off-limits 1.5–2 months. Earliest Oct 23, safe Nov 8.'},
   {id:'sauna',    name:'Sauna / hammam / hair dye', d:'2026-12-08', ico:'🧖', why:'Heat and chemicals: three months.'},
   {id:'lineup',   name:'Line-up / razor on the hairline', d:'2027-03-08', ico:'🪒', why:'Six months. No trimmer or razor edging the grafted hairline until then; scissors only.'}
+];
+
+// Things that END. Each resolves its last day from the schedule (so the
+// editable Settings dates flow through).
+const STOPS = [
+  {id:'pred',    name:'Prednol (anti-swelling)',        last:()=>medEnd(MEDS.find(m=>m.id==='pred'))},
+  {id:'cipra',   name:'Ciprasid (antibiotic)',          last:()=>'2026-09-15', then:'alcohol is back the next day'},
+  {id:'trent',   name:'Trentilin (blood thinner)',      last:()=>'2026-09-15'},
+  {id:'rif',     name:'RIF on the grafts',              last:()=>medEnd(CARE.find(c=>c.id==='rif'))},
+  {id:'coro',    name:'Corospin (blood thinner)',       last:()=>'2026-09-18'},
+  {id:'donor',   name:'Fusidas / Hametol on the donor', last:()=>medEnd(CARE.find(c=>c.id==='donor'))},
+  {id:'foam',    name:'Foam-lotion soak wash',          last:()=>'2026-09-18', then:'massage wash from Sep 19'},
+  {id:'sleep',   name:'Sleeping propped up, on your back', last:()=>'2026-09-18', then:'any position from Sep 19'},
+  {id:'daily',   name:'Daily check-ins',                last:()=>'2026-09-22', then:'every 3–4 days from Sep 23'},
+  {id:'shampoo', name:'Prescribed foam shampoo',        last:()=>'2026-09-29', then:'any shampoo from Sep 30'},
+  {id:'hat',     name:'Hat / sunscreen outdoors',       last:()=>'2026-11-07', then:'bare head from Nov 8'},
+  {id:'scissors',name:'Scissors-only rule',             last:()=>'2027-03-07', then:'razor and line-ups from Mar 8, 2027'}
 ];
 
 const BADGES = [
@@ -789,7 +827,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),1800);}
 
 function renderAll(){
-  renderHero(); renderBanners(); renderDay(); renderUnlocks(); renderGallery(); renderCompare(); renderBadges(); renderTimeline(); renderLog(); renderSettings();
+  renderHero(); renderBanners(); renderDay(); renderUnlocks(); renderStops(); renderGallery(); renderCompare(); renderBadges(); renderTimeline(); renderLog(); renderSettings();
 }
 
 function renderHero(){
@@ -895,8 +933,15 @@ function renderDay(){
     care = day<0 ? '<div class="empty">Nothing to take yet. Surgery is on Sep 8.</div>'
          : `<div class="empty">Care routine complete. Any shampoo from Sep 30, hands off the grafts, hat in the sun. From here the job is photos and notes on check-in days.</div>`;
   }else{
-    SLOTS.forEach(s=>{
-      const items=tasks.filter(t=>t.slot===s.id); if(!items.length) return;
+    const allDone=tasks.every(t=>rec.tasks[t.id]);
+    const slotOrder=SLOTS.filter(s=>tasks.some(t=>t.slot===s.id));
+    if(!allDone) slotOrder.sort((a,b)=>{
+      const ad=tasks.filter(t=>t.slot===a.id).every(t=>rec.tasks[t.id]), bd=tasks.filter(t=>t.slot===b.id).every(t=>rec.tasks[t.id]);
+      return (ad===bd)?0:(ad?1:-1);   // fully-ticked groups drop below groups with work left
+    });
+    slotOrder.forEach(s=>{
+      let items=tasks.filter(t=>t.slot===s.id); if(!items.length) return;
+      if(!allDone) items=items.filter(t=>!rec.tasks[t.id]).concat(items.filter(t=>rec.tasks[t.id]));   // ticked → bottom
       const done=items.filter(t=>rec.tasks[t.id]).length;
       care+=`<div class="group-h"><span class="t">${esc(s.title)}</span><span class="dim" style="font-size:11px;font-weight:700">${done}/${items.length}</span></div>`;
       items.forEach(t=>{
@@ -985,6 +1030,20 @@ async function renderCompare(){
   el.innerHTML=(await side(cmpL,'L'))+(await side(cmpR,'R'));
 }
 
+function renderStops(){
+  const tk=todayKey(), t=utcDays(tk);
+  const rows=STOPS.map(x=>({...x,d:x.last()})).sort((a,b)=>a.d.localeCompare(b.d));
+  const past=rows.filter(r=>r.d<tk).length;
+  $('#stopSub').textContent=past+' of '+rows.length+' done';
+  $('#stops').innerHTML=rows.map(r=>{
+    const gap=utcDays(r.d)-t; const isPast=gap<0; const soon=!isPast&&gap<=2;
+    const when=isPast?'Done':(gap===0?'Last day today':gap+' more day'+(gap===1?'':'s'));
+    return `<div class="stop ${isPast?'past':soon?'soon':''}"><span class="ic">${isPast?'✓':'⏳'}</span>
+      <div class="n">${esc(r.name)}${r.then?`<div class="t">then ${esc(r.then)}</div>`:''}</div>
+      <div class="w">${when}<div class="t">${isPast?'last day ':'until '}${fmt(r.d,r.d.slice(0,4)!==tk.slice(0,4))}</div></div></div>`;
+  }).join('');
+}
+
 function renderBadges(){
   const earned=new Set(earnedBadges().map(b=>b.id)); const today=dayOf(todayKey());
   $('#badges').innerHTML=BADGES.map(b=>{
@@ -995,14 +1054,16 @@ function renderBadges(){
   $('#badgeSub').textContent=earned.size+' of '+BADGES.length;
 }
 
+const tlOpen={};   // completed phases the user has tapped open (session only)
 function renderTimeline(){
   const day=dayOf(todayKey());
   $('#timeline').innerHTML=PHASES.slice(0,8).map(p=>{
     const st = day>p.to ? 'done' : (day>=p.from ? 'now' : 'future');
     const cad=cadenceFor(p.from);
-    return `<div class="tli ${st}"><div class="node">${st==='done'?'✓':''}</div>
-      <div class="h">${esc(p.name)}<span class="r">${esc(p.range)} · ${fmt(keyForDay(p.from))} – ${fmt(keyForDay(p.to),p.to>=120)}${st==='now'?' · now':''}</span></div>
-      <div class="p">${esc(p.normal)} <span class="dim">· ${esc(cad.short)} check-ins</span></div></div>`;
+    const collapsed = st==='done' && !tlOpen[p.id];
+    return `<div class="tli ${st} ${collapsed?'collapsed':''}" ${st==='done'?`data-act="tl-toggle" data-p="${p.id}" role="button" tabindex="0"`:''}><div class="node">${st==='done'?'✓':''}</div>
+      <div class="h">${esc(p.name)}<span class="r">${esc(p.range)} · ${fmt(keyForDay(p.from))} – ${fmt(keyForDay(p.to),p.to>=120)}${st==='now'?' · now':''}</span>${st==='done'?`<span class="chev">${collapsed?'▸':'▾'}</span>`:''}</div>
+      ${collapsed?'':`<div class="p">${esc(p.normal)} <span class="dim">· ${esc(cad.short)} check-ins</span></div>`}</div>`;
   }).join('');
 }
 
@@ -1069,6 +1130,7 @@ document.addEventListener('click',async e=>{
   const act=b.dataset.act;
   if(b.dataset.angle){ openPhotoSheet.angle=b.dataset.angle; $('#angleChips').querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.angle===b.dataset.angle)); return; }
   if(act==='toggle'){ const id=b.dataset.task; const on=!peekDay(selectedKey).tasks[id]; setTask(selectedKey,id,on); if(on) toast('+'+(tasksFor(selectedKey).find(t=>t.id===id)||{xp:0}).xp+' XP'); renderHero(); renderDay(); renderBadges(); renderLog(); return; }
+  if(act==='tl-toggle'){ tlOpen[b.dataset.p]=!tlOpen[b.dataset.p]; renderTimeline(); return; }
   if(act==='steps'){ expandedSteps[b.dataset.task]=!expandedSteps[b.dataset.task]; renderDay(); return; }
   if(act==='all-done'){ tasksFor(selectedKey).forEach(t=>setTask(selectedKey,t.id,true)); toast('All care ticked'); renderHero(); renderDay(); renderBadges(); renderLog(); return; }
   if(act==='checkin'){ doCheckin(selectedKey); renderAll(); return; }
@@ -1085,7 +1147,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.id==='flagChk'){ const r=dayRec(selectedKey); r.flag=t.checked; saveState(); renderDay(); renderLog(); if(t.checked) toast('Flagged. If it matches a red flag, message the clinic now.'); return; }
-  if(t.dataset&&t.dataset.set){ if(t.value){ state.settings[t.dataset.set]=t.value; saveState(); renderHero(); renderDay(); renderBadges(); } return; }
+  if(t.dataset&&t.dataset.set){ if(t.value){ state.settings[t.dataset.set]=t.value; saveState(); renderHero(); renderDay(); renderBadges(); renderStops(); } return; }
   if(t.dataset&&t.dataset.act==='cmp'){ if(t.dataset.side==='L') cmpL=t.value; else cmpR=t.value; await renderCompare(); return; }
   if(t.id==='photoFile'||t.id==='photoFileLib'){
     const f=t.files&&t.files[0]; t.value=''; if(!f) return;
