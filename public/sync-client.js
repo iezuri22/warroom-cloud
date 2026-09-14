@@ -23,6 +23,7 @@
     // stale values on bootstrap and fight the live listener.
     'pd-active',
     'pd-collapsed',      // banner expand/collapse is a per-device preference
+    'pt-nt-lib-shut',    // Notes list folded to the rail — per-device layout, like pd-collapsed
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
