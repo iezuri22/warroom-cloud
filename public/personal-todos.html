@@ -903,7 +903,6 @@
        row; the expanded side strip is full-width via .planned-item.open. */
     .planned-details textarea { font-size: 16px }
   }
-  }
 
   /* ============ FOCUS 5 LIST STRIP — switch between named lists ============ */
   .nav-strip {
@@ -971,7 +970,7 @@
        whole strip genuinely fits the viewport. */
     .nav-tab {
       flex: 0 0 auto; justify-content: center;
-      padding: 8px 8px; font-size: 12.5px; gap: 4px; max-width: none;
+      padding: 8px 6px; font-size: 12.5px; gap: 4px; max-width: none;
     }
     .nav-tab .name {
       flex-shrink: 0; max-width: 64px;
@@ -984,6 +983,8 @@
     .nav-tab.planned-pill .name,
     .nav-tab.completed-pill .name { display: none; }
     .nav-tab.completed-pill .ct { display: none; }
+    /* Six pills since Notes joined — the Overview's habit card shows the meter. */
+    .nav-tab.habits-pill .ct { display: none; }
     /* More room under the last row so the add-line + FAB never overlap it. */
     .work-view { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
   }
@@ -3167,6 +3168,413 @@
     .ovwn-name { font-size: 13px; }
   }
 
+  /* ===== NOTES & AGENDA — docs that live inside Personal =====
+     #notesPane is a SIBLING of #list: render() rebuilds #list every minute,
+     so the editor sits where it can't reach, keeping caret, undo and scroll.
+     Desktop = library · page · outline, each scrolling on its own; phones get
+     one screen at a time (data-screen). */
+  body.notes-active .meals-banner { display: none !important; }
+  body.work-active.notes-active .list { flex: none; overflow: visible; padding-bottom: 0; }
+  body.notes-active .list .work-view { padding-bottom: 0; gap: 0; }
+  #notesPane[hidden], #notesPane [hidden], #ntPop[hidden], .nt-modal-bd[hidden] { display: none !important; }
+  .notes-pane { flex: 1; min-height: 0; display: flex; padding: 2px 28px 16px; }
+  .nt-shell {
+    flex: 1; min-width: 0; min-height: 0;
+    display: grid; grid-template-columns: 268px minmax(0, 1fr) 210px; gap: 14px;
+  }
+  .nt-lib, .nt-doc, .nt-outline { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  .nt-lib {
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-card);
+    padding: 12px 10px 10px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .nt-lib-top { display: flex; gap: 6px; align-items: center; padding: 0 2px; }
+  .nt-search {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+    background: var(--fill); border-radius: 10px; padding: 0 10px; color: var(--ink-dim);
+  }
+  .nt-search input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 13px; font-weight: 500; color: var(--ink); padding: 8px 0;
+  }
+  .nt-new {
+    border: none; background: var(--accent); color: var(--on-accent); border-radius: 10px;
+    height: 34px; padding: 0 12px; font-family: inherit; font-size: 12.5px; font-weight: 800;
+    cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .nt-sub {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--ink-dim); padding: 2px 4px 4px; display: flex; align-items: center; gap: 6px;
+  }
+  .nt-sub .sp { flex: 1; }
+  .nt-sub button {
+    border: none; background: transparent; color: var(--ink-dim); cursor: pointer; padding: 0;
+    font: inherit; letter-spacing: inherit; text-transform: inherit;
+  }
+  .nt-sub button:hover { color: var(--accent); }
+  .nt-today { display: flex; flex-direction: column; gap: 2px; }
+  .nt-trow {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    border: none; background: transparent; border-radius: 9px; padding: 7px 6px;
+    font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink); cursor: pointer;
+  }
+  .nt-trow:hover { background: var(--fill); }
+  .nt-trow .tm { width: 58px; flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+  .nt-trow .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-trow .go { font-size: 11px; font-weight: 800; color: var(--ink-dim); flex-shrink: 0; }
+  .nt-trow.has .go { color: var(--accent); }
+  .nt-trow.past { opacity: .5; }
+  .nt-trow.daily { background: var(--accent-soft); color: var(--ink); }
+  .nt-trow.daily .go { color: var(--accent); }
+  .nt-trow.quiet { color: var(--ink-dim); font-weight: 500; cursor: default; }
+  .nt-trow.quiet:hover { background: transparent; }
+  .nt-trow a { color: var(--blue); font-weight: 700; text-decoration: none; }
+  .nt-filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 2px; }
+  .nt-chip {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 5px 10px; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-mid);
+    cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .nt-chip .d { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--ink-dim)); flex-shrink: 0; }
+  .nt-chip .n { font-size: 10px; font-weight: 800; color: var(--ink-dim); }
+  .nt-chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .nt-chip.on .n { color: var(--on-accent); opacity: .85; }
+  .nt-chip.on .d { box-shadow: 0 0 0 1.5px var(--on-accent); }
+  .nt-list { display: flex; flex-direction: column; }
+  .nt-row {
+    display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
+    border: none; background: transparent; border-radius: 10px; padding: 8px 6px;
+    font-family: inherit; cursor: pointer; color: var(--ink);
+  }
+  .nt-row + .nt-row { box-shadow: 0 -1px 0 var(--border); }
+  .nt-row:hover { background: var(--fill); }
+  .nt-row.on { background: var(--accent-soft); box-shadow: none; }
+  .nt-row.on + .nt-row { box-shadow: none; }
+  .nt-row .d { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-dim)); flex-shrink: 0; margin-top: 5px; }
+  .nt-row .m { flex: 1; min-width: 0; }
+  .nt-row .t { display: block; font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-row .s { display: block; font-size: 11.5px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+  .nt-row .r { flex-shrink: 0; font-size: 10.5px; font-weight: 700; color: var(--ink-dim); text-align: right; line-height: 1.5; }
+  .nt-row .r b { display: block; font-weight: 800; color: var(--ink-mid); }
+  .nt-row .pin { color: var(--accent); margin-right: 3px; }
+  .nt-row-acts { display: flex; gap: 6px; padding: 0 6px 8px 23px; }
+  .nt-empty-lib { font-size: 12.5px; color: var(--ink-dim); padding: 10px 6px; line-height: 1.45; }
+  .nt-lib-foot { margin-top: auto; display: flex; gap: 6px; padding: 4px 2px 0; }
+  .nt-lib-foot button {
+    border: none; background: transparent; font-family: inherit; font-size: 11.5px; font-weight: 700;
+    color: var(--ink-dim); cursor: pointer; padding: 4px 6px; border-radius: 7px;
+  }
+  .nt-lib-foot button:hover { background: var(--fill); color: var(--ink); }
+  .nt-lib-foot button.on { color: var(--accent); }
+
+  /* The page — white paper, sticky toolbar inside the .nt-doc scroller. */
+  .nt-doc { scrollbar-gutter: stable; }
+  .nt-page {
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-card);
+    max-width: 840px; margin: 0 auto; min-height: calc(100% - 2px); padding-bottom: 140px;
+    position: relative;
+  }
+  .nt-docbar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 14px 20px 0 22px;
+  }
+  .nt-docbar .sp { flex: 1; }
+  /* Right cluster stays right-aligned even when the chips wrap it down. */
+  .nt-dbr { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+  .nt-back {
+    display: none; border: none; background: var(--fill); color: var(--ink); border-radius: 99px;
+    height: 30px; padding: 0 12px 0 8px; font-family: inherit; font-size: 12.5px; font-weight: 800;
+    cursor: pointer; align-items: center; gap: 3px;
+  }
+  .nt-dchip {
+    position: relative; border: 1px solid var(--border-strong); background: var(--surface);
+    border-radius: 99px; height: 28px; padding: 0 10px; font-family: inherit; font-size: 11.5px;
+    font-weight: 700; color: var(--ink-mid); cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap; max-width: 100%;
+  }
+  .nt-dchip:hover { border-color: var(--accent); color: var(--ink); }
+  .nt-dchip .d { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-dim)); }
+  .nt-dchip.set { color: var(--ink); }
+  .nt-dchip.kind { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 800; cursor: default; }
+  .nt-dchip input[type="date"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; font-size: 16px; }
+  .nt-dchip .x { margin-left: 2px; color: var(--ink-dim); font-weight: 800; }
+  .nt-dchip.ev { max-width: 320px; overflow: hidden; cursor: default; }
+  .nt-dchip.ev .tx { overflow: hidden; text-overflow: ellipsis; }
+  .nt-dchip.ev a { color: var(--blue); font-weight: 800; text-decoration: none; }
+  .nt-state { font-size: 11px; font-weight: 700; color: var(--ink-dim); white-space: nowrap; }
+  .nt-state.err { color: var(--red); }
+  .nt-icon {
+    width: 30px; height: 30px; border-radius: 9px; border: none; background: transparent;
+    color: var(--ink-mid); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; flex-shrink: 0;
+  }
+  .nt-icon:hover { background: var(--fill); color: var(--ink); }
+  .nt-icon.on { color: var(--accent); }
+  .nt-title {
+    display: block; width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 28px; font-weight: 800; letter-spacing: -.03em; color: var(--ink);
+    padding: 10px 44px 4px; line-height: 1.15;
+  }
+  .nt-title::placeholder { color: var(--ink-dim); }
+  .nt-banner {
+    margin: 6px 44px 0; padding: 9px 12px; border-radius: 11px; background: rgba(232,162,61,.14);
+    font-size: 12.5px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .nt-banner .sp { flex: 1; }
+  .nt-banner button {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 4px 10px; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink); cursor: pointer;
+  }
+  .nt-docempty {
+    max-width: 420px; margin: 12vh auto 0; text-align: center; color: var(--ink-mid);
+    font-size: 13.5px; line-height: 1.5; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  .nt-docempty b { font-size: 18px; font-weight: 800; color: var(--ink); }
+  .nt-docempty .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .nt-btn {
+    border: 1px solid var(--border-strong); background: var(--surface); border-radius: 99px;
+    padding: 7px 14px; font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink); cursor: pointer;
+  }
+  .nt-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .nt-btn.del { color: var(--red); border-color: rgba(220,75,62,.35); }
+  .nt-btn.del.arm { background: var(--red); border-color: var(--red); color: #fff; }
+
+  .nt-toolbar {
+    position: sticky; top: 0; z-index: 7; background: var(--surface);
+    display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+    padding: 8px 40px; margin-top: 6px; border-bottom: 1px solid var(--border);
+  }
+  .nt-tb {
+    height: 30px; min-width: 30px; padding: 0 7px; border: none; border-radius: 8px; background: transparent;
+    color: var(--ink-mid); cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0;
+  }
+  .nt-tb:hover { background: var(--fill); color: var(--ink); }
+  .nt-tb.on { background: var(--fill-2); color: var(--ink); }
+  .nt-tb.style { min-width: 62px; justify-content: space-between; }
+  .nt-tb.task { color: var(--accent); background: var(--accent-soft); margin-left: auto; padding: 0 10px; }
+  .nt-tb.task:hover { background: var(--accent); color: var(--on-accent); }
+  .nt-tb-sep { width: 1px; height: 18px; background: var(--border-strong); margin: 0 4px; flex-shrink: 0; }
+  .nt-tb-more { display: none; }
+
+  /* Editor content — the doc's own typography. Headings open sections: every
+     H2 after the first draws a hairline, so a long agenda reads as parts. */
+  .nt-editor {
+    position: relative; outline: none; min-height: 50vh;
+    padding: 14px 44px 20px 44px; font-size: 15px; line-height: 1.6; color: var(--ink);
+    word-wrap: break-word; overflow-wrap: anywhere; -webkit-user-modify: read-write;
+  }
+  .nt-editor.nt-loading { opacity: .55; }
+  .nt-editor.nt-loading.is-empty::before { content: 'Loading…'; }
+  .nt-editor.is-empty::before {
+    content: attr(data-placeholder); position: absolute; left: 44px; top: 14px;
+    color: var(--ink-dim); pointer-events: none;
+  }
+  .nt-editor > :first-child { margin-top: 0; }
+  .nt-editor p { margin: 0 0 8px; }
+  .nt-editor h1, .nt-editor h2, .nt-editor h3 { position: relative; scroll-margin-top: 64px; }
+  .nt-editor h1 { font-size: 24px; font-weight: 800; letter-spacing: -.025em; line-height: 1.25; margin: 22px 0 8px; }
+  .nt-editor h2 { font-size: 19px; font-weight: 800; letter-spacing: -.02em; line-height: 1.3; margin: 22px 0 6px; }
+  .nt-editor h2:not(:first-child) { border-top: 1px solid var(--border); padding-top: 16px; }
+  .nt-editor h3 { font-size: 15.5px; font-weight: 800; letter-spacing: -.01em; margin: 16px 0 4px; color: var(--ink); }
+  /* Fold caret lives in the left gutter as a pseudo-element; clicks land on
+     the heading itself and are hit-tested against its left edge. */
+  .nt-editor h1::before, .nt-editor h2::before, .nt-editor h3::before {
+    content: ''; position: absolute; left: -26px; top: 50%; width: 18px; height: 18px; margin-top: -9px;
+    border-radius: 6px; opacity: 0; cursor: pointer; transition: opacity .12s;
+    background: no-repeat center/12px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23211E19' stroke-opacity='.5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  }
+  .nt-editor h2:not(:first-child)::before { margin-top: -1px; }
+  .nt-editor h1:hover::before, .nt-editor h2:hover::before, .nt-editor h3:hover::before { opacity: 1; }
+  .nt-editor [data-collapsed]::before { opacity: 1; transform: rotate(-90deg); }
+  .nt-editor [data-collapsed]::after {
+    content: '···'; display: inline-block; margin-left: 8px; font-size: 13px; font-weight: 800;
+    color: var(--ink-dim); letter-spacing: 1px; text-decoration: none;
+  }
+  .nt-editor .nt-fold { display: none !important; }
+  .nt-editor ul, .nt-editor ol { margin: 0 0 8px; padding-left: 24px; }
+  .nt-editor li { margin: 2px 0; }
+  .nt-editor li > ul, .nt-editor li > ol { margin: 2px 0 0; }
+  .nt-editor blockquote {
+    margin: 4px 0 10px; padding: 2px 0 2px 14px; border-left: 3px solid var(--accent);
+    color: var(--ink-mid);
+  }
+  .nt-editor hr { border: none; border-top: 1px solid var(--border-strong); margin: 16px 0; }
+  .nt-editor a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+  .nt-editor code, .nt-editor pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em;
+    background: var(--fill); border-radius: 6px;
+  }
+  .nt-editor code { padding: 1px 5px; }
+  .nt-editor pre { padding: 10px 12px; white-space: pre-wrap; margin: 0 0 10px; }
+  .nt-editor ul.nt-checklist { list-style: none; padding-left: 2px; }
+  .nt-editor ul.nt-checklist > li { position: relative; padding-left: 30px; }
+  .nt-editor ul.nt-checklist > li::before {
+    content: ''; position: absolute; left: 1px; top: .22em; width: 18px; height: 18px; box-sizing: border-box;
+    border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--surface); cursor: pointer;
+  }
+  .nt-editor ul.nt-checklist > li[data-checked="true"]::before {
+    background: var(--accent) no-repeat center/12px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FFF7EF' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    border-color: var(--accent);
+  }
+  .nt-editor ul.nt-checklist > li[data-checked="true"] { color: var(--ink-dim); text-decoration: line-through; text-decoration-color: rgba(33,30,25,.3); }
+  .nt-editor li[data-task-id]::after {
+    content: 'Task'; display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 5px;
+    font-size: 10px; font-weight: 800; line-height: 17px; vertical-align: 1px; text-decoration: none;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .nt-editor li[data-task-id][data-checked="true"]::after { content: 'Task · done'; background: rgba(30,158,106,.13); color: var(--green); }
+  .nt-editor li.nt-flash, .nt-editor .nt-flash { animation: ntFlash 1.2s ease; }
+  @keyframes ntFlash { 0% { background: var(--accent-soft) } 100% { background: transparent } }
+
+  /* Outline rail (≥1100). Sections with their checklist tally. */
+  .nt-outline { padding: 6px 2px 20px; }
+  .nt-ol-item {
+    display: flex; align-items: center; gap: 4px; width: 100%; text-align: left; border: none; background: transparent;
+    padding: 5px 6px; border-radius: 8px; font-family: inherit; font-size: 12.5px; font-weight: 600;
+    color: var(--ink-mid); cursor: pointer;
+  }
+  .nt-ol-item:hover { background: var(--fill); color: var(--ink); }
+  .nt-ol-item.on { color: var(--ink); font-weight: 800; }
+  .nt-ol-item.l1 { font-weight: 800; color: var(--ink); }
+  .nt-ol-item.l3 { padding-left: 20px; font-size: 12px; }
+  .nt-ol-item .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-ol-item .ct { font-size: 10.5px; font-weight: 800; color: var(--ink-dim); flex-shrink: 0; }
+  .nt-ol-item .ct.done { color: var(--green); }
+  .nt-ol-fold {
+    width: 18px; height: 18px; flex-shrink: 0; border: none; background: transparent; padding: 0; border-radius: 5px;
+    color: var(--ink-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .nt-ol-fold:hover { background: var(--fill-2); color: var(--ink); }
+  .nt-ol-fold.shut svg { transform: rotate(-90deg); }
+  .nt-ol-stats { font-size: 11px; font-weight: 600; color: var(--ink-dim); padding: 10px 6px 0; line-height: 1.5; }
+  .nt-ol-empty { font-size: 12px; color: var(--ink-dim); padding: 4px 6px; line-height: 1.45; }
+
+  /* Popover (menus, link editor, task routing) and the category sheet. */
+  .nt-pop {
+    position: fixed; z-index: 9460; min-width: 190px; max-width: min(320px, calc(100vw - 24px));
+    background: var(--surface); border-radius: 14px; box-shadow: var(--shadow-float);
+    border: 1px solid var(--border); padding: 6px; max-height: 60vh; overflow-y: auto;
+  }
+  .nt-pop-h { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-dim); padding: 6px 8px 4px; }
+  .nt-pop-i {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: none; background: transparent;
+    border-radius: 9px; padding: 8px 9px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--ink); cursor: pointer;
+  }
+  .nt-pop-i:hover, .nt-pop-i.on { background: var(--fill); }
+  .nt-pop-i .d { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--ink-dim)); flex-shrink: 0; }
+  .nt-pop-i .k { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--ink-dim); }
+  .nt-pop-i.danger { color: var(--red); }
+  .nt-pop-i.h1 { font-size: 17px; font-weight: 800; }
+  .nt-pop-i.h2 { font-size: 15px; font-weight: 800; }
+  .nt-pop-i.h3 { font-size: 13.5px; font-weight: 800; }
+  .nt-pop-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+  .nt-pop-form { display: flex; gap: 6px; padding: 6px; }
+  .nt-pop-form input {
+    flex: 1; min-width: 0; border: 1px solid var(--border-strong); border-radius: 9px; padding: 7px 9px;
+    font-family: inherit; font-size: 13px; color: var(--ink); outline: none; background: var(--surface);
+  }
+  .nt-pop-form input:focus { border-color: var(--accent); }
+  .nt-modal-bd {
+    position: fixed; inset: 0; z-index: 9450; background: rgba(28,25,20,.45);
+    display: flex; align-items: center; justify-content: center; padding: 22px;
+  }
+  .nt-modal {
+    width: 100%; max-width: 460px; max-height: 88vh; display: flex; flex-direction: column;
+    background: var(--surface); border-radius: 20px; overflow: hidden; box-shadow: var(--shadow-float);
+  }
+  .nt-modal-h { padding: 20px 22px 12px; border-bottom: 1px solid var(--border); }
+  .nt-modal-h b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+  .nt-modal-h span { font-size: 12.5px; color: var(--ink-mid); font-weight: 600; }
+  .nt-modal-b { flex: 1; overflow-y: auto; padding: 10px 18px 14px; display: flex; flex-direction: column; gap: 2px; }
+  .nt-modal-f { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .nt-cat-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .nt-cat-sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border-strong); background: var(--c); cursor: pointer; flex-shrink: 0; padding: 0; }
+  .nt-cat-row input {
+    flex: 1; min-width: 0; border: 1px solid transparent; border-radius: 8px; padding: 6px 8px; background: transparent;
+    font-family: inherit; font-size: 14px; font-weight: 700; color: var(--ink); outline: none;
+  }
+  .nt-cat-row input:hover, .nt-cat-row input:focus { border-color: var(--border-strong); background: var(--surface); }
+  .nt-cat-row select {
+    border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); padding: 5px 6px;
+    font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-mid);
+  }
+  .nt-cat-row .lock { font-size: 10.5px; font-weight: 700; color: var(--ink-dim); width: 64px; text-align: right; }
+  .nt-cat-add { display: flex; gap: 8px; padding-top: 12px; }
+  .nt-cat-add input {
+    flex: 1; min-width: 0; border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px 10px;
+    font-family: inherit; font-size: 14px; color: var(--ink); outline: none;
+  }
+
+  /* Overview: today's agenda card + the Notes chip + strip pill. */
+  .ov-agenda {
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-card);
+    padding: 12px 14px 8px;
+  }
+  .ova-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .ova-title { font-size: 10.5px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; color: var(--ink-dim); }
+  .ova-meta { font-size: 11.5px; font-weight: 700; color: var(--ink-mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ova-all { border: none; background: transparent; font-family: inherit; font-size: 11.5px; font-weight: 800; color: var(--accent); cursor: pointer; padding: 2px 0; flex-shrink: 0; }
+  .ova-row {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: none; background: transparent;
+    padding: 7px 0; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer;
+  }
+  .ova-row + .ova-row { border-top: 1px solid var(--border); }
+  .ova-row .tm { width: 62px; flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+  .ova-row .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ova-row .go { font-size: 11px; font-weight: 800; color: var(--ink-dim); flex-shrink: 0; }
+  .ova-row.has .go, .ova-row.daily .go { color: var(--accent); }
+  .ova-row.past { opacity: .5; }
+  .ova-row.daily .tx { font-weight: 700; }
+  .ov-notelink {
+    display: inline-flex; vertical-align: -2px; margin-left: 6px; border: none; background: transparent; padding: 0;
+    color: var(--ink-dim); cursor: pointer;
+  }
+  .ov-notelink:hover { color: var(--accent); }
+  .nav-tab.notes-pill svg { color: var(--indigo); flex-shrink: 0; }
+
+  @media (max-width: 1099px) {
+    .nt-shell { grid-template-columns: 250px minmax(0, 1fr); }
+    .nt-outline { display: none; }
+  }
+  @media (min-width: 1100px) { .nt-ol-btn { display: none; } }
+  /* Phones: the body scrolls, one screen at a time, and the sticky toolbar
+     pins to the viewport. FABs step aside while you type. */
+  @media (max-width: 760px) {
+    .notes-pane { display: block; padding: 2px 12px calc(104px + env(safe-area-inset-bottom)); }
+    .nt-shell { display: block; }
+    .nt-lib, .nt-doc { overflow: visible; }
+    .nt-shell[data-screen="lib"] .nt-doc,
+    .nt-shell[data-screen="doc"] .nt-lib { display: none; }
+    .nt-lib { padding: 12px 10px 12px; }
+    .nt-page { min-height: 70vh; padding-bottom: 120px; }
+    .nt-back { display: inline-flex; }
+    #ntPinBtn { display: none; }   /* Pin lives in the ⋯ menu too */
+    .nt-docbar { padding: 12px 12px 0; }
+    .nt-title { font-size: 23px; padding: 10px 16px 2px 26px; }
+    .nt-banner { margin: 6px 14px 0; }
+    .nt-toolbar { padding: 6px 8px; gap: 1px; flex-wrap: nowrap; }
+    .nt-tb { min-width: 34px; height: 34px; }
+    .nt-tb.wide, .nt-tb-sep.wide { display: none; }
+    .nt-tb-more { display: inline-flex; }
+    .nt-editor { font-size: 16px; padding: 12px 16px 20px 26px; }
+    .nt-editor.is-empty::before { left: 26px; top: 12px; }
+    .nt-editor h1::before, .nt-editor h2::before, .nt-editor h3::before { left: -24px; }
+    .nt-editor [data-collapsed]::before { opacity: 1; }
+    .nt-search input, .nt-pop-form input, .nt-cat-add input, .nt-cat-row input, .nt-cat-row select { font-size: 16px; }
+    .nt-modal-bd { padding: 12px; align-items: flex-end; }
+    .nt-modal { max-width: none; border-radius: 20px 20px 0 0; max-height: 92vh; }
+    body.nt-editing .pt-add-top, body.nt-editing .coach-fab,
+    body.nt-editing .tmr-capsule, body.nt-editing .race-restore { display: none !important; }
+  }
+  /* 561–760: the body scrolls and the toolbar pins to the viewport top,
+     right where the still top-anchored Add / Coach pills sit. */
+  @media (min-width: 641px) and (max-width: 760px) { body.notes-active .pt-add-top { display: none !important; } }
+  @media (min-width: 561px) and (max-width: 760px) { body.notes-active .coach-fab { display: none !important; } }
+  @media (max-width: 640px) {
+    .ov-go.nt-go { display: none; }
+    .nav-tab.notes-pill .name { display: none; }
+  }
+
   /* ===== COACH — voice planning chat (day/week plans via /api/plan-chat) ===== */
   .coach-fab {
     /* Sits one Add-pill to the left of the column's right edge. */
@@ -4106,6 +4514,9 @@
     </div>
     <div id="mealsBanner" class="meals-banner" style="display:none"></div>
     <div class="list" id="list"></div>
+    <!-- Notes & Agenda — mounted once by ntEnsureMounted(); render() only
+         toggles `hidden`, never rebuilds it (the editor must survive ticks). -->
+    <div class="notes-pane" id="notesPane" hidden></div>
     <div class="freq-opts" id="freqOpts"></div>
   </div>
   <iframe id="ptMusicFrame" class="pt-music-audio-frame" src="about:blank" allow="autoplay; encrypted-media" title="Lofi music"></iframe>
@@ -6063,6 +6474,7 @@ const VOICE = {
     try { ptRenderGoals(); } catch {}
     // Refresh toggle pill (date may have changed, picks may be stale)
     try { loadWork(); } catch {}
+    if (currentView !== 'tasks' && _tabNotes) { _tabNotes = false; try { ntSyncPane(); } catch {} }
     if (currentView === 'recurring') return renderRecurring();
     if (currentView === 'archive') return renderArchive();
     // Personal is strictly the working page now. The old
@@ -8845,6 +9257,9 @@ const VOICE = {
   // (further down the module) get defined.
   let _tabHabits = false;
   let _tabTimer = false;
+  // Notes & Agenda (NOTES block below renderWorkView). Its pane sits outside
+  // #list; this flag only decides whether that pane is showing.
+  let _tabNotes = false;
 
   // ====================================================================
   // TOAST — one shared line for the Habits + Timer surfaces.
@@ -10666,7 +11081,7 @@ const VOICE = {
       ${bars.length ? `<div class="ovt-bars">${bars.map(b => b.html).join('')}</div>` : ''}`;
     card.addEventListener('click', () => {
       _tabTimer = true; _tabHabits = false; _tabOverview = false;
-      _tabPlanned = false;
+      _tabPlanned = false; _tabNotes = false;
       tmrDate = todayKey();
       render();
     });
@@ -10686,7 +11101,7 @@ const VOICE = {
       <span class="ovh-val ${m.hit ? 'hit' : ''}">${m.total ? `${m.done}/${m.total}` : '—'}</span>`;
     card.addEventListener('click', () => {
       _tabHabits = true; _tabTimer = false; _tabOverview = false;
-      _tabPlanned = false;
+      _tabPlanned = false; _tabNotes = false;
       hbSub = 'today';
       hbDate = todayKey();
       render();
@@ -10905,7 +11320,7 @@ const VOICE = {
         return;
       }
       _tabTimer = true; _tabHabits = false; _tabOverview = false;
-      _tabPlanned = false;
+      _tabPlanned = false; _tabNotes = false;
       render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -12036,7 +12451,7 @@ const VOICE = {
       ${grip}
       <button class="ov-check ${done ? 'on' : ''}" type="button" data-ov-done="${escHtml(t.id)}" aria-label="${done ? 'Mark open' : 'Mark done'}">${done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
       ${chip ? `<span class="ov-daychip today">${escHtml(chip)}</span>` : ''}
-      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}${done ? '' : _ovDueChipHTML(t)}</span>
+      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}${t.noteId ? _ovNoteLinkHTML(t.noteId) : ''}${done ? '' : _ovDueChipHTML(t)}</span>
       ${t.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(t.id) : ''}`;
   }
@@ -12054,7 +12469,7 @@ const VOICE = {
     const open = _ovRowOpen === p.id;
     return `<div class="ov-row wk ${open ? 'open' : ''}" data-ov-open="${escHtml(p.id)}">
       <span class="ov-daychip">${escHtml(_ovDayChip(p.plannedFor))}</span>
-      <span class="ov-text">${escHtml(p.text || '')}${_ovDueChipHTML(p)}</span>
+      <span class="ov-text">${escHtml(p.text || '')}${p.noteId ? _ovNoteLinkHTML(p.noteId) : ''}${_ovDueChipHTML(p)}</span>
       ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(p.id) : ''}`;
   }
@@ -12750,7 +13165,9 @@ const VOICE = {
   }
   // Hooked into task completion. Chain drained + something parked = offer it.
   async function dfAfterTaskDone(){
-    if (_dfBusy || dfAnyOpen()) return;
+    // Never over an open doc — ticking a linked line in Notes is still a
+    // completion, but a check-in modal over the editor is the wrong moment.
+    if (_dfBusy || dfAnyOpen() || _tabNotes) return;
     if (!dfWasShown('parked') && dfPriorityOpenCount() === 0) {
       _dfBusy = true;
       let opened = false;
@@ -12967,6 +13384,7 @@ const VOICE = {
       </div>
       <div class="ov-gos">
         <button class="ov-go" type="button" data-ov-go="planned">Planned${plOpen ? ` · ${plOpen}` : ''}</button>
+        <button class="ov-go nt-go" type="button" data-ov-go="notes">Notes</button>
         <button class="ov-go" type="button" data-ov-go="stats">Stats</button>
         <button class="ov-go" type="button" data-ov-go="done" aria-label="Completed">✓</button>
       </div>`;
@@ -13035,6 +13453,12 @@ const VOICE = {
       winsCard.innerHTML = '<div class="ovw-line"><span class="ovw-title">Good days</span><span class="ovw-meta">…</span></div>';
     }
     col.appendChild(winsCard);
+    // Agenda — today's calendar + today's agenda doc, one tap into Notes.
+    // Day mode only, and deliberately NOT an .ov-sec: the spine rail and
+    // scroll spy key off .ov-sec and would light nothing up.
+    if (_ovMode === 'day') {
+      try { col.appendChild(_ovAgendaCard()); } catch (e) { console.warn('[notes] agenda card', e); }
+    }
 
     // In a week that isn't this one there's nothing to add to — you're
     // reading a record (past) or a plan (future).
@@ -13222,16 +13646,29 @@ const VOICE = {
       // tap further (Check habits in the day detail) and loops back.
       const sq = e.target.closest('[data-ovw-day]');
       if (sq) { openOvStats(sq.getAttribute('data-ovw-day')); return; }
+      // Notes links sit inside task rows — handled before done/open.
+      const noteLink = e.target.closest('[data-ov-note]');
+      if (noteLink) { e.stopPropagation(); ntGo({ id: noteLink.getAttribute('data-ov-note') }); return; }
+      const ag = e.target.closest('[data-ov-agenda]');
+      if (ag) {
+        const k = ag.getAttribute('data-ov-agenda');
+        if (k === 'daily') ntGo({ daily: todayKey() });
+        else if (k === 'ev') ntGo({ eventId: ag.getAttribute('data-ov-ev'), date: todayKey() });
+        else ntGo({});
+        return;
+      }
       const go = e.target.closest('[data-ov-go]');
       if (go) {
         const dest = go.getAttribute('data-ov-go');
         if (dest === 'planned') {
           _tabOverview = false; _tabPlanned = true;
-          _tabHabits = false; _tabTimer = false;
+          _tabHabits = false; _tabTimer = false; _tabNotes = false;
           loadPlannedTodos().then(() => { try { if (_tabPlanned) render(); } catch {} });
           render();
         } else if (dest === 'stats') {
           try { openOvStats(); } catch (e) { console.warn(e); }
+        } else if (dest === 'notes') {
+          ntGo({});
         } else if (dest === 'done') {
           try { openCompletedBrowser(); } catch {}
         }
@@ -13576,13 +14013,16 @@ const VOICE = {
     // Overview is HOME. Everything else is one of three pills — Planned,
     // Timer, Habits — plus Completed, which opens a modal over whatever
     // you were on. Named lists are gone; anything else lands back here.
-    if (!_tabPlanned && !_tabTimer && !_tabHabits) _tabOverview = true;
+    if (!_tabPlanned && !_tabTimer && !_tabHabits && !_tabNotes) _tabOverview = true;
     // The capsule hides on the Timer tab and shows everywhere else — repaint
     // with the view so it flips on the same frame, not on the next tick.
     try { tmrPaintCapsule(); } catch {}
     // Overview hides the meals banner via body class — the Meals card IS the
     // banner there. CSS-only so the banner's own show/hide state survives.
     document.body.classList.toggle('ov-active', !!_tabOverview);
+    // Notes owns #notesPane — shown or hidden here, never rebuilt here.
+    document.body.classList.toggle('notes-active', !!_tabNotes);
+    ntSyncPane();
     list.innerHTML = '';
     const view = document.createElement('div');
     view.className = 'work-view';
@@ -13615,6 +14055,7 @@ const VOICE = {
       _tabPlanned = false;
       _tabHabits = false;
       _tabTimer = false;
+      _tabNotes = false;
       loadPlannedTodos().then(() => { try { if (_tabOverview) render(); } catch {} });
       render();
       // DAYFLOW: the second (and last) allowed trigger. Opening Overview is
@@ -13639,6 +14080,7 @@ const VOICE = {
       _tabOverview = false;
       _tabHabits = false;
       _tabTimer = false;
+      _tabNotes = false;
       loadPlannedTodos().then(() => { try { if (_tabPlanned) render(); } catch {} });
       render();
     });
@@ -13657,6 +14099,7 @@ const VOICE = {
       _tabHabits = false;
       _tabPlanned = false;
       _tabOverview = false;
+      _tabNotes = false;
       tmrDate = todayKey();
       render();
     });
@@ -13675,9 +14118,19 @@ const VOICE = {
       _tabTimer = false;
       _tabPlanned = false;
       _tabOverview = false;
+      _tabNotes = false;
       render();
     });
     strip.appendChild(habitsTab);
+    // Notes pill — docs + agendas. The strip is all #list holds on Notes.
+    const notesTab = document.createElement('button');
+    notesTab.type = 'button';
+    notesTab.className = `nav-tab notes-pill ${_tabNotes ? 'active' : ''}`;
+    notesTab.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+      <span class="name">Notes</span>`;
+    notesTab.addEventListener('click', () => ntGo());
+    strip.appendChild(notesTab);
     // Completed pill — shows lifetime done count of tasks WITH a project
     // (chores/no-project tasks intentionally excluded). Reads cached count
     // immediately and refreshes from Firestore async so it stays fresh.
@@ -13699,6 +14152,13 @@ const VOICE = {
     try { _updateCompletedPillCount(); } catch {}
     view.appendChild(strip);
 
+    // ---- NOTES TAB — strip here, docs in #notesPane (mounted once) ----
+    if (_tabNotes) {
+      list.appendChild(view);
+      ntEnsureMounted();
+      return;
+    }
+
     // ---- PLANNED TAB — swaps the list content for the planned ledger ----
     if (_tabPlanned) {
       renderPlannedView(view);
@@ -13714,6 +14174,2454 @@ const VOICE = {
     // ---- HABITS TAB — today's checklist, progress, health ----
     renderHabitsView(view);
     list.appendChild(view);
+  }
+
+  // ====================================================================
+  // NOTES & AGENDA — Google-Docs-style pages inside Personal.
+  //
+  //   personal_notes/{id}         meta: {title, kind:'note'|'agenda', category,
+  //                               agendaDate? (agendas only), daily?, event?,
+  //                               outline[], checks{total,done}, snippet, text,
+  //                               pinned, trashed, rev, createdAt, updatedAt}
+  //   personal_notes_body/{id}    {html, rev, updatedAt, deviceId}
+  //   personal_notes_config/main  {categories:[{id,label,color,section,builtin}]}
+  //
+  // Rules that cost something to learn — keep them:
+  //  1. The editor lives in #notesPane, OUTSIDE #list. render() only toggles
+  //     it (ntSyncPane); ~160 render paths + a 60s tick empty #list, and a
+  //     contenteditable in there would lose caret, undo and unsaved text.
+  //  2. Every HTML string that reaches the DOM goes through ntSanitize — on
+  //     load, paste, drop and save. tv-todos is open-rules Firestore.
+  //  3. No where()+orderBy() on different fields: no composite index is
+  //     deployed. One list listener, filtered client-side.
+  //  4. Crash drafts go to IndexedDB, never localStorage (sync-client ships
+  //     every localStorage key to Neon and poisons the big ones).
+  //  5. Nothing here opens by itself (popup discipline); dayflow checks
+  //     _tabNotes and stays quiet while a doc is open.
+  // ====================================================================
+  const NT_COL = 'personal_notes';
+  const NT_BODY_COL = 'personal_notes_body';
+  const NT_CFG_DOC = ['personal_notes_config', 'main'];
+  const NT_DEFAULT_CATS = [
+    { id: 'ecm',        label: 'ECM',        color: '#3B6FD4', section: 'ecm',        builtin: true },
+    { id: 'vitaltouch', label: 'VitalTouch', color: '#2AA79B', section: 'vitaltouch', builtin: true },
+    { id: 'meals',      label: 'Meals',      color: '#1E9E6A', section: 'meals',      builtin: true },
+    { id: 'life',       label: 'Life',       color: '#7C63E8', section: 'life',       builtin: true },
+  ];
+  const NT_PALETTE = ['#3B6FD4', '#2AA79B', '#1E9E6A', '#7C63E8', '#E8A23D', '#E96A5B', '#5B67F1', '#F07E28', '#DC4B3E', '#8A8175'];
+  const NT_GENERAL = '#8A8175';
+  // Per page load. Only used to recognise our own save echoing back.
+  const NT_DEVICE = Math.random().toString(36).slice(2, 10);
+  const NT_I = (d, sw, sz) => `<svg width="${sz || 15}" height="${sz || 15}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw || 2.2}" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const NT_SVG = {
+    search: NT_I('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>', 2.4),
+    plus: NT_I('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 2.8),
+    back: NT_I('<polyline points="15 18 9 12 15 6"/>', 2.6),
+    chev: NT_I('<polyline points="6 9 12 15 18 9"/>', 2.6),
+    chevS: NT_I('<polyline points="6 9 12 15 18 9"/>', 2.8, 11),
+    pin: NT_I('<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>', 2),
+    more: NT_I('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>', 2.6),
+    outline: NT_I('<line x1="8" y1="6" x2="21" y2="6"/><line x1="12" y1="12" x2="21" y2="12"/><line x1="12" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="8" cy="18" r="1"/>', 2.2),
+    cal: NT_I('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>', 2.2),
+    ul: NT_I('<line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/>', 2.2),
+    ol: NT_I('<line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>', 2),
+    check: NT_I('<rect x="3" y="4" width="7" height="7" rx="2"/><polyline points="4.5 7.5 6 9 8.5 6"/><line x1="13" y1="7.5" x2="21" y2="7.5"/><rect x="3" y="13" width="7" height="7" rx="2"/><line x1="13" y1="16.5" x2="21" y2="16.5"/>', 2),
+    quote: NT_I('<path d="M7 7h4v4c0 3-2 5-4 6"/><path d="M14 7h4v4c0 3-2 5-4 6"/>', 2.2),
+    hr: NT_I('<line x1="3" y1="12" x2="21" y2="12"/>', 2.6),
+    link: NT_I('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>', 2.2),
+    indent: NT_I('<polyline points="3 8 7 12 3 16"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="18" x2="11" y2="18"/>', 2.2),
+    outdent: NT_I('<polyline points="7 8 3 12 7 16"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="18" x2="11" y2="18"/>', 2.2),
+    clear: NT_I('<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/><line x1="4" y1="20" x2="20" y2="4"/>', 2),
+    task: NT_I('<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>', 2.2),
+    doc: NT_I('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/>', 2.2),
+    docS: NT_I('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/>', 2.2, 13),
+  };
+
+  let ntSubsOn = false, ntListLoaded = false;
+  const ntNotes = new Map();        // id -> meta (everything, trashed included)
+  let ntCats = NT_DEFAULT_CATS.map(c => ({ ...c }));
+  let ntFilter = 'all';             // 'all' | 'agenda' | <categoryId> | '' (General) | 'trash'
+  let ntQuery = '';
+  let ntOpenId = null;
+  let ntScreen = 'lib';             // phones: 'lib' | 'doc'
+  let _ntMounted = false;
+  let _ntEls = null;
+  let _ntBodyUnsub = null, _ntBodyLoaded = false;
+  let _ntRev = 0, _ntDirty = false, _ntSaving = false, _ntSaveAgain = false, _ntErrToasted = false;
+  let _ntSaveT = null, _ntMaxT = null, _ntDraftT = null, _ntOutlineT = null, _ntSelT = null;
+  let _ntState = 'saved';           // saved | dirty | saving | error
+  let _ntRemote = null;             // a body that arrived from elsewhere mid-edit
+  let _ntRange = null;              // last selection inside the editor
+  let _ntLibSig = '', _ntTodaySig = '', _ntOlSig = '';
+  let _ntPopKind = null, _ntPopAnchor = null;
+  let _ntDelArm = null;
+  let _ntTouchAt = 0;
+  let _ntOpening = null;            // guards double-create of agendas
+  let _ntTitleEdited = false;       // title typed since load — only then is it saved
+  let _ntPendingFocus = null;       // 'empty' once the body lands
+  const _ntBodyCache = new Map();   // id -> html, so switching back is instant
+  let _ntCal = { at: 0, byDate: null, status: '', busy: false, src: '', cacheAt: 0 };
+
+  // ---- small helpers ----
+  const ntIso = () => new Date().toISOString();
+  // escHtml() leaves quotes alone; anything that lands in an attribute goes
+  // through this one instead.
+  function ntEsc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function ntCat(id){ return ntCats.find(c => c.id === id) || null; }
+  function ntCatColor(id){ const c = ntCat(id); return c ? c.color : NT_GENERAL; }
+  function ntCatLabel(id){ const c = ntCat(id); return c ? c.label : 'General'; }
+  // Which Personal section a category's tasks land in.
+  function ntCatSection(id){
+    const c = ntCat(id);
+    if (c && SECTION_META[c.section]) return c.section;
+    return SECTION_META[id] ? id : 'life';
+  }
+  function ntNormCats(arr){
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(arr) ? arr : []).forEach(c => {
+      if (!c || typeof c.id !== 'string' || !c.id || seen.has(c.id)) return;
+      seen.add(c.id);
+      const def = NT_DEFAULT_CATS.find(d => d.id === c.id);
+      out.push({
+        id: c.id,
+        label: String(c.label || (def && def.label) || 'Untitled').slice(0, 40),
+        color: /^#[0-9a-f]{6}$/i.test(c.color || '') ? c.color : (def ? def.color : NT_GENERAL),
+        section: SECTION_META[c.section] ? c.section : (def ? def.section : 'life'),
+        builtin: !!def,
+      });
+    });
+    // Built-ins can be renamed or recoloured but never go missing — tasks
+    // route through them.
+    NT_DEFAULT_CATS.forEach(d => { if (!seen.has(d.id)) out.push({ ...d }); });
+    return out;
+  }
+  function ntDay(ds, opts){
+    try { return new Date(ds + 'T12:00:00').toLocaleDateString('en-US', opts || { weekday: 'short', month: 'short', day: 'numeric' }); }
+    catch { return ds; }
+  }
+  function ntAddDays(ds, n){ const d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + n); return dkey(d); }
+  function ntRel(iso){
+    const t = Date.parse(iso || '');
+    if (!t) return '';
+    const s = (Date.now() - t) / 1000;
+    if (s < 60) return 'now';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    const d = new Date(t);
+    if (dkey(d) === todayKey()) return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (dkey(d) === ntAddDays(todayKey(), -1)) return 'Yesterday';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function ntLive(){ return [...ntNotes.values()].filter(n => !n.trashed); }
+  function ntIsAgenda(n){ return !!n && n.kind === 'agenda' && typeof n.agendaDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(n.agendaDate); }
+  function ntSafeId(s){ return String(s || '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120); }
+  function ntLineId(){ return Math.random().toString(36).slice(2, 10); }
+  // Rule 2 again: Firestore meta is untrusted, so numbers that reach HTML
+  // are coerced to integers here rather than interpolated raw.
+  function ntCk(c){
+    const t = c ? (+c.total | 0) : 0, d = c ? (+c.done | 0) : 0;
+    return t > 0 ? `${Math.max(0, Math.min(d, t))}/${t}` : '';
+  }
+  function ntTitleOf(n){ return (n && String(n.title || '').trim()) || (ntIsAgenda(n) ? ntDay(n.agendaDate, { weekday: 'long', month: 'short', day: 'numeric' }) : 'Untitled'); }
+
+  // ---- sanitizer: an allowlist rebuild, never a blocklist scrub ----
+  const NT_DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'NOSCRIPT', 'META', 'LINK', 'TITLE', 'HEAD', 'SVG', 'MATH', 'IMG', 'PICTURE', 'VIDEO', 'AUDIO', 'CANVAS', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA', 'FORM', 'OPTION', 'SOURCE', 'TRACK', 'MAP', 'AREA', 'FRAME', 'FRAMESET', 'APPLET', 'BASE', 'DIALOG', 'COL', 'COLGROUP']);
+  const NT_BLOCKISH = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'HR', 'TABLE', 'TBODY', 'THEAD', 'TFOOT', 'TR', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'MAIN', 'ASIDE', 'NAV', 'FIGURE', 'DL', 'DT', 'DD', 'ADDRESS', 'DETAILS', 'SUMMARY']);
+  function ntSanitize(html){
+    let body;
+    try { body = new DOMParser().parseFromString('<!doctype html><body>' + String(html || '') + '</body>', 'text/html').body; }
+    catch { return ''; }
+    const out = document.createElement('div');
+    ntWalk(body, out);
+    ntNormalize(out);
+    return out.innerHTML;
+  }
+  // undefined = inline we don't know (unwrap, keep style-borne formatting),
+  // null = container to unwrap, element = the clean replacement.
+  function ntMapEl(node, tag, dst){
+    const mk = t => document.createElement(t);
+    switch (tag) {
+      case 'P': return mk('p');
+      case 'H1': case 'H2': case 'H3': {
+        const h = mk(tag.toLowerCase());
+        if (node.hasAttribute('data-collapsed')) h.setAttribute('data-collapsed', '1');
+        return h;
+      }
+      case 'H4': case 'H5': case 'H6': return mk('h3');
+      case 'BLOCKQUOTE': return mk('blockquote');
+      case 'UL': case 'OL': {
+        const kids = Array.from(node.children);
+        const isCheck = tag === 'UL' && (node.classList.contains('nt-checklist')
+          || kids.some(li => li.hasAttribute('data-checked') || li.hasAttribute('aria-checked') || li.getAttribute('role') === 'checkbox'));
+        const l = mk(isCheck ? 'ul' : tag.toLowerCase());
+        if (isCheck) l.className = 'nt-checklist';
+        return l;
+      }
+      case 'LI': {
+        const li = mk('li');
+        if (dst.nodeName === 'UL' && dst.classList.contains('nt-checklist')) {
+          const c = node.getAttribute('data-checked') || node.getAttribute('aria-checked');
+          li.setAttribute('data-checked', c === 'true' ? 'true' : 'false');
+        }
+        const tid = node.getAttribute('data-task-id');
+        if (tid && /^[A-Za-z0-9_-]{1,64}$/.test(tid)) li.setAttribute('data-task-id', tid);
+        const lid = node.getAttribute('data-line');
+        if (lid && /^[A-Za-z0-9]{2,20}$/.test(lid)) li.setAttribute('data-line', lid);
+        return li;
+      }
+      case 'STRONG': return mk('strong');
+      // Google Docs wraps whole pastes in <b style="font-weight:normal">.
+      case 'B': return /font-weight\s*:\s*(normal|[1-5]00)\b/i.test(node.getAttribute('style') || '') ? null : mk('strong');
+      case 'EM': case 'I': return mk('em');
+      case 'U': case 'INS': return mk('u');
+      case 'S': case 'STRIKE': case 'DEL': return mk('s');
+      case 'CODE': case 'KBD': case 'SAMP': case 'TT': return mk('code');
+      case 'A': {
+        const href = (node.getAttribute('href') || '').trim();
+        if (!/^(https?:|mailto:)/i.test(href)) return null;
+        const a = mk('a');
+        a.setAttribute('href', href);
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+        return a;
+      }
+      case 'TR': case 'DT': case 'DD': case 'SUMMARY': case 'FIGCAPTION': case 'CAPTION': return mk('p');
+      case 'TABLE': case 'TBODY': case 'THEAD': case 'TFOOT': case 'TD': case 'TH': return null;
+      case 'DIV': case 'SECTION': case 'ARTICLE': case 'HEADER': case 'FOOTER': case 'MAIN':
+      case 'ASIDE': case 'NAV': case 'FIGURE': case 'ADDRESS': case 'DETAILS': case 'CENTER': case 'DL':
+        return Array.from(node.children).some(c => NT_BLOCKISH.has(c.tagName.toUpperCase())) ? null : mk('p');
+      default: return undefined;
+    }
+  }
+  function ntStyleWraps(st){
+    const w = [];
+    if (/font-weight\s*:\s*(bold|[6-9]00)/.test(st)) w.push('strong');
+    if (/font-style\s*:\s*italic/.test(st)) w.push('em');
+    if (/text-decoration[^;]*underline/.test(st)) w.push('u');
+    if (/text-decoration[^;]*line-through/.test(st)) w.push('s');
+    return w;
+  }
+  function ntWalk(src, dst){
+    for (const node of Array.from(src.childNodes)) {
+      if (node.nodeType === 3) { if (node.nodeValue) dst.appendChild(document.createTextNode(node.nodeValue)); continue; }
+      if (node.nodeType !== 1) continue;
+      const tag = node.tagName.toUpperCase();
+      if (NT_DROP.has(tag)) continue;
+      if (tag === 'BR') { dst.appendChild(document.createElement('br')); continue; }
+      if (tag === 'HR') { dst.appendChild(document.createElement('hr')); continue; }
+      if (tag === 'PRE') { const p = document.createElement('pre'); p.textContent = node.textContent; dst.appendChild(p); continue; }
+      const el = ntMapEl(node, tag, dst);
+      if (el === undefined) {
+        const wraps = ntStyleWraps((node.getAttribute('style') || '').toLowerCase());
+        if (!wraps.length) { ntWalk(node, dst); continue; }
+        let outer = null, inner = null;
+        wraps.forEach(t => { const e = document.createElement(t); if (inner) inner.appendChild(e); else outer = e; inner = e; });
+        ntWalk(node, inner);
+        dst.appendChild(outer);
+        continue;
+      }
+      if (el === null) {
+        ntWalk(node, dst);
+        if (tag === 'TD' || tag === 'TH') dst.appendChild(document.createTextNode(' '));
+        continue;
+      }
+      dst.appendChild(el);
+      ntWalk(node, el);
+    }
+  }
+  function ntNormalize(root){
+    const INLINE = n => n.nodeType === 3 || /^(STRONG|EM|U|S|A|CODE|BR)$/.test(n.nodeName);
+    // Loose inline runs at the top level become paragraphs; orphan <li>s get a list.
+    let run = null, orphanList = null;
+    Array.from(root.childNodes).forEach(n => {
+      if (INLINE(n)) {
+        orphanList = null;
+        if (n.nodeType === 3 && !n.nodeValue.trim() && !run) { n.remove(); return; }
+        if (!run) { run = document.createElement('p'); root.insertBefore(run, n); }
+        run.appendChild(n);
+      } else if (n.nodeName === 'LI') {
+        run = null;
+        if (!orphanList) { orphanList = document.createElement('ul'); root.insertBefore(orphanList, n); }
+        orphanList.appendChild(n);
+      } else { run = null; orphanList = null; }
+    });
+    root.querySelectorAll('ul, ol').forEach(l => {
+      Array.from(l.childNodes).forEach(n => { if (n.nodeType === 3 && !n.nodeValue.trim()) n.remove(); });
+      const check = l.nodeName === 'UL' && l.classList.contains('nt-checklist');
+      Array.from(l.children).forEach(li => {
+        if (li.nodeName !== 'LI') return;
+        if (check) { if (li.getAttribute('data-checked') !== 'true') li.setAttribute('data-checked', 'false'); }
+        else li.removeAttribute('data-checked');
+      });
+    });
+    root.querySelectorAll('strong, em, u, s, code, a').forEach(e => {
+      if (!e.textContent && !e.querySelector('br')) e.remove();
+    });
+  }
+  // Plain text for search, snippets and "Copy as text".
+  function ntPlainText(root){
+    const c = root.cloneNode(true);
+    c.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+    c.querySelectorAll('h1, h2, h3, p, li, blockquote, pre').forEach(b => b.appendChild(document.createTextNode('\n')));
+    return c.textContent.replace(/[ \t ]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  // ---- crash drafts (IndexedDB — see rule 4) ----
+  let _ntIdbP = null;
+  function ntIdb(){
+    if (_ntIdbP) return _ntIdbP;
+    _ntIdbP = new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('personal-notes', 1);
+        r.onupgradeneeded = () => { try { r.result.createObjectStore('drafts', { keyPath: 'id' }); } catch {} };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+    _ntIdbP.catch(() => { _ntIdbP = null; });
+    return _ntIdbP;
+  }
+  async function ntDraftPut(rec){
+    try { const idb = await ntIdb(); idb.transaction('drafts', 'readwrite').objectStore('drafts').put(rec); } catch {}
+  }
+  async function ntDraftGet(id){
+    try {
+      const idb = await ntIdb();
+      return await new Promise(res => {
+        const r = idb.transaction('drafts').objectStore('drafts').get(id);
+        r.onsuccess = () => res(r.result || null);
+        r.onerror = () => res(null);
+      });
+    } catch { return null; }
+  }
+  async function ntDraftDel(id){
+    try { const idb = await ntIdb(); idb.transaction('drafts', 'readwrite').objectStore('drafts').delete(id); } catch {}
+  }
+
+  // ---- calendar (read-only) ----
+  // /api/calendar wakes Neon + Google on every call and is no-store, so it is
+  // fetched at most once passively per page load (Overview card) and on a
+  // 10-minute memo while Notes is open. Between fetches we read the caches
+  // the Calendar tab and the shell already keep. Never write either key.
+  function ntCalNorm(e){
+    return {
+      id: String(e.id || ''),
+      summary: String(e.summary || '(untitled)'),
+      time: String(e.time || e.timeStr || ''),
+      startISO: String(e.startISO || ''),
+      endISO: String(e.endISO || e.startISO || ''),
+      allDay: !!e.allDay,
+      cal: String(e.cal || ''),
+      meetingUrl: /^https:\/\//i.test(e.meetingUrl || '') ? e.meetingUrl : '',
+    };
+  }
+  function ntCalFromCache(refresh){
+    let best = null;
+    try {
+      const a = JSON.parse(localStorage.getItem('calendar-gcal-cache-v1') || 'null');
+      if (a && Array.isArray(a.events)) {
+        const by = {};
+        a.events.forEach(e => { if (e && e.date) (by[e.date] = by[e.date] || []).push(e); });
+        best = { by, at: Date.parse(a.syncedAt || '') || 0, src: 'calendar' };
+      }
+    } catch {}
+    try {
+      const b = JSON.parse(localStorage.getItem('cal-events-cache') || 'null');
+      const at = parseInt(localStorage.getItem('cal-last-synced') || '0', 10) || 0;
+      if (b && typeof b === 'object' && !Array.isArray(b) && (!best || at > best.at)) best = { by: b, at, src: 'shell' };
+    } catch {}
+    if (best && _ntCal.src !== 'live' && (!_ntCal.byDate || best.at >= _ntCal.cacheAt)) {
+      _ntCal.byDate = best.by; _ntCal.cacheAt = best.at; _ntCal.src = best.src;
+    }
+    if (refresh) ntCalChanged();
+  }
+  function ntCalEvents(ds){
+    if (!_ntCal.byDate) ntCalFromCache(false);
+    const arr = (_ntCal.byDate && Array.isArray(_ntCal.byDate[ds])) ? _ntCal.byDate[ds] : [];
+    const seen = new Set(), out = [];
+    arr.forEach(e => {
+      if (!e) return;
+      const n = ntCalNorm(e);
+      if (!n.id || seen.has(n.id)) return;       // one invite on two calendars
+      seen.add(n.id); out.push(n);
+    });
+    out.sort((a, b) => (Number(b.allDay) - Number(a.allDay)) || a.startISO.localeCompare(b.startISO));
+    return out;
+  }
+  function ntEvPast(ev){
+    if (ev.allDay) return false;
+    const t = Date.parse(ev.endISO || ev.startISO);
+    return !!t && t < Date.now();
+  }
+  function ntEvTime(ev){
+    if (ev.allDay) return 'All day';
+    const t = Date.parse(ev.startISO);
+    if (!t) return (ev.time || '').split(' - ')[0];
+    return new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(':00', '');
+  }
+  async function ntCalFetch(force){
+    if (_ntCal.busy) return;
+    // Memo on the last ATTEMPT, not the last success — an erroring endpoint
+    // would otherwise be hit on every render while Notes is open.
+    const fresh = (Date.now() - _ntCal.at) < 10 * 60 * 1000;
+    if (!force && (fresh || _ntCal.status === 'disconnected' || _ntCal.status === 'signedout')) return;
+    _ntCal.busy = true;
+    try {
+      const r = await fetch('/api/calendar', { credentials: 'same-origin' });
+      if (r.status === 412) _ntCal.status = 'disconnected';
+      else if (r.status === 401) _ntCal.status = 'signedout';
+      else if (!r.ok) _ntCal.status = 'error';
+      else {
+        const j = await r.json();
+        if (j && j.by_date && typeof j.by_date === 'object') { _ntCal.byDate = j.by_date; _ntCal.src = 'live'; _ntCal.status = 'ok'; }
+      }
+    } catch { _ntCal.status = 'error'; }
+    finally { _ntCal.at = Date.now(); _ntCal.busy = false; }
+    ntCalChanged();
+  }
+  function ntCalChanged(){
+    if (_tabNotes && _ntMounted) { try { ntRenderToday(); } catch {} }
+    if (_tabOverview) { try { render(); } catch {} }
+  }
+  // Legacy per-event notes from the shell and the Calendar tab — imported
+  // (read-only) into a new meeting doc so nothing written there is stranded.
+  function ntLegacyEventNote(evId){
+    const out = [];
+    try { const a = JSON.parse(localStorage.getItem('calendar-gcal-notes-v1') || '{}'); if (a && typeof a[evId] === 'string' && a[evId].trim()) out.push(a[evId].trim()); } catch {}
+    try { const b = JSON.parse(localStorage.getItem('cal-notes-global') || '{}'); if (b && typeof b[evId] === 'string' && b[evId].trim() && !out.includes(b[evId].trim())) out.push(b[evId].trim()); } catch {}
+    return out.join('\n\n');
+  }
+
+  // ---- data: subscriptions ----
+  // Lazy, like hbEnsureSubs: first reached from the Overview agenda card or
+  // the Notes tab. The list is metadata only — bodies load one at a time.
+  function ntEnsureSubs(){
+    if (ntSubsOn) return;
+    ntSubsOn = true;
+    onSnapshot(collection(db, NT_COL), snap => {
+      ntNotes.clear();
+      snap.forEach(d => ntNotes.set(d.id, { id: d.id, ...d.data() }));
+      ntListLoaded = true;
+      ntOnListChange();
+    }, e => console.warn('[notes] list sub', e));
+    onSnapshot(doc(db, NT_CFG_DOC[0], NT_CFG_DOC[1]), snap => {
+      const d = snap.exists() ? snap.data() : null;
+      ntCats = ntNormCats(d && d.categories);
+      ntOnListChange();
+    }, e => console.warn('[notes] config sub', e));
+  }
+  // Snapshots never rebuild the page while you're in Notes — only the notes
+  // UI, and that never touches the editor node.
+  function ntOnListChange(){
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); ntRenderDocChrome(); } catch (e) { console.warn('[notes] list render', e); } }
+    else if (_tabOverview) { try { render(); } catch {} }
+  }
+
+  // ---- data: derived fields (library rows, outline, search) ----
+  function ntDerive(root){
+    const outline = [];
+    Array.from(root.children).forEach(el => {
+      if (!/^H[123]$/.test(el.nodeName)) return;
+      const t = el.textContent.replace(/\s+/g, ' ').trim();
+      if (t) outline.push({ level: +el.nodeName[1], text: t.slice(0, 80) });
+    });
+    const lis = root.querySelectorAll('ul.nt-checklist > li');
+    let done = 0;
+    lis.forEach(li => { if (li.getAttribute('data-checked') === 'true') done++; });
+    const text = ntPlainText(root);
+    const heads = new Set(outline.map(o => o.text));
+    const snippet = text.split('\n').map(s => s.trim()).filter(s => s && !heads.has(s.slice(0, 80))).join(' · ').slice(0, 160);
+    return { outline: outline.slice(0, 60), checks: { total: lis.length, done }, snippet, text: text.slice(0, 4000) };
+  }
+
+  // ---- data: meta patches ----
+  const NT_DEL = Symbol('ntDel');
+  function ntPatchMeta(id, patch){
+    const cur = ntNotes.get(id);
+    const wire = {};
+    Object.keys(patch).forEach(k => {
+      const v = patch[k];
+      if (v === NT_DEL) { wire[k] = deleteField(); if (cur) delete cur[k]; }
+      else { wire[k] = v; if (cur) cur[k] = v; }
+    });
+    wire.updatedAt = ntIso();
+    if (cur) cur.updatedAt = wire.updatedAt;
+    setDoc(doc(db, NT_COL, id), wire, { merge: true }).catch(e => {
+      console.warn('[notes] meta', e);
+      ptToast('Couldn’t save — check your connection');
+    });
+  }
+
+  // ---- data: create ----
+  // Writes are not awaited: with the memory cache an offline commit only
+  // resolves once the server acks, and the doc should open right away.
+  // Latency compensation feeds our own listeners in the meantime.
+  function ntCreate(opts){
+    const o = opts || {};
+    const ref = o.id ? doc(db, NT_COL, o.id) : doc(collection(db, NT_COL));
+    const now = ntIso();
+    const html = ntSanitize(o.html || '');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const meta = {
+      title: String(o.title || '').slice(0, 200),
+      kind: o.agendaDate ? 'agenda' : 'note',
+      category: typeof o.category === 'string' ? o.category : '',
+      ...ntDerive(tmp),
+      pinned: false, trashed: false, rev: 1, createdAt: now, updatedAt: now,
+    };
+    if (o.agendaDate) meta.agendaDate = o.agendaDate;
+    if (o.daily) meta.daily = true;
+    if (o.event) meta.event = o.event;
+    const b = writeBatch(db);
+    b.set(ref, meta);
+    b.set(doc(db, NT_BODY_COL, ref.id), { html, rev: 1, updatedAt: now, deviceId: NT_DEVICE });
+    b.commit().catch(e => {
+      console.warn('[notes] create', e);
+      ptToast('Couldn’t create the note — check your connection');
+    });
+    ntNotes.set(ref.id, { id: ref.id, ...meta });
+    _ntBodyCache.set(ref.id, html);
+    return ref.id;
+  }
+  function ntNew(){
+    const cat = (ntFilter !== 'all' && ntFilter !== 'agenda' && ntFilter !== 'trash') ? ntFilter : '';
+    const id = ntCreate({ category: cat, agendaDate: ntFilter === 'agenda' ? todayKey() : '', html: '<p><br></p>' });
+    if (ntFilter === 'trash') ntFilter = 'all';
+    ntOpenDoc(id, { focus: 'title' });
+  }
+
+  // ---- data: open / body listener ----
+  function ntScroller(){
+    const d = _ntEls && _ntEls.doc;
+    if (d && getComputedStyle(d).overflowY === 'auto') return d;
+    return document.scrollingElement || document.documentElement;
+  }
+  function ntOpenDoc(id, opts){
+    const o = opts || {};
+    if (!id || !_ntEls) return;
+    if (ntOpenId && ntOpenId !== id) ntFlush();
+    ntPopClose();
+    const same = ntOpenId === id;
+    ntOpenId = id;
+    try { localStorage.setItem('pt-nt-last', id); } catch {}
+    ntScreen = 'doc';
+    const m = ntNotes.get(id);
+    if (m && m.trashed && ntFilter !== 'trash') ntFilter = 'trash';
+    if (!same) {
+      _ntDirty = false; _ntRemote = null; _ntBodyLoaded = false; _ntErrToasted = false;
+      _ntRev = (m && m.rev) || 0;
+      ntSetState('saved');
+      const cached = _ntBodyCache.get(id);
+      _ntEls.editor.innerHTML = cached != null ? cached : '';
+      // Read-only until the first real snapshot: text typed into a blank or
+      // stale copy would otherwise be saved over the whole note.
+      _ntEls.editor.classList.add('nt-loading');
+      _ntEls.editor.contentEditable = 'false';
+      _ntTitleEdited = false;
+      _ntPendingFocus = null;
+      _ntEls.title.value = m ? (m.title || '') : '';
+      ntAfterContentSwap();
+      ntSubBody(id);
+      const sc = ntScroller();
+      if (sc === _ntEls.doc) sc.scrollTop = 0; else window.scrollTo(0, 0);
+    }
+    ntRenderAll();
+    if (o.focus === 'title') setTimeout(() => { try { _ntEls.title.focus(); } catch {} }, 0);
+    else if (o.focus === 'empty') { if (_ntBodyLoaded) setTimeout(() => ntFocusFirstEmpty(), 0); else _ntPendingFocus = 'empty'; }
+  }
+  function ntCloseDoc(){
+    if (_ntBodyUnsub) { try { _ntBodyUnsub(); } catch {} _ntBodyUnsub = null; }
+    ntOpenId = null; _ntDirty = false; _ntRemote = null;
+    ntScreen = 'lib';
+    try { localStorage.removeItem('pt-nt-last'); } catch {}
+    if (_ntEls) { _ntEls.editor.innerHTML = ''; _ntEls.title.value = ''; }
+    ntRenderAll();
+  }
+  function ntSubBody(id){
+    if (_ntBodyUnsub) { try { _ntBodyUnsub(); } catch {} _ntBodyUnsub = null; }
+    _ntBodyUnsub = onSnapshot(doc(db, NT_BODY_COL, id), snap => {
+      if (ntOpenId !== id || !_ntEls) return;
+      const d = snap.exists() ? (snap.data() || {}) : null;
+      const rev = d ? (d.rev | 0) : 0;
+      if (!_ntBodyLoaded) {
+        // Offline with nothing cached: that "missing" doc is the cache
+        // talking, not the server. Stay read-only until the server answers.
+        if (!d && snap.metadata && snap.metadata.fromCache) return;
+        _ntBodyLoaded = true;
+        _ntEls.editor.classList.remove('nt-loading');
+        _ntEls.editor.contentEditable = 'true';
+        ntApplyHtml(d ? String(d.html || '') : '');   // read-only until now, so nothing typed to keep
+        _ntRev = Math.max(_ntRev, rev);
+        ntRestoreDraft(id, d, !!(snap.metadata && snap.metadata.hasPendingWrites));
+        ntSyncTaskChecks();
+        if (_ntPendingFocus === 'empty') { _ntPendingFocus = null; setTimeout(() => ntFocusFirstEmpty(), 0); }
+        if (_ntDirty) ntMarkDirty();                     // a title typed while loading
+        return;
+      }
+      if (!d) return;
+      // Only OUR echoes are dropped by rev. Another device's write is the
+      // server's truth whatever its rev (equal revs happen on concurrent saves).
+      if (d.deviceId === NT_DEVICE && rev <= _ntRev) return;
+      const incoming = String(d.html || '');
+      if (ntSanitize(incoming) === ntSanitize(_ntEls.editor.innerHTML)) { _ntRev = Math.max(_ntRev, rev); return; }
+      // Never yank text out from under the caret — and never autosave over it
+      // (ntSave holds while _ntRemote is set).
+      if (_ntDirty || ntEditorFocused()) {
+        _ntRemote = { html: incoming, rev };
+        ntRenderBanner();
+        return;
+      }
+      _ntRev = Math.max(_ntRev, rev);
+      ntApplyHtml(incoming, { keepScroll: true });
+    }, e => console.warn('[notes] body sub', e));
+  }
+  function ntEditorFocused(){
+    const ae = document.activeElement;
+    return !!(_ntEls && ae && (ae === _ntEls.editor || _ntEls.editor.contains(ae)));
+  }
+  function ntApplyHtml(html, opts){
+    if (!_ntEls) return;
+    const clean = ntSanitize(html);
+    const sc = ntScroller();
+    const top = sc ? sc.scrollTop : 0;
+    _ntEls.editor.innerHTML = clean;
+    if (ntOpenId) _ntBodyCache.set(ntOpenId, clean);
+    ntAfterContentSwap();
+    if (opts && opts.keepScroll && sc) sc.scrollTop = top;
+  }
+  // A draft is text that never reached the server. Restore it silently only
+  // if the server hasn't moved past the rev it was written on; otherwise put
+  // it in the editor and let the banner decide. `pending` = the snapshot is
+  // our own queued write — the draft is its only durable copy, keep it.
+  async function ntRestoreDraft(id, remote, pending){
+    const dr = await ntDraftGet(id);
+    if (!dr || ntOpenId !== id) return;
+    const mine = ntSanitize(dr.html || '');
+    const theirsRaw = String((remote && remote.html) || '');
+    if (mine === ntSanitize(theirsRaw)) { if (!pending) ntDraftDel(id); return; }
+    const remoteRev = remote ? (remote.rev | 0) : 0;
+    const behind = typeof dr.rev === 'number'
+      ? remoteRev > dr.rev
+      : (Date.parse((remote && remote.updatedAt) || '') || 0) > (dr.ts || 0);
+    ntApplyHtml(mine);
+    if (typeof dr.title === 'string' && dr.title !== _ntEls.title.value) { _ntEls.title.value = dr.title; _ntTitleEdited = true; }
+    if (behind) {
+      _ntRemote = { html: theirsRaw, rev: remoteRev };
+      _ntDirty = true;
+      ntSetState('dirty');
+      ntRenderBanner();
+      ptToast('Restored unsaved changes — this note also changed elsewhere');
+    } else {
+      ntMarkDirty();
+      ptToast('Restored changes that hadn’t saved yet');
+    }
+  }
+  function ntTakeRemote(){
+    if (!_ntRemote || !_ntEls) return;
+    const r = _ntRemote;
+    _ntRemote = null; _ntDirty = false;
+    _ntRev = Math.max(_ntRev, r.rev);
+    clearTimeout(_ntSaveT); clearTimeout(_ntMaxT); _ntSaveT = _ntMaxT = null;
+    ntApplyHtml(r.html, { keepScroll: true });
+    if (ntOpenId) ntDraftDel(ntOpenId);
+    const m = ntOpenId ? ntNotes.get(ntOpenId) : null;
+    _ntTitleEdited = false;
+    if (m) _ntEls.title.value = m.title || '';
+    ntSetState('saved');
+    ntRenderBanner();
+  }
+
+  // ---- data: save ----
+  let _ntInflight = 0;
+  function ntSetState(s){
+    _ntState = s;
+    const el = _ntEls && _ntEls.state;
+    if (!el) return;
+    el.textContent = s === 'saving' ? 'Saving…' : s === 'dirty' ? 'Edited' : s === 'error' ? 'Not saved — retrying' : 'Saved';
+    el.classList.toggle('err', s === 'error');
+  }
+  function ntMarkDirty(){
+    if (!ntOpenId || !_ntEls) return;
+    _ntDirty = true;
+    ntSetState('dirty');
+    clearTimeout(_ntSaveT);
+    _ntSaveT = setTimeout(ntSave, 1200);
+    if (!_ntMaxT) _ntMaxT = setTimeout(ntSave, 6000);
+    clearTimeout(_ntDraftT);
+    const id = ntOpenId;
+    _ntDraftT = setTimeout(() => {
+      if (ntOpenId === id && _ntDirty) ntDraftPut({ id, html: _ntEls.editor.innerHTML, title: _ntEls.title.value, ts: Date.now(), rev: _ntRev });
+    }, 400);
+  }
+  // Snapshots the doc synchronously, so switching docs right after is safe.
+  // Firestore applies one client's writes in order, so saves don't need a
+  // gate; rev only ever climbs.
+  function ntSave(){
+    clearTimeout(_ntSaveT); clearTimeout(_ntMaxT); _ntSaveT = null; _ntMaxT = null;
+    const id = ntOpenId;
+    if (!id || !_ntDirty || !_ntEls) return;
+    // Not loaded yet, or another device's edit is waiting on Load theirs /
+    // Keep mine: stay dirty (the IndexedDB draft holds the text) and wait.
+    if (!_ntBodyLoaded || _ntRemote) return;
+    const m = ntNotes.get(id);
+    if (ntListLoaded && !m) { _ntDirty = false; ntSetState('saved'); return; }   // deleted elsewhere
+    const ed = _ntEls.editor;
+    const html = ntSanitize(ed.innerHTML);
+    const derived = ntDerive(ed);
+    const title = _ntEls.title.value.replace(/\s+/g, ' ').trim().slice(0, 200);
+    // The title field can be stale (renamed on another device while we
+    // typed in the body) — it's only written when it was edited here.
+    const withTitle = _ntTitleEdited;
+    _ntTitleEdited = false;
+    const rev = (_ntRev | 0) + 1;
+    const now = ntIso();
+    _ntRev = rev; _ntDirty = false; _ntInflight++;
+    ntSetState('saving');
+    _ntBodyCache.set(id, html);
+    if (m) Object.assign(m, derived, withTitle ? { title } : {}, { rev, updatedAt: now });
+    ntDraftPut({ id, html, title, ts: Date.now(), rev: rev - 1 });
+    const b = writeBatch(db);
+    b.set(doc(db, NT_BODY_COL, id), { html, rev, updatedAt: now, deviceId: NT_DEVICE });
+    b.set(doc(db, NT_COL, id), { ...derived, ...(withTitle ? { title } : {}), rev, updatedAt: now }, { merge: true });
+    b.commit().then(() => {
+      _ntErrToasted = false;
+      if (!(ntOpenId === id && _ntDirty)) ntDraftDel(id);
+    }).catch(e => {
+      console.warn('[notes] save', e);
+      if (ntOpenId === id) { _ntDirty = true; if (withTitle) _ntTitleEdited = true; clearTimeout(_ntSaveT); _ntSaveT = setTimeout(ntSave, 8000); }
+      if (!_ntErrToasted) { _ntErrToasted = true; ptToast('Couldn’t save — your text is kept on this device'); }
+    }).finally(() => {
+      _ntInflight = Math.max(0, _ntInflight - 1);
+      if (ntOpenId === id) ntSetState(_ntDirty ? (_ntSaveT ? (_ntErrToasted ? 'error' : 'dirty') : 'dirty') : (_ntInflight ? 'saving' : 'saved'));
+    });
+    ntRenderLib();
+  }
+  function ntFlush(){ if (_ntDirty) ntSave(); }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ntFlush(); });
+  window.addEventListener('pagehide', () => ntFlush());
+
+  // ---- data: trash / duplicate ----
+  function ntTrash(id){
+    if (ntOpenId === id) ntFlush();
+    ntPatchMeta(id, { trashed: true, trashedAt: ntIso(), pinned: false });
+    if (ntOpenId === id) ntCloseDoc(); else ntRenderAll();
+    ptToast('Moved to trash');
+  }
+  function ntRestore(id){
+    ntPatchMeta(id, { trashed: false, trashedAt: NT_DEL });
+    ntRenderAll();
+  }
+  function ntDeleteForever(id){
+    ntNotes.delete(id); _ntBodyCache.delete(id); ntDraftDel(id);
+    if (ntOpenId === id) ntCloseDoc();
+    const b = writeBatch(db);
+    b.delete(doc(db, NT_COL, id));
+    b.delete(doc(db, NT_BODY_COL, id));
+    b.commit().catch(e => { console.warn('[notes] delete', e); ptToast('Couldn’t delete — check your connection'); });
+    _ntDelArm = null;
+    ntRenderAll();
+  }
+  async function ntDuplicate(id){
+    const m = ntNotes.get(id);
+    if (!m) return;
+    if (ntOpenId === id) ntFlush();
+    let src = (ntOpenId === id && _ntEls) ? _ntEls.editor.innerHTML : _ntBodyCache.get(id);
+    if (src == null) {
+      try { const s = await getDoc(doc(db, NT_BODY_COL, id)); src = s.exists() ? String((s.data() || {}).html || '') : ''; } catch { src = ''; }
+    }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = ntSanitize(src);
+    // A task belongs to one line — the copy starts unlinked.
+    tmp.querySelectorAll('[data-task-id], [data-line]').forEach(li => { li.removeAttribute('data-task-id'); li.removeAttribute('data-line'); });
+    const nid = ntCreate({ title: 'Copy of ' + ntTitleOf(m), category: m.category || '', html: tmp.innerHTML });
+    ntOpenDoc(nid, { focus: 'title' });
+  }
+
+  // ---- agendas: today's and one per calendar event ----
+  function ntFindDaily(ds){ return ntLive().find(n => n.daily && n.agendaDate === ds) || null; }
+  function ntFindEvent(ev, ds){
+    const live = ntLive();
+    return live.find(n => n.event && n.event.id === ev.id && n.agendaDate === ds)
+      // all-day ids are made up from the title, so fall back to the title
+      || (ev.allDay ? live.find(n => n.event && n.agendaDate === ds && n.event.summary === ev.summary) : null)
+      || null;
+  }
+  function ntDailyTemplate(ds){
+    const evs = ntCalEvents(ds);
+    const sched = evs.length
+      ? '<ul>' + evs.map(e => `<li><strong>${escHtml(ntEvTime(e))}</strong> — ${escHtml(e.summary)}</li>`).join('') + '</ul>'
+      : '<p>Nothing on the calendar.</p>';
+    let tasks = [];
+    if (ds === todayKey()) { try { tasks = work.today.map(resolveTaskRef).filter(t => t && !t.done && t.id).slice(0, 10); } catch {} }
+    const pri = tasks.length
+      ? '<ul class="nt-checklist">' + tasks.map(t => `<li data-checked="false" data-task-id="${ntEsc(t.id)}" data-line="${ntLineId()}">${escHtml(t.text || '')}</li>`).join('') + '</ul>'
+      : '<ul class="nt-checklist"><li data-checked="false"><br></li></ul>';
+    return `<h2>Schedule</h2>${sched}<h2>Priorities</h2>${pri}<h2>Notes</h2><p><br></p><h2>Follow-ups</h2><ul class="nt-checklist"><li data-checked="false"><br></li></ul>`;
+  }
+  function ntEventTemplate(ev){
+    const legacy = ntLegacyEventNote(ev.id);
+    const notes = legacy ? legacy.split(/\n+/).map(l => `<p>${escHtml(l)}</p>`).join('') : '<p><br></p>';
+    return `<h2>Agenda</h2><ul class="nt-checklist"><li data-checked="false"><br></li></ul><h2>Notes</h2>${notes}<h2>Action items</h2><ul class="nt-checklist"><li data-checked="false"><br></li></ul>`;
+  }
+  function ntGuessCat(ev){
+    const s = (ev.summary + ' ' + ev.cal).toLowerCase();
+    if (/\becm\b|govtech|smartsheet/.test(s)) return 'ecm';
+    if (/vital/.test(s)) return 'vitaltouch';
+    if (/\bmeal|cook|grocer/.test(s)) return 'meals';
+    const c = ntCats.find(x => !x.builtin && x.label.length > 2 && s.includes(x.label.toLowerCase()));
+    return c ? c.id : '';
+  }
+  // Deterministic ids + a getDoc check, so two devices (or a double tap)
+  // can't mint two agendas for the same day or meeting.
+  async function ntClaimId(id){
+    try {
+      const s = await getDoc(doc(db, NT_COL, id));
+      if (!s.exists()) return { id, existing: false };
+      const d = s.data() || {};
+      if (d.trashed) return { id: null, existing: false };
+      ntNotes.set(id, { id, ...d });
+      return { id, existing: true };
+    } catch {
+      // Offline / uncached: can't prove the id is free, and ntCreate's set()
+      // would overwrite another device's agenda. A random id at worst duplicates.
+      return { id: null, existing: false };
+    }
+  }
+  async function ntOpenDaily(ds){
+    const hit = ntFindDaily(ds);
+    if (hit) { ntOpenDoc(hit.id); return; }
+    if (_ntOpening) return;
+    _ntOpening = 'daily';
+    try {
+      const c = await ntClaimId('agenda-' + ds);
+      if (c.existing) { ntOpenDoc(c.id); return; }
+      const nid = ntCreate({ id: c.id || undefined, title: ntDay(ds, { weekday: 'long', month: 'short', day: 'numeric' }), agendaDate: ds, daily: true, category: '', html: ntDailyTemplate(ds) });
+      ntOpenDoc(nid, { focus: 'empty' });
+    } finally { _ntOpening = null; }
+  }
+  async function ntOpenEvent(evId, ds){
+    const ev = ntCalEvents(ds).find(e => e.id === evId);
+    if (!ev) { ptToast('That event isn’t on the calendar anymore'); return; }
+    const hit = ntFindEvent(ev, ds);
+    if (hit) { ntOpenDoc(hit.id); return; }
+    if (_ntOpening) return;
+    _ntOpening = 'ev';
+    try {
+      const c = await ntClaimId('evt-' + ds + '-' + ntSafeId(ev.id));
+      if (c.existing) { ntOpenDoc(c.id); return; }
+      const event = {
+        id: ev.id.slice(0, 200), summary: ev.summary.slice(0, 200), time: ev.time.slice(0, 60),
+        startISO: ev.startISO, endISO: ev.endISO, allDay: ev.allDay, cal: ev.cal.slice(0, 80), meetingUrl: ev.meetingUrl,
+      };
+      const nid = ntCreate({ id: c.id || undefined, title: ev.summary, agendaDate: ds, event, category: ntGuessCat(ev), html: ntEventTemplate(ev) });
+      ntOpenDoc(nid, { focus: 'empty' });
+    } finally { _ntOpening = null; }
+  }
+
+  // ---- checklist lines <-> Personal tasks ----
+  // tv_todos has no listener, so on open we ask each linked task how it's
+  // doing and mirror done-ness onto its line.
+  async function ntSyncTaskChecks(){
+    const id = ntOpenId;
+    if (!id || !_ntEls) return;
+    const lis = Array.from(_ntEls.editor.querySelectorAll('li[data-task-id]'));
+    if (!lis.length) return;
+    const rows = await Promise.all(lis.map(async li => {
+      const tid = li.getAttribute('data-task-id');
+      let t = todos.find(x => x.id === tid) || (_plannedCache || []).find(x => x.id === tid);
+      if (!t) {
+        try { const s = await getDoc(doc(db, 'tv_todos', tid)); t = s.exists() ? { id: tid, ...s.data() } : null; }
+        catch { return null; }
+      }
+      return t ? { li, t } : null;
+    }));
+    if (ntOpenId !== id) return;
+    let changed = false;
+    rows.forEach(r => {
+      if (!r || !r.li.isConnected) return;
+      const ul = r.li.parentElement;
+      if (!ul || !ul.classList.contains('nt-checklist')) return;
+      const want = r.t.done ? 'true' : 'false';
+      if (r.li.getAttribute('data-checked') !== want) { r.li.setAttribute('data-checked', want); changed = true; }
+    });
+    if (changed) { ntMarkDirty(); ntRenderOutline(); }
+  }
+  async function ntToggleLine(li){
+    const on = li.getAttribute('data-checked') !== 'true';
+    li.setAttribute('data-checked', on ? 'true' : 'false');
+    ntMarkDirty();
+    ntRenderOutline();
+    const tid = li.getAttribute('data-task-id');
+    if (!tid) return;
+    try {
+      // Always the REAL toggle — it keeps the done-log, stats, shell analytics
+      // and Smartsheet push honest. A task outside today's array (planned, or
+      // another day's) is loaded first, the way ensureWorkTasksLoaded does.
+      let t = todos.find(x => x.id === tid);
+      if (!t) {
+        const s = await getDoc(doc(db, 'tv_todos', tid));
+        if (s.exists()) { t = { id: tid, ...(s.data() || {}) }; todos.push(t); }
+      }
+      if (!t) { ptToast('That task no longer exists'); return; }
+      if (!!t.done !== on) await toggleTodo(tid);
+      const p = (_plannedCache || []).find(x => x.id === tid);
+      if (p) p.done = on;
+    } catch (e) { console.warn('[notes] task toggle', e); ptToast('Couldn’t update the linked task'); }
+  }
+  // when: 'today' | 'someday' | 'YYYY-MM-DD'. Same rails as the Coach accept.
+  async function ntLineToTask(li, when){
+    const id = ntOpenId;
+    if (!id || !li || !li.isConnected) return;
+    const text = (li.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!text) { ptToast('Type the task on this line first'); return; }
+    if (li.getAttribute('data-task-id')) { ptToast('This line is already a task'); return; }
+    const m = ntNotes.get(id) || {};
+    const sec = ntCatSection(m.category || '');
+    const job = sectionJob(sec) || '';
+    const line = li.getAttribute('data-line') || ntLineId();
+    const today = todayKey();
+    const link = { section: sec, noteId: id, noteLineId: line };
+    let tid = null, where = 'Today';
+    if (when === 'today' || when === today) {
+      tid = await addTodoItem(text, null, job ? { job } : {});
+      if (tid) {
+        // addTodoItem dates the task to the VIEWED day — pin it to today.
+        await updateTodoFields(tid, { ...link, ...(dkey(currentDate) !== today ? { date: today } : {}) });
+        addToToday(tid);
+      }
+    } else {
+      const ds = when === 'someday' ? '' : when;
+      tid = await createPlannedTask(text, ds, job);
+      if (tid) {
+        // updateTodoFields no-ops for planned ids — write directly.
+        try { await updateDoc(doc(db, 'tv_todos', tid), link); } catch (e) { console.warn('[notes] link task', e); }
+        const p = (_plannedCache || []).find(x => x.id === tid);
+        if (p) Object.assign(p, link);
+        where = ds ? 'Planned · ' + ntDay(ds) : 'Planned · Someday';
+      }
+    }
+    if (!tid) { ptToast('Couldn’t create the task — check your connection'); return; }
+    if (li.isConnected && ntOpenId === id) {
+      li.setAttribute('data-task-id', tid);
+      li.setAttribute('data-line', line);
+      li.classList.add('nt-flash');
+      setTimeout(() => li.classList.remove('nt-flash'), 1300);
+      ntMarkDirty();
+      ntRenderOutline();
+    }
+    ptToast('Added to ' + where);
+    try { render(); } catch {}
+  }
+
+  // ---- categories ----
+  function ntSaveCats(next){
+    ntCats = ntNormCats(next);
+    setDoc(doc(db, NT_CFG_DOC[0], NT_CFG_DOC[1]), {
+      categories: ntCats.map(c => ({ id: c.id, label: c.label, color: c.color, section: c.section })),
+      updatedAt: ntIso(),
+    }).catch(e => { console.warn('[notes] categories', e); ptToast('Couldn’t save categories'); });
+    ntRenderAll();
+  }
+  function ntDeleteCat(catId){
+    const c = ntCat(catId);
+    if (!c || c.builtin) return;
+    // Its notes fall back to General rather than vanishing with it.
+    const docs = [...ntNotes.values()].filter(n => n.category === catId);
+    for (let i = 0; i < docs.length; i += 400) {
+      const b = writeBatch(db);
+      docs.slice(i, i + 400).forEach(n => { n.category = ''; b.set(doc(db, NT_COL, n.id), { category: '' }, { merge: true }); });
+      b.commit().catch(e => console.warn('[notes] recategorise', e));
+    }
+    if (ntFilter === catId) ntFilter = 'all';
+    ntSaveCats(ntCats.filter(x => x.id !== catId));
+  }
+
+  // ---- view plumbing ----
+  function ntIsPhone(){ try { return matchMedia('(max-width: 760px)').matches; } catch { return false; } }
+  // Called from renderWorkView on every render: show/hide only.
+  function ntSyncPane(){
+    const np = document.getElementById('notesPane');
+    if (!np) return;
+    const show = !!_tabNotes;
+    if (np.hidden === show) np.hidden = !show;
+    if (!show) ntOnHide();
+  }
+  function ntOnHide(){
+    if (!_ntMounted) return;
+    ntFlush();
+    ntPopClose();
+    document.body.classList.remove('nt-editing');
+  }
+  // The one way in: flags, render (rebuilds the strip), then the target.
+  function ntGo(target){
+    _tabNotes = true; _tabOverview = false; _tabPlanned = false; _tabHabits = false; _tabTimer = false;
+    // render() defers while a text input has focus — don't let a half-open
+    // quick-add strand us on the Overview.
+    try { const ae = document.activeElement; if (ae && ae !== document.body && ae.blur) ae.blur(); } catch {}
+    render();
+    document.body.classList.add('notes-active');
+    ntSyncPane();
+    ntEnsureMounted();
+    const t = target || {};
+    if (t.id) ntOpenDoc(t.id);
+    else if (t.daily) ntOpenDaily(t.daily);
+    else if (t.eventId) ntOpenEvent(t.eventId, t.date || todayKey());
+    else if (ntIsPhone()) { ntScreen = 'lib'; ntRenderAll(); }
+    const sc = ntScroller();
+    if (sc !== (_ntEls && _ntEls.doc)) window.scrollTo(0, 0);
+    // The doc stayed mounted while you were away; tasks may have been ticked.
+    if (ntOpenId && _ntBodyLoaded && (!t.id || t.id === ntOpenId)) ntSyncTaskChecks();
+  }
+  function ntEnsureMounted(){
+    const pane = document.getElementById('notesPane');
+    if (!pane) return;
+    ntEnsureSubs();
+    if (!_ntMounted) {
+      pane.innerHTML = ntShellHTML();
+      const q = id => document.getElementById(id);
+      _ntEls = {
+        shell: q('ntShell'), search: q('ntSearch'), today: q('ntToday'), filters: q('ntFilters'),
+        list: q('ntList'), foot: q('ntLibFoot'), doc: q('ntDoc'), empty: q('ntDocEmpty'), page: q('ntPage'),
+        catChip: q('ntCatChip'), kindChip: q('ntKindChip'), dateChip: q('ntDateChip'), dateLbl: q('ntDateLbl'),
+        date: q('ntDate'), dateClear: q('ntDateClear'), evChip: q('ntEvChip'), state: q('ntState'), pin: q('ntPinBtn'),
+        title: q('ntTitle'), banner: q('ntBanner'), toolbar: q('ntToolbar'), styleLbl: q('ntStyleLbl'),
+        editor: q('ntEditor'), outline: q('ntOutline'),
+      };
+      try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
+      ntWire();
+      _ntMounted = true;
+      ntCalFromCache(false);
+      // Desktop reopens the last doc; phones land on the library.
+      let last = null;
+      try { last = localStorage.getItem('pt-nt-last'); } catch {}
+      if (last && !ntIsPhone()) {
+        const m = ntNotes.get(last);
+        if (!m || !m.trashed) ntOpenDoc(last);
+      }
+    }
+    ntCalFetch(false);
+    ntRenderAll();
+  }
+  function ntShellHTML(){
+    return `
+    <div class="nt-shell" id="ntShell" data-screen="lib">
+      <aside class="nt-lib" aria-label="Notes">
+        <div class="nt-lib-top">
+          <label class="nt-search">${NT_SVG.search}<input id="ntSearch" type="search" placeholder="Search notes" autocomplete="off" enterkeyhint="search"></label>
+          <button class="nt-new" id="ntNew" type="button" data-nt-act="new">${NT_SVG.plus}<span>New</span></button>
+        </div>
+        <div class="nt-today" id="ntToday"></div>
+        <div class="nt-filters" id="ntFilters"></div>
+        <div class="nt-list" id="ntList"></div>
+        <div class="nt-lib-foot" id="ntLibFoot"></div>
+      </aside>
+      <section class="nt-doc" id="ntDoc">
+        <div class="nt-docempty" id="ntDocEmpty">
+          <b>Notes &amp; agenda</b>
+          <span>Pick a note, or start one. Headings split a page into sections you can fold and jump between, and any checklist line can become a Personal task.</span>
+          <div class="row">
+            <button class="nt-btn primary" type="button" data-nt-act="new">New note</button>
+            <button class="nt-btn" type="button" data-nt-act="daily">Today’s agenda</button>
+          </div>
+        </div>
+        <article class="nt-page" id="ntPage" hidden>
+          <div class="nt-docbar">
+            <button class="nt-back" type="button" data-nt-act="back">${NT_SVG.back}Notes</button>
+            <button class="nt-dchip" type="button" id="ntCatChip" data-nt-act="cat" title="Category"></button>
+            <span class="nt-dchip kind" id="ntKindChip" hidden>Agenda</span>
+            <label class="nt-dchip" id="ntDateChip" title="Agenda date">${NT_SVG.cal}<span id="ntDateLbl">Add date</span><input type="date" id="ntDate" aria-label="Agenda date"></label>
+            <button class="nt-dchip" type="button" id="ntDateClear" data-nt-act="undate" title="Remove the date (back to a plain note)" hidden>✕</button>
+            <span class="nt-dchip ev" id="ntEvChip" hidden></span>
+            <span class="nt-dbr">
+            <span class="nt-state" id="ntState">Saved</span>
+            <button class="nt-icon nt-ol-btn" type="button" data-nt-act="outline" title="Outline" aria-label="Outline">${NT_SVG.outline}</button>
+            <button class="nt-icon" type="button" id="ntPinBtn" data-nt-act="pin" title="Pin to top" aria-label="Pin">${NT_SVG.pin}</button>
+            <button class="nt-icon" type="button" data-nt-act="more" title="More" aria-label="More">${NT_SVG.more}</button>
+            </span>
+          </div>
+          <input class="nt-title" id="ntTitle" type="text" placeholder="Untitled" autocomplete="off" maxlength="200" aria-label="Title">
+          <div class="nt-banner" id="ntBanner" hidden></div>
+          <div class="nt-toolbar" id="ntToolbar" role="toolbar" aria-label="Formatting">${ntToolbarHTML()}</div>
+          <div class="nt-editor" id="ntEditor" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Note"
+               data-placeholder="Start writing — ## and a space for a section, [] for a checklist"></div>
+        </article>
+      </section>
+      <aside class="nt-outline" id="ntOutline" aria-label="Outline"></aside>
+    </div>`;
+  }
+  function ntToolbarHTML(){
+    const b = (cmd, inner, title, cls) =>
+      `<button class="nt-tb ${cls || ''}" type="button" data-nt-cmd="${cmd}" title="${title}" aria-label="${title}">${inner}</button>`;
+    return b('style', '<span id="ntStyleLbl">Text</span>' + NT_SVG.chevS, 'Text style', 'style')
+      + '<span class="nt-tb-sep"></span>'
+      + b('bold', '<b>B</b>', 'Bold (⌘B)')
+      + b('italic', '<i style="font-family:Georgia,serif;font-size:14px">I</i>', 'Italic (⌘I)')
+      + b('underline', '<u>U</u>', 'Underline (⌘U)', 'wide')
+      + b('strike', '<s>S</s>', 'Strikethrough', 'wide')
+      + '<span class="nt-tb-sep wide"></span>'
+      + b('ul', NT_SVG.ul, 'Bulleted list (⌘⇧8)')
+      + b('ol', NT_SVG.ol, 'Numbered list (⌘⇧7)', 'wide')
+      + b('check', NT_SVG.check, 'Checklist (⌘⇧9)')
+      + '<span class="nt-tb-sep wide"></span>'
+      + b('quote', NT_SVG.quote, 'Quote', 'wide')
+      + b('hr', NT_SVG.hr, 'Divider', 'wide')
+      + b('link', NT_SVG.link, 'Link (⌘K)', 'wide')
+      + b('outdent', NT_SVG.outdent, 'Outdent (⇧Tab)', 'wide')
+      + b('indent', NT_SVG.indent, 'Indent (Tab)', 'wide')
+      + b('clear', NT_SVG.clear, 'Clear formatting', 'wide')
+      + b('more', NT_SVG.more, 'More formatting', 'nt-tb-more')
+      + b('task', NT_SVG.task + '<span>Task</span>', 'Make this line a Personal task', 'task');
+  }
+
+  // ---- library ----
+  function ntRenderAll(){
+    if (!_ntEls) return;
+    ntRenderLib();
+    ntRenderDocChrome();
+    ntRenderOutline();
+    ntSetState(_ntState);
+  }
+  function ntCounts(){
+    const live = ntLive();
+    const c = { all: live.length, agenda: 0, trash: ntNotes.size - live.length, '': 0 };
+    ntCats.forEach(x => { c[x.id] = 0; });
+    live.forEach(n => {
+      if (ntIsAgenda(n)) c.agenda++;
+      const k = ntCat(n.category) ? n.category : '';
+      c[k] = (c[k] || 0) + 1;
+    });
+    return c;
+  }
+  function ntVisible(){
+    const q = ntQuery.trim().toLowerCase();
+    let arr = ntFilter === 'trash' ? [...ntNotes.values()].filter(n => n.trashed) : ntLive();
+    if (ntFilter === 'agenda') arr = arr.filter(ntIsAgenda);
+    else if (ntFilter !== 'all' && ntFilter !== 'trash') arr = arr.filter(n => (ntCat(n.category) ? n.category : '') === ntFilter);
+    if (q) arr = arr.filter(n => (ntTitleOf(n) + '\n' + (n.text || n.snippet || '')).toLowerCase().includes(q));
+    return arr;
+  }
+  const ntByUpdated = (a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  function ntRowHTML(n){
+    const ck = ntCk(n.checks);
+    const when = ntIsAgenda(n) ? ntDay(n.agendaDate, { month: 'short', day: 'numeric' }) : ntRel(n.updatedAt);
+    const sub = n.snippet || (n.event ? [ntEvTime(n.event), n.event.cal].filter(Boolean).join(' · ') : '') || 'Empty page';
+    let h = `<button class="nt-row${n.id === ntOpenId ? ' on' : ''}" type="button" data-nt-open="${ntEsc(n.id)}" style="--c:${ntEsc(ntCatColor(n.category))}">
+      <span class="d"></span>
+      <span class="m"><span class="t">${n.pinned ? '<span class="pin">●</span>' : ''}${escHtml(ntTitleOf(n))}</span><span class="s">${escHtml(sub)}</span></span>
+      <span class="r">${escHtml(when)}${ck ? `<b>${ck}</b>` : ''}</span>
+    </button>`;
+    if (n.trashed) {
+      const arm = _ntDelArm === n.id;
+      h += `<div class="nt-row-acts">
+        <button class="nt-btn" type="button" data-nt-restore="${ntEsc(n.id)}">Restore</button>
+        <button class="nt-btn del${arm ? ' arm' : ''}" type="button" data-nt-purge="${ntEsc(n.id)}">${arm ? 'Delete forever?' : 'Delete'}</button>
+      </div>`;
+    }
+    return h;
+  }
+  function ntRenderLib(){
+    if (!_ntEls) return;
+    _ntEls.shell.dataset.screen = ntScreen;
+    ntRenderToday();
+    ntRenderFilters();
+    const arr = ntVisible();
+    const sub = t => `<div class="nt-sub">${escHtml(t)}</div>`;
+    let h = '';
+    if (!ntListLoaded && !arr.length) h = '<div class="nt-empty-lib">Loading…</div>';
+    else if (!arr.length) {
+      h = `<div class="nt-empty-lib">${ntQuery ? `Nothing matches “${escHtml(ntQuery)}”.`
+        : ntFilter === 'trash' ? 'Trash is empty.'
+        : ntFilter === 'agenda' ? 'No agendas yet. Start today’s above, or give any note a date.'
+        : 'Nothing here yet — start one with New.'}</div>`;
+    } else if (ntQuery) {
+      h = arr.slice().sort(ntByUpdated).map(ntRowHTML).join('');
+    } else if (ntFilter === 'trash') {
+      h = arr.slice().sort((a, b) => String(b.trashedAt || '').localeCompare(String(a.trashedAt || ''))).map(ntRowHTML).join('');
+    } else if (ntFilter === 'agenda') {
+      const t = todayKey();
+      const today = arr.filter(n => n.agendaDate === t).sort(ntByUpdated);
+      const up = arr.filter(n => n.agendaDate > t).sort((a, b) => a.agendaDate.localeCompare(b.agendaDate));
+      const past = arr.filter(n => n.agendaDate < t).sort((a, b) => b.agendaDate.localeCompare(a.agendaDate));
+      if (today.length) h += sub('Today') + today.map(ntRowHTML).join('');
+      if (up.length) h += sub('Upcoming') + up.map(ntRowHTML).join('');
+      if (past.length) h += sub('Past') + past.map(ntRowHTML).join('');
+    } else {
+      const pinned = arr.filter(n => n.pinned).sort(ntByUpdated);
+      const rest = arr.filter(n => !n.pinned).sort(ntByUpdated);
+      if (pinned.length) h += sub('Pinned') + pinned.map(ntRowHTML).join('') + (rest.length ? sub('Recent') : '');
+      h += rest.map(ntRowHTML).join('');
+    }
+    if (h !== _ntLibSig) { _ntLibSig = h; _ntEls.list.innerHTML = h; }
+    const c = ntCounts();
+    const foot = `<button type="button" data-nt-act="cats">Categories</button>`
+      + (c.trash || ntFilter === 'trash' ? `<button type="button" class="${ntFilter === 'trash' ? 'on' : ''}" data-nt-filter="trash">Trash${c.trash ? ' · ' + c.trash : ''}</button>` : '');
+    if (_ntEls.foot.innerHTML !== foot) _ntEls.foot.innerHTML = foot;
+  }
+  function ntRenderFilters(){
+    const c = ntCounts();
+    const chip = (key, label, n, color) =>
+      `<button class="nt-chip${ntFilter === key ? ' on' : ''}" type="button" data-nt-filter="${ntEsc(key)}"${color ? ` style="--c:${ntEsc(color)}"` : ''}>${color ? '<span class="d"></span>' : ''}${escHtml(label)}${n ? `<span class="n">${n}</span>` : ''}</button>`;
+    let h = chip('all', 'All', c.all) + chip('agenda', 'Agenda', c.agenda);
+    ntCats.forEach(x => { h += chip(x.id, x.label, c[x.id], x.color); });
+    if (c[''] || ntFilter === '') h += chip('', 'General', c[''], NT_GENERAL);
+    h += `<button class="nt-chip" type="button" data-nt-act="cats" title="Add or edit categories" aria-label="Add or edit categories">+</button>`;
+    if (_ntEls.filters.dataset.sig !== h) { _ntEls.filters.dataset.sig = h; _ntEls.filters.innerHTML = h; }
+  }
+  function ntRenderToday(){
+    if (!_ntEls) return;
+    let h = '';
+    if (!ntQuery && (ntFilter === 'all' || ntFilter === 'agenda')) {
+      const ds = todayKey();
+      const daily = ntFindDaily(ds);
+      const evs = ntCalEvents(ds);
+      h += `<div class="nt-sub"><span>Today · ${escHtml(ntDay(ds))}</span><span class="sp"></span>${_ntCal.busy ? '<span>…</span>' : '<button type="button" data-nt-act="calsync" title="Refresh from Google Calendar">Refresh</button>'}</div>`;
+      h += daily
+        ? `<button class="nt-trow daily has" type="button" data-nt-open="${ntEsc(daily.id)}"><span class="tm">Agenda</span><span class="tx">${escHtml(ntTitleOf(daily))}</span><span class="go">${ntCk(daily.checks) || 'Open'}</span></button>`
+        : `<button class="nt-trow daily" type="button" data-nt-act="daily"><span class="tm">Agenda</span><span class="tx">Start today’s agenda</span><span class="go">+</span></button>`;
+      evs.slice(0, 10).forEach(ev => {
+        const d = ntFindEvent(ev, ds);
+        h += `<button class="nt-trow${d ? ' has' : ''}${ntEvPast(ev) ? ' past' : ''}" type="button" data-nt-ev="${ntEsc(ev.id)}" title="${ntEsc(ev.summary)}"><span class="tm">${escHtml(ntEvTime(ev))}</span><span class="tx">${escHtml(ev.summary)}</span><span class="go">${d ? 'Notes' : '+ Notes'}</span></button>`;
+      });
+      if (!evs.length) {
+        if (_ntCal.status === 'disconnected') h += '<div class="nt-trow quiet">Calendar isn’t connected ·&nbsp;<a href="/api/google-auth" target="_top">Connect</a></div>';
+        else if (_ntCal.status === 'signedout') h += '<div class="nt-trow quiet">Signed out — reload to see the calendar</div>';
+        else h += `<div class="nt-trow quiet">${_ntCal.busy ? 'Checking the calendar…' : 'No events today'}</div>`;
+      }
+    }
+    if (h !== _ntTodaySig) { _ntTodaySig = h; _ntEls.today.innerHTML = h; }
+    _ntEls.today.hidden = !h;
+  }
+
+  // ---- doc chrome ----
+  function ntRenderDocChrome(){
+    if (!_ntEls) return;
+    const E = _ntEls;
+    E.shell.dataset.screen = ntScreen;
+    const m = ntOpenId ? ntNotes.get(ntOpenId) : null;
+    if (ntOpenId && ntListLoaded && !m) { ntCloseDoc(); return; }   // deleted on another device
+    E.page.hidden = !ntOpenId;
+    E.empty.hidden = !!ntOpenId;
+    if (!ntOpenId) return;
+    const cat = (m && ntCat(m.category)) ? m.category : '';
+    E.catChip.style.setProperty('--c', ntCatColor(cat));
+    const catH = `<span class="d"></span>${escHtml(ntCatLabel(cat))}`;
+    if (E.catChip.innerHTML !== catH) E.catChip.innerHTML = catH;
+    const agenda = ntIsAgenda(m);
+    E.kindChip.hidden = !agenda;
+    E.kindChip.textContent = m && m.daily ? 'Daily agenda' : 'Agenda';
+    E.dateLbl.textContent = agenda ? ntDay(m.agendaDate) : 'Add date';
+    E.dateChip.classList.toggle('set', agenda);
+    if (document.activeElement !== E.date) E.date.value = agenda ? m.agendaDate : '';
+    E.dateClear.hidden = !agenda;
+    const ev = m && m.event;
+    E.evChip.hidden = !ev;
+    if (ev) {
+      const sig = JSON.stringify(ev);
+      if (E.evChip.dataset.sig !== sig) {
+        E.evChip.dataset.sig = sig;
+        E.evChip.innerHTML = `<span class="tx">${escHtml(ntEvTime(ev))} · ${escHtml(ev.summary || '')}${ev.cal ? ' · ' + escHtml(ev.cal) : ''}</span>`
+          + (/^https:\/\//i.test(ev.meetingUrl || '') ? `<a href="${ntEsc(ev.meetingUrl)}" target="_blank" rel="noopener noreferrer">Join</a>` : '');
+      }
+    }
+    E.pin.classList.toggle('on', !!(m && m.pinned));
+    E.pin.title = m && m.pinned ? 'Unpin' : 'Pin to top';
+    if (m && document.activeElement !== E.title && !_ntTitleEdited && E.title.value !== (m.title || '')) E.title.value = m.title || '';
+    E.title.placeholder = agenda ? ntDay(m.agendaDate, { weekday: 'long', month: 'long', day: 'numeric' }) : 'Untitled';
+    ntRenderBanner();
+  }
+  function ntRenderBanner(){
+    const E = _ntEls;
+    if (!E) return;
+    const m = ntOpenId ? ntNotes.get(ntOpenId) : null;
+    let h = '';
+    if (m && m.trashed) h = `<span>This note is in the trash.</span><span class="sp"></span><button type="button" data-nt-restore="${ntEsc(m.id)}">Restore</button>`;
+    else if (_ntRemote) h = '<span>Edited on another device while you were typing.</span><span class="sp"></span><button type="button" data-nt-act="take-remote">Load theirs</button><button type="button" data-nt-act="keep-mine">Keep mine</button>';
+    E.banner.hidden = !h;
+    if (E.banner.dataset.sig !== h) { E.banner.dataset.sig = h; E.banner.innerHTML = h; }
+  }
+
+  // ---- outline: sections = headings; each carries its checklist tally ----
+  let _ntSecs = [];
+  function ntSections(){
+    const out = [];
+    let cur = null;
+    if (!_ntEls) return out;
+    Array.from(_ntEls.editor.children).forEach(el => {
+      if (/^H[123]$/.test(el.nodeName)) {
+        cur = { el, level: +el.nodeName[1], text: el.textContent.replace(/\s+/g, ' ').trim(), total: 0, done: 0 };
+        out.push(cur);
+        return;
+      }
+      if (!cur) return;
+      const lists = [...(el.matches('ul.nt-checklist') ? [el] : []), ...el.querySelectorAll('ul.nt-checklist')];
+      lists.forEach(u => Array.from(u.children).forEach(li => {
+        if (li.nodeName !== 'LI') return;
+        cur.total++;
+        if (li.getAttribute('data-checked') === 'true') cur.done++;
+      }));
+    });
+    return out;
+  }
+  function ntOutlineItemsHTML(secs){
+    const chev = NT_SVG.chevS;
+    return secs.map((s, i) => `<div style="display:flex;align-items:center">
+      <button class="nt-ol-fold${s.el.hasAttribute('data-collapsed') ? ' shut' : ''}" type="button" data-nt-fold="${i}" title="${s.el.hasAttribute('data-collapsed') ? 'Unfold' : 'Fold'} section" aria-label="Fold section">${chev}</button>
+      <button class="nt-ol-item l${s.level}" type="button" data-nt-head="${i}"><span class="tx">${escHtml(s.text || 'Untitled section')}</span>${s.total ? `<span class="ct${s.done === s.total ? ' done' : ''}">${s.done}/${s.total}</span>` : ''}</button>
+    </div>`).join('');
+  }
+  function ntRenderOutline(){
+    if (!_ntEls) return;
+    const secs = ntOpenId ? ntSections() : [];
+    _ntSecs = secs;
+    let h = '<div class="nt-sub">Outline</div>';
+    if (!ntOpenId) h += '<div class="nt-ol-empty">Open a note to see its sections.</div>';
+    else {
+      h += secs.length ? ntOutlineItemsHTML(secs) : '<div class="nt-ol-empty">Headings become sections here — type <b>##</b> and a space.</div>';
+      const ed = _ntEls.editor;
+      const words = (ed.textContent.match(/\S+/g) || []).length;
+      const lis = ed.querySelectorAll('ul.nt-checklist > li');
+      const done = Array.from(lis).filter(li => li.getAttribute('data-checked') === 'true').length;
+      h += `<div class="nt-ol-stats">${words} word${words === 1 ? '' : 's'}${lis.length ? ` · ${done}/${lis.length} checked` : ''}</div>`;
+      if (secs.length > 1) h += '<div class="nt-sub" style="padding-top:6px"><button type="button" data-nt-act="fold-all">Fold all</button><span>·</span><button type="button" data-nt-act="unfold-all">Unfold all</button></div>';
+    }
+    if (h !== _ntOlSig) { _ntOlSig = h; _ntEls.outline.innerHTML = h; }
+    if (_ntPopKind === 'outline') ntPopOutline(true);
+  }
+
+  // ---- Overview: agenda card + note links on task rows ----
+  let _ntPassiveDone = false;
+  function _ovAgendaCard(){
+    ntEnsureSubs();
+    const ds = todayKey();
+    // One passive calendar read per page load (see the calendar notes above).
+    if (!_ntPassiveDone && document.visibilityState === 'visible') {
+      _ntPassiveDone = true;
+      setTimeout(() => ntCalFetch(false), 1500);
+    }
+    const evs = ntCalEvents(ds);
+    const daily = ntFindDaily(ds);
+    const up = evs.filter(e => !ntEvPast(e));
+    const next = up.find(e => !e.allDay);
+    const meta = evs.length
+      ? `${evs.length} event${evs.length === 1 ? '' : 's'}${next ? ' · next ' + ntEvTime(next) : up.length ? '' : ' · all done'}`
+      : 'Nothing on the calendar';
+    let rows = daily
+      ? `<button class="ova-row daily" type="button" data-ov-agenda="daily"><span class="tm">Agenda</span><span class="tx">${escHtml(ntTitleOf(daily))}</span><span class="go">${ntCk(daily.checks) || 'Open'}</span></button>`
+      : '<button class="ova-row daily" type="button" data-ov-agenda="daily"><span class="tm">Agenda</span><span class="tx">Start today’s agenda</span><span class="go">+</span></button>';
+    up.slice(0, 4).forEach(ev => {
+      const d = ntFindEvent(ev, ds);
+      rows += `<button class="ova-row${d ? ' has' : ''}" type="button" data-ov-agenda="ev" data-ov-ev="${ntEsc(ev.id)}"><span class="tm">${escHtml(ntEvTime(ev))}</span><span class="tx">${escHtml(ev.summary)}</span><span class="go">${d ? 'Notes' : '+'}</span></button>`;
+    });
+    if (up.length > 4) rows += `<button class="ova-row" type="button" data-ov-agenda="all"><span class="tm"></span><span class="tx" style="color:var(--ink-dim)">${up.length - 4} more today</span></button>`;
+    const card = document.createElement('div');
+    card.className = 'ov-agenda';
+    card.innerHTML = `<div class="ova-head"><span class="ova-title">Agenda</span><span class="ova-meta">${escHtml(meta)}</span><button class="ova-all" type="button" data-ov-agenda="all">All notes</button></div>${rows}`;
+    return card;
+  }
+  function _ovNoteLinkHTML(noteId){
+    const n = ntNotes.get(noteId);
+    if (ntListLoaded && (!n || n.trashed)) return '';
+    const title = n ? 'Open “' + ntTitleOf(n) + '”' : 'Open note';
+    return `<button class="ov-notelink" type="button" data-ov-note="${ntEsc(noteId)}" title="${ntEsc(title)}" aria-label="${ntEsc(title)}">${NT_SVG.docS}</button>`;
+  }
+
+  // ---- editor: selection + blocks ----
+  function ntSel(){ const s = window.getSelection(); return (s && s.rangeCount) ? s : null; }
+  function ntInEditor(node){ return !!(_ntEls && node && (node === _ntEls.editor || _ntEls.editor.contains(node))); }
+  function ntSaveRange(){ const s = ntSel(); if (s && ntInEditor(s.anchorNode)) _ntRange = s.getRangeAt(0).cloneRange(); }
+  // Toolbar buttons and popovers steal nothing (mousedown is cancelled), but
+  // a popover input does — so every command puts the saved range back first.
+  function ntRestoreRange(){
+    const ed = _ntEls.editor;
+    const s = window.getSelection();
+    if (s && s.rangeCount && ntInEditor(s.anchorNode)) return;
+    ed.focus({ preventScroll: true });
+    s.removeAllRanges();
+    if (_ntRange && ntInEditor(_ntRange.startContainer)) { s.addRange(_ntRange); return; }
+    const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); s.addRange(r);
+  }
+  function ntCaretIn(el, atEnd){
+    const s = window.getSelection();
+    const r = document.createRange();
+    r.selectNodeContents(el); r.collapse(!atEnd);
+    s.removeAllRanges(); s.addRange(r);
+  }
+  function ntBlockOf(node){
+    const ed = _ntEls.editor;
+    let n = node && node.nodeType === 3 ? node.parentNode : node;
+    while (n && n !== ed) {
+      if (/^(P|H1|H2|H3|LI|BLOCKQUOTE|PRE|DIV)$/.test(n.nodeName)) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+  function ntCurBlock(){ const s = ntSel(); return (s && ntInEditor(s.anchorNode)) ? ntBlockOf(s.anchorNode) : null; }
+  function ntCurLi(){ const b = ntCurBlock(); return b ? (b.nodeName === 'LI' ? b : (b.closest ? b.closest('li') : null)) : null; }
+  function ntTopChild(node){
+    const ed = _ntEls.editor;
+    let n = node && node.nodeType === 3 ? node.parentNode : node;
+    while (n && n.parentNode && n.parentNode !== ed) n = n.parentNode;
+    return (n && n.parentNode === ed) ? n : null;
+  }
+  function ntExec(cmd, val){ try { return document.execCommand(cmd, false, val); } catch { return false; } }
+  function ntTextBeforeCaret(block){
+    const s = ntSel();
+    const r = document.createRange();
+    r.selectNodeContents(block); r.setEnd(s.anchorNode, s.anchorOffset);
+    return r.toString().replace(/ /g, ' ');
+  }
+  function ntCaretAtEnd(block){
+    const s = ntSel();
+    if (!s || !s.isCollapsed) return false;
+    const r = document.createRange();
+    r.selectNodeContents(block); r.setStart(s.anchorNode, s.anchorOffset);
+    return !r.toString().length;
+  }
+  function ntEnsureBlock(){
+    const ed = _ntEls.editor;
+    if (!ed.firstChild || (ed.childNodes.length === 1 && ed.firstChild.nodeName === 'BR')) ed.innerHTML = '<p><br></p>';
+  }
+  function ntUpdateEmpty(){
+    const ed = _ntEls.editor;
+    const empty = !ed.textContent.trim() && !ed.querySelector('li, hr, h1, h2, h3, blockquote') && ed.querySelectorAll('p').length <= 1;
+    ed.classList.toggle('is-empty', empty);
+  }
+  function ntAfterContentSwap(){
+    ntEnsureBlock();
+    ntApplyFolds();
+    ntUpdateEmpty();
+    ntRenderOutline();
+  }
+  function ntFocusFirstEmpty(){
+    if (!_ntEls || !ntOpenId) return;
+    const ed = _ntEls.editor;
+    const target = Array.from(ed.querySelectorAll('p, li')).find(b => !b.textContent.trim() && !b.querySelector('ul, ol'));
+    ed.focus({ preventScroll: true });
+    if (target) { ntCaretIn(target, false); try { target.scrollIntoView({ block: 'nearest' }); } catch {} }
+    else ntCaretIn(ed, true);
+    ntSaveRange();
+  }
+  // Caret-safe tidy-ups after any edit. Enter clones attributes onto the new
+  // line, so a task link (or a tick) can't be allowed to duplicate.
+  // Chrome's insertUnorderedList on an empty <p> can leave <p><ul>…</ul></p>
+  // (and pastes can nest blocks the same way). Lift the block out, keeping
+  // the caret on the same text node.
+  function ntUnnest(ed){
+    const bad = ed.querySelectorAll('p > ul, p > ol, p > blockquote, p > p, p > h1, p > h2, p > h3, h1 > ul, h2 > ul, h3 > ul, h1 > ol, h2 > ol, h3 > ol');
+    if (!bad.length) return;
+    const s = ntSel();
+    const keep = (s && ntInEditor(s.anchorNode)) ? [s.anchorNode, s.anchorOffset, s.focusNode, s.focusOffset] : null;
+    bad.forEach(blk => {
+      const host = blk.parentElement;
+      if (!host || !host.parentElement || !blk.isConnected) return;
+      const par = host.parentElement, ref = host.nextSibling;
+      const tail = document.createElement(host.nodeName.toLowerCase());
+      let n = blk.nextSibling;
+      while (n) { const nx = n.nextSibling; tail.appendChild(n); n = nx; }
+      par.insertBefore(blk, ref);
+      if (tail.textContent.trim()) par.insertBefore(tail, ref);
+      if (!host.textContent.trim() && !host.querySelector('hr')) host.remove();
+    });
+    if (keep) { try { s.setBaseAndExtent(keep[0], keep[1], keep[2], keep[3]); } catch {} }
+  }
+  // Paste/drop like Docs: one paragraph goes in inline (no stray split); many
+  // blocks landing inside a list item become one item per line.
+  function ntInsertClean(html, text){
+    if (!html) { ntInsertPlain(text); return; }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    // A pasted task link would tie a second line to the same task. Keep it
+    // only for a cut-and-paste move inside the note that owns the task.
+    tmp.querySelectorAll('[data-task-id], [data-line]').forEach(li => {
+      const tid = li.getAttribute('data-task-id');
+      const line = li.getAttribute('data-line');
+      const t = tid ? (todos.find(x => x.id === tid) || (_plannedCache || []).find(x => x.id === tid)) : null;
+      const keep = !!(tid && t && t.noteId === ntOpenId && !_ntEls.editor.querySelector(`[data-task-id="${tid}"]`));
+      if (!keep) li.removeAttribute('data-task-id');
+      if (!keep || (line && _ntEls.editor.querySelector(`[data-line="${line}"]`))) li.removeAttribute('data-line');
+    });
+    html = tmp.innerHTML;
+    const blocks = Array.from(tmp.children);
+    if (!blocks.length) { ntExec('insertHTML', html); return; }
+    if (blocks.length === 1 && blocks[0].nodeName === 'P') { ntExec('insertHTML', blocks[0].innerHTML); return; }
+    if (ntCurLi()) {
+      const lines = [];
+      const own = li => Array.from(li.childNodes).filter(x => !(x.nodeType === 1 && /^(UL|OL)$/.test(x.nodeName))).map(x => x.textContent).join('').replace(/\s+/g, ' ').trim();
+      blocks.forEach(b => {
+        if (/^(UL|OL)$/.test(b.nodeName)) b.querySelectorAll('li').forEach(li => { const t = own(li); if (t) lines.push(t); });
+        else { const t = b.textContent.replace(/\s+/g, ' ').trim(); if (t) lines.push(t); }
+      });
+      lines.forEach((l, i) => { if (i) ntExec('insertParagraph'); ntExec('insertText', l); });
+      return;
+    }
+    ntExec('insertHTML', html);
+  }
+  function ntNormalizeLive(){
+    const ed = _ntEls.editor;
+    ntUnnest(ed);
+    ed.querySelectorAll('ul.nt-checklist > li:not([data-checked])').forEach(li => li.setAttribute('data-checked', 'false'));
+    ed.querySelectorAll('li[data-checked]').forEach(li => {
+      const p = li.parentElement;
+      if (!p || !p.classList.contains('nt-checklist')) li.removeAttribute('data-checked');
+    });
+    const seen = new Map();
+    ed.querySelectorAll('li[data-line], li[data-task-id]').forEach(li => {
+      const key = li.getAttribute('data-line') || ('t:' + li.getAttribute('data-task-id'));
+      const prev = seen.get(key);
+      if (!prev) { seen.set(key, li); return; }
+      const keepPrev = !!prev.textContent.trim() || !li.textContent.trim();
+      const loser = keepPrev ? li : prev;
+      loser.removeAttribute('data-line'); loser.removeAttribute('data-task-id');
+      if (loser.parentElement && loser.parentElement.classList.contains('nt-checklist')) loser.setAttribute('data-checked', 'false');
+      if (!keepPrev) seen.set(key, li);
+    });
+  }
+  function ntAfterEnter(){
+    const li = ntCurLi();
+    if (!li || !li.parentElement || !li.parentElement.classList.contains('nt-checklist')) return;
+    [li, li.previousElementSibling].forEach(x => {
+      if (x && x.nodeName === 'LI' && !x.textContent.trim()) x.setAttribute('data-checked', 'false');
+    });
+  }
+  function ntScheduleOutline(){ clearTimeout(_ntOutlineT); _ntOutlineT = setTimeout(ntRenderOutline, 250); }
+  function ntAfterMutation(){
+    if (!_ntEls) return;
+    ntNormalizeLive();
+    ntApplyFolds();
+    ntUpdateEmpty();
+    ntMarkDirty();
+    ntScheduleOutline();
+    ntUpdateToolbar();
+  }
+
+  // ---- editor: formatting commands ----
+  function ntSetBlock(tag){
+    ntRestoreRange();
+    let b = ntCurBlock();
+    if (tag === 'blockquote') {
+      if (b && b.closest && b.closest('blockquote')) ntExec('outdent');
+      else ntExec('formatBlock', '<blockquote>');
+      ntAfterMutation();
+      return;
+    }
+    const li = ntCurLi();
+    if (li && tag !== 'p') {
+      // A heading can't live in a list item — lift the line out first.
+      ntExec(li.parentElement && li.parentElement.nodeName === 'OL' ? 'insertOrderedList' : 'insertUnorderedList');
+      b = ntCurBlock();
+    }
+    const cur = b ? b.nodeName.toLowerCase() : 'p';
+    ntExec('formatBlock', (cur === tag && tag !== 'p') ? '<p>' : `<${tag}>`);
+    ntAfterMutation();
+  }
+  function ntToggleList(kind){
+    ntRestoreRange();
+    const s = ntSel();
+    const one = !!(s && s.isCollapsed);
+    const li = ntCurLi();
+    const list = li && li.parentElement;
+    const isCheck = !!(list && list.nodeName === 'UL' && list.classList.contains('nt-checklist'));
+    if (isCheck && (kind === 'ol' || one)) {
+      // Just this line changes kind; its neighbours stay checkboxes.
+      if (list.children.length > 1 || kind === 'ol') ntIsolateLi(li, kind);
+      else { list.classList.remove('nt-checklist'); list.removeAttribute('class'); li.removeAttribute('data-checked'); }
+      ntAfterMutation();
+      return;
+    }
+    if (isCheck) {
+      list.classList.remove('nt-checklist');
+      if (!list.className) list.removeAttribute('class');
+      Array.from(list.children).forEach(x => x.removeAttribute('data-checked'));
+      ntAfterMutation();
+      return;
+    }
+    const b = ntCurBlock();
+    if (!li && one && b && /^(P|DIV)$/.test(b.nodeName) && b.parentElement === _ntEls.editor) {
+      ntBlockToList(b, kind);
+      ntAfterMutation();
+      return;
+    }
+    ntExec(kind === 'ol' ? 'insertOrderedList' : 'insertUnorderedList');
+    ntAfterMutation();
+  }
+  // DOM moves collapse the selection to the removal point; the text node
+  // itself survives, so put the caret back on it.
+  function ntKeepSel(fn){
+    const s = ntSel();
+    const k = (s && ntInEditor(s.anchorNode)) ? [s.anchorNode, s.anchorOffset, s.focusNode, s.focusOffset] : null;
+    fn();
+    if (k && k[0].isConnected && ntInEditor(k[0])) { try { s.setBaseAndExtent(k[0], k[1], k[2], k[3]); } catch {} }
+  }
+  // Paragraph → one-item list WITHOUT execCommand: insertUnorderedList
+  // appends to whatever list sits next door, and a class set on that list
+  // then converts every item in it.
+  function ntBlockToList(block, kind){
+    let li = null;
+    ntKeepSel(() => {
+      const list = document.createElement(kind === 'ol' ? 'ol' : 'ul');
+      if (kind === 'check') list.className = 'nt-checklist';
+      li = document.createElement('li');
+      if (kind === 'check') li.setAttribute('data-checked', 'false');
+      while (block.firstChild) li.appendChild(block.firstChild);
+      if (!li.firstChild) li.appendChild(document.createElement('br'));
+      list.appendChild(li);
+      block.replaceWith(list);
+    });
+    const s = ntSel();
+    if (li && (!s || !ntInEditor(s.anchorNode))) ntCaretIn(li, true);
+    return li;
+  }
+  // Pull one item out of a mixed list into its own list, splitting around it.
+  function ntIsolateLi(li, kind){
+    const list = li.parentElement;
+    ntKeepSel(() => {
+      const own = document.createElement(kind === 'ol' ? 'ol' : 'ul');
+      if (kind === 'check') own.className = 'nt-checklist';
+      const tail = list.cloneNode(false);
+      let n = li.nextSibling;
+      while (n) { const nx = n.nextSibling; tail.appendChild(n); n = nx; }
+      list.after(own);
+      own.appendChild(li);
+      if (tail.childNodes.length) own.after(tail);
+      if (!list.children.length) list.remove();
+      if (kind === 'check') { if (li.getAttribute('data-checked') !== 'true') li.setAttribute('data-checked', 'false'); }
+      else li.removeAttribute('data-checked');
+    });
+  }
+  // Chrome's indent nests as a bare <ul> beside the item (ul > ul > li), with
+  // no class: the checkbox and its tick vanish. Nest properly and restore.
+  function ntIndent(out){
+    const li = ntCurLi();
+    if (!li) return;
+    const wasCheck = !!(li.parentElement && li.parentElement.classList.contains('nt-checklist'));
+    const ck = li.getAttribute('data-checked') === 'true' ? 'true' : 'false';
+    ntExec(out ? 'outdent' : 'indent');
+    const nli = ntCurLi();
+    const pl = nli && nli.parentElement;
+    if (pl && /^(UL|OL)$/.test(pl.nodeName)) {
+      const prev = pl.previousElementSibling;
+      if (!out && pl.parentElement && /^(UL|OL)$/.test(pl.parentElement.nodeName) && prev && prev.nodeName === 'LI') {
+        ntKeepSel(() => prev.appendChild(pl));
+      }
+      if (wasCheck && pl.nodeName === 'UL') { pl.classList.add('nt-checklist'); nli.setAttribute('data-checked', ck); }
+      else if (pl.classList.contains('nt-checklist')) nli.setAttribute('data-checked', ck);
+    }
+    ntAfterMutation();
+  }
+  function ntFixChecklist(list){
+    Array.from(list.children).forEach(li => {
+      if (li.nodeName === 'LI' && li.getAttribute('data-checked') !== 'true') li.setAttribute('data-checked', 'false');
+    });
+  }
+  function ntToggleChecklist(){
+    ntRestoreRange();
+    const s = ntSel();
+    const one = !!(s && s.isCollapsed);
+    let li = ntCurLi();
+    let list = li && li.parentElement;
+    if (list && list.nodeName === 'UL' && list.classList.contains('nt-checklist')) { ntExec('insertUnorderedList'); ntAfterMutation(); return; }
+    if (list && /^(UL|OL)$/.test(list.nodeName)) {
+      // One line in a bullet/numbered list becomes a checkbox — not the list.
+      if ((one && list.children.length > 1) || list.nodeName === 'OL') ntIsolateLi(li, 'check');
+      else { list.classList.add('nt-checklist'); ntFixChecklist(list); }
+      ntAfterMutation();
+      return;
+    }
+    const b = ntCurBlock();
+    if (one && b && /^(P|DIV)$/.test(b.nodeName) && b.parentElement === _ntEls.editor) {
+      ntBlockToList(b, 'check');
+      ntAfterMutation();
+      return;
+    }
+    ntExec('insertUnorderedList');           // multi-line selection → list
+    li = ntCurLi(); list = li && li.parentElement;
+    if (list && list.nodeName === 'UL') { list.classList.add('nt-checklist'); ntFixChecklist(list); }
+    ntAfterMutation();
+  }
+  function ntLinkAt(){
+    const s = ntSel();
+    if (!s || !ntInEditor(s.anchorNode)) return null;
+    const n = s.anchorNode.nodeType === 3 ? s.anchorNode.parentNode : s.anchorNode;
+    return (n && n.closest) ? n.closest('a') : null;
+  }
+  function ntApplyLink(url){
+    ntRestoreRange();
+    let u = String(url || '').trim();
+    if (!u) return;
+    if (!/^(https?:|mailto:)/i.test(u)) u = (/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(u) ? 'mailto:' : 'https://') + u;
+    const a0 = ntLinkAt();
+    const s = ntSel();
+    if (a0) a0.setAttribute('href', u);
+    else if (s && s.isCollapsed) ntExec('insertHTML', `<a href="${ntEsc(u)}" target="_blank" rel="noopener noreferrer">${escHtml(u.replace(/^mailto:/i, ''))}</a>&nbsp;`);
+    else ntExec('createLink', u);
+    _ntEls.editor.querySelectorAll('a:not([target])').forEach(a => { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener noreferrer'); });
+    ntAfterMutation();
+  }
+  function ntUnlink(){
+    ntRestoreRange();
+    const a = ntLinkAt();
+    if (a) { const r = document.createRange(); r.selectNodeContents(a); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }
+    ntExec('unlink');
+    ntAfterMutation();
+  }
+  function ntInsertHr(){
+    ntRestoreRange();
+    ntExec('insertHorizontalRule');
+    const hr = Array.from(_ntEls.editor.querySelectorAll('hr')).find(h => !h.nextElementSibling || h.nextElementSibling.nodeName === 'HR');
+    if (hr) { const p = document.createElement('p'); p.innerHTML = '<br>'; hr.after(p); ntCaretIn(p, false); }
+    ntAfterMutation();
+  }
+  function ntCmd(cmd, anchor){
+    if (!ntOpenId || !_ntEls) return;
+    switch (cmd) {
+      case 'bold': case 'italic': case 'underline': ntRestoreRange(); ntExec(cmd); break;
+      case 'strike': ntRestoreRange(); ntExec('strikeThrough'); break;
+      case 'ul': case 'ol': ntToggleList(cmd); return;
+      case 'check': ntToggleChecklist(); return;
+      case 'quote': ntSetBlock('blockquote'); return;
+      case 'p': case 'h1': case 'h2': case 'h3': ntSetBlock(cmd); return;
+      case 'hr': ntInsertHr(); return;
+      case 'indent': case 'outdent': ntRestoreRange(); ntIndent(cmd === 'outdent'); return;
+      case 'clear': {
+        ntRestoreRange(); ntExec('removeFormat');
+        const b = ntCurBlock();
+        if (b && /^(H1|H2|H3)$/.test(b.nodeName)) ntExec('formatBlock', '<p>');
+        break;
+      }
+      case 'style': ntPopStyle(anchor); return;
+      case 'link': ntPopLink(anchor); return;
+      case 'task': ntPopTask(anchor); return;
+      case 'more': ntPopMore(anchor); return;
+      default: return;
+    }
+    ntAfterMutation();
+  }
+  function ntUpdateToolbar(){
+    if (!_ntEls) return;
+    const s = ntSel();
+    if (!s || !ntInEditor(s.anchorNode)) return;
+    const b = ntCurBlock(), li = ntCurLi(), list = li && li.parentElement;
+    const q = c => { try { return document.queryCommandState(c); } catch { return false; } };
+    const st = {
+      bold: q('bold'), italic: q('italic'), underline: q('underline'), strike: q('strikeThrough'),
+      ul: !!(list && list.nodeName === 'UL' && !list.classList.contains('nt-checklist')),
+      ol: !!(list && list.nodeName === 'OL'),
+      check: !!(list && list.classList.contains('nt-checklist')),
+      quote: !!(b && b.closest && b.closest('blockquote')),
+      link: !!ntLinkAt(),
+    };
+    _ntEls.toolbar.querySelectorAll('[data-nt-cmd]').forEach(btn => {
+      const k = btn.getAttribute('data-nt-cmd');
+      if (k in st) btn.classList.toggle('on', !!st[k]);
+    });
+    const tag = b ? b.nodeName : 'P';
+    _ntEls.styleLbl.textContent = ntIsPhone()
+      ? (tag === 'H1' ? 'H1' : tag === 'H2' ? 'H2' : tag === 'H3' ? 'H3' : 'Text')
+      : (tag === 'H1' ? 'Title' : tag === 'H2' ? 'Heading' : tag === 'H3' ? 'Subhead' : 'Text');
+  }
+
+  // ---- sections: fold state lives on the heading (data-collapsed, saved);
+  // the hiding itself is a runtime class the sanitizer strips on save ----
+  function ntApplyFolds(){
+    if (!_ntEls) return;
+    let hide = 0;
+    Array.from(_ntEls.editor.children).forEach(el => {
+      const lv = /^H[123]$/.test(el.nodeName) ? +el.nodeName[1] : 0;
+      if (lv && !(hide && lv > hide)) {
+        el.classList.remove('nt-fold');
+        hide = el.hasAttribute('data-collapsed') ? lv : 0;
+        return;
+      }
+      el.classList.toggle('nt-fold', !!hide);
+    });
+  }
+  function ntToggleFold(h, force){
+    const on = force != null ? !!force : !h.hasAttribute('data-collapsed');
+    if (on) h.setAttribute('data-collapsed', '1'); else h.removeAttribute('data-collapsed');
+    ntApplyFolds();
+    const s = ntSel();
+    if (on && s && ntInEditor(s.anchorNode)) {
+      const top = ntTopChild(s.anchorNode);
+      if (top && top.classList.contains('nt-fold')) ntCaretIn(h, true);
+    }
+    ntMarkDirty();
+    ntRenderOutline();
+  }
+  function ntFoldAll(on){
+    const hs = Array.from(_ntEls.editor.children).filter(el => /^H[123]$/.test(el.nodeName));
+    if (!hs.length) return;
+    const min = Math.min(...hs.map(h => +h.nodeName[1]));
+    hs.forEach(h => {
+      if (!on) h.removeAttribute('data-collapsed');
+      else if (+h.nodeName[1] === min && h.nextElementSibling && !/^H[123]$/.test(h.nextElementSibling.nodeName)) h.setAttribute('data-collapsed', '1');
+    });
+    ntApplyFolds();
+    ntMarkDirty();
+    ntRenderOutline();
+  }
+  // The caret (arrow keys, a search jump) walked into a folded section — open it.
+  function ntUnfoldAround(node){
+    let el = ntTopChild(node);
+    let changed = false, guard = 0;
+    while (el && el.classList.contains('nt-fold') && guard++ < 6) {
+      let p = el.previousElementSibling;
+      while (p && !(/^H[123]$/.test(p.nodeName) && p.hasAttribute('data-collapsed') && !p.classList.contains('nt-fold'))) p = p.previousElementSibling;
+      if (!p) break;
+      p.removeAttribute('data-collapsed');
+      changed = true;
+      ntApplyFolds();
+    }
+    if (changed) { ntMarkDirty(); ntRenderOutline(); }
+  }
+  function ntJumpTo(i){
+    const s = _ntSecs[i];
+    if (!s || !s.el.isConnected) return;
+    ntPopClose();
+    if (s.el.classList.contains('nt-fold')) ntUnfoldAround(s.el);
+    const sc = ntScroller();
+    if (sc === _ntEls.doc) {
+      sc.scrollTop = Math.max(0, s.el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - (_ntEls.toolbar.offsetHeight + 12));
+    } else {
+      window.scrollTo(0, Math.max(0, s.el.getBoundingClientRect().top + window.scrollY - (_ntEls.toolbar.offsetHeight + 12)));
+    }
+    s.el.classList.add('nt-flash');
+    setTimeout(() => s.el.classList.remove('nt-flash'), 1300);
+    if (!ntIsPhone()) { _ntEls.editor.focus({ preventScroll: true }); ntCaretIn(s.el, true); ntSaveRange(); }
+  }
+
+  // ---- editor: keys, markdown shortcuts, paste, drop ----
+  const NT_MD = { '#': 'h1', '##': 'h2', '###': 'h3', '-': 'ul', '*': 'ul', '•': 'ul', '1.': 'ol', '1)': 'ol', '[]': 'check', '[ ]': 'check', '[x]': 'checked', '>': 'quote' };
+  function ntMarkdownSpace(){
+    const s = ntSel();
+    if (!s || !s.isCollapsed) return false;
+    const b = ntCurBlock();
+    if (!b || !/^(P|DIV)$/.test(b.nodeName)) return false;
+    const kind = NT_MD[ntTextBeforeCaret(b)];
+    if (!kind) return false;
+    const r = document.createRange();
+    r.selectNodeContents(b); r.setEnd(s.anchorNode, s.anchorOffset);
+    s.removeAllRanges(); s.addRange(r);
+    ntExec('delete');                               // undoable, unlike a DOM edit
+    if (kind === 'ul' || kind === 'ol') ntToggleList(kind);
+    else if (kind === 'check' || kind === 'checked') {
+      ntToggleChecklist();
+      const li = ntCurLi();
+      if (li && kind === 'checked') { li.setAttribute('data-checked', 'true'); ntMarkDirty(); }
+    }
+    else if (kind === 'quote') ntSetBlock('blockquote');
+    else ntSetBlock(kind);
+    return true;
+  }
+  // Folded blocks are display:none, so the caret skips them — and a delete
+  // (or cut, which doesn't even copy hidden content) takes them with it.
+  // Open the sections a deletion would reach BEFORE the browser acts.
+  function ntUnfoldForDelete(dir){
+    const s = ntSel();
+    if (!s || !ntInEditor(s.anchorNode)) return;
+    const folded = Array.from(_ntEls.editor.children).filter(el => el.classList.contains('nt-fold'));
+    if (!folded.length) return;
+    const r = s.getRangeAt(0);
+    let hit = s.isCollapsed ? [] : folded.filter(el => r.intersectsNode(el));
+    if (s.isCollapsed) {
+      const top = ntTopChild(s.anchorNode);
+      if (top && dir === 'back' && ntTextBeforeCaret(top) === '' && top.previousElementSibling && top.previousElementSibling.classList.contains('nt-fold')) hit = [top.previousElementSibling];
+      if (top && dir === 'fwd' && ntCaretAtEnd(top) && top.nextElementSibling && top.nextElementSibling.classList.contains('nt-fold')) hit = [top.nextElementSibling];
+    }
+    hit.forEach(el => { if (el.isConnected && el.classList.contains('nt-fold')) ntUnfoldAround(el); });
+  }
+  function ntOnKeydown(e){
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === 'Backspace' || e.key === 'Delete') ntUnfoldForDelete(e.key === 'Backspace' ? 'back' : 'fwd');
+    else if (!mod && !e.isComposing && e.key && e.key.length === 1) { const s = ntSel(); if (s && !s.isCollapsed) ntUnfoldForDelete(null); }
+    if (e.key === 'Escape') { e.stopPropagation(); if (_ntPopKind) { e.preventDefault(); ntPopClose(); } return; }
+    if (e.isComposing) return;
+    const k = (e.key || '').toLowerCase();
+    if (mod && !e.altKey && !e.shiftKey && k === 's') { e.preventDefault(); ntFlush(); return; }
+    if (mod && !e.altKey && !e.shiftKey && k === 'k') { e.preventDefault(); ntSaveRange(); ntPopLink(_ntEls.toolbar.querySelector('[data-nt-cmd="link"]')); return; }
+    if (mod && e.altKey && /^Digit[0-3]$/.test(e.code)) { e.preventDefault(); ntSetBlock(['p', 'h1', 'h2', 'h3'][+e.code.slice(5)]); return; }
+    if (mod && e.shiftKey && e.code === 'Digit7') { e.preventDefault(); ntToggleList('ol'); return; }
+    if (mod && e.shiftKey && e.code === 'Digit8') { e.preventDefault(); ntToggleList('ul'); return; }
+    if (mod && e.shiftKey && e.code === 'Digit9') { e.preventDefault(); ntToggleChecklist(); return; }
+    if (mod && e.shiftKey && k === 'x') { e.preventDefault(); ntCmd('strike'); return; }
+    if (mod && k === 'enter') {
+      const li = ntCurLi();
+      if (li && li.parentElement && li.parentElement.classList.contains('nt-checklist')) { e.preventDefault(); ntToggleLine(li); }
+      return;
+    }
+    if (e.key === 'Tab' && !mod) {
+      if (ntCurLi()) { e.preventDefault(); ntIndent(e.shiftKey); }
+      return;
+    }
+    if (e.key === ' ' && !mod && !e.altKey) { if (ntMarkdownSpace()) { e.preventDefault(); } return; }
+    if (e.key === 'Enter' && !e.shiftKey && !mod) {
+      const b = ntCurBlock();
+      if (b && b.nodeName === 'P' && b.textContent.trim() === '---') {
+        e.preventDefault();
+        const r = document.createRange(); r.selectNodeContents(b);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        ntExec('delete'); ntInsertHr();
+        return;
+      }
+      // Enter at the end of a heading starts body text, never another heading.
+      if (b && /^H[123]$/.test(b.nodeName) && ntCaretAtEnd(b)) {
+        e.preventDefault();
+        if (b.hasAttribute('data-collapsed')) ntToggleFold(b, false);
+        ntExec('insertParagraph');
+        ntExec('formatBlock', '<p>');
+        ntAfterMutation();
+      }
+    }
+  }
+  function ntPlainToHtml(t){
+    let h = '', list = null;
+    const close = () => { if (list) { h += `</${list.tag}>`; list = null; } };
+    const open = (tag, cls) => {
+      if (list && list.tag === tag && list.cls === cls) return;
+      close(); list = { tag, cls }; h += `<${tag}${cls ? ` class="${cls}"` : ''}>`;
+    };
+    t.split('\n').forEach(raw => {
+      const l = raw.replace(/\s+$/, '');
+      let m;
+      if ((m = l.match(/^\s*(?:[-*•]\s+)?\[( |x|X)\]\s+(.*)$/))) { open('ul', 'nt-checklist'); h += `<li data-checked="${m[1].trim() ? 'true' : 'false'}">${escHtml(m[2])}</li>`; }
+      else if ((m = l.match(/^\s*[-*•]\s+(.*)$/))) { open('ul', ''); h += `<li>${escHtml(m[1])}</li>`; }
+      else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { open('ol', ''); h += `<li>${escHtml(m[1])}</li>`; }
+      else {
+        close();
+        if ((m = l.match(/^(#{1,3})\s+(.*)$/))) h += `<h${m[1].length}>${escHtml(m[2])}</h${m[1].length}>`;
+        else if ((m = l.match(/^>\s?(.*)$/))) h += `<blockquote>${escHtml(m[1])}</blockquote>`;
+        else if (l.trim()) h += `<p>${escHtml(l)}</p>`;
+      }
+    });
+    close();
+    return ntSanitize(h);
+  }
+  function ntInsertPlain(text){
+    const t = String(text || '').replace(/\r\n?/g, '\n');
+    if (!t.includes('\n')) { ntExec('insertText', t); return; }
+    ntExec('insertHTML', ntPlainToHtml(t));
+  }
+  // Hit-test the checkbox (li::before) and the fold caret (h::before): both
+  // are pseudo-elements, so clicks land on the element and we check where.
+  function ntHit(target, x, y){
+    if (!ntInEditor(target)) return null;
+    const el = target.nodeType === 1 ? target : target.parentElement;
+    if (!el || !el.closest) return null;
+    const li = el.closest('li');
+    if (li && li.parentElement && li.parentElement.classList.contains('nt-checklist')) {
+      const r = li.getBoundingClientRect();
+      if (x - r.left <= 26 && x - r.left >= -4 && y - r.top <= 28) return { kind: 'check', li };
+    }
+    const h = el.closest('h1, h2, h3');
+    if (h && h.parentElement === _ntEls.editor && x < h.getBoundingClientRect().left) return { kind: 'fold', h };
+    return null;
+  }
+  function ntHitAct(hit){
+    if (hit.kind === 'check') ntToggleLine(hit.li);
+    else ntToggleFold(hit.h);
+  }
+  let _ntDragInside = false;
+  function ntWireEditor(){
+    const ed = _ntEls.editor, title = _ntEls.title;
+    ed.addEventListener('keydown', ntOnKeydown);
+    ed.addEventListener('input', e => {
+      if ((e.inputType || '') === 'insertParagraph') ntAfterEnter();
+      // Typing into an emptied page lands text straight in the root.
+      const s = ntSel();
+      if (s && s.anchorNode && s.anchorNode.nodeType === 3 && s.anchorNode.parentNode === ed) ntExec('formatBlock', '<p>');
+      ntAfterMutation();
+    });
+    ed.addEventListener('mousedown', e => { if (ntHit(e.target, e.clientX, e.clientY)) e.preventDefault(); });
+    ed.addEventListener('click', e => {
+      if (Date.now() - _ntTouchAt < 700) return;
+      const hit = ntHit(e.target, e.clientX, e.clientY);
+      if (hit) { e.preventDefault(); ntHitAct(hit); return; }
+      if (e.metaKey || e.ctrlKey) {
+        const a = e.target.closest && e.target.closest('a[href]');
+        if (a && /^(https?:|mailto:)/i.test(a.getAttribute('href') || '')) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
+      }
+    });
+    // Phones: a TAP on a checkbox / fold caret acts without summoning the
+    // keyboard; a swipe that merely starts there scrolls and ticks nothing
+    // (a tick can complete a real task).
+    let tap = null;
+    ed.addEventListener('touchstart', e => {
+      const t = e.touches && e.touches[0];
+      tap = null;
+      if (!t || e.touches.length > 1) return;
+      const hit = ntHit(e.target, t.clientX, t.clientY);
+      if (hit) tap = { hit, x: t.clientX, y: t.clientY, at: Date.now() };
+    }, { passive: true });
+    ed.addEventListener('touchmove', e => {
+      const t = e.touches && e.touches[0];
+      if (tap && t && (Math.abs(t.clientX - tap.x) > 8 || Math.abs(t.clientY - tap.y) > 8)) tap = null;
+    }, { passive: true });
+    ed.addEventListener('touchend', e => {
+      const tt = tap;
+      tap = null;
+      if (!tt || Date.now() - tt.at > 500) return;
+      e.preventDefault();                 // no synthetic click, caret or keyboard
+      _ntTouchAt = Date.now();
+      ntHitAct(tt.hit);
+    }, { passive: false });
+    ed.addEventListener('touchcancel', () => { tap = null; });
+    ed.addEventListener('paste', e => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      e.preventDefault();
+      const html = cd.getData('text/html'), text = cd.getData('text/plain');
+      if (!html && !text) { if (cd.files && cd.files.length) ptToast('Images can’t go in notes yet'); return; }
+      ntInsertClean(html ? ntSanitize(html) : '', text);
+      ntAfterMutation();
+    });
+    ed.addEventListener('cut', () => ntUnfoldForDelete(null));
+    ed.addEventListener('copy', () => ntUnfoldForDelete(null));
+    ed.addEventListener('dragstart', () => { _ntDragInside = true; ntUnfoldForDelete(null); });
+    ed.addEventListener('dragend', () => { _ntDragInside = false; });
+    ed.addEventListener('drop', e => {
+      if (_ntDragInside) { _ntDragInside = false; setTimeout(ntAfterMutation, 0); return; }
+      e.preventDefault();
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const html = dt.getData('text/html'), text = dt.getData('text/plain');
+      if (!html && !text) { if (dt.files && dt.files.length) ptToast('Images can’t go in notes yet'); return; }
+      const pos = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+      if (pos && ntInEditor(pos.startContainer)) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(pos); }
+      else ntRestoreRange();
+      ntInsertClean(html ? ntSanitize(html) : '', text);
+      ntAfterMutation();
+    });
+    const editing = on => {
+      if (on) { document.body.classList.add('nt-editing'); return; }
+      setTimeout(() => {
+        const ae = document.activeElement;
+        if (!(ae === title || ntEditorFocused())) document.body.classList.remove('nt-editing');
+      }, 150);
+    };
+    ed.addEventListener('focus', () => { editing(true); ntEnsureBlock(); });
+    ed.addEventListener('blur', () => { editing(false); ntFlush(); });
+    title.addEventListener('focus', () => editing(true));
+    title.addEventListener('blur', () => { editing(false); ntFlush(); });
+    title.addEventListener('input', () => { _ntTitleEdited = true; ntMarkDirty(); });
+    title.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.stopPropagation(); return; }
+      if (e.key === 'Enter' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        ed.focus({ preventScroll: true });
+        ntCaretIn(ed.firstElementChild || ed, false);
+        ntSaveRange();
+      }
+    });
+    document.addEventListener('selectionchange', () => {
+      if (!_tabNotes || !_ntEls) return;
+      clearTimeout(_ntSelT);
+      _ntSelT = setTimeout(() => {
+        const s = ntSel();
+        if (!s || !ntInEditor(s.anchorNode)) { if (_ntPopKind === 'bubble') ntPopClose(); return; }
+        _ntRange = s.getRangeAt(0).cloneRange();
+        ntUpdateToolbar();
+        ntUnfoldAround(s.anchorNode);
+        ntMaybeLinkBubble();
+      }, 80);
+    });
+  }
+
+  // ---- popovers: one floating element, placed under its anchor ----
+  let _ntPopLi = null;
+  function ntPopEl(){
+    let p = document.getElementById('ntPop');
+    if (p) return p;
+    p = document.createElement('div');
+    p.id = 'ntPop'; p.className = 'nt-pop'; p.hidden = true;
+    document.body.appendChild(p);
+    // Clicks inside keep the editor's selection, except in real inputs.
+    p.addEventListener('mousedown', e => { if (!e.target.closest('input, select, textarea')) e.preventDefault(); });
+    p.addEventListener('click', ntPopClick);
+    p.addEventListener('submit', ntPopSubmit);
+    p.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); ntPopClose(); ntRestoreRange(); } });
+    return p;
+  }
+  function ntPopOpen(kind, anchor, html, opts){
+    const o = opts || {};
+    if (!o.refresh && _ntPopKind === kind && _ntPopAnchor === anchor && kind !== 'bubble') { ntPopClose(); return; }
+    const p = ntPopEl();
+    _ntPopKind = kind; _ntPopAnchor = anchor || null;
+    p.innerHTML = html;
+    p.dataset.kind = kind;
+    p.hidden = false;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    p.style.left = '0px'; p.style.top = '0px';
+    const pr = p.getBoundingClientRect();
+    const r = (anchor && anchor.getBoundingClientRect) ? anchor.getBoundingClientRect() : { left: vw / 2, right: vw / 2, top: vh / 3, bottom: vh / 3 };
+    let left = o.alignRight ? r.right - pr.width : r.left;
+    left = Math.max(12, Math.min(left, vw - pr.width - 12));
+    let top = r.bottom + 6;
+    if (top + pr.height > vh - 12) top = Math.max(12, r.top - pr.height - 6);
+    p.style.left = left + 'px'; p.style.top = top + 'px';
+    if (o.focus) { const f = p.querySelector(o.focus); if (f) setTimeout(() => { try { f.focus(); } catch {} }, 0); }
+  }
+  function ntPopClose(){
+    const p = document.getElementById('ntPop');
+    if (p && !p.hidden) { p.hidden = true; p.innerHTML = ''; }
+    _ntPopKind = null; _ntPopAnchor = null;
+  }
+  function ntPopStyle(anchor){
+    ntSaveRange();
+    const b = ntCurBlock();
+    const cur = b ? b.nodeName.toLowerCase() : 'p';
+    const ph = ntIsPhone();
+    const it = (v, label, cls, k) => `<button class="nt-pop-i ${cls}${cur === v ? ' on' : ''}" type="button" data-np-style="${v}">${label}${!ph && k ? `<span class="k">${k}</span>` : ''}</button>`;
+    ntPopOpen('style', anchor,
+      it('p', 'Text', '', '⌘⌥0') + it('h1', 'Title', 'h1', '⌘⌥1') + it('h2', 'Heading', 'h2', '⌘⌥2') + it('h3', 'Subheading', 'h3', '⌘⌥3')
+      + '<div class="nt-pop-sep"></div>' + it('blockquote', 'Quote', '', ''));
+  }
+  function ntPopMore(anchor){
+    ntSaveRange();
+    const it = (cmd, label) => `<button class="nt-pop-i" type="button" data-np-cmd="${cmd}">${label}</button>`;
+    ntPopOpen('more', anchor, it('underline', '<u>Underline</u>') + it('strike', '<s>Strikethrough</s>') + it('ol', 'Numbered list')
+      + it('quote', 'Quote') + it('hr', 'Divider') + it('link', 'Link…') + it('indent', 'Indent') + it('outdent', 'Outdent') + it('clear', 'Clear formatting'), { alignRight: true });
+  }
+  function ntPopLink(anchor){
+    ntSaveRange();
+    const a = ntLinkAt();
+    const cur = a ? (a.getAttribute('href') || '') : '';
+    ntPopOpen('link', anchor || _ntEls.toolbar,
+      `<div class="nt-pop-h">${a ? 'Edit link' : 'Add link'}</div>
+       <form class="nt-pop-form" data-np-form="link"><input type="text" name="u" inputmode="url" placeholder="Paste a link" value="${ntEsc(cur)}" autocomplete="off"><button class="nt-btn primary" type="submit">Apply</button></form>`
+      + (a ? '<div class="nt-pop-sep"></div><button class="nt-pop-i" type="button" data-np-link="open">Open link ↗</button><button class="nt-pop-i danger" type="button" data-np-link="remove">Remove link</button>' : ''),
+      { focus: 'input' });
+  }
+  function ntMaybeLinkBubble(){
+    const a = ntLinkAt(), s = ntSel();
+    if (a && s && s.isCollapsed) {
+      if (_ntPopKind && _ntPopKind !== 'bubble') return;
+      if (_ntPopKind === 'bubble' && _ntPopAnchor === a) return;
+      const href = a.getAttribute('href') || '';
+      ntPopOpen('bubble', a, `<div style="display:flex;align-items:center;gap:2px">
+        <button class="nt-pop-i" type="button" data-np-link="open" style="max-width:200px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(href.replace(/^(https?:\/\/|mailto:)/i, ''))}</span>↗</button>
+        <button class="nt-pop-i" type="button" data-np-link="edit" style="width:auto">Edit</button>
+        <button class="nt-pop-i" type="button" data-np-link="remove" style="width:auto">Unlink</button></div>`);
+    } else if (_ntPopKind === 'bubble') ntPopClose();
+  }
+  // "Task" on the current line: routes it into Personal like any other add.
+  function ntPopTask(anchor){
+    ntRestoreRange();
+    let li = ntCurLi();
+    if (!li || !li.parentElement || !li.parentElement.classList.contains('nt-checklist')) {
+      const b = ntCurBlock();
+      if (!b || !b.textContent.trim()) { ptToast('Put the cursor on a line with text first'); return; }
+      ntToggleChecklist();
+      li = ntCurLi();
+    }
+    if (!li) return;
+    if (li.getAttribute('data-task-id')) { ptToast('This line is already a task'); return; }
+    if (!li.textContent.trim()) { ptToast('Type the task on this line first'); return; }
+    _ntPopLi = li;
+    const m = ntNotes.get(ntOpenId) || {};
+    const t = todayKey(), tm = ntAddDays(t, 1);
+    const ad = ntIsAgenda(m) && m.agendaDate > tm ? m.agendaDate : '';
+    const sec = ntCatSection(m.category || '');
+    const it = (v, label, k) => `<button class="nt-pop-i" type="button" data-np-when="${ntEsc(v)}">${label}${k ? `<span class="k">${escHtml(k)}</span>` : ''}</button>`;
+    ntPopOpen('task', anchor,
+      `<div class="nt-pop-h">To Personal · ${escHtml(SECTION_META[sec].label)}</div>`
+      + it('today', 'Today', ntDay(t)) + it(tm, 'Tomorrow', ntDay(tm)) + (ad ? it(ad, 'On the agenda day', ntDay(ad)) : '') + it('someday', 'Someday', 'Planned')
+      + `<div class="nt-pop-sep"></div><form class="nt-pop-form" data-np-form="task-date"><input type="date" name="d" min="${t}" aria-label="Plan for a date"><button class="nt-btn" type="submit">Plan</button></form>`,
+      { alignRight: true });
+  }
+  function ntPopCat(anchor){
+    const m = ntNotes.get(ntOpenId);
+    if (!m) return;
+    const cur = ntCat(m.category) ? m.category : '';
+    const it = (id, label, color) => `<button class="nt-pop-i${cur === id ? ' on' : ''}" type="button" data-np-cat="${ntEsc(id)}" style="--c:${ntEsc(color)}"><span class="d"></span>${escHtml(label)}</button>`;
+    ntPopOpen('cat', anchor, '<div class="nt-pop-h">Category</div>' + ntCats.map(c => it(c.id, c.label, c.color)).join('')
+      + it('', 'General', NT_GENERAL) + '<div class="nt-pop-sep"></div><button class="nt-pop-i" type="button" data-np-act="manage">Edit categories…</button>');
+  }
+  function ntPopDoc(anchor){
+    const m = ntNotes.get(ntOpenId);
+    if (!m) return;
+    const it = (act, label, cls) => `<button class="nt-pop-i ${cls || ''}" type="button" data-np-act="${act}">${label}</button>`;
+    ntPopOpen('doc', anchor, it('pin', m.pinned ? 'Unpin' : 'Pin to top') + it('dup', 'Duplicate') + it('copy', 'Copy as text')
+      + (_ntSecs.length > 1 ? it('fold-all', 'Fold all sections') + it('unfold-all', 'Unfold all sections') : '')
+      + '<div class="nt-pop-sep"></div>' + (m.trashed ? it('restore', 'Restore from trash') : it('trash', 'Move to trash', 'danger')), { alignRight: true });
+  }
+  function ntPopOutline(refresh){
+    const secs = _ntSecs;
+    const html = '<div class="nt-pop-h">Outline</div>' + (secs.length ? ntOutlineItemsHTML(secs) : '<div class="nt-ol-empty">No sections yet — type ## and a space.</div>');
+    if (refresh) { const p = document.getElementById('ntPop'); if (p && !p.hidden) p.innerHTML = html; return; }
+    ntPopOpen('outline', _ntEls.page.querySelector('[data-nt-act="outline"]'), html, { alignRight: true });
+  }
+  function ntPopClick(e){
+    const t = e.target;
+    const st = t.closest('[data-np-style]');
+    if (st) { ntPopClose(); ntSetBlock(st.getAttribute('data-np-style')); return; }
+    const cm = t.closest('[data-np-cmd]');
+    if (cm) {
+      const c = cm.getAttribute('data-np-cmd');
+      ntPopClose();
+      if (c === 'link') ntPopLink(_ntEls.toolbar.querySelector('[data-nt-cmd="more"]'));
+      else ntCmd(c);
+      return;
+    }
+    const wh = t.closest('[data-np-when]');
+    if (wh) { const li = _ntPopLi; ntPopClose(); if (li) ntLineToTask(li, wh.getAttribute('data-np-when')); return; }
+    const ca = t.closest('[data-np-cat]');
+    if (ca) { ntPopClose(); if (ntOpenId) { ntPatchMeta(ntOpenId, { category: ca.getAttribute('data-np-cat') }); ntRenderAll(); } return; }
+    const ln = t.closest('[data-np-link]');
+    if (ln) {
+      const k = ln.getAttribute('data-np-link');
+      const a = _ntPopKind === 'bubble' ? _ntPopAnchor : ntLinkAt();
+      if (k === 'open') { const href = a && a.getAttribute('href'); ntPopClose(); if (href && /^(https?:|mailto:)/i.test(href)) window.open(href, '_blank', 'noopener'); }
+      else if (k === 'remove') { ntPopClose(); ntUnlink(); }
+      else if (k === 'edit') { ntPopClose(); ntPopLink(_ntEls.toolbar.querySelector('[data-nt-cmd="link"]')); }
+      return;
+    }
+    const hd = t.closest('[data-nt-head]');
+    if (hd) { ntJumpTo(+hd.getAttribute('data-nt-head')); return; }
+    const fd = t.closest('[data-nt-fold]');
+    if (fd) { const s = _ntSecs[+fd.getAttribute('data-nt-fold')]; if (s) ntToggleFold(s.el); return; }
+    const ac = t.closest('[data-np-act]');
+    if (!ac) return;
+    const act = ac.getAttribute('data-np-act');
+    ntPopClose();
+    if (act === 'manage') ntOpenCats();
+    else if (act === 'pin' && ntOpenId) { const m = ntNotes.get(ntOpenId); ntPatchMeta(ntOpenId, { pinned: !(m && m.pinned) }); ntRenderAll(); }
+    else if (act === 'dup' && ntOpenId) ntDuplicate(ntOpenId);
+    else if (act === 'copy') ntCopyText();
+    else if (act === 'trash' && ntOpenId) ntTrash(ntOpenId);
+    else if (act === 'restore' && ntOpenId) ntRestore(ntOpenId);
+    else if (act === 'fold-all') ntFoldAll(true);
+    else if (act === 'unfold-all') ntFoldAll(false);
+  }
+  function ntPopSubmit(e){
+    e.preventDefault();
+    const f = e.target;
+    if (f.dataset.npForm === 'link') { const u = f.u.value; ntPopClose(); ntApplyLink(u); }
+    else if (f.dataset.npForm === 'task-date') {
+      const d = f.d.value, li = _ntPopLi;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !li) return;
+      ntPopClose();
+      ntLineToTask(li, d <= todayKey() ? 'today' : d);
+    }
+  }
+  // Markdown, so it pastes cleanly into Slack, email or another doc.
+  function ntCopyText(){
+    if (!_ntEls) return;
+    const lines = [];
+    const title = _ntEls.title.value.trim() || _ntEls.title.placeholder;
+    if (title && title !== 'Untitled') lines.push('# ' + title, '');
+    const own = li => Array.from(li.childNodes).filter(x => !(x.nodeType === 1 && /^(UL|OL)$/.test(x.nodeName))).map(x => x.textContent).join('').trim();
+    const list = (l, depth) => {
+      const check = l.classList.contains('nt-checklist');
+      let i = 1;
+      Array.from(l.children).forEach(li => {
+        if (li.nodeName !== 'LI') return;
+        const mark = check ? (li.getAttribute('data-checked') === 'true' ? '- [x] ' : '- [ ] ') : l.nodeName === 'OL' ? (i++) + '. ' : '- ';
+        lines.push('  '.repeat(depth) + mark + own(li));
+        Array.from(li.children).forEach(c => { if (/^(UL|OL)$/.test(c.nodeName)) list(c, depth + 1); });
+      });
+    };
+    Array.from(_ntEls.editor.children).forEach(c => {
+      const n = c.nodeName;
+      if (/^H[123]$/.test(n)) lines.push('', '#'.repeat(Math.min(6, +n[1] + 1)) + ' ' + c.textContent.trim());
+      else if (n === 'UL' || n === 'OL') list(c, 0);
+      else if (n === 'BLOCKQUOTE') lines.push('> ' + c.textContent.trim());
+      else if (n === 'HR') lines.push('---');
+      else if (n === 'PRE') lines.push('```', c.textContent, '```');
+      else if (c.textContent.trim()) lines.push(c.textContent.trim());
+    });
+    const out = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(out) : Promise.reject())
+      .then(() => ptToast('Copied as text'), () => ptToast('Couldn’t reach the clipboard'));
+  }
+
+  // ---- categories sheet ----
+  let _ntCatDraft = null, _ntCatArm = null, _ntCatOrig = null;
+  function ntOpenCats(){
+    ntPopClose();
+    let bd = document.getElementById('ntCatsBd');
+    if (!bd) {
+      bd = document.createElement('div');
+      bd.id = 'ntCatsBd'; bd.className = 'nt-modal-bd'; bd.hidden = true;
+      document.body.appendChild(bd);
+      bd.addEventListener('click', ntCatsClick);
+      bd.addEventListener('input', e => {
+        const i = e.target.getAttribute('data-nc-label');
+        if (i != null && _ntCatDraft[+i]) _ntCatDraft[+i].label = e.target.value;
+      });
+      bd.addEventListener('change', e => {
+        const i = e.target.getAttribute('data-nc-sec');
+        if (i != null && _ntCatDraft[+i]) _ntCatDraft[+i].section = e.target.value;
+      });
+      bd.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.stopPropagation(); ntCloseCats(); }
+        else if (e.key === 'Enter' && e.target.hasAttribute('data-nc-new')) { e.preventDefault(); ntCatsAdd(); }
+      });
+    }
+    _ntCatDraft = ntCats.map(c => ({ ...c }));
+    _ntCatOrig = new Set(ntCats.map(c => c.id));
+    _ntCatArm = null;
+    ntRenderCats();
+    bd.hidden = false;
+  }
+  function ntCloseCats(){ const bd = document.getElementById('ntCatsBd'); if (bd) bd.hidden = true; _ntCatDraft = null; }
+  function ntRenderCats(){
+    const bd = document.getElementById('ntCatsBd');
+    if (!bd || !_ntCatDraft) return;
+    const counts = ntCounts();
+    const secOpts = cur => Object.keys(SECTION_META).map(k => `<option value="${k}"${k === cur ? ' selected' : ''}>Tasks → ${SECTION_META[k].label}</option>`).join('');
+    const rows = _ntCatDraft.map((c, i) => `<div class="nt-cat-row">
+      <button class="nt-cat-sw" type="button" style="--c:${ntEsc(c.color)}" data-nc-color="${i}" title="Change colour" aria-label="Change colour"></button>
+      <input type="text" value="${ntEsc(c.label)}" data-nc-label="${i}" maxlength="40" aria-label="Category name">
+      ${c.builtin
+        ? `<span class="lock">${counts[c.id] || 0} note${counts[c.id] === 1 ? '' : 's'}</span>`
+        : `<select data-nc-sec="${i}" aria-label="Where tasks land">${secOpts(c.section)}</select><button class="nt-btn del${_ntCatArm === c.id ? ' arm' : ''}" type="button" data-nc-del="${i}">${_ntCatArm === c.id ? 'Sure?' : 'Delete'}</button>`}
+    </div>`).join('');
+    bd.innerHTML = `<div class="nt-modal" role="dialog" aria-modal="true" aria-label="Categories">
+      <div class="nt-modal-h"><b>Categories</b><span>Colour-code notes. Tasks made from a note land in the matching Personal section; deleting a category moves its notes to General.</span></div>
+      <div class="nt-modal-b">${rows}
+        <div class="nt-cat-add"><input type="text" placeholder="New category — e.g. BHA, Church, Home" data-nc-new maxlength="40" aria-label="New category"><button class="nt-btn" type="button" data-nc-add>Add</button></div>
+      </div>
+      <div class="nt-modal-f"><button class="nt-btn" type="button" data-nc-cancel>Cancel</button><button class="nt-btn primary" type="button" data-nc-save>Save</button></div>
+    </div>`;
+  }
+  function ntCatsAdd(){
+    const bd = document.getElementById('ntCatsBd');
+    const inp = bd && bd.querySelector('[data-nc-new]');
+    const label = inp ? inp.value.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
+    if (!label) return;
+    const used = new Set(_ntCatDraft.map(c => c.color));
+    const color = NT_PALETTE.find(c => !used.has(c)) || NT_PALETTE[_ntCatDraft.length % NT_PALETTE.length];
+    _ntCatDraft.push({ id: 'c-' + Date.now().toString(36), label, color, section: 'life', builtin: false });
+    ntRenderCats();
+    const next = bd.querySelector('[data-nc-new]');
+    if (next) next.focus();
+  }
+  function ntCatsClick(e){
+    const bd = document.getElementById('ntCatsBd');
+    const t = e.target;
+    if (t === bd || t.closest('[data-nc-cancel]')) { ntCloseCats(); return; }
+    const col = t.closest('[data-nc-color]');
+    if (col) {
+      const c = _ntCatDraft[+col.getAttribute('data-nc-color')];
+      if (c) c.color = NT_PALETTE[(NT_PALETTE.indexOf(c.color) + 1) % NT_PALETTE.length];
+      ntRenderCats();
+      return;
+    }
+    const del = t.closest('[data-nc-del]');
+    if (del) {
+      const c = _ntCatDraft[+del.getAttribute('data-nc-del')];
+      if (!c) return;
+      if (_ntCatArm === c.id) { _ntCatDraft = _ntCatDraft.filter(x => x.id !== c.id); _ntCatArm = null; }
+      else _ntCatArm = c.id;
+      ntRenderCats();
+      return;
+    }
+    if (t.closest('[data-nc-add]')) { ntCatsAdd(); return; }
+    if (t.closest('[data-nc-save]')) {
+      const draft = _ntCatDraft.map(c => ({ ...c, label: String(c.label || '').replace(/\s+/g, ' ').trim() || (ntCat(c.id) || {}).label || 'Untitled' }));
+      const orig = _ntCatOrig || new Set();
+      // Only what this sheet showed and you removed counts as deleted; a
+      // category another device added meanwhile is kept, not wiped.
+      const gone = [...orig].filter(cid => !draft.some(d => d.id === cid) && !(ntCat(cid) || {}).builtin);
+      ntCats.forEach(c => { if (!orig.has(c.id) && !draft.some(d => d.id === c.id)) draft.push({ ...c }); });
+      ntCloseCats();
+      gone.forEach(id => {
+        const docs = [...ntNotes.values()].filter(n => n.category === id);
+        for (let i = 0; i < docs.length; i += 400) {
+          const b = writeBatch(db);
+          docs.slice(i, i + 400).forEach(n => { n.category = ''; b.set(doc(db, NT_COL, n.id), { category: '' }, { merge: true }); });
+          b.commit().catch(err => console.warn('[notes] recategorise', err));
+        }
+        if (ntFilter === id) ntFilter = 'all';
+      });
+      ntSaveCats(draft);
+    }
+  }
+
+  // ---- wiring (once, at mount) ----
+  function ntAct(act, el){
+    switch (act) {
+      case 'new': ntNew(); break;
+      case 'daily': ntOpenDaily(todayKey()); break;
+      case 'back': ntFlush(); ntPopClose(); ntScreen = 'lib'; ntRenderAll(); window.scrollTo(0, 0); break;
+      case 'cat': ntPopCat(el); break;
+      case 'undate':
+        if (ntOpenId) { ntPatchMeta(ntOpenId, { kind: 'note', agendaDate: NT_DEL, daily: NT_DEL }); ntRenderAll(); }
+        break;
+      case 'pin':
+        if (ntOpenId) { const m = ntNotes.get(ntOpenId); ntPatchMeta(ntOpenId, { pinned: !(m && m.pinned) }); ntRenderAll(); }
+        break;
+      case 'more': ntPopDoc(el); break;
+      case 'outline': ntPopOutline(); break;
+      case 'cats': ntOpenCats(); break;
+      case 'calsync': ntCalFetch(true); ntRenderToday(); break;
+      case 'take-remote': ntTakeRemote(); break;
+      case 'keep-mine':
+        if (_ntRemote) _ntRev = Math.max(_ntRev, _ntRemote.rev);
+        _ntRemote = null; ntRenderBanner(); ntMarkDirty();
+        break;
+      case 'fold-all': ntFoldAll(true); break;
+      case 'unfold-all': ntFoldAll(false); break;
+    }
+  }
+  function ntWire(){
+    const E = _ntEls;
+    const pane = document.getElementById('notesPane');
+    pane.addEventListener('click', e => {
+      const t = e.target;
+      if (ntInEditor(t)) return;                                  // the editor has its own handlers
+      const open = t.closest('[data-nt-open]');
+      if (open) { ntOpenDoc(open.getAttribute('data-nt-open')); return; }
+      const ev = t.closest('[data-nt-ev]');
+      if (ev) { ntOpenEvent(ev.getAttribute('data-nt-ev'), todayKey()); return; }
+      const f = t.closest('[data-nt-filter]');
+      if (f) { ntFilter = f.getAttribute('data-nt-filter'); _ntDelArm = null; ntRenderLib(); return; }
+      const rs = t.closest('[data-nt-restore]');
+      if (rs) { ntRestore(rs.getAttribute('data-nt-restore')); return; }
+      const pg = t.closest('[data-nt-purge]');
+      if (pg) {
+        const id = pg.getAttribute('data-nt-purge');
+        if (_ntDelArm === id) ntDeleteForever(id); else { _ntDelArm = id; ntRenderLib(); }
+        return;
+      }
+      const hd = t.closest('[data-nt-head]');
+      if (hd) { ntJumpTo(+hd.getAttribute('data-nt-head')); return; }
+      const fd = t.closest('[data-nt-fold]');
+      if (fd) { const s = _ntSecs[+fd.getAttribute('data-nt-fold')]; if (s) ntToggleFold(s.el); return; }
+      const cmd = t.closest('[data-nt-cmd]');
+      if (cmd) { ntCmd(cmd.getAttribute('data-nt-cmd'), cmd); return; }
+      const act = t.closest('[data-nt-act]');
+      if (act) ntAct(act.getAttribute('data-nt-act'), act);
+    });
+    E.toolbar.addEventListener('mousedown', e => { if (e.target.closest('[data-nt-cmd]')) e.preventDefault(); });
+    E.search.addEventListener('input', () => { ntQuery = E.search.value; ntRenderLib(); });
+    E.search.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { e.stopPropagation(); E.search.value = ''; ntQuery = ''; ntRenderLib(); }
+      else if (e.key === 'Enter') { const first = E.list.querySelector('[data-nt-open]'); if (first) ntOpenDoc(first.getAttribute('data-nt-open')); }
+    });
+    E.date.addEventListener('click', () => { try { E.date.showPicker(); } catch {} });
+    E.date.addEventListener('change', () => {
+      const v = E.date.value;
+      if (!ntOpenId || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+      ntPatchMeta(ntOpenId, { kind: 'agenda', agendaDate: v });
+      ntRenderAll();
+    });
+    ntWireEditor();
+    // Outside clicks close the popover (the anchor re-toggles it itself).
+    document.addEventListener('mousedown', e => {
+      if (!_ntPopKind) return;
+      const p = document.getElementById('ntPop');
+      if (p && p.contains(e.target)) return;
+      if (_ntPopAnchor && _ntPopAnchor.contains && _ntPopAnchor.contains(e.target)) return;
+      if (_ntPopKind === 'bubble' && ntInEditor(e.target)) return;
+      ntPopClose();
+    }, true);
+    window.addEventListener('resize', () => { if (_ntPopKind) ntPopClose(); });
+    E.doc.addEventListener('scroll', () => { if (_ntPopKind === 'bubble') ntPopClose(); }, { passive: true });
   }
 
 
@@ -14925,6 +17833,8 @@ const VOICE = {
       drainSprintQueue().then(() => render()).catch(() => {});
     } else if (e.key === 'sprint-pending-completions') {
       drainSprintCompletions().then(() => render()).catch(() => {});
+    } else if (e.key === 'calendar-gcal-cache-v1' || e.key === 'cal-events-cache') {
+      try { ntCalFromCache(true); } catch {}
     }
   });
 
