@@ -438,7 +438,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.1.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.3.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -491,7 +491,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 // of War Room uses. Photos are downscaled to 1200px (~150–300KB) to stay
 // well under Firestore's 1MB document limit.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-import { getFirestore, doc, setDoc, getDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+import { getFirestore, doc, setDoc, getDoc, deleteDoc, getDocs, collection } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
 const app = initializeApp({
   apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
   authDomain: "tv-todos.firebaseapp.com",
@@ -499,6 +499,10 @@ const app = initializeApp({
 });
 const db = getFirestore(app);
 const COL = 'hair_recovery_photos';
+// Metadata-only index, read through the SDK. The REST list endpoint returns
+// 429 for this project's API key, so it can't be the way devices discover
+// each other's photos; it stays only as a last-resort fallback.
+const META = 'hair_recovery_photo_meta';
 const toDataUrl = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
 const REST = 'https://firestore.googleapis.com/v1/projects/tv-todos/databases/(default)/documents/' + COL
   + '?key=AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs&pageSize=300&mask.fieldPaths=id&mask.fieldPaths=date&mask.fieldPaths=angle&mask.fieldPaths=ts&mask.fieldPaths=bytes';
@@ -506,6 +510,20 @@ window.__hrCloud = {
   // Metadata only — lets any device discover photos taken elsewhere without
   // pulling the image bytes or depending on the account sync.
   async list(){
+    try {
+      const snap = await getDocs(collection(db, META));
+      if(!snap.empty) return snap.docs.map(d => { const x = d.data(); return { id: d.id, date: x.date, angle: x.angle, ts: x.ts || 0, bytes: x.bytes || 0 }; });
+    } catch(e){ console.warn('[recovery] meta index read failed, trying REST', e.code || e.message); }
+    // Index empty or unreadable: fall back to REST, then seed the index from
+    // what REST returned so the next device never needs REST at all.
+    const items = await this.listRest();
+    for(const it of items){ if(it.date) this.putMeta(it.id, it).catch(e => console.warn('[recovery] index seed failed', it.id, e.code || e.message)); }
+    return items;
+  },
+  async putMeta(id, meta){
+    await setDoc(doc(db, META, id), { id, date: meta.date, angle: meta.angle, ts: meta.ts || 0, bytes: meta.bytes || 0 });
+  },
+  async listRest(){
     const out = []; let url = REST;
     while(url){
       const r = await fetch(url); if(!r.ok) throw new Error('list ' + r.status);
@@ -518,6 +536,7 @@ window.__hrCloud = {
   async put(id, meta, blob){
     const b64 = await toDataUrl(blob);
     await setDoc(doc(db, COL, id), { id, date: meta.date, angle: meta.angle, ts: meta.ts, w: meta.w || null, h: meta.h || null, bytes: blob.size, b64 });
+    await this.putMeta(id, { date: meta.date, angle: meta.angle, ts: meta.ts, bytes: blob.size });
     return true;
   },
   async get(id){
@@ -528,7 +547,7 @@ window.__hrCloud = {
     return { blob, date: d.date, angle: d.angle, ts: d.ts, w: d.w, h: d.h };
   },
   async remove(id){
-    try { await deleteDoc(doc(db, COL, id)); }
+    try { await deleteDoc(doc(db, COL, id)); await deleteDoc(doc(db, META, id)); }
     catch(e){ console.warn('[recovery] cloud delete failed', e.code || e.message); }
   }
 };
@@ -908,6 +927,13 @@ async function loadPhotoMeta(){
   if(window.__hrCloud){
     try{
       const cloud=await window.__hrCloud.list();
+      const listed=new Set(cloud.map(c=>c.id));
+      for(const m of byId.values()){
+        if(m.cloud && !listed.has(m.id)){
+          try{ await window.__hrCloud.putMeta(m.id,{date:m.date,angle:m.angle,ts:m.ts}); cloud.push({id:m.id,date:m.date,angle:m.angle,ts:m.ts}); }
+          catch(e){ console.warn('[recovery] index backfill failed', m.id, e.code||e.message); }
+        }
+      }
       cloud.forEach(c=>{ if(!c.date) return; const m=byId.get(c.id)||{id:c.id,date:c.date,angle:c.angle||'front',ts:c.ts,local:false}; m.cloud=true; byId.set(c.id,m); });
       // anything we thought was in the cloud but isn't any more (deleted elsewhere)
       const cloudIds=new Set(cloud.map(c=>c.id));
