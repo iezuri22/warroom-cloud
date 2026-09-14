@@ -343,6 +343,7 @@ textarea:focus,input:focus,select:focus{border-color:var(--accent);outline:none}
 .compare .frame{position:relative;aspect-ratio:4/5;border-radius:12px;overflow:hidden;background:var(--card-2);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;font-weight:700;text-align:center;padding:0}
 .compare .frame img{width:100%;height:100%;object-fit:cover;display:block}
 .compare .frame .base{position:absolute;right:6px;top:6px;font-size:9.5px;font-weight:800;background:var(--accent);color:var(--on-accent);padding:2px 6px;border-radius:6px}
+.compare .frame .base.now{background:var(--green);color:#fff}
 .compare .empty{grid-column:1/-1}
 .gal-card{padding:4px 12px}
 .gday{display:grid;grid-template-columns:52px minmax(0,1fr);gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border)}
@@ -447,7 +448,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <section class="col" data-sec="progress">
       <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
       <div class="card" id="settings"></div>
-      <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.19.</p>
+      <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.20.</p>
     </section>
   </div>
 
@@ -1275,7 +1276,7 @@ async function renderGallery(){
   const chips=[{id:'all',label:'All'}].concat(ANGLES);
   $('#angleFilter').innerHTML=chips.map(a=>`<button role="tab" aria-selected="${angleFilter===a.id}" class="${angleFilter===a.id?'on':''}" data-act="filter" data-a="${a.id}">${esc(a.label)}</button>`).join('');
   const list=photosMeta.filter(p=>angleFilter==='all'||p.angle===angleFilter);
-  const base=baselinePhoto(angleFilter);
+  const before=comparePair().L;
   if(!list.length){ $('#gallery').innerHTML='<div class="empty">No photos yet. Same spot, same light, same three angles each time: front, right, left. Day 5 becomes the baseline.</div>'; return; }
   const byDate={}; list.forEach(p=>{(byDate[p.date]=byDate[p.date]||[]).push(p);});
   const dates=Object.keys(byDate).sort().reverse();
@@ -1287,7 +1288,7 @@ async function renderGallery(){
     const order={front:0,right:1,left:2};
     for(const p of byDate[d].slice().sort((a,b)=>(order[a.angle]??9)-(order[b.angle]??9)||a.ts-b.ts)){
       const u=await photoUrl(p.id), al=angleLabel(p.angle);
-      html+=`<button class="gt ${u?'':'pending'}" data-act="open" data-id="${p.id}" aria-label="${esc(al)}, ${esc(dayTag(d))}">${u?`<img src="${u}" alt="">`:'<span class="wait">On your other device</span>'}<i class="lab">${esc(al)}</i>${base&&base.id===p.id?'<span class="bdot" title="Baseline"></span>':''}</button>`;
+      html+=`<button class="gt ${u?'':'pending'}" data-act="open" data-id="${p.id}" aria-label="${esc(al)}, ${esc(dayTag(d))}">${u?`<img src="${u}" alt="">`:'<span class="wait">On your other device</span>'}<i class="lab">${esc(al)}</i>${before&&before.id===p.id?'<span class="bdot" title="Before photo in Compare"></span>':''}</button>`;
     }
     html+='</div></div>';
   }
@@ -1296,26 +1297,37 @@ async function renderGallery(){
 }
 
 let cmpL=null, cmpR=null;
+// Compare pair. "Before" defaults to the earliest photo for the angle filter
+// (Day 0, or a pre-op shot if there is one); "after" follows the newest shot
+// from the same angle. Both picks are saved per filter in state.compare, which
+// syncs, so they stick across reloads and devices. R is stored as 'latest'
+// when it should keep tracking new photos.
+function comparePool(){
+  return photosMeta.filter(p=>angleFilter==='all'||p.angle===angleFilter).slice().sort((a,b)=>a.date.localeCompare(b.date)||a.ts-b.ts);
+}
+function newestAfter(L,pool){
+  const same=pool.filter(p=>p.angle===L.angle&&p.id!==L.id);
+  const later=same.filter(p=>p.date>L.date||(p.date===L.date&&p.ts>L.ts));
+  return later.length?later[later.length-1]:(same.length?same[same.length-1]:pool.filter(p=>p.id!==L.id).pop());
+}
+function comparePair(){
+  const pool=comparePool();
+  if(pool.length<2) return {pool,L:pool[0]||null,R:null,latest:false};
+  const saved=((state.compare||{})[angleFilter])||{};
+  const L=pool.find(p=>p.id===saved.L)||pool[0];
+  const pinned=saved.R&&saved.R!=='latest'&&saved.R!==L.id?pool.find(p=>p.id===saved.R):null;
+  return pinned?{pool,L,R:pinned,latest:false}:{pool,L,R:newestAfter(L,pool),latest:true};
+}
 async function renderCompare(){
-  const pool=photosMeta.filter(p=>angleFilter==='all'||p.angle===angleFilter).slice().sort((a,b)=>a.date.localeCompare(b.date)||a.ts-b.ts);
-  const el=$('#compare');
-  if(pool.length<2){ el.innerHTML='<div class="empty">Add two photos to compare them side by side.</div>'; return; }
-  const base=baselinePhoto(angleFilter), tk=todayKey();
-  if(!cmpL||!pool.some(p=>p.id===cmpL)) cmpL=base?base.id:pool[0].id;
-  if(!cmpR||!pool.some(p=>p.id===cmpR)){
-    // Default the right side to the newest shot from the SAME angle as the left,
-    // so "All" doesn't open on a front-vs-left pair that shows nothing.
-    const L=pool.find(p=>p.id===cmpL), same=pool.filter(p=>p.angle===L.angle&&p.id!==L.id);
-    const later=same.filter(p=>p.date>L.date||(p.date===L.date&&p.ts>L.ts));
-    cmpR=(later.length?later[later.length-1]:(same.length?same[same.length-1]:pool.filter(p=>p.id!==L.id).pop())).id;
-  }
+  const el=$('#compare'), {pool,L,R,latest}=comparePair(), tk=todayKey();
+  if(!R){ el.innerHTML='<div class="empty">Add two photos to compare them side by side.</div>'; return; }
   const lbl=p=>`${dayOf(p.date)<0?'Pre-op':'Day '+dayOf(p.date)} · ${fmt(p.date,p.date.slice(0,4)!==tk.slice(0,4))} · ${angleLabel(p.angle)}`;
   const opt=sel=>pool.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(lbl(p))}</option>`).join('');
-  const side=async(id,which)=>{
-    const p=pool.find(x=>x.id===id), u=p?await photoUrl(p.id):null;
-    return `<div class="side"><select data-act="cmp" data-side="${which}" aria-label="${which==='L'?'Left':'Right'} photo">${opt(id)}</select><div class="frame">${u?`<img src="${u}" alt="">`:'Pick a photo'}${p&&base&&base.id===p.id?'<span class="base">Baseline</span>':''}</div></div>`;
+  const side=async(p,which,tag)=>{
+    const u=await photoUrl(p.id);
+    return `<div class="side"><select data-act="cmp" data-side="${which}" aria-label="${which==='L'?'Before':'After'} photo">${opt(p.id)}</select><div class="frame">${u?`<img src="${u}" alt="">`:'Pick a photo'}${tag}</div></div>`;
   };
-  el.innerHTML=(await side(cmpL,'L'))+(await side(cmpR,'R'));
+  el.innerHTML=(await side(L,'L','<span class="base">Before</span>'))+(await side(R,'R',latest?'<span class="base now">Latest</span>':''));
 }
 
 function renderStops(){
@@ -1458,7 +1470,7 @@ document.addEventListener('click',async e=>{
   if(act==='undo-checkin'){ const r=dayRec(selectedKey); r.checkin=false; delete r.checkinAt; saveState(); renderAll(); return; }
   if(act==='symptom'){ const r=dayRec(selectedKey); const s=b.dataset.s; r.symptoms=r.symptoms||[]; const i=r.symptoms.indexOf(s); if(i>=0) r.symptoms.splice(i,1); else r.symptoms.push(s); saveState(); renderDay(); renderLog(); return; }
   if(act==='add-photo'){ openPhotoSheet(); return; }
-  if(act==='filter'){ angleFilter=b.dataset.a; cmpL=cmpR=null; await renderGallery(); await renderCompare(); return; }
+  if(act==='filter'){ angleFilter=b.dataset.a; await renderGallery(); await renderCompare(); return; }
   if(act==='open'){ openLightbox(b.dataset.id); return; }
   if(act==='goto'){ selectedKey=b.dataset.k; renderDay(); goSection('today','secToday'); return; }
   if(act==='dismiss-cadence'){ state.cadenceSeen=cadenceFor(Math.max(0,dayOf(todayKey()))).every; saveState(); renderBanners(); return; }
@@ -1470,7 +1482,14 @@ document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.id==='flagChk'){ const r=dayRec(selectedKey); r.flag=t.checked; saveState(); renderDay(); renderLog(); if(t.checked) toast('Flagged. If it matches a red flag, message the clinic now.'); return; }
   if(t.dataset&&t.dataset.set){ if(t.value||t.dataset.clearable){ state.settings[t.dataset.set]=t.value||''; saveState(); renderHero(); renderDay(); renderBadges(); renderStops(); renderProducts(); } return; }
-  if(t.dataset&&t.dataset.act==='cmp'){ if(t.dataset.side==='L') cmpL=t.value; else cmpR=t.value; await renderCompare(); return; }
+  if(t.dataset&&t.dataset.act==='cmp'){
+    state.compare=state.compare||{};
+    const cur={...(state.compare[angleFilter]||{})};
+    if(t.dataset.side==='L') cur.L=t.value;
+    else { const {pool,L}=comparePair(); const nw=L?newestAfter(L,pool):null; cur.R=(nw&&t.value===nw.id)?'latest':t.value; }
+    state.compare[angleFilter]=cur; saveState();
+    await renderCompare(); await renderGallery(); return;
+  }
   if(t.id==='photoFile'||t.id==='photoFileLib'){
     const f=t.files&&t.files[0]; t.value=''; if(!f) return;
     const dateKey=(photoDateKey&&photoDateKey<=todayKey())?photoDateKey:selectedKey;
