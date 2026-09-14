@@ -86,9 +86,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .hide{display:none !important}
 
 /* ---------- top bar ---------- */
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px}
-.topbar .brand{display:flex;flex-direction:column;gap:2px;min-width:0}
-.topbar .brand .name{font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .iconbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--border);background:var(--card);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;flex-shrink:0}
 
 /* ---------- hero (compact) ---------- */
@@ -105,12 +102,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .hx-date{font-size:12px;color:var(--mid);font-weight:600;margin-top:3px}
 .hx-lvl{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;align-self:flex-start}
 .hx-lvl .dim{font-size:10.5px;font-weight:700;white-space:nowrap}
-.hx-quote{font-size:13.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hx-quote{font-size:13.5px;line-height:1.45}
 .hx-quote em{color:var(--accent);font-style:normal;font-weight:700}
 .hx-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
 .hs{background:var(--card-2);border-radius:12px;padding:7px 10px;min-width:0;border:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:transform .1s}
 .hs:active{transform:scale(.97)}
 .hs .v .ring{width:16px;height:16px;vertical-align:-2px;margin-right:5px}
+.hs .due-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:5px;vertical-align:1px}
 .hs.care.all{background:var(--green-soft)}
 .hs.care.all .v{color:var(--green)}
 .hs .k{font-size:9.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -152,6 +150,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .banner .x{margin-left:auto;background:none;border:none;font-size:18px;color:var(--dim);cursor:pointer;padding:0 4px;flex-shrink:0;min-width:32px;min-height:32px}
 
 /* ---------- dock (section navigation) ---------- */
+/* The dock is the top of the page. On phones the status panel (.lead)
+   belongs to the Today tab; other tabs start right under the dock. */
+@media(max-width:759px){ body:not([data-view="today"]) .lead{display:none} }
 .dock{position:sticky;top:6px;z-index:20;margin-bottom:12px;padding:4px;border-radius:16px;border:1px solid var(--border);
   background:var(--card-2);background:color-mix(in srgb,var(--bg) 80%,transparent);
   -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
@@ -392,17 +393,6 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 </head>
 <body data-view="today">
 
-<div class="topbar">
-  <div class="brand">
-    <span class="eyebrow">Hair recovery · quest log</span>
-    <span class="name">FUE hairline · Asli Tarcan · Sep 8, 2026</span>
-  </div>
-  <button class="iconbtn" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">◐</button>
-</div>
-
-<div id="hero" class="hero"></div>
-<div id="banners"></div>
-
 <nav class="dock" id="dock" aria-label="Sections">
   <div class="dock-main">
     <button class="dock-ring" id="dockRing" data-act="go-care" hidden aria-label="Today's care"></button>
@@ -410,6 +400,11 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   </div>
   <div class="dock-sub" id="dockSub"></div>
 </nav>
+
+<div class="lead">
+  <div id="hero" class="hero"></div>
+  <div id="banners"></div>
+</div>
 
 <div class="grid">
   <section class="col" data-sec="today">
@@ -455,7 +450,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.6.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.8.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -1073,6 +1068,7 @@ function renderAll(){
 }
 
 function careToday(){
+  if(!state) return {total:0,done:0};   // setView() runs at script init, before boot() loads state
   const tk=todayKey(), tasks=tasksFor(tk), rec=peekDay(tk);
   return {total:tasks.length, done:tasks.filter(t=>rec.tasks[t.id]).length};
 }
@@ -1111,7 +1107,7 @@ function renderHero(){
       <div class="hx-quote">${phase.quote}</div>
       <div class="hx-stats">
         ${care.total
-          ? `<button class="hs care ${care.done===care.total?'all':(due?'due':'')}" data-act="go-care" title="Today's care checklist"><div class="k">Today${due?' · check-in due':''}</div><div class="v">${ringSvg(care.done,care.total)}${care.done}/${care.total}</div></button>`
+          ? `<button class="hs care ${care.done===care.total?'all':(due?'due':'')}" data-act="go-care" title="Today's care checklist${due?' · check-in due':''}"><div class="k">Today${due?'<span class="due-dot" aria-label="check-in due"></span>':''}</div><div class="v">${ringSvg(care.done,care.total)}${care.done}/${care.total}</div></button>`
           : `<button class="hs ${due?'due':''}" data-act="go-checkin" title="${esc(cad.label)}"><div class="k">Check-in</div><div class="v">${nextTxt}${nextSub?`<small>${esc(nextSub)}</small>`:''}</div></button>`}
         <button class="hs" data-act="go-checkin" title="Scheduled check-ins in a row"><div class="k">Streak</div><div class="v">🔥 ${si.streak}</div></button>
         <button class="hs" data-act="go-unlocks" title="${nu?esc(nu.name)+' · '+fmt(nu.d):'All unlocked'}"><div class="k">${nu?esc(nu.name):'Unlocks'}</div><div class="v">${nu?nu.ico+' '+nuGap+'d':'All clear'}</div></button>
@@ -1356,7 +1352,10 @@ function renderLog(){
 }
 
 function renderSettings(){
+  const dark=document.documentElement.getAttribute('data-theme')==='dark';
   $('#settings').innerHTML=`
+    <div class="set-row"><div><div class="l">Procedure</div><div class="h">FUE hairline + temples · Asli Tarcan, Istanbul · Sep 8, 2026</div></div></div>
+    <div class="set-row"><div><div class="l">Dark mode</div><div class="h">This device only</div></div><button class="btn sm" data-act="theme" aria-pressed="${dark}">${dark?'On':'Off'}</button></div>
     <div class="set-row"><div><div class="l">Prednol last day</div><div class="h">Sheet says early days only. Set the real last day.</div></div><input type="date" data-set="prednolEnd" value="${esc(state.settings.prednolEnd)}"></div>
     <div class="set-row"><div><div class="l">RIF last day</div><div class="h">On the grafts. Set to Tue, Sep 15.</div></div><input type="date" data-set="rifEnd" value="${esc(state.settings.rifEnd)}"></div>
     <div class="set-row"><div><div class="l">Donor topicals last day</div><div class="h">Fusidas / Hametol on the donor area.</div></div><input type="date" data-set="topicalsEnd" value="${esc(state.settings.topicalsEnd)}"></div>
@@ -1416,6 +1415,7 @@ document.addEventListener('click',async e=>{
   if(act==='go-care'){ if(selectedKey!==todayKey()){ selectedKey=todayKey(); renderDay(); } goSection('today', tasksFor(todayKey()).length?'careCard':'secToday'); return; }
   if(act==='go-checkin'){ if(selectedKey!==todayKey()){ selectedKey=todayKey(); renderDay(); } goSection('today','secToday'); return; }
   if(act==='go-unlocks'){ goSection('unlocks','secUnlocks'); return; }
+  if(act==='theme'){ toggleTheme(); return; }
   if(act==='nw-toggle'){ nwOpen=!nwOpen; try{localStorage.setItem(NW_KEY,nwOpen?'1':'0');}catch(e){} renderHero(); return; }
   if(act==='tl-toggle'){ tlOpen[b.dataset.p]=!tlOpen[b.dataset.p]; renderTimeline(); return; }
   if(act==='steps'){ expandedSteps[b.dataset.task]=!expandedSteps[b.dataset.task]; renderDay(); return; }
@@ -1491,10 +1491,16 @@ function renderDock(){
   if(!subs.some(x=>x[0]===activeSub)) activeSub=subs.length?subs[0][0]:null;
   $('#dockSub').innerHTML=subs.map(([id,l])=>`<button class="${id===activeSub?'on':''}" data-sub="${id}">${l}</button>`).join('');
 }
+// Measured on every call (display:none gives a zero rect, scrolled-past gives
+// a bottom above the dock), so it's right no matter what triggered it.
+function heroInView(){
+  const r=$('#hero').getBoundingClientRect();
+  return r.height>0 && r.bottom > $('#dock').getBoundingClientRect().bottom + 40;
+}
 function renderDockRing(){
-  const el=$('#dockRing'); if(!el) return;
-  const c=careToday(), heroGone=($('#hero').getBoundingClientRect().bottom<8);
-  if(!c.total||!heroGone){ el.hidden=true; return; }
+  const el=$('#dockRing'); if(!el||!state) return;
+  const c=careToday();
+  if(!c.total||heroInView()){ el.hidden=true; return; }
   el.hidden=false; el.classList.toggle('all',c.done===c.total);
   el.innerHTML=`${ringSvg(c.done,c.total)}${c.done}/${c.total}`;
   el.title=c.done===c.total?'All care done today':'Today\'s care: '+c.done+' of '+c.total;
@@ -1503,18 +1509,23 @@ function setView(v){
   if(!VIEWS.includes(v)) v='today';
   document.body.dataset.view=v;
   try{localStorage.setItem(VIEW_KEY,v);}catch(e){}
-  renderDock();
+  renderDock(); renderDockRing();
 }
 function jumpTo(id){
   const el=document.getElementById(id); if(!el) return;
   const y=el.getBoundingClientRect().top+window.scrollY-($('#dock').offsetHeight+14);
   window.scrollTo(0,Math.max(0,y));
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
-  activeSub=id; renderDock();
+  activeSub=id; renderDock(); renderDockRing();
 }
 function goSection(view,id){ setView(view); jumpTo(id||(navFor(view).subs[0]||['secTimeline'])[0]); }
 $('#dock').addEventListener('click',e=>{
-  const t=e.target.closest('[data-nav]'); if(t){ goSection(t.dataset.nav); return; }
+  const t=e.target.closest('[data-nav]');
+  if(t){
+    if(t.dataset.nav==='today'){ setView('today'); window.scrollTo(0,0); activeSub=navFor('today').subs[0][0]; renderDock(); renderDockRing(); }
+    else { goSection(t.dataset.nav); window.scrollTo(0,0); renderDockRing(); }
+    return;
+  }
   const sb=e.target.closest('[data-sub]'); if(sb){ jumpTo(sb.dataset.sub); return; }
 });
 // scrollspy + dock ring visibility
@@ -1532,11 +1543,16 @@ window.addEventListener('scroll',()=>{
   });
 },{passive:true});
 window.addEventListener('resize',()=>renderDockRing(),{passive:true});
+// The ring in the dock only appears when the hero's own care tile isn't visible:
+// scrolled past it, or on a phone tab that doesn't show the hero at all.
+if('IntersectionObserver' in window){
+  new IntersectionObserver(()=>renderDockRing(),{threshold:[0,.25,.5,1]}).observe($('#hero'));
+}
 try{ const v=localStorage.getItem(VIEW_KEY); setView(v&&VIEWS.includes(v)?v:'today'); }catch(e){ setView('today'); }
 
 // theme
 function applyTheme(t){ document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light'); const m=document.querySelector('meta[name=theme-color]'); if(m) m.content=t==='dark'?'#0B0C12':'#F6F5F1'; }
-$('#themeBtn').addEventListener('click',()=>{ const cur=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; try{localStorage.setItem(THEME_KEY,cur);}catch(e){} applyTheme(cur); });
+function toggleTheme(){ const cur=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; try{localStorage.setItem(THEME_KEY,cur);}catch(e){} applyTheme(cur); renderSettings(); }
 
 /* =====================================================================
    BOOT
