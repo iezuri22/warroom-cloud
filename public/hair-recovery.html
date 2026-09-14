@@ -263,6 +263,21 @@ textarea:focus,input:focus,select:focus{border-color:var(--accent);outline:none}
 .stop.past .w{color:var(--green)}
 .stop.soon .w{color:var(--accent)}
 
+/* ---------- products ---------- */
+.prod{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--border)}
+.prod:first-child{border-top:0}
+.prod .ic{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;background:var(--card-2)}
+.prod.now .ic{background:var(--green-soft)}
+.prod.done{opacity:.5}
+.prod .b{flex:1;min-width:0}
+.prod .n{font-size:13.5px;font-weight:800;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.prod .h{font-size:12px;color:var(--mid);line-height:1.4;margin-top:2px}
+.prod .gate{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;font-weight:700;color:var(--mid)}
+.prod .gate input{width:auto;padding:6px 8px;font-size:13px}
+.avoid{margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--red-soft)}
+.avoid b{display:block;font-size:10px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--red);margin-bottom:4px}
+.avoid li{font-size:12px;line-height:1.45;margin-left:16px}
+
 /* ---------- timeline ---------- */
 .tl{position:relative;padding-left:26px}
 .tl::before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:2px;background:var(--border-strong)}
@@ -370,6 +385,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   <button class="desk" data-view="today" data-target="notesCard">Notes</button>
   <button data-view="unlocks" data-target="secUnlocks">Unlocks</button>
   <button class="desk" data-view="unlocks" data-target="secStops">Stop</button>
+  <button class="desk" data-view="unlocks" data-target="secProducts">Products</button>
   <button class="desk" data-view="unlocks" data-target="secBadges">Badges</button>
   <button data-view="photos" data-target="secPhotos">Photos</button>
   <button class="desk" data-view="photos" data-target="secCompare">Compare</button>
@@ -398,6 +414,8 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="unlocks" id="unlocks"></div>
     <div class="sec-title" id="secStops"><h2>You can stop</h2><span class="sub" id="stopSub"></span></div>
     <div class="card" id="stops"></div>
+    <div class="sec-title" id="secProducts"><h2>Products</h2><span class="sub" id="productSub"></span></div>
+    <div class="card" id="products"></div>
     <div class="sec-title" id="secBadges"><h2>Badges</h2><span class="sub" id="badgeSub"></span></div>
     <div class="badges" id="badges"></div>
   </section>
@@ -420,7 +438,7 @@ body.embed .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <div class="card" id="log"></div>
     <div class="sec-title" id="secSettings"><h2>Settings</h2></div>
     <div class="card" id="settings"></div>
-    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-13.7.</p>
+    <p class="foot">Timeline and restriction windows follow the Asli Tarcan aftercare sheet. Medication dates are the handwritten ones; cross-check them against the physical form. Red flags (spreading redness, pus, fever, worsening pain, asymmetric swelling) mean contact the clinic, not this app. Notes and check-ins sync with your War Room account; photos are kept on this device and uploaded to War Room storage so every device shows the same gallery. Build 2026-09-14.1.</p>
   </section>
 
   <section class="col" data-sec="timeline">
@@ -616,6 +634,9 @@ const CARE = [
   {id:'wash-massage', name:'Gentle massage wash', meta:'Once daily · prescribed foam shampoo until Sep 29, any shampoo after',
    start:'2026-09-19', end:'2026-09-29', slot:'wash', steps:WASH_MASSAGE_STEPS, xp:10},
   {id:'rif', name:'RIF on grafts', meta:'Topical · last day Tue, Sep 15', start:'2026-09-09', endSetting:'rifEnd', slot:'topical', xp:3},
+  {id:'keto', name:'Ketoconazole shampoo', meta:'Nizoral 1% · leave on 3–5 min, then condition', start:'2026-09-30', end:'2099-12-31', dows:[1,4], slot:'wash', xp:5},
+  {id:'minox-am', name:'Minoxidil foam', meta:'Half capful · grafts + native hair', startSetting:'minoxStart', end:'2099-12-31', slot:'morning', xp:3},
+  {id:'minox-pm', name:'Minoxidil foam', meta:'Half capful · grafts + native hair', startSetting:'minoxStart', end:'2099-12-31', slot:'evening', xp:3},
   {id:'donor', name:'Fusidas / Hametol on donor', meta:'Topical · last day Sep 18', start:'2026-09-09', endSetting:'topicalsEnd', slot:'topical', xp:3}
 ];
 const SLOTS = [
@@ -662,6 +683,31 @@ const STOPS = [
   {id:'shampoo', name:'Prescribed foam shampoo',        last:()=>'2026-09-29', then:'any shampoo from Sep 30'},
   {id:'hat',     name:'Hat + sunscreen whenever you\'re in sun', last:()=>'2026-11-07', then:'bare head from Nov 8'},
   {id:'lineup',  name:'No bare blade on the hairline', last:()=>'2027-03-07', then:'line-ups and skin fades from Mar 8, 2027'}
+];
+
+// Products for growth + scalp health, tuned for coily hair. `setting` = the
+// start date comes from a user-entered date (clinic clearance); `gate` marks
+// items that need someone's okay first.
+const PRODUCTS = [
+  {id:'clinic', name:'Clinic products only', ico:'🏥', how:'Foam lotion, prescribed shampoo, RIF, Fusidas / Hametol. No oil, grease, pomade, edge control or wave products on the grafts.', from:'2026-09-08', to:'2026-09-29'},
+  {id:'satin',  name:'Satin pillowcase', ico:'🛏️', how:'Less friction on the grafts and less breakage on coily hair.', from:'2026-09-19'},
+  {id:'spf',    name:'Tinted mineral sunscreen', ico:'🧴', how:'Zinc SPF 30–50 on the hairline and temples when you\'re outside. Tinted or sheer so there\'s no white cast.', from:'2026-09-22'},
+  {id:'shampoo',name:'Sulfate-free moisturizing shampoo + rinse-out conditioner', ico:'🫧', how:'Every wash. Coily hair dries out fast, and an itchy scalp makes you scratch during the shed.', from:'2026-09-30'},
+  {id:'keto',   name:'Ketoconazole shampoo', ico:'🧪', how:'Nizoral 1%, Mondays and Thursdays. Leave on 3–5 min, then condition, because it\'s drying. Controls flaking, modest evidence for density.', from:'2026-09-30'},
+  {id:'minox',  name:'Minoxidil 5% foam', ico:'💧', how:'Half capful morning and night on the grafts and the native hair behind them. Foam, not liquid. Expect a short extra shed early on; that means it\'s working.', gate:'clinic', setting:'minoxStart'},
+  {id:'oil',    name:'Light scalp moisture', ico:'🌿', how:'If dry: a few drops of jojoba or argan, or a water-based leave-in.', from:'2026-10-08'},
+  {id:'brush',  name:'Soft brush + durag', ico:'🌀', how:'For waves over the grafted area.', from:'2026-10-08'},
+  {id:'edge',   name:'Alcohol-free edge control', ico:'✨', how:'Only alcohol-free, washed out daily.', from:'2026-10-08'},
+  {id:'fin',    name:'Finasteride', ico:'🛡️', how:'Oral or topical. Protects the native hair behind the new hairline.', gate:'derm'},
+  {id:'blood',  name:'Ferritin + vitamin D bloodwork', ico:'🩸', how:'If shedding runs heavier or longer than expected. With no dairy, keep protein up too.', gate:'derm'},
+  {id:'micro',  name:'Microneedling', ico:'📍', how:'Only after month 6 and only with the clinic\'s okay.', from:'2027-03-08', gate:'clinic'}
+];
+const AVOID = [
+  'Heavy grease, petroleum pomade or mineral-oil "hair food" on the scalp',
+  'Castor oil on the hairline: heavy, clogs follicles, no evidence for growth',
+  'Minoxidil liquid: its propylene glycol irritates',
+  'Biotin unless you\'re deficient: does nothing, and throws off thyroid and heart labs',
+  'Anything on the grafts before Oct 8 the clinic hasn\'t okayed'
 ];
 
 const BADGES = [
@@ -753,7 +799,9 @@ function tasksFor(k){
     m.doses.forEach(d=>out.push({id:'med:'+m.id+':'+d.id, slot:d.slot, name:m.name, meta:m.kind+' · '+d.label, xp:XP.dose, note:m.note}));
   });
   CARE.forEach(c=>{
-    if(!inRange(k,c.start,medEnd(c))) return;
+    const start = c.startSetting ? state.settings[c.startSetting] : c.start;
+    if(!start || !inRange(k,start,medEnd(c))) return;
+    if(c.dows && !c.dows.includes(parseKey(k).getDay())) return;
     const meta = c.endSetting ? c.meta.replace(/last day .*$/,'last day '+fmtLong(medEnd(c))) : c.meta;
     out.push({id:'care:'+c.id, slot:c.slot, name:c.name, meta, xp:c.xp, steps:c.steps});
   });
@@ -978,7 +1026,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),1800);}
 
 function renderAll(){
-  renderHero(); renderBanners(); renderDay(); renderUnlocks(); renderStops(); renderGallery(); renderCompare(); renderBadges(); renderTimeline(); renderLog(); renderSettings();
+  renderHero(); renderBanners(); renderDay(); renderUnlocks(); renderStops(); renderProducts(); renderGallery(); renderCompare(); renderBadges(); renderTimeline(); renderLog(); renderSettings();
 }
 
 function renderHero(){
@@ -1083,7 +1131,7 @@ function renderDay(){
   const tasks=tasksFor(k); let care='';
   if(!tasks.length){
     care = day<0 ? '<div class="empty">Nothing to take yet. Surgery is on Sep 8.</div>'
-         : `<div class="empty">Care routine complete. Any shampoo from Sep 30, hands off the grafts, hat in the sun. From here the job is photos and notes on check-in days.</div>`;
+         : `<div class="empty">Nothing scheduled today. Wash with sulfate-free shampoo and conditioner as needed; ketoconazole days are Monday and Thursday. Products has the full list.</div>`;
   }else{
     const allDone=tasks.every(t=>rec.tasks[t.id]);
     const slotOrder=SLOTS.filter(s=>tasks.some(t=>t.slot===s.id));
@@ -1206,6 +1254,27 @@ function renderStops(){
   }).join('');
 }
 
+function renderProducts(){
+  const tk=todayKey(), t=utcDays(tk);
+  const rows=PRODUCTS.map(p=>{
+    const from = p.setting ? (state.settings[p.setting]||null) : (p.from||null);
+    let st, pill, rank, sortKey=from||'9999';
+    if(p.to && p.to<tk){ st='done'; pill='<span class="pill">Done</span>'; rank=4; }
+    else if(from && from<=tk){ st='now'; pill='<span class="pill green">Now</span>'; rank=0; }
+    else if(from){ const g=utcDays(from)-t; st='next'; pill=`<span class="pill accent">${fmt(from,from.slice(0,4)!==tk.slice(0,4))} · ${g}d</span>`; rank=1; }
+    else if(p.gate==='clinic'){ st='gate'; pill='<span class="pill amber">Clinic OK first</span>'; rank=2; }
+    else { st='gate'; pill='<span class="pill">Ask dermatologist</span>'; rank=3; }
+    return {...p,from,st,pill,rank,sortKey};
+  }).sort((a,b)=>a.rank-b.rank||a.sortKey.localeCompare(b.sortKey));
+  $('#productSub').textContent=rows.filter(r=>r.st==='now').length+' in use now';
+  $('#products').innerHTML=rows.map(r=>`<div class="prod ${r.st}"><span class="ic">${r.ico}</span><div class="b">
+      <div class="n">${esc(r.name)} ${r.pill}</div>
+      <div class="h">${esc(r.how)}${r.to&&r.st!=='done'?' Until '+fmt(r.to)+'.':''}</div>
+      ${r.setting?`<div class="gate">${state.settings[r.setting]?'Started':'Cleared by the clinic? Start date'} <input type="date" data-set="${r.setting}" data-clearable="1" value="${esc(state.settings[r.setting]||'')}"></div>`:''}
+    </div></div>`).join('')
+    +`<div class="avoid"><b>Skip</b><ul>${AVOID.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div>`;
+}
+
 function renderBadges(){
   const earned=new Set(earnedBadges().map(b=>b.id)); const today=dayOf(todayKey());
   $('#badges').innerHTML=BADGES.map(b=>{
@@ -1316,7 +1385,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',async e=>{
   const t=e.target;
   if(t.id==='flagChk'){ const r=dayRec(selectedKey); r.flag=t.checked; saveState(); renderDay(); renderLog(); if(t.checked) toast('Flagged. If it matches a red flag, message the clinic now.'); return; }
-  if(t.dataset&&t.dataset.set){ if(t.value){ state.settings[t.dataset.set]=t.value; saveState(); renderHero(); renderDay(); renderBadges(); renderStops(); } return; }
+  if(t.dataset&&t.dataset.set){ if(t.value||t.dataset.clearable){ state.settings[t.dataset.set]=t.value||''; saveState(); renderHero(); renderDay(); renderBadges(); renderStops(); renderProducts(); } return; }
   if(t.dataset&&t.dataset.act==='cmp'){ if(t.dataset.side==='L') cmpL=t.value; else cmpR=t.value; await renderCompare(); return; }
   if(t.id==='photoFile'||t.id==='photoFileLib'){
     const f=t.files&&t.files[0]; t.value=''; if(!f) return;
