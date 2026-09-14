@@ -4737,6 +4737,16 @@ window.addEventListener('message', (ev) => {
     if (document.body.classList.contains('fullscreen')) exitFullscreen();
     return;
   }
+  // Personal → Notes writing mode wants (or releases) the whole screen.
+  if (d.type === 'warroom:notes-focus') {
+    // Only the Personal frame may ask, and only while Personal is showing —
+    // anything else could hide every piece of navigation.
+    const tf = document.getElementById('todosFrame');
+    if (!tf || ev.source !== tf.contentWindow) return;
+    if (d.on && typeof currentTab !== 'undefined' && currentTab !== 'todos') return;
+    setNotesFocus(!!d.on);
+    return;
+  }
   if (d.type === 'warroom:personal-time') {
     const secs = Number(d.seconds) || 0;
     if (secs < 1) return;
@@ -4785,6 +4795,33 @@ function exitFullscreen(){
   try { if(document.fullscreenElement) document.exitFullscreen(); } catch(e){}
 }
 // One toggle button — picks enter or exit based on current state
+// --- Notes writing mode (Personal asks via postMessage) ---
+let _notesFocusNative = false;
+function notesFocusTellFrame(){
+  const f = document.getElementById('todosFrame');
+  try { f && f.contentWindow && f.contentWindow.postMessage({ type:'warroom:notes-focus-exit' }, '*'); } catch {}
+}
+function setNotesFocus(on){
+  const was = document.body.classList.contains('notes-focus');
+  document.body.classList.toggle('notes-focus', !!on);
+  if (on && !was && !document.fullscreenElement) {
+    // Desktop gets real full screen too; iOS can't, and the class alone
+    // still clears every piece of chrome.
+    try {
+      const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+      if (p && p.then) p.then(() => {
+        // Writing mode may already be over (a quick double toggle).
+        if (document.body.classList.contains('notes-focus')) _notesFocusNative = true;
+        else if (!document.body.classList.contains('fullscreen') && document.fullscreenElement) { try { document.exitFullscreen(); } catch {} }
+      }, () => {});
+    } catch {}
+  } else if (!on && was) {
+    if (_notesFocusNative && document.fullscreenElement && !document.body.classList.contains('fullscreen')) {
+      try { const p = document.exitFullscreen(); if (p && p.catch) p.catch(() => {}); } catch {}
+    }
+    _notesFocusNative = false;
+  }
+}
 function toggleFullscreen(){
   if (document.body.classList.contains('fullscreen')) exitFullscreen();
   else enterFullscreen();
@@ -5733,11 +5770,20 @@ document.addEventListener('keydown', e => {
   exitFocusImmersion();
 });
 document.addEventListener('keydown', e => {
+  if(e.key === 'Escape' && document.body.classList.contains('notes-focus')){ setNotesFocus(false); notesFocusTellFrame(); return; }
   if(e.key === 'Escape' && document.body.classList.contains('fullscreen')) exitFullscreen();
 });
 // Keep body class in sync with native fullscreen state
 document.addEventListener('fullscreenchange', () => {
-  if(!document.fullscreenElement) document.body.classList.remove('fullscreen');
+  if(document.fullscreenElement) return;
+  // Leaving native full screen always ends Notes writing mode. If writing
+  // mode opened that session, cast mode (a class) is left as it was.
+  if(document.body.classList.contains('notes-focus')){
+    const ours = _notesFocusNative; _notesFocusNative = false;
+    document.body.classList.remove('notes-focus'); notesFocusTellFrame();
+    if(ours) return;
+  }
+  document.body.classList.remove('fullscreen');
 });
 
 // --- Analytics ---
@@ -5766,6 +5812,7 @@ function switchTab(tab){
   // deep links can still name any of them — send them to Personal rather
   // than a blank screen.
   if(tab==='habits'||tab==='goals'||tab==='board'||tab==='learning') tab='todos';
+  if(tab!=='todos' && document.body.classList.contains('notes-focus')){ setNotesFocus(false); notesFocusTellFrame(); }
   currentTab=tab;
   saveUiState({tab});
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
@@ -11156,6 +11203,23 @@ _pdRender();
 @media (max-width: 380px) {
   .mtb-tab{ font-size:9px }
   .mtb-tab svg{ width:20px; height:20px }
+}
+/* Notes writing mode — Personal's Notes page asked for the whole screen.
+   Unlike cast fullscreen (which keeps tabs for navigation), every piece of
+   shell chrome goes, phones included, and the Personal iframe fills it. */
+body.notes-focus .header,
+body.notes-focus .tabs,
+body.notes-focus .focus-bar,
+body.notes-focus .add-plan,
+body.notes-focus .notepad-fab,
+body.notes-focus .mobile-tabbar,
+body.notes-focus #wr-sync-indicator,
+body.notes-focus .pd-float{ display:none !important }
+body.notes-focus .main{ padding:0 !important; margin:0 !important; max-width:none !important }
+body.notes-focus #todosFrame{
+  height:100vh !important; min-height:100vh !important;
+  height:100dvh !important; min-height:100dvh !important;
+  border-radius:0 !important;
 }
 </style>
 
