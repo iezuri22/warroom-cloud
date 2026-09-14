@@ -24,6 +24,10 @@
     'pd-active',
     'pd-collapsed',      // banner expand/collapse is a per-device preference
     'pt-nt-lib-shut',    // Notes list folded to the rail — per-device layout, like pd-collapsed
+    'pt-nt-nav-shut',    // Notes sidebar collapsed — per-device layout
+    'pt-nt-list-shut',   // Notes list collapsed — per-device layout
+    'pt-nt-w',           // Notes sidebar/list widths (px) — per-device layout
+    'pt-nt-page',        // Notes page width (standard / wide / full) — per-device
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
