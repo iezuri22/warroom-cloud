@@ -6419,7 +6419,9 @@ const VOICE = {
   // Belt-and-suspenders dedup: also keys off `sourceGoalTaskId` on the
   // personal-todos side so cross-device sync issues / cleared flags can't
   // produce duplicates. Returns true if a task with this source already
-  // lives in Personal.
+  // lives in Personal — null when it couldn't tell (a failed or cache-only
+  // lookup): the caller skips it this time, neither pushing a second copy
+  // nor marking it pushed without one.
   async function personalAlreadyHasGoalTask(sourceGoalTaskId) {
     if (!sourceGoalTaskId) return false;
     // Check the in-memory list first (covers today's view) then Firestore
@@ -6427,8 +6429,9 @@ const VOICE = {
     try {
       const q = query(todosCol, where('sourceGoalTaskId', '==', sourceGoalTaskId));
       const snap = await getDocs(q);
+      if (snap.empty && snap.metadata && snap.metadata.fromCache) return null;
       return !snap.empty;
-    } catch { return false; }
+    } catch { return null; }
   }
   // One-time cleanup: if multiple non-done todos share a sourceGoalTaskId
   // (artifact of an old auto-push bug), keep the oldest by createdAt and
@@ -6488,7 +6491,9 @@ const VOICE = {
           const sourceId = `qg:${g.id}:${it.id}`;
           // Skip if this goal task is already in Personal — protects against
           // sync-cleared flags causing repeat pushes
-          if (await personalAlreadyHasGoalTask(sourceId)) {
+          const hasIt = await personalAlreadyHasGoalTask(sourceId);
+          if (hasIt === null) continue;   // couldn't check: try again next time
+          if (hasIt) {
             it.pushedToPersonal = true;
             it.pushedAt = todayKeyStr;
             goalsMutated = true;
@@ -6525,7 +6530,9 @@ const VOICE = {
             if (!it || it.done || it.pushedToPersonal || !it.startDate) continue;
             if (it.startDate > todayKeyStr) continue;
             const sourceId = `bd:${b.id}:${g.id}:${it.id}`;
-            if (await personalAlreadyHasGoalTask(sourceId)) {
+            const hasIt = await personalAlreadyHasGoalTask(sourceId);
+            if (hasIt === null) continue;   // couldn't check: try again next time
+            if (hasIt) {
               it.pushedToPersonal = true;
               it.pushedAt = todayKeyStr;
               boardMutated = true;
@@ -8996,7 +9003,7 @@ const VOICE = {
       // Closed on the sheet: recounted by a fresh scan rather than bumped —
       // another open Personal document may close the same task.
       if (closedFromSheet > 0) _statsSoon();
-      let added = 0, updated = 0;
+      let added = 0, updated = 0, unsure = 0;
       for (const row of incomplete) {
         const text = (ssCellValue(row, colTask.id) || '').toString().trim();
         if (!text) continue;
@@ -9012,15 +9019,21 @@ const VOICE = {
         // how 12 sheet rows became 48 docs. Ask Firestore before creating.
         let existing = byRowId.get(String(row.id));
         if (!existing) {
-          try {
-            const dq = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(row.id))));
-            if (!dq.empty) {
-              const hit = dq.docs.find(d => !(d.data() || {}).done) || dq.docs[0];
-              existing = { id: hit.id, ...hit.data() };
-              byRowId.set(String(row.id), existing);
-              if (!todos.some(t => t.id === existing.id)) todos.push(existing);
-            }
-          } catch (e) { console.warn('ss dedupe lookup failed', e); }
+          // Only the server can say a row has no copy yet. A failed lookup,
+          // or an empty answer from the cache (offline, over quota), isn't
+          // "none": creating on it added a copy of every open row on every
+          // load while reads were refused (2026-09-15). Skip the row; the
+          // next sync asks again.
+          let dq = null;
+          try { dq = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(row.id)))); }
+          catch (e) { console.warn('ss dedupe lookup failed', e); }
+          if (!dq || (dq.empty && dq.metadata && dq.metadata.fromCache)) { unsure++; continue; }
+          if (!dq.empty) {
+            const hit = dq.docs.find(d => !(d.data() || {}).done) || dq.docs[0];
+            existing = { id: hit.id, ...hit.data() };
+            byRowId.set(String(row.id), existing);
+            if (!todos.some(t => t.id === existing.id)) todos.push(existing);
+          }
         }
         if (existing) {
           // Update if anything drifted on the Smartsheets side
@@ -9070,7 +9083,9 @@ const VOICE = {
           added++;
         } catch (e) { console.error('ss add error:', e); }
       }
-      ssSaveConfig({ lastSyncAt: Date.now(), lastSyncOk: true, lastSyncError: '' });
+      // Rows it couldn't check wait for the next sync (a visit 30 s on, or the
+      // next load); the shell's dot says so instead of calling it clean.
+      ssSaveConfig({ lastSyncAt: Date.now(), lastSyncOk: !unsure, lastSyncError: unsure ? `Couldn’t check ${unsure} row${unsure === 1 ? '' : 's'} against Personal’s tasks (no connection) — will retry` : '' });
       // Drain any queued edits that failed to push earlier
       const flushed = await ssDrainPending();
       try { render(); } catch {}
@@ -9082,11 +9097,12 @@ const VOICE = {
         if (closedFromSheet) parts.push(`✓${closedFromSheet}`);
         if (reassignedOut || deletedFromSheet) parts.push(`−${reassignedOut + deletedFromSheet}`);
         if (flushed) parts.push(`↑${flushed}`);
+        if (unsure) parts.push(`${unsure} unchecked`);
         count.textContent = parts.length ? parts.join(' · ') : 'no change';
         count.style.display = '';
       }
       setTimeout(() => { if (label) label.textContent = 'Sync ECM'; if (count) count.style.display = 'none'; }, 4000);
-      return { added, updated, flushed, total: incomplete.length };
+      return { added, updated, flushed, unsure, total: incomplete.length };
     } catch (e) {
       console.error('ssSync error:', e);
       // Persist failure so the shell can show a red dot + message
@@ -21386,6 +21402,9 @@ const VOICE = {
             let todo = todos.find(t => String(t.smartsheetRowId || '') === String(p.rowId));
             if (!todo) {
               const qs = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(p.rowId))));
+              // Only the server's "none" creates (see ssSync): an empty answer
+              // from the cache keeps this push for the next drain.
+              if (qs.empty && qs.metadata && qs.metadata.fromCache) continue;
               if (!qs.empty) {
                 const dd = qs.docs[0];
                 todo = { id: dd.id, ...(dd.data() || {}) };
@@ -21967,12 +21986,18 @@ const VOICE = {
   // dedupe as the push drain); future dates park it in Planned, today lands it
   // on top of the first priority list with ecmAccepted set.
   async function _coachAcceptEcm(p, today){
-    let todo = todos.find(t => String(t.smartsheetRowId || '') === String(p.rowId));
+    const same = t => String(t.smartsheetRowId || '') === String(p.rowId);
+    let todo = todos.find(same) || null;
+    // The copies already in memory next (the Coach's ECM picks usually come
+    // from Planned or the live open list), so no read is needed.
+    if (!todo) { const c = (_plannedCache || []).find(same) || [..._ntOpenIdx.values()].find(same); if (c) { todo = c; todos.push(c); } }
     if (!todo) {
-      try {
-        const qs = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(p.rowId))));
-        if (!qs.empty) { const d0 = qs.docs[0]; todo = { id: d0.id, ...d0.data() }; todos.push(todo); }
-      } catch {}
+      // As in ssSync: only the server can say there's no copy yet — a failed
+      // or cache-only lookup mustn't create a second one (the plan keeps it).
+      let qs = null;
+      try { qs = await getDocs(query(todosCol, where('smartsheetRowId', '==', String(p.rowId)))); } catch {}
+      if (!qs || (qs.empty && qs.metadata && qs.metadata.fromCache)) return false;
+      if (!qs.empty) { const d0 = qs.docs[0]; todo = { id: d0.id, ...d0.data() }; todos.push(todo); }
     }
     const future = p.date > today;
     if (todo) {
@@ -22022,13 +22047,15 @@ const VOICE = {
     if (!accepted.length) return;
     const today = todayKey();
     let nToday = 0, nPlanned = 0;
+    const failed = [];   // not added (no connection, say): they stay in the plan to accept again
     for (const p of accepted) {
+      let ok = false;
       try {
         const date = (p.date && p.date > today) ? p.date : today;
         const sec = SECTION_META[p.section] ? p.section : (p.rowId ? 'ecm' : 'life');
         const job = sectionJob(sec);
         if (p.rowId) {
-          if (await _coachAcceptEcm({ ...p, date }, today)) { date > today ? nPlanned++ : nToday++; }
+          if (await _coachAcceptEcm({ ...p, date }, today)) { ok = true; date > today ? nPlanned++ : nToday++; }
         } else if (date > today) {
           const id = await createPlannedTask(p.title, date, job || '');
           if (id) {
@@ -22036,7 +22063,7 @@ const VOICE = {
             // day's `todos` array, and planned tasks live in _plannedCache.
             try { await updateDoc(doc(db, 'tv_todos', id), { section: sec }); } catch (e) { console.warn(e); }
             const pc = _plannedCache.find(x => x.id === id); if (pc) pc.section = sec;
-            nPlanned++;
+            nPlanned++; ok = true;
           }
         } else {
           const id = await addTodoItem(p.title, null, job ? { job } : {});
@@ -22047,16 +22074,22 @@ const VOICE = {
             const t = todos.find(x => x.id === id);
             if (t) Object.assign(t, patch);
             addToToday(id);
-            nToday++;
+            nToday++; ok = true;
           }
         }
       } catch (e) { console.warn('coach accept item failed', e); }
+      if (!ok) failed.push(p);
     }
-    _coachPlan = null;
+    // What didn't make it stays in the plan (still ticked) to accept again;
+    // the rest of the plan is done with.
+    _coachPlan = failed.length ? failed : null;
     const bits = [];
     if (nToday) bits.push(`**${nToday}** added for today`);
     if (nPlanned) bits.push(`**${nPlanned}** parked on their day — they'll auto-promote that morning`);
-    _coachMsgs.push({ who: 'ai', text: bits.length ? `Done — ${bits.join(', ')}.` : 'Nothing made it in — try again.' });
+    if (failed.length && bits.length) bits.push(`**${failed.length}** couldn’t be added (no connection to your tasks) — still below to accept again`);
+    _coachMsgs.push({ who: 'ai', text: bits.length ? `Done — ${bits.join(', ')}.`
+      : failed.length ? `Nothing made it in (no connection to your tasks) — ${failed.length === 1 ? 'it’s' : 'they’re'} still below; accept again in a moment.`
+      : 'Nothing made it in — try again.' });
     try { await ensureWorkTasksLoaded(); } catch {}
     try { await loadPlannedTodos(true); } catch {}
     try { render(); } catch {}
