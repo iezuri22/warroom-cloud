@@ -5338,7 +5338,7 @@
 
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, query, where, orderBy, writeBatch, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, query, where, orderBy, writeBatch, runTransaction, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
     authDomain: "tv-todos.firebaseapp.com",
@@ -5355,6 +5355,13 @@
   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   let todos = [];
   let recurringTasks = [];
+  let _recurringOk = false;                   // recurringTasks came from a successful read
+  // Routine copies (materializeRecurringForDay) are made only against today's
+  // tasks as loaded from the server, one run at a time.
+  let _todayLoaded = '';                      // the date todos holds from the server, when it's today
+  let _matBusy = null, _matAgain = false;
+  const _matTried = new Set();                // 'templateId@date' looked up since today's last load
+  let _todayCopies = { day: '', list: [] };   // today's routine copies, lent to other days' views
   let archiveTasks = [];
   let currentDate = new Date();
   let currentView = 'tasks'; // tasks | recurring | archive
@@ -5879,8 +5886,15 @@ const VOICE = {
     render(); savePositions();
   }
   // ---- Auto carry-over ----
+  // Open tasks dated before today move up to today. Routine copies don't: one
+  // whose routine has come round again (a daily one, the next morning) is
+  // deleted, since today's copy stands for it, and a routine that isn't due
+  // today keeps only its newest copy, carried up (a missed weekly one waits
+  // for next week's). Carrying every copy had piled up 3,169 duplicates by
+  // 2026-09-15. Writes go out in batches of at most 450.
   async function carryOverIncompleteTasks() {
     const tk = todayKey();
+    let moved = 0, listedGone = false;
     try {
       // Fetch all incomplete tasks, then filter by date < today client-side.
       // Avoids needing a Firestore composite index for (done, date).
@@ -5896,16 +5910,52 @@ const VOICE = {
         return data.date && data.date < tk;
       });
       if (stale.length === 0) return 0;
-      const batch = writeBatch(db);
-      const maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
-      stale.forEach((d, i) => {
-        batch.update(doc(db, 'tv_todos', d.id), { date: tk, position: maxPos + i, timeSpent: 0, countdownSecs: 0 });
-        const data = { id: d.id, ...d.data(), date: tk, position: maxPos + i, timeSpent: 0, countdownSecs: 0 };
-        todos.push(data);
+      // Routine copies are sorted out only once the routines themselves have
+      // loaded; until then they stay where they are.
+      if (!_recurringOk && stale.some(d => d.data().fromTemplate)) await loadRecurring();
+      const tplById = _recurringOk ? new Map(recurringTasks.map(t => [t.id, t])) : null;
+      const move = [], drop = [], copies = new Map();
+      stale.forEach(d => {
+        const tpl = d.data().fromTemplate;
+        if (!tpl) move.push(d);
+        else if (tplById) { if (!copies.has(tpl)) copies.set(tpl, []); copies.get(tpl).push(d); }
       });
-      await batch.commit();
-      return stale.length;
-    } catch (e) { console.error('Carry-over error:', e); return 0; }
+      const hasToday = new Set(snap.docs.map(d => d.data()).filter(x => x.fromTemplate && x.date === tk).map(x => x.fromTemplate));
+      copies.forEach((list, id) => {
+        const tpl = tplById.get(id);
+        // Deleted routine, due again today, or already carried up (another
+        // device): none of its old copies stay.
+        if (!tpl || shouldRecurOn(tpl, tk) || hasToday.has(id)) { drop.push(...list); return; }
+        list.sort((a, b) => String(b.data().date).localeCompare(String(a.data().date)) || String(b.data().createdAt || '').localeCompare(String(a.data().createdAt || '')));
+        move.push(list[0]); drop.push(...list.slice(1));
+      });
+      const maxPos = todos.length > 0 ? Math.max(...todos.map(t => +t.position || 0)) + 1 : 0;
+      const ops = [...move.map((d, i) => ({ d, patch: { date: tk, position: maxPos + i, timeSpent: 0, countdownSecs: 0 } })), ...drop.map(d => ({ d }))];
+      const gone = new Set();
+      try {
+        for (let i = 0; i < ops.length; i += 450) {
+          const part = ops.slice(i, i + 450), batch = writeBatch(db);
+          part.forEach(o => { const ref = doc(db, 'tv_todos', o.d.id); if (o.patch) batch.update(ref, o.patch); else batch.delete(ref); });
+          await batch.commit();
+          part.forEach(o => {
+            if (!o.patch) { gone.add(o.d.id); return; }
+            const row = { id: o.d.id, ...o.d.data(), ...o.patch }, at = todos.findIndex(t => t.id === o.d.id);
+            if (at >= 0) todos[at] = row; else todos.push(row);
+            moved++;
+          });
+        }
+      } finally {
+        if (gone.size) {
+          listedGone = todos.some(t => gone.has(t.id));
+          if (listedGone) todos = todos.filter(t => !gone.has(t.id));
+          // A deleted copy that was put on Today by its own id leaves with it.
+          const refs = workRefs().filter(r => gone.has(String(r)));
+          if (refs.length) { refs.forEach(r => removeFromWork(r)); saveWork(); }
+        }
+      }
+    } catch (e) { console.error('Carry-over error:', e); }
+    if (listedGone) { try { render(); } catch {} }
+    return moved;
   }
   // ---- Recurrence helpers ----
   // Parse a yyyy-mm-dd date key into a local Date at noon (avoids TZ drift).
@@ -5986,36 +6036,64 @@ const VOICE = {
     }
     return '';
   }
-  // For the given date key, create missing instances from recurrence templates.
-  // Each instance is a normal todo with `fromTemplate: <templateId>` so we
-  // know not to duplicate it. Returns number of new instances created.
-  async function materializeRecurringForDay(dateKey) {
-    try {
-      if (!recurringTasks.length) await loadRecurring();
-      if (!recurringTasks.length) return 0;
-      const existingIds = new Set(todos.filter(t => t.fromTemplate).map(t => t.fromTemplate));
-      const due = recurringTasks.filter(t => shouldRecurOn(t, dateKey) && !existingIds.has(t.id));
-      if (!due.length) return 0;
-      let maxPos = todos.length > 0 ? Math.max(...todos.map(t => t.position)) + 1 : 0;
-      let created = 0;
-      for (const tpl of due) {
-        try {
-          const payload = {
-            text: tpl.text,
-            done: false,
-            date: dateKey,
-            position: maxPos++,
-            timeSpent: 0, countdownSecs: 0,
-            fromTemplate: tpl.id,
-            createdAt: new Date().toISOString()
-          };
-          const ref = await addDoc(todosCol, payload);
-          todos.push({ id: ref.id, ...payload });
-          created++;
-        } catch (e) { /* ignore single-instance failure */ }
-      }
-      return created;
-    } catch { return 0; }
+  // Today's copy of each routine due today: a normal todo carrying
+  // `fromTemplate: <templateId>`. Copies are made only for TODAY, only once
+  // today's tasks have loaded from the server (_todayLoaded: never against
+  // the empty list mid-load, a failed load or another day's list), one run at
+  // a time, and each under the id tpl_<templateId>_<date>, created only if it
+  // doesn't exist yet. Unguarded runs from every render had minted 3,169
+  // duplicates by 2026-09-15. Resolves to the number of copies added to todos.
+  function _matReady(dateKey) {
+    return dateKey === todayKey() && dkey(currentDate) === dateKey && _todayLoaded === dateKey;
+  }
+  function materializeRecurringForDay(dateKey) {
+    if (!_matReady(dateKey)) return Promise.resolve(0);
+    if (_matBusy) { _matAgain = true; return _matBusy; }
+    _matBusy = (async () => {
+      let added = 0;
+      do { _matAgain = false; added += await _materializeOnce(dateKey); } while (_matAgain && _matReady(dateKey));
+      return added;
+    })().catch(() => 0).finally(() => { _matBusy = null; });
+    return _matBusy;
+  }
+  async function _materializeOnce(dateKey) {
+    if (!recurringTasks.length) await loadRecurring();
+    if (!_matReady(dateKey)) return 0;
+    const have = new Set(todos.filter(t => t.fromTemplate && t.date === dateKey).map(t => t.fromTemplate));
+    // Each routine is looked up once per load of today (loadTodos clears this).
+    const due = recurringTasks.filter(t => shouldRecurOn(t, dateKey) && !have.has(t.id) && !_matTried.has(`${t.id}@${dateKey}`));
+    let added = 0;
+    for (const tpl of due) {
+      if (!_matReady(dateKey)) break;   // the view moved on
+      _matTried.add(`${tpl.id}@${dateKey}`);
+      const ref = doc(db, 'tv_todos', `tpl_${tpl.id}_${dateKey}`);
+      const payload = {
+        text: tpl.text,
+        done: false,
+        date: dateKey,
+        position: todos.length > 0 ? Math.max(...todos.map(t => +t.position || 0)) + 1 : 0,
+        timeSpent: 0, countdownSecs: 0,
+        fromTemplate: tpl.id,
+        createdAt: new Date().toISOString()
+      };
+      try {
+        // Another tab or device may have made it a moment ago: take theirs.
+        const theirs = await runTransaction(db, async tx => {
+          const s = await tx.get(ref);
+          if (s.exists()) return { id: s.id, ...s.data() };
+          tx.set(ref, payload);
+          return null;
+        });
+        const row = theirs || { id: ref.id, ...payload };
+        // Skip it when the view moved on meanwhile, the copy was moved to
+        // another day, or it's listed already.
+        if (!_matReady(dateKey) || row.date !== dateKey || todos.some(t => t.id === row.id)) continue;
+        todos.push(row);
+        if (_todayCopies.day === dateKey) _todayCopies.list.push(row);
+        added++;
+      } catch (e) { console.warn('routine copy failed', tpl.id, e && e.code); }
+    }
+    return added;
   }
 
   // ---- Firebase CRUD ----
@@ -6031,24 +6109,38 @@ const VOICE = {
     // Done range tasks anchor to whatever `date` they were marked done on (set in toggleTodo).
     return true;
   }
+  // Viewing another day: Today and the morning routine still list today's
+  // routine copies ('tpl:' refs resolve by fromTemplate + today's date). No
+  // copies are made for a day you merely view, so the view borrows the ones
+  // from today's last load.
+  function _withTodayRoutines() {
+    if (_todayCopies.day !== todayKey()) return;
+    const tpls = new Set(workRefs().filter(r => String(r).startsWith('tpl:')).map(r => String(r).slice(4)));
+    _todayCopies.list.forEach(c => { if (tpls.has(c.fromTemplate) && !todos.some(t => t.id === c.id)) todos.push(c); });
+  }
   async function loadTodos() {
     if (activeTimerId) await stopTimer(false);
-    loading = true; render();
+    loading = true; _todayLoaded = ''; render();
     const viewKey = dkey(currentDate);
+    let fromServer = false;
     try {
-      // Two passes:
+      // Three small queries, merged + deduped by id:
       //   1. Tasks bound to the current view-day (gets done + plain pending tasks)
-      //   2. All pending tasks — we'll keep only the range tasks (with startDate or dueDate)
-      // Merge + dedupe by id.
+      //   2-3. Range tasks: the ones with a startDate or a dueDate (isRangeTask).
+      //      They used to come from a scan of every open task, routine copies
+      //      and all; the open ones are kept.
       const dayQ = query(todosCol, where('date', '==', viewKey));
-      const pendingQ = query(todosCol, where('done', '==', false));
-      const [daySnap, pendingSnap] = await Promise.all([getDocs(dayQ), getDocs(pendingQ)]);
+      const startQ = query(todosCol, where('startDate', '>', ''));
+      const dueQ = query(todosCol, where('dueDate', '>', ''));
+      const snaps = await Promise.all([getDocs(dayQ), getDocs(startQ), getDocs(dueQ)]);
+      fromServer = !snaps.some(s => s.metadata && s.metadata.fromCache);
+      const [daySnap, startSnap, dueSnap] = snaps;
       const merged = new Map();
       daySnap.docs.forEach(d => merged.set(d.id, { id: d.id, ...d.data() }));
-      pendingSnap.docs.forEach(d => {
+      [...startSnap.docs, ...dueSnap.docs].forEach(d => {
         if (merged.has(d.id)) return;
         const data = d.data();
-        if (!isRangeTask(data)) return; // skip non-range pending tasks bound to other days
+        if (data.done || !isRangeTask(data)) return; // a done range task shows on the day it was done (query 1)
         if (!rangeTaskVisibleOn(data, viewKey)) return;
         merged.set(d.id, { id: d.id, ...data });
       });
@@ -6067,9 +6159,15 @@ const VOICE = {
         notice.style.display = 'block';
         setTimeout(() => notice.style.display = 'none', 5000);
       }
-    }
-    // Materialize recurring-task instances for this day
-    try { await materializeRecurringForDay(dkey(currentDate)); } catch {}
+      // Today's routine copies may be made from here on, and only against this
+      // list (materializeRecurringForDay). A failed or cached load makes none.
+      if (fromServer && dkey(currentDate) === viewKey) {
+        _todayLoaded = viewKey; _matTried.clear();
+        _todayCopies = { day: viewKey, list: todos.filter(t => t.fromTemplate && t.date === viewKey) };
+      }
+    } else _withTodayRoutines();
+    // Today's routine copies (a no-op for any other day)
+    try { await materializeRecurringForDay(viewKey); } catch {}
     // Fire any reminders whose date has arrived — bumps them to slot 1 of
     // the top of Today. Defer slightly so the working set is loaded.
     setTimeout(() => { try { checkRemindersDueToday(); } catch {} }, 200);
@@ -6715,7 +6813,8 @@ const VOICE = {
     try {
       const snap = await getDocs(query(recurringCol, orderBy('createdAt')));
       recurringTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    } catch { recurringTasks = []; }
+      _recurringOk = true;
+    } catch { recurringTasks = []; _recurringOk = false; }
   }
   // opts: { freq, weekdays, anchorDow, anchorDay, monthlyMode, nthWeek, nthDow, startDate }
   async function addRecurring(text, opts) {
@@ -8292,7 +8391,10 @@ const VOICE = {
     // Skipped when the reminder is in the future: the whole point is to NOT
     // see this task until the day comes (checkRemindersDueToday inserts it).
     if (newTaskId && !isFutureReminder) {
-      try { addToToday(newTaskId); } catch (e) { console.warn('add to today failed', e); }
+      // A new routine goes on Today as itself ('tpl:'), which resolves to each
+      // day's copy; its first copy, left unticked, is deleted the next morning.
+      const made = todos.find(t => t.id === newTaskId);
+      try { addToToday(made && made.fromTemplate ? 'tpl:' + made.fromTemplate : newTaskId); } catch (e) { console.warn('add to today failed', e); }
     }
     // After the new task is in todos, check for due reminders (only fires
     // today / past dates; future ones stay hidden).
@@ -9645,14 +9747,13 @@ const VOICE = {
       let inst = todos.find(t => t.fromTemplate === tplId && t.date === today);
       if (!inst) inst = todos.find(t => t.fromTemplate === tplId && !t.date);
       if (inst) return inst;
-      // Not yet materialized — kick off materialization, render again next tick
-      try {
-        if (typeof materializeRecurringForDay === 'function' && today) {
-          setTimeout(() => {
-            materializeRecurringForDay(today).then(n => { if (n) render(); }).catch(() => {});
-          }, 0);
-        }
-      } catch {}
+      // Not made yet: ask for today's copies and render again when they land.
+      // Nothing is made until today's tasks have loaded from the server, and
+      // then one run at a time (materializeRecurringForDay); this used to
+      // start a fresh run on every call, each minting a full set of copies.
+      if (today && _todayLoaded === today) {
+        setTimeout(() => { materializeRecurringForDay(today).then(n => { if (n) render(); }).catch(() => {}); }, 0);
+      }
       return null;
     }
     return todos.find(t => t.id === id) || null;
