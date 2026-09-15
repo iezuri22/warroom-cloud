@@ -3254,6 +3254,7 @@
   .nt-chip .tx { overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
   .nt-chip svg { flex-shrink: 0; opacity: .75; }
   .nt-chip.clr { color: var(--ink-dim); border-style: dashed; }
+  .nt-chip.tgl svg { width: 11px; height: 11px; opacity: 1; }
   @media (pointer: coarse) { .nt-chip { padding: 7px 11px; } }
   .nt-list { display: flex; flex-direction: column; }
   .nt-row {
@@ -6281,7 +6282,7 @@ const VOICE = {
     //   { text, addTimeSpent }   — match by text (manual Sprint task)
     const targets = []; // {id, local, addSecs}
     const seen = new Set();
-    const queueByText = (text, addSecs) => {
+    const queueByText = (text, addSecs, at) => {
       const target = (text || '').trim().toLowerCase();
       if (!target) return;
       const candidate = todos
@@ -6289,7 +6290,7 @@ const VOICE = {
         .sort((a,b) => (b.position||0) - (a.position||0))[0];
       if (candidate && !seen.has(candidate.id)) {
         seen.add(candidate.id);
-        targets.push({ id: candidate.id, local: candidate, addSecs: addSecs || 0 });
+        targets.push({ id: candidate.id, local: candidate, addSecs: addSecs || 0, at });
       }
     };
     for (const q of queue) {
@@ -6298,20 +6299,26 @@ const VOICE = {
       if (q.todoId) {
         if (!seen.has(q.todoId)) {
           seen.add(q.todoId);
-          targets.push({ id: q.todoId, local: todos.find(t => t.id === q.todoId), addSecs });
+          targets.push({ id: q.todoId, local: todos.find(t => t.id === q.todoId), addSecs, at: q.completedAt });
         }
       } else if (q.text) {
-        queueByText(q.text, addSecs);
+        queueByText(q.text, addSecs, q.completedAt);
       }
     }
     let anyDone = false;
     for (const t of targets) {
       const newTimeSpent = ((t.local && Number(t.local.timeSpent)) || 0) + (t.addSecs || 0);
-      // Stamped like toggleTodo, so the done scan files it on the day it was done.
-      const completedAt = (t.local && t.local.completedAt) || new Date().toISOString();
-      if (t.local) { t.local.done = true; t.local.timeSpent = newTimeSpent; t.local.completedAt = completedAt; }
+      // Stamped like toggleTodo, with the sprint's own time: the done scan and
+      // All tasks' Completed file it on the day it was done (a late drain,
+      // older than the scan's 2 h overlap, makes its done count disagree, so
+      // that refresh reads in full). One already finished here keeps its time.
+      const ms = Number(t.at) || Date.parse(t.at || '') || Date.now();
+      const kept = !!(t.local && t.local.done && t.local.completedAt);
+      const at = new Date(Math.min(ms, Date.now())).toISOString();
+      if (t.local) { t.local.done = true; t.local.timeSpent = newTimeSpent; if (!kept) t.local.completedAt = at; }
       try {
-        const patch = { done: true, completedAt };
+        const patch = { done: true };
+        if (!kept) patch.completedAt = at;
         if (t.addSecs > 0) patch.timeSpent = newTimeSpent;
         await updateDoc(doc(db, 'tv_todos', t.id), patch);
         anyDone = true;
@@ -14742,8 +14749,8 @@ const VOICE = {
   // says 'visible' in there, but the frame element has no boxes. A
   // standalone page always counts as rendered.
   function ptRendered(){ try { const fe = window.frameElement; if (fe && !fe.getClientRects().length) return false; } catch {} return true; }
-  // A hidden load holds the heavy reads (All tasks' listener, the calendar,
-  // the stats scan). Showing the frame doesn't resize it, so the shell says
+  // A hidden load holds the heavy reads (All tasks' listener and completed
+  // tasks, the calendar, the stats scan). Showing the frame doesn't resize it, so the shell says
   // so (warroom:personal-shown); the first touch or focus, a resize, or the
   // 60s tick's render are the fallbacks.
   let _ptHeld = false, _ntReopenLast = null;   // _ntReopenLast: the last note, for once a hidden load is shown
@@ -14751,7 +14758,13 @@ const VOICE = {
     if (!_ptHeld || !ptRendered()) return;
     _ptHeld = false;
     try {
-      if (_tabNotes && _ntMounted) { ntEnsureOpenIdx(); if (ntFilter === 'agenda') ntCalFetch(false); ntReopenLast(); }
+      if (_tabNotes && _ntMounted) {
+        ntEnsureOpenIdx();
+        if (ntFilter === 'agenda') ntCalFetch(false);
+        // All tasks' Completed view, left open last time: its first read.
+        if (ntFilter === 'tasks' && !_ntDoneList && !_ntDoneTry && ntTaskFilter().status === 'done') ntEnsureDone(false);
+        ntReopenLast();
+      }
       if (!_tabNotes || _statsWanted) _statsMaybe();
     } catch {}
   }
@@ -15021,6 +15034,12 @@ const VOICE = {
   // All tasks' filter ({cat, when, src} as stored — read lazily from
   // localStorage pt-nt-tfilt, per device) and what it lists, out of how many.
   let _ntTf = null, _ntAllShown = 0, _ntAllTotal = 0;
+  // All tasks' Completed view: the done tasks as last read, when that read
+  // (from the server) was, when one was last tried, whether one is running,
+  // how the last one went ('' | 'offline' | 'error'), whether a sweep left
+  // it behind, and whether every row is shown.
+  let _ntDoneList = null, _ntDoneAt = 0, _ntDoneTry = 0, _ntDoneBusy = false, _ntDoneErr = '', _ntDoneStale = false, _ntDoneAll = false;
+  const NT_DONE_CAP = 250;   // completed rows shown before "Show all"
   const _ntMirrorAsk = new Map();   // task id → when the open-note mirror last asked the server about it
   // Move to…: the picker's task ({tid, from, cat, text, q, form}) and the one move in flight.
   let _ntMove = null, _ntMoveBusy = false;
@@ -15454,6 +15473,13 @@ const VOICE = {
     if (_ntOpenOn) return;
     _ntOpenOn = true;
     onSnapshot(query(collection(db, 'tv_todos'), where('done', '==', false)), snap => {
+      // Tasks that just left the open list — ticked in Planned, a check-in,
+      // Sprint, another device (routine copies aside: not listed there).
+      let left = [];
+      // A restarted listener (after an error) answers with everything as new:
+      // what finished while it was down is unknown — the next open reads it all.
+      if (_ntOpenLoaded && !_ntOpenFresh) _ntDoneStale = true;
+      else if (_ntOpenLoaded) { try { left = snap.docChanges().filter(ch => ch.type === 'removed' && !(ch.doc.data() || {}).fromTemplate).map(ch => ch.doc.id); } catch {} }
       _ntOpenIdx.clear();
       snap.forEach(d => _ntOpenIdx.set(d.id, { id: d.id, ...d.data() }));
       _ntOpenLoaded = true; _ntOpenErr = false; _ntOpenFresh = true;
@@ -15466,6 +15492,7 @@ const VOICE = {
       });
       if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] all tasks render', e); } }
       try { ntMirrorOpenChecks(); } catch (e) { console.warn('[notes] mirror', e); }
+      if (left.length) ntDoneCatchUp(left);
     }, e => {
       // A failed listener is gone for good: say so; ntRetryLive starts a new
       // one (the next mount check, a visit, or Retry).
@@ -15559,12 +15586,15 @@ const VOICE = {
   // wrapped, with its actions under it (one row at a time: _ntAllRow).
   function ntTaskRowHTML(t, o){
     const opt = o || {}, c = opt.all || null;
-    const n = t.noteId ? ntNotes.get(t.noteId) : null;
+    // opt.noteOf: the note to show when it isn't the task's own (the Completed
+    // view finds agenda-linked tasks through the notes' links).
+    const nid = opt.noteOf != null ? opt.noteOf : t.noteId;
+    const n = nid ? ntNotes.get(nid) : null;
     const live = !!(n && !n.trashed);
     const due = !t.done && ntDueInfo(c ? ntAllBadgeDay(t) : t.deadline);
     const k = opt.cat ? (t.noteId ? ntTaskCat(t) : ntSecCat(t)) : null;
     const cat = k != null ? `<span class="cat" style="--c:${ntEsc(ntCatColor(k))}"><span class="d"></span><span class="tx">${escHtml(ntCatPath(k))}</span></span><span>·</span>` : '';
-    const src = t.noteId
+    const src = nid
       ? `${NT_SVG.docS}<span class="src">${escHtml(!n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n))}</span><span>·</span>`
       : (t.smartsheetTicket ? `<span class="src">#${escHtml(String(t.smartsheetTicket))}</span><span>·</span>` : '');
     const when = c ? ntAllWhen(t, opt.place || {}, c) : ntTaskWhen(t);
@@ -15572,11 +15602,11 @@ const VOICE = {
     // a tap no longer leaves the list (on a phone that lost your place). A done
     // task's strip only opens its note, so with no live note there's none.
     const expand = !!opt.expand, open = expand && _ntAllRow === t.id;
-    const acts = !t.done || live, strip = open ? ntAllActsHTML(t, opt.place, c) : '';
+    const acts = !t.done || live, strip = open ? ntAllActsHTML(t, opt.place, c, nid) : '';
     const pin = (c && !t.done && t.pinnedUntilDone && c.order.has(t.id)) ? '<span class="pin" aria-hidden="true">📌</span>' : '';
     const id = ntEsc(t.id);
     const attrs = expand ? ` role="button" tabindex="0" data-nt-tact="${id}" data-nt-tid="${id}" aria-expanded="${open ? 'true' : 'false'}"${acts ? ` aria-controls="nt-ta-${id}"` : ''} title="${acts ? 'Show the whole task and its actions' : 'Show the whole task'}"`
-      : live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${id}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
+      : live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(nid)}" data-nt-tid="${id}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
     return `<div class="nt-taskrow${t.done ? ' done' : ''}${open ? ' open' : ''}${open && !strip ? ' solo' : ''}"${attrs}>`
       + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
       // The due badge rides on the title line, so the meta line below keeps
@@ -15707,7 +15737,7 @@ const VOICE = {
   }
   // The row's schedule, in words.
   function ntAllWhen(t, p, c){
-    if (t.done) return 'Done';
+    if (t.done) { const d = ntDoneDay(t, c.today); return !d ? 'Done' : d === c.today ? 'Done today' : 'Done ' + ntDay(d, { month: 'short', day: 'numeric' }); }
     if (p.g === 'ecm') return 'Not planned yet';
     if (c.order.has(t.id)) return 'Today';
     if (c.morning.has(t.id)) return 'Morning';
@@ -15745,9 +15775,9 @@ const VOICE = {
   // never for ECM work (the sheet sync would bring it back) or a note's task
   // (that's deleted from its note). A done task only opens its note. p and c
   // are All tasks' placement and context; a category's section passes neither.
-  function ntAllActsHTML(t, p, c){
-    const id = ntEsc(t.id), n = t.noteId ? ntNotes.get(t.noteId) : null;
-    const note = (n && !n.trashed) ? `<button class="nt-ta go" type="button" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${id}">Open in note →</button>` : '';
+  function ntAllActsHTML(t, p, c, nid){
+    const id = ntEsc(t.id), nn = nid != null ? nid : t.noteId, n = nn ? ntNotes.get(nn) : null;
+    const note = (n && !n.trashed) ? `<button class="nt-ta go" type="button" data-nt-taskopen="${ntEsc(nn)}" data-nt-tid="${id}">Open in note →</button>` : '';
     if (t.done) return note ? `<div class="nt-tacts" id="nt-ta-${id}">${note}</div>` : '';
     c = c || ntAllCtx(); p = p || ntAllPlace(t, c);
     const home = ntAllHome(t, p, c), arm = _ntAllDelArm === t.id;
@@ -15769,17 +15799,6 @@ const VOICE = {
       + `<span class="m"><span class="top"><span class="t">${escHtml(m.text || '')}</span></span><span class="s"><span>Parked with Coach</span><span>·</span><span>Not scheduled</span></span></span></div>`
       + (open ? `<div class="nt-tacts"><span class="lbl">Move to</span><button class="nt-ta" type="button" data-nt-park="today|${id}">Today</button><button class="nt-ta" type="button" data-nt-park="someday|${id}">Someday</button><button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-park="drop|${id}">${arm ? 'Sure?' : 'Drop'}</button></div>` : '');
   }
-  // Done: the notes' done tasks, and whatever was ticked here this session.
-  function ntAllDoneList(){
-    const m = new Map();
-    _ntAllDone.forEach((t, id) => {
-      if (_ntOpenIdx.has(id)) return;
-      if (t.noteId && _ntTaskIdxLoaded && !_ntTaskIdx.has(id)) return;   // deleted since
-      m.set(id, t);
-    });
-    _ntTaskIdx.forEach(t => { if (t.done) m.set(t.id, t); });
-    return [...m.values()];
-  }
   // "All tasks" (the sidebar's second entry): every open task in Personal —
   // today's and overdue work in every section, what's planned, Someday, ECM
   // assignments still waiting, parked items — and the notes' tasks, grouped
@@ -15787,6 +15806,7 @@ const VOICE = {
   // came from one.
   function ntAllTasksHTML(){
     _ntAllShown = _ntAllTotal = 0;
+    if (ntTaskFilter().status === 'done') return ntCompletedHTML();
     if (!_ntOpenLoaded) return _ntOpenErr
       ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection. <button class="nt-retry" type="button" data-nt-act="retry-live">Retry</button></div>'
       : '<div class="nt-empty-lib">Loading tasks…</div>';
@@ -15817,15 +15837,14 @@ const VOICE = {
       if (G[k].length) h += ntAllGroupHTML(k, label, color || ntCatColor('ecm'), G[k].length, G[k].map(row).join(''));
     });
     if (parked.length) h += ntAllGroupHTML('parked', 'Parked', 'var(--ink-dim)', parked.length, parked.map(ntParkRowHTML).join(''));
-    // Done: When doesn't apply to finished work; Category and Source do.
-    const done = ntAllDoneList().filter(t => ntTaskPass(t, null, 'when')).sort(ntTaskDoneOrder);
     // Emptied by the filter (the search alone finds some): offer to clear it.
     if (!open.length && !parked.length) h += (tfOn && _ntAllTotal)
       ? '<div class="nt-empty-lib">No tasks match these filters · <button class="nt-tf-clr" type="button" data-nt-tfclear>Clear filters</button></div>'
       : ntQuery.trim()
         ? `<div class="nt-empty-lib">No tasks match “${escHtml(ntQuery)}”.</div>`
         : '<div class="nt-empty-lib">Nothing open — you’re all caught up.</div>';
-    return `<div class="nt-alltasks">${h}${ntDoneTasksHTML(done, t => ntTaskRowHTML(t, { cat: true, all: c, place: { g: 'done', day: '' }, expand: true }))}</div>`;
+    // Finished work lives in the Completed view (the chip, or this).
+    return `<div class="nt-alltasks">${h}<button class="nt-tasks-more" type="button" data-nt-tfdone="on">Show completed →</button></div>`;
   }
   // ---- All tasks: filters — Category · When · Source, one value each ----
   // They combine with the search and stick per device (pt-nt-tfilt is in
@@ -15840,42 +15859,49 @@ const VOICE = {
       let v = null;
       try { v = JSON.parse(localStorage.getItem('pt-nt-tfilt') || 'null'); } catch {}
       const s = k => (v && typeof v[k] === 'string') ? v[k] : null;
-      _ntTf = { cat: s('cat'), when: s('when'), src: s('src') };
+      _ntTf = { cat: s('cat'), when: s('when'), src: s('src'), status: s('status') };
     }
     const f = _ntTf;
     return {
       cat: (f.cat === '' || (f.cat != null && ntCat(f.cat))) ? f.cat : null,
-      when: NT_TF_WHEN.some(w => w[0] === f.when) ? f.when : null,
+      // When is about the schedule: finished work has none, so it's off in the
+      // Completed view (still stored for the way back).
+      when: (f.status !== 'done' && NT_TF_WHEN.some(w => w[0] === f.when)) ? f.when : null,
       src: NT_TF_SRC.some(w => w[0] === f.src) ? f.src : null,
+      status: f.status === 'done' ? 'done' : null,
     };
   }
   function ntSaveTaskFilter(){
     try { localStorage.setItem('pt-nt-tfilt', JSON.stringify(_ntTf || {})); } catch {}
   }
   function ntSetTaskFilter(dim, v){
-    if (dim !== 'cat' && dim !== 'when' && dim !== 'src') return;
-    ntTaskFilter();   // loads what's stored, so the other two stay
+    if (dim !== 'cat' && dim !== 'when' && dim !== 'src' && dim !== 'status') return;
+    ntTaskFilter();   // loads what's stored, so the others stay
     _ntTf[dim] = typeof v === 'string' ? v : null;
     ntSaveTaskFilter();
   }
   function ntClearTaskFilter(){
-    _ntTf = { cat: null, when: null, src: null };
+    ntTaskFilter();
+    // Clear drops the filters, not the view: Completed stays Completed.
+    _ntTf = { cat: null, when: null, src: null, status: _ntTf.status === 'done' ? 'done' : null };
     ntSaveTaskFilter();
   }
   function ntTfOn(f){ return f.cat != null || f.when != null || f.src != null; }
   // The category a row shows (its dot): a note task's own, else its section's.
   function ntRowCat(t){ return t.noteId ? ntTaskCat(t) : ntSecCat(t); }
-  function ntInLiveNote(t){ const n = t.noteId ? ntNotes.get(t.noteId) : null; return !!(n && !n.trashed); }
+  // nid: the note to judge by, when it isn't the task's own (a completed task
+  // only linked from an agenda's line).
+  function ntInLiveNote(t, nid){ const id = nid != null ? nid : t.noteId; const n = id ? ntNotes.get(id) : null; return !!(n && !n.trashed); }
   // The search plus the filter. p is the row's placement (When reads it; a
   // done task has none and skips When). skip leaves one dimension out: a
   // chip's counts are what each of its values would list.
-  function ntTaskPass(t, p, skip){
+  function ntTaskPass(t, p, skip, nid){
     if (!ntTaskMatches(t)) return false;
     const f = ntTaskFilter();
     // A parent takes in its subcategories, as it does in the sidebar.
     if (skip !== 'cat' && f.cat != null) { const k = ntRowCat(t); if (k !== f.cat && !(f.cat && k && (ntCat(k) || {}).parent === f.cat)) return false; }
     if (skip !== 'when' && f.when != null && !(p && p.g === f.when)) return false;
-    if (skip !== 'src' && f.src != null && ntInLiveNote(t) !== (f.src === 'note')) return false;
+    if (skip !== 'src' && f.src != null && ntInLiveNote(t, nid) !== (f.src === 'note')) return false;
     return true;
   }
   // Parked items have no category and no note: they stay listed while no
@@ -15888,6 +15914,19 @@ const VOICE = {
   // the other two filters and the search would list.
   function ntTaskFacets(dim){
     const m = new Map(), bump = k => m.set(k, (m.get(k) || 0) + 1);
+    // The Completed view counts completed tasks (no When, no parked items).
+    if (ntTaskFilter().status === 'done') {
+      if (!_ntDoneList) return m;
+      const links = ntLinkNotes();
+      ntCompletedList().forEach(t => {
+        const nid = ntDoneNoteOf(t, links);
+        if (!ntTaskPass(t, null, dim, nid)) return;
+        bump(null);
+        if (dim === 'cat') { const k = ntRowCat(t), kc = k ? ntCat(k) : null; bump(k); if (kc && kc.parent) bump(kc.parent); }
+        else if (dim === 'src') bump(ntInLiveNote(t, nid) ? 'note' : 'free');
+      });
+      return m;
+    }
     if (!_ntOpenLoaded) return m;
     const c = ntAllCtx();
     ntAllOpen().forEach(t => {
@@ -15912,8 +15951,10 @@ const VOICE = {
     const f = ntTaskFilter();
     const name = (list, v) => (list.find(w => w[0] === v) || [])[1] || null;
     const chip = (dim, idle, tip, val, color) => `<button class="nt-chip${val != null ? ' on' : ''}" type="button" data-nt-tfchip="${dim}" title="${ntEsc(val != null ? idle + ': ' + val : tip)}"${color ? ` style="--c:${ntEsc(color)}"` : ''}>${color ? '<span class="d"></span>' : ''}<span class="tx">${escHtml(val != null ? val : idle)}</span>${NT_SVG.chevS}</button>`;
-    const h = chip('cat', 'Category', 'Filter by category', f.cat != null ? ntCatPath(f.cat) : null, f.cat != null ? ntCatColor(f.cat) : '')
-      + chip('when', 'When', 'Filter by schedule', name(NT_TF_WHEN, f.when), '')
+    const done = f.status === 'done';
+    const tgl = `<button class="nt-chip tgl${done ? ' on' : ''}" type="button" data-nt-tfdone aria-pressed="${done ? 'true' : 'false'}" title="${done ? 'Back to open tasks' : 'Show completed tasks'}">${HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ')}<span class="tx">Completed</span></button>`;
+    const h = tgl + chip('cat', 'Category', 'Filter by category', f.cat != null ? ntCatPath(f.cat) : null, f.cat != null ? ntCatColor(f.cat) : '')
+      + (done ? '' : chip('when', 'When', 'Filter by schedule', name(NT_TF_WHEN, f.when), ''))
       + chip('src', 'Source', 'Filter by where it came from', name(NT_TF_SRC, f.src), '')
       + (ntTfOn(f) ? '<button class="nt-chip clr" type="button" data-nt-tfclear title="Show every task"><span aria-hidden="true">×</span>Clear</button>' : '');
     if (E.filters.dataset.sig !== h) { E.filters.dataset.sig = h; E.filters.innerHTML = h; }
@@ -15939,8 +15980,162 @@ const VOICE = {
   function ntFocusTfChip(dim){
     const ae = document.activeElement;
     if (ae && ae !== document.body && ae.isConnected) return;
-    const b = (_ntEls && _ntEls.filters) ? _ntEls.filters.querySelector(`[data-nt-tfchip="${dim === 'when' || dim === 'src' ? dim : 'cat'}"]`) : null;
+    const sel = dim === 'status' ? '[data-nt-tfdone]' : `[data-nt-tfchip="${dim === 'when' || dim === 'src' ? dim : 'cat'}"]`;
+    const b = (_ntEls && _ntEls.filters) ? _ntEls.filters.querySelector(sel) : null;
     if (b) { try { b.focus({ preventScroll: true }); } catch {} }
+  }
+  // ---- All tasks: the Completed view ----
+  // The done tasks are read once — the first time the view is shown — and
+  // after that only when you ask: coming back to the view or to All tasks
+  // (10 minutes apart at most), Refresh. Never from a render: the 60s tick,
+  // saves and the listeners all re-render. Between reads the list keeps up
+  // from the live indexes, this session's ticks, and one read per task that
+  // leaves the open list (ntDoneCatchUp). Routine copies aren't tasks here.
+  function ntEnsureDone(force){
+    // A hidden load (the shell's background frame) waits to be shown: ptWake.
+    if (_ntDoneBusy || _ptHeld || !ptRendered()) return;
+    // Sooner after a failed read, or when a sweep left the list behind.
+    const gap = (_ntDoneErr || _ntDoneStale) ? 30000 : 10 * 60000;
+    if (!force && _ntDoneTry && Date.now() - _ntDoneTry < gap) return;
+    _ntDoneBusy = true; _ntDoneTry = Date.now();
+    getDocs(query(todosCol, where('done', '==', true))).then(snap => {
+      const out = [];
+      snap.forEach(d => { const t = { id: d.id, ...(d.data() || {}) }; if (!t.fromTemplate) out.push(t); });
+      // Offline the read answers from this device — only the done tasks other
+      // views happen to hold. That stands in only when there's nothing better.
+      if (snap.metadata && snap.metadata.fromCache) { if (!_ntDoneList) _ntDoneList = out; _ntDoneErr = 'offline'; return; }
+      _ntDoneList = out; _ntDoneAt = Date.now(); _ntDoneErr = ''; _ntDoneStale = false;
+    }).catch(e => { console.warn('[notes] completed tasks', e); _ntDoneErr = 'error'; })
+      .finally(() => { _ntDoneBusy = false; if (_tabNotes && _ntMounted && ntFilter === 'tasks') { try { ntRenderLib(); } catch {} } });
+  }
+  // Tasks that left the open list since the read: one read each (a handful a
+  // day) instead of all of them again. More than 20 at once (the sheet sync
+  // closing rows) marks the list stale instead: the next open reads it all.
+  function ntDoneCatchUp(ids){
+    if (!_ntDoneList) return;   // not read yet: that read will have them
+    const want = ids.filter(id => !_ntAllDone.has(id) && !(_ntTaskIdxLoaded && !_ntTaskIdxErr && _ntTaskIdx.has(id)));
+    if (want.length > 20) { _ntDoneStale = true; return; }
+    want.forEach(id => {
+      getDoc(doc(db, 'tv_todos', id)).then(snap => {
+        if (!_ntDoneList || !snap.exists()) return;
+        const t = { id, ...(snap.data() || {}) };
+        if (!t.done || t.fromTemplate) return;
+        const at = _ntDoneList.findIndex(x => x.id === id);
+        if (at >= 0) _ntDoneList[at] = t; else _ntDoneList.push(t);
+        if (_tabNotes && _ntMounted && ntFilter === 'tasks' && ntTaskFilter().status === 'done') { try { ntRenderLib(); } catch {} }
+      }).catch(() => {});
+    });
+  }
+  // When a task was finished: completedAt (Personal) or doneAt (Sprint), in
+  // ms (0 when unknown), and its local day — else, for older tasks, the day it
+  // was for — never after today. The sort, the groups and "Done Sep 14" agree.
+  function ntDoneMs(t){
+    const raw = t && (t.completedAt || t.doneAt);
+    if (!raw) return 0;
+    const ms = typeof raw === 'number' ? raw : typeof raw.toMillis === 'function' ? raw.toMillis() : Date.parse(raw);
+    return isNaN(ms) ? 0 : ms;
+  }
+  function ntDoneDay(t, today){
+    const ms = ntDoneMs(t), d = String((t && t.date) || '').slice(0, 10);
+    const day = ms ? dkey(new Date(ms)) : ntIsDay(d) ? d : '';
+    return (day && today && day > today) ? today : day;
+  }
+  function ntCompletedList(){
+    const m = new Map();
+    (_ntDoneList || []).forEach(t => m.set(t.id, t));
+    const ixOk = _ntTaskIdxLoaded && !_ntTaskIdxErr;
+    // This session's ticks — unless the read has it ticked later (again,
+    // elsewhere), or it's a note's task the live index no longer has (deleted).
+    _ntAllDone.forEach((t, id) => {
+      if (t.noteId && ixOk && !_ntTaskIdx.has(id)) return;
+      const o = m.get(id); if (!o || ntDoneMs(t) >= ntDoneMs(o)) m.set(id, t);
+    });
+    // The note index is live: a note task re-opened since leaves, one done
+    // since joins. A dead listener's copy only adds.
+    _ntTaskIdx.forEach(t => { if (t.done) { if (ixOk || !m.has(t.id)) m.set(t.id, t); } else if (ixOk) m.delete(t.id); });
+    // Not listed: routine copies (except one ticked here this session, so it
+    // can be un-ticked back onto Today) and tasks open again. An ECM row with
+    // more than one done copy is listed once — its latest — and not at all
+    // while the row is open again (any copy of it listed with the open tasks).
+    const openRows = new Set(ntAllOpen().filter(t => t.smartsheetRowId).map(t => String(t.smartsheetRowId)));
+    const out = [], byRow = new Map();
+    m.forEach((t, id) => {
+      if ((t.fromTemplate && !_ntAllDone.has(id)) || _ntOpenIdx.has(id)) return;
+      if (!t.smartsheetRowId) { out.push(t); return; }
+      const k = String(t.smartsheetRowId);
+      if (openRows.has(k)) return;
+      const was = byRow.get(k);
+      if (!was || ntDoneMs(t) > ntDoneMs(was)) byRow.set(k, t);
+    });
+    return out.concat([...byRow.values()]);
+  }
+  // Task id → the note whose lines link it (notes keep their linked task ids
+  // since v8): a live note first, the most recently edited one.
+  function ntLinkNotes(){
+    const m = new Map();
+    const notes = [...ntNotes.values()].filter(n => Array.isArray(n.links) && n.links.length)
+      .sort((a, b) => (!!a.trashed - !!b.trashed) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    notes.forEach(n => n.links.slice(0, 100).forEach(id => { if (typeof id === 'string' && !m.has(id)) m.set(id, n.id); }));
+    return m;
+  }
+  // The note a completed task was in: its own (if that note still exists),
+  // else one that links it, else its own id (shown as "Note deleted").
+  function ntDoneNoteOf(t, links){
+    if (t.noteId && ntNotes.has(t.noteId)) return t.noteId;
+    return links.get(t.id) || t.noteId || '';
+  }
+  function ntCompletedHTML(){
+    // A render only ever starts the first read (see ntEnsureDone).
+    if (!_ntDoneList && !_ntDoneTry) ntEnsureDone(false);
+    if (!_ntDoneList) return (_ntDoneErr && !_ntDoneBusy)
+      ? '<div class="nt-empty-lib">Couldn’t load completed tasks — check your connection. <button class="nt-retry" type="button" data-nt-doneretry>Retry</button></div>'
+      : '<div class="nt-empty-lib">Loading completed tasks…</div>';
+    const c = ntAllCtx(), f = ntTaskFilter(), tfOn = ntTfOn(f), links = ntLinkNotes();
+    const nidOf = new Map();
+    const found = ntCompletedList().filter(ntTaskMatches);
+    found.forEach(t => nidOf.set(t.id, ntDoneNoteOf(t, links)));
+    const list = found.filter(t => ntTaskPass(t, null, 'when', nidOf.get(t.id)));
+    _ntAllShown = list.length; _ntAllTotal = found.length;
+    // Newest first: by the day the groups use, then the time it was ticked —
+    // so the groups come out in day order too.
+    const tk = c.today, day = new Map(), ms = new Map();
+    list.forEach(t => { day.set(t.id, ntDoneDay(t, tk)); ms.set(t.id, ntDoneMs(t)); });
+    list.sort((a, b) => day.get(b.id).localeCompare(day.get(a.id)) || (ms.get(b.id) - ms.get(a.id)));
+    const CAP = NT_DONE_CAP, cut = _ntDoneAll ? list.length : CAP;
+    const yd = ntAddDays(tk, -1);
+    const ws = _mondayKeyFor(new Date(tk + 'T12:00:00')), lws = ntAddDays(ws, -7);
+    // Each group counts all its tasks, rows past the cap included.
+    const G = new Map();
+    list.forEach((t, i) => {
+      const d = day.get(t.id);
+      const [k, label, color] = !d ? ['done-none', 'Earlier', 'var(--ink-dim)']
+        : d >= tk ? ['done-today', 'Today', 'var(--accent)']
+        : d === yd ? ['done-yday', 'Yesterday', 'var(--ink-dim)']
+        : d >= ws ? ['done-week', 'Earlier this week', 'var(--ink-dim)']
+        : d >= lws ? ['done-last', 'Last week', 'var(--ink-dim)']
+        : ['done-m' + d.slice(0, 7), ntDay(d.slice(0, 7) + '-01', { month: 'long', year: 'numeric' }), 'var(--ink-dim)'];
+      if (!G.has(k)) G.set(k, { label, color, n: 0, items: [] });
+      const g = G.get(k); g.n++;
+      if (i < cut) g.items.push(t);
+    });
+    const row = t => ntTaskRowHTML(t, { cat: true, all: c, place: { g: 'done', day: '' }, expand: true, noteOf: nidOf.get(t.id) });
+    let h = '';
+    // How fresh the list is, as a time ("N min ago" would change every
+    // minute, and each change rebuilds the list); a failed read says so.
+    const stamp = at => { const d = new Date(at), tm = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); return escHtml(dkey(d) === tk ? tm : ntDay(dkey(d), { month: 'short', day: 'numeric' }) + ', ' + tm); };
+    if (_ntDoneBusy) h += '<div class="nt-tf-line">Refreshing…</div>';
+    else if (_ntDoneErr) h += `<div class="nt-tf-line">${_ntDoneAt ? 'Couldn’t refresh — last updated ' + stamp(_ntDoneAt) : 'Showing only what’s on this device — couldn’t reach the server'} · <button class="nt-tf-clr" type="button" data-nt-doneretry>Retry</button></div>`;
+    else if (_ntDoneAt) h += `<div class="nt-tf-line">Updated ${stamp(_ntDoneAt)} · <button class="nt-tf-clr" type="button" data-nt-doneretry>Refresh</button></div>`;
+    if (tfOn && list.length) h += `<div class="nt-tf-line">Showing ${list.length} of ${found.length} · <button class="nt-tf-clr" type="button" data-nt-tfclear>Clear</button></div>`;
+    G.forEach((g, k) => { if (g.items.length) h += ntAllGroupHTML(k, g.label, g.color, g.n, g.items.map(row).join('')); });
+    if (list.length > cut) h += `<button class="nt-tasks-more" type="button" data-nt-donemore>Show all ${list.length}</button>`;
+    else if (_ntDoneAll && list.length > CAP) h += '<button class="nt-tasks-more" type="button" data-nt-donemore>Show fewer</button>';
+    if (!list.length) h += (tfOn && found.length)
+      ? '<div class="nt-empty-lib">No completed tasks match these filters · <button class="nt-tf-clr" type="button" data-nt-tfclear>Clear filters</button></div>'
+      : ntQuery.trim()
+        ? `<div class="nt-empty-lib">No completed tasks match “${escHtml(ntQuery)}”.</div>`
+        : '<div class="nt-empty-lib">Nothing completed yet.</div>';
+    return `<div class="nt-alltasks">${h}</div>`;
   }
   // Bring a task's line into view (opening its folded section) and flash it.
   function ntRevealTaskLine(tid){
@@ -16718,7 +16913,7 @@ const VOICE = {
       const prev = _ntAllDone.get(tid);
       const onToday = on ? ntWorkIds(work.today).includes(tid) : !!(prev && prev.onToday);
       // All tasks keeps what it ticks done (it leaves the open snapshot at
-      // once), so it can be un-ticked from "Show done". An ECM row re-opened
+      // once), so it can be un-ticked in the Completed view. An ECM row re-opened
       // here stays listed while the sheet still says Completed (ntAllOpen).
       if (on) { _ntAllDone.set(tid, { ...t, done: true, completedAt: t.completedAt || new Date().toISOString(), onToday }); _ntAllReopened.delete(tid); }
       else { _ntAllDone.delete(tid); if (t.smartsheetRowId) _ntAllReopened.set(tid, Date.now()); }
@@ -17316,6 +17511,9 @@ const VOICE = {
     if (_ntFilterWant != null) { _ntFilterWant = null; ntSaveFilter(); }
     if (ntFilter === 'tasks' && was !== 'tasks') { try { dfMaybePrompt(); } catch {} }
     if (ntFilter === 'agenda' && was !== 'agenda') { try { ntCalFetch(false); } catch {} }
+    // All tasks' Completed view: coming back to it reads the done tasks again
+    // (10 minutes apart at most) — and says so (the list was drawn before).
+    if (ntFilter === 'tasks' && was !== 'tasks' && ntTaskFilter().status === 'done') { try { ntEnsureDone(false); if (_ntDoneBusy) ntRenderLib(); } catch {} }
   }
   function ntShellHTML(){
     return `
@@ -17564,22 +17762,27 @@ const VOICE = {
     if (h !== _ntLibSig) {
       // Keep a keyboard user on the control they just used — a Tasks box, an
       // All tasks row or one of its actions — as the list is rebuilt around
-      // it (a ticked row may have moved behind "Show done").
+      // it (a ticked row may have moved behind "Show done", or to Completed).
       const ae = document.activeElement;
       // A note row too: its tick count moves live with its tasks. A strip's
       // "Open in note" is keyed by its note (its data-nt-tid names the task).
-      // The filter's Clear (the "Showing" line or the empty state) too.
-      const ka = (ae && E.list.contains(ae)) ? ['data-nt-tkdone', 'data-nt-tact', 'data-nt-tdel', 'data-nt-park', 'data-nt-tpush', 'data-nt-tgo', 'data-nt-move', 'data-nt-taskopen', 'data-nt-tid', 'data-nt-open', 'data-nt-tfclear'].find(a => ae.hasAttribute(a)) : null;
+      // The filter's Clear (the "Showing" line or the empty state) too, and
+      // the Completed view's Show all / Show fewer and Refresh / Retry, and a
+      // group's header (its count moves with its tasks).
+      const ka = (ae && E.list.contains(ae)) ? ['data-nt-tkdone', 'data-nt-tact', 'data-nt-tdel', 'data-nt-park', 'data-nt-tpush', 'data-nt-tgo', 'data-nt-move', 'data-nt-taskopen', 'data-nt-tid', 'data-nt-open', 'data-nt-tfclear', 'data-nt-donemore', 'data-nt-doneretry', 'data-nt-group'].find(a => ae.hasAttribute(a)) : null;
       const kv = ka ? ae.getAttribute(ka) : null;
       // The All tasks row a control belongs to — focus goes there when the
       // control itself is gone (pushed, deleted, scheduled), else to the row
       // now in its place.
-      const rk = (!ka || ka === 'data-nt-tkdone' || ka === 'data-nt-open') ? null
+      const rk = (!ka || ka === 'data-nt-tkdone' || ka === 'data-nt-open' || ka === 'data-nt-group') ? null
         : ka === 'data-nt-tpush' ? kv.slice(0, kv.lastIndexOf('|'))
         : ka === 'data-nt-park' ? 'park:' + kv.slice(kv.indexOf('|') + 1)
         : ka === 'data-nt-taskopen' ? ae.getAttribute('data-nt-tid') : kv;
       const rowsOf = () => [...E.list.querySelectorAll('.nt-taskrow[data-nt-tact], .nt-taskrow[data-nt-taskopen]')];   // rows, not a strip's note button
       const keyOf = r => r.getAttribute('data-nt-tact') || r.getAttribute('data-nt-tid');   // a note task's row: its task id
+      // Nothing left in the list to stand in (the last task ticked): "Show
+      // completed →", the empty state's Clear, else All tasks' Completed chip.
+      const last = () => E.list.querySelector('[data-nt-tfdone], [data-nt-tfclear]') || ((ntFilter === 'tasks' && E.filters) ? E.filters.querySelector('[data-nt-tfdone]') : null);
       const ri = rk ? rowsOf().findIndex(r => keyOf(r) === rk) : -1;
       const at = ka === 'data-nt-tkdone' ? [...E.list.querySelectorAll('[data-nt-tkdone]')].indexOf(ae) : -1;
       _ntLibSig = h; E.list.innerHTML = h;
@@ -17590,12 +17793,12 @@ const VOICE = {
           // A pushed row has left for another group: stay in its place (the
           // row there now), as after a delete; otherwise follow the row.
           const rows = rowsOf(), here = ri >= 0 ? rows[Math.min(ri, rows.length - 1)] : null;
-          to = (ka === 'data-nt-tpush' ? here : null) || rows.find(r => keyOf(r) === rk) || here || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]');
+          to = (ka === 'data-nt-tpush' ? here : null) || rows.find(r => keyOf(r) === rk) || here || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]') || last();
           moved = true;
         }
         if (!to && ka === 'data-nt-tkdone') {
           const boxes = [...E.list.querySelectorAll('[data-nt-tkdone]')];
-          to = boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]') || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]');
+          to = boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]') || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]') || last();
         }
         // The same control stays put; a stand-in scrolls into view if it must.
         if (to) { try { to.focus({ preventScroll: !moved }); } catch {} }
@@ -19846,11 +20049,60 @@ const VOICE = {
       if (ntInEditor(t)) return;
       const tdn = t.closest('[data-nt-tkdone]');
       // The box flips what its row shows (All tasks' rows aren't all in the note index).
-      if (tdn) { e.stopPropagation(); e.preventDefault(); const id = tdn.getAttribute('data-nt-tkdone'), row = tdn.closest('.nt-taskrow'); ntTaskSetDone(id, !(row && row.classList.contains('done')), 'list'); return; }
+      if (tdn) {
+        e.stopPropagation(); e.preventDefault();
+        const id = tdn.getAttribute('data-nt-tkdone'), row = tdn.closest('.nt-taskrow'), on = !(row && row.classList.contains('done'));
+        const pr = ntTaskSetDone(id, on, 'list');
+        // Re-opened from the Completed view: it leaves this list — say where it went.
+        if (!on && ntFilter === 'tasks' && ntTaskFilter().status === 'done') Promise.resolve(pr).then(() => {
+          const ix = _ntTaskIdx.get(id);
+          if (_ntOpenIdx.has(id) || (ix && ix.done === false)) ptToast('Reopened — it’s back with your open tasks');
+        });
+        return;
+      }
       const tsd = t.closest('[data-nt-tasksdone]');
       if (tsd) { e.stopPropagation(); _ntShowDoneTasks = !_ntShowDoneTasks; ntRenderLib(); return; }
       // All tasks' filter: a chip opens its values; Clear (the chip, the
       // "Showing" line, the empty state) drops all three.
+      // All tasks' Completed view: the chip toggles it, "Show completed →"
+      // turns it on; Show all / Refresh are its own buttons.
+      const tdo = t.closest('[data-nt-tfdone]');
+      if (tdo) {
+        e.stopPropagation(); e.preventDefault();
+        if (_ntPopKind === 'tfilt') ntPopClose();
+        const on = tdo.getAttribute('data-nt-tfdone') === 'on' || ntTaskFilter().status !== 'done';
+        ntSetTaskFilter('status', on ? 'done' : null);
+        _ntAllRow = null; _ntAllDelArm = null;
+        if (on) ntEnsureDone(false);
+        ntRenderLib(); ntFocusTfChip('status');
+        // From "Show completed →" at the foot of a long list: back up to the
+        // top, where the chip (and Today) are.
+        const ch = (_ntEls && _ntEls.filters) ? _ntEls.filters.querySelector('[data-nt-tfdone]') : null;
+        if (ch) { try { ch.scrollIntoView({ block: 'nearest' }); } catch {} }
+        return;
+      }
+      const tdm = t.closest('[data-nt-donemore]');
+      if (tdm) {
+        e.stopPropagation();
+        const L = _ntEls ? _ntEls.list : null;
+        const rows = () => (L ? [...L.querySelectorAll('.nt-taskrow[data-nt-tact], .nt-taskrow[data-nt-taskopen]')] : []);
+        const heads = () => (L ? [...L.querySelectorAll('[data-nt-group^="all:done"]')] : []);
+        const key = r => r.getAttribute('data-nt-tact') || r.getAttribute('data-nt-tid');
+        const seen = new Set(rows().map(key)), seenG = new Set(heads().map(h => h.getAttribute('data-nt-group')));
+        _ntDoneAll = !_ntDoneAll; ntRenderLib();
+        // Show all: on to the first row it revealed — or, when the groups
+        // above were all folded and it opened none, the first new group —
+        // since Show fewer sits after them all. Show fewer keeps the button.
+        if (_ntDoneAll) {
+          const nx = rows().find(x => !seen.has(key(x))) || heads().find(h => !seenG.has(h.getAttribute('data-nt-group')));
+          if (nx) { try { nx.focus(); } catch {} }
+        }
+        return;
+      }
+      const tdr = t.closest('[data-nt-doneretry]');
+      // Refresh / Retry: the line they sit on changes as the read starts, so
+      // the keyboard goes back to the Completed chip.
+      if (tdr) { e.stopPropagation(); ntEnsureDone(true); ntRenderLib(); ntFocusTfChip('status'); return; }
       const tfc = t.closest('[data-nt-tfclear]');
       if (tfc) {
         e.stopPropagation();
