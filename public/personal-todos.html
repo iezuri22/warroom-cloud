@@ -3956,12 +3956,19 @@
   .nt-taskrow .m { flex: 1; min-width: 0; }
   .nt-taskrow .t { display: block; font-size: 13px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nt-taskrow.done .t { color: var(--ink-dim); text-decoration: line-through; }
-  .nt-taskrow .s { display: flex; align-items: center; gap: 4px; margin-top: 1px; min-width: 0; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
+  .nt-taskrow .s { display: flex; align-items: center; gap: 4px; margin-top: 1px; min-width: 0; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; }
   .nt-taskrow .s svg { width: 11px; height: 11px; flex-shrink: 0; }
-  .nt-taskrow .s .src { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .nt-taskrow .s .src { overflow: hidden; text-overflow: ellipsis; min-width: 3.5em; }
   .nt-taskrow .due { flex-shrink: 0; margin-top: 1px; padding: 0 6px; border-radius: 5px; line-height: 17px; font-size: 10.5px; font-weight: 800; background: var(--fill); color: var(--ink-mid); }
   .nt-taskrow .due.now { background: var(--accent-soft); color: var(--accent); }
   .nt-taskrow .due.late { background: rgba(220,75,62,.13); color: var(--red); }
+  .nt-taskrow .top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .nt-taskrow .top .t { flex: 1; min-width: 0; }
+  .nt-taskrow .s .cat { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 55%; flex-shrink: 1; color: var(--ink-mid); font-weight: 700; }
+  .nt-taskrow .s .cat .d { width: 6px; height: 6px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
+  .nt-taskrow .s .cat .tx { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .nt-alltasks .nt-sub { padding-top: 10px; }
+  .nt-alltasks .nt-sub:first-child { padding-top: 2px; }
   .nt-tasks-more { border: none; background: transparent; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-dim); cursor: pointer; padding: 6px; }
   .nt-tasks-more:hover { color: var(--ink); }
   /* Personal task rows: the note a task came from. */
@@ -14700,7 +14707,7 @@ const VOICE = {
   let _ntTask = null, _ntNewCat = null, _ntLayout = null, _ntTaskTok = 0, _ntTaskBusy = 0;   // task sheet · new-category form · pane layout
   const _ntTaskIdx = new Map();     // tv_todos made from note lines (live) — the category Tasks section
   const _ntTkBusy = new Set();      // task ids whose tick is still being written
-  let _ntTaskIdxOn = false, _ntTaskIdxLoaded = false, _ntShowDoneTasks = false, _ntPendingLine = null;
+  let _ntTaskIdxOn = false, _ntTaskIdxLoaded = false, _ntTaskIdxErr = false, _ntShowDoneTasks = false, _ntPendingLine = null;
 
   // ---- small helpers ----
   const ntIso = () => new Date().toISOString();
@@ -15084,9 +15091,15 @@ const VOICE = {
     onSnapshot(query(collection(db, 'tv_todos'), where('noteId', '>', '')), snap => {
       _ntTaskIdx.clear();
       snap.forEach(d => _ntTaskIdx.set(d.id, { id: d.id, ...d.data() }));
-      _ntTaskIdxLoaded = true;
+      _ntTaskIdxLoaded = true; _ntTaskIdxErr = false;
       if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] tasks render', e); } }
-    }, e => console.warn('[notes] task index', e));
+    }, e => {
+      // A failed listener is gone for good: say so, and let the next visit to
+      // Notes (ntGo) start a new one.
+      console.warn('[notes] task index', e);
+      _ntTaskIdxErr = true;
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    });
   }
   // A task's category — the task sheet's rule: the one picked when it was
   // made (noteCat) while it still matches the task's section (a task can be
@@ -15120,9 +15133,9 @@ const VOICE = {
     return t.done ? 'Done' : t.plannedFor ? ntDay(t.plannedFor) : t.planned ? 'Someday' : (t.date && t.date !== today ? ntDay(t.date) : 'Today');
   }
   function ntHasGeneralTasks(){ return _ntTaskIdxLoaded && [..._ntTaskIdx.values()].some(t => ntTaskCat(t) === ''); }
+  function ntTaskMatches(t){ const q = ntQuery.trim().toLowerCase(); return !q || String(t.text || '').toLowerCase().includes(q); }
   function ntCatTasks(f){
-    const q = ntQuery.trim().toLowerCase();
-    return [..._ntTaskIdx.values()].filter(t => ntTaskInCat(t, f) && (!q || String(t.text || '').toLowerCase().includes(q)));
+    return [..._ntTaskIdx.values()].filter(t => ntTaskInCat(t, f) && ntTaskMatches(t));
   }
   // Top of a category: the tasks filed under it, from any note — open ones
   // first (the soonest deadline on top), done ones behind a toggle. A row
@@ -15130,33 +15143,78 @@ const VOICE = {
   function ntTaskSectionHTML(){
     if (_ntSelMode) return '';   // select mode picks notes — its boxes look just like these
     const f = ntFilter;
-    if (f === 'all' || f === 'agenda' || f === 'pinned' || f === 'trash' || !_ntTaskIdxLoaded) return '';
+    if (f === 'all' || f === 'tasks' || f === 'agenda' || f === 'pinned' || f === 'trash' || !_ntTaskIdxLoaded) return '';
     const all = ntCatTasks(f);
     if (!all.length) return '';
-    const open = all.filter(t => !t.done), done = all.filter(t => t.done);
-    const key = t => (ntDueInfo(t.deadline) ? t.deadline : '9999') + '|' + (t.planned && !t.plannedFor ? '9998' : (t.plannedFor || t.date || '')) + '|' + String(t.createdAt || '');
-    open.sort((a, b) => key(a).localeCompare(key(b)));
-    done.sort((a, b) => String(b.completedAt || b.doneAt || '').localeCompare(String(a.completedAt || a.doneAt || '')));
+    const open = all.filter(t => !t.done).sort(ntTaskOrder), done = all.filter(t => t.done).sort(ntTaskDoneOrder);
     const gkey = 'tasks:' + f, shut = ntGroupShut().has(gkey);
-    const row = t => {
-      const n = ntNotes.get(t.noteId);
-      const live = !!(n && !n.trashed);
-      const src = !n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n);
-      const due = !t.done && ntDueInfo(t.deadline);
-      const open = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
-      return `<div class="nt-taskrow${t.done ? ' done' : ''}"${open}>`
-        + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
-        + `<span class="m"><span class="t">${escHtml(t.text || '')}</span><span class="s">${NT_SVG.docS}<span class="src">${escHtml(src)}</span><span>·</span><span>${escHtml(ntTaskWhen(t))}</span></span></span>`
-        + (due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : '')
-        + '</div>';
-    };
+    // A parent lists its subcategories' tasks too — those rows say which.
+    const pc = ntCat(f), kids = !!(pc && !pc.parent && ntCatKids(pc.id).length);
+    const row = t => ntTaskRowHTML(t, { cat: kids && ntTaskCat(t) !== f });
     let h = `<div class="nt-group nt-tasks${shut ? ' shut' : ''}"><button class="nt-group-h" type="button" data-nt-group="${ntEsc(gkey)}" aria-expanded="${shut ? 'false' : 'true'}">${NT_SVG.task}<span class="tx">Tasks</span><span class="n">${open.length}${done.length ? ` · ${done.length} done` : ''}</span>${NT_SVG.chevS}</button>`;
     if (!shut) {
       h += open.map(row).join('');
       if (!open.length) h += '<div class="nt-empty-lib">All done here.</div>';
-      if (done.length) h += `<button class="nt-tasks-more" type="button" data-nt-tasksdone>${_ntShowDoneTasks ? 'Hide done' : `Show ${done.length} done`}</button>` + (_ntShowDoneTasks ? done.map(row).join('') : '');
+      h += ntDoneTasksHTML(done, row);
     }
     return h + '</div>';
+  }
+  // Open tasks: the soonest deadline first, then by schedule (Someday last).
+  function ntTaskKey(t){ return (ntDueInfo(t.deadline) ? t.deadline : '9999') + '|' + (t.planned && !t.plannedFor ? '9998' : (t.plannedFor || t.date || '')) + '|' + String(t.createdAt || ''); }
+  function ntTaskOrder(a, b){ return ntTaskKey(a).localeCompare(ntTaskKey(b)); }
+  function ntTaskDoneOrder(a, b){ return String(b.completedAt || b.doneAt || '').localeCompare(String(a.completedAt || a.doneAt || '')); }
+  function ntOpenTaskCount(){ let n = 0; _ntTaskIdx.forEach(t => { if (!t.done) n++; }); return n; }
+  // One task row, shared by a category's section and All tasks. o.cat adds
+  // the task's category (dot + path) to the meta line.
+  function ntTaskRowHTML(t, o){
+    const n = ntNotes.get(t.noteId);
+    const live = !!(n && !n.trashed);
+    const src = !n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n);
+    const due = !t.done && ntDueInfo(t.deadline);
+    const k = (o && o.cat) ? ntTaskCat(t) : null;
+    const cat = k != null ? `<span class="cat" style="--c:${ntEsc(ntCatColor(k))}"><span class="d"></span><span class="tx">${escHtml(ntCatPath(k))}</span></span><span>·</span>` : '';
+    const open = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
+    return `<div class="nt-taskrow${t.done ? ' done' : ''}"${open}>`
+      + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
+      // The due badge rides on the title line, so the meta line below keeps
+      // the full width for category · note · schedule.
+      + `<span class="m"><span class="top"><span class="t">${escHtml(t.text || '')}</span>${due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : ''}</span>`
+      + `<span class="s">${cat}${NT_SVG.docS}<span class="src">${escHtml(src)}</span><span>·</span><span>${escHtml(ntTaskWhen(t))}</span></span></span>`
+      + '</div>';
+  }
+  function ntDoneTasksHTML(done, row){
+    if (!done.length) return '';
+    return `<button class="nt-tasks-more" type="button" data-nt-tasksdone>${_ntShowDoneTasks ? 'Hide done' : `Show ${done.length} done`}</button>` + (_ntShowDoneTasks ? done.map(row).join('') : '');
+  }
+  // "All tasks" (the sidebar's second entry): every task made from a note,
+  // grouped by when it's due, each row naming its category and note.
+  function ntAllTasksHTML(){
+    if (!_ntTaskIdxLoaded) return _ntTaskIdxErr
+      ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection, then open Notes again.</div>'
+      : '<div class="nt-empty-lib">Loading tasks…</div>';
+    const q = ntQuery.trim().toLowerCase();
+    const all = [..._ntTaskIdx.values()].filter(ntTaskMatches);
+    if (!all.length) return q
+      ? `<div class="nt-empty-lib">No tasks match “${escHtml(ntQuery)}”.</div>`
+      : '<div class="nt-empty-lib">No tasks yet. Put the cursor on a line and press <b>Task</b> (or type /task) — it shows up here and in its category.</div>';
+    const open = all.filter(t => !t.done).sort(ntTaskOrder), done = all.filter(t => t.done).sort(ntTaskDoneOrder);
+    const today = todayKey();
+    const dd = t => ntDueInfo(t.deadline) ? _ovDayDiff(today, t.deadline) : null;
+    const groups = [
+      ['Overdue', t => dd(t) !== null && dd(t) < 0],
+      ['Due today', t => dd(t) === 0],
+      ['Due this week', t => dd(t) !== null && dd(t) >= 1 && dd(t) <= 7],
+      ['Due later', t => dd(t) !== null && dd(t) > 7],
+      ['No deadline', t => dd(t) === null],
+    ];
+    const row = t => ntTaskRowHTML(t, { cat: true });
+    let h = '';
+    groups.forEach(([label, test]) => {
+      const items = open.filter(test);
+      if (items.length) h += `<div class="nt-sub">${escHtml(label)} · ${items.length}</div>` + items.map(row).join('');
+    });
+    if (!open.length) h += '<div class="nt-empty-lib">All done — nothing open.</div>';
+    return `<div class="nt-alltasks">${h}${ntDoneTasksHTML(done, row)}</div>`;
   }
   // Bring a task's line into view (opening its folded section) and flash it.
   function ntRevealTaskLine(tid){
@@ -15250,7 +15308,7 @@ const VOICE = {
     const f = ntFilter;
     const cat = (f !== 'all' && f !== 'agenda' && f !== 'trash' && f !== 'pinned' && (f === '' || ntCat(f))) ? f : '';
     const id = ntCreate({ category: cat, html: '<p><br></p>' });
-    if (f === 'trash' || f === 'agenda' || f === 'pinned') ntFilter = cat || 'all';
+    if (f === 'trash' || f === 'agenda' || f === 'pinned' || f === 'tasks') ntFilter = cat || 'all';
     if (_ntSelMode) ntSelectMode(false);
     ntOpenDoc(id, { focus: 'title' });
   }
@@ -15780,6 +15838,7 @@ const VOICE = {
     render();
     document.body.classList.add('notes-active');
     ntSyncPane();
+    if (_ntTaskIdxErr) { _ntTaskIdxOn = false; _ntTaskIdxErr = false; }   // the task listener died: retry on entry
     ntEnsureMounted();
     const t = target || {};
     if (t.id) ntOpenDoc(t.id, t.taskId ? { line: t.taskId } : undefined);
@@ -15975,7 +16034,8 @@ const VOICE = {
   function ntRenderLib(){
     if (!_ntEls) return;
     const E = _ntEls;
-    if (!['all', 'agenda', 'pinned', 'trash', ''].includes(ntFilter) && !ntCat(ntFilter)) ntFilter = 'all';
+    if (!['all', 'tasks', 'agenda', 'pinned', 'trash', ''].includes(ntFilter) && !ntCat(ntFilter)) ntFilter = 'all';
+    if (ntFilter === 'tasks' && _ntSelMode) { ntSelectMode(false); return; }   // selecting is for notes (it re-renders)
     E.shell.dataset.screen = ntScreen;
     E.shell.classList.toggle('nt-selecting', _ntSelMode);
     ntApplyLayout();
@@ -15986,7 +16046,7 @@ const VOICE = {
     if (E.ltitle) E.ltitle.textContent = label;
     if (E.lswitchLbl) E.lswitchLbl.textContent = label;
     if (E.lswitch) { E.lswitch.classList.toggle('dot', !!color); if (color) E.lswitch.style.setProperty('--c', color); }
-    if (E.selBtn) E.selBtn.classList.toggle('on', _ntSelMode);
+    if (E.selBtn) { E.selBtn.classList.toggle('on', _ntSelMode); E.selBtn.hidden = ntFilter === 'tasks'; }
     ntRenderToday();
     const arr = ntVisible();
     if (E.lcount) E.lcount.textContent = arr.length ? String(arr.length) : '';
@@ -16040,6 +16100,12 @@ const VOICE = {
         h += (pinned.length && rest.length ? sub('Recent') : '') + rest.map(ntRowHTML).join('');
       }
     }
+    // "All tasks" lists every task made from a note, instead of notes.
+    if (ntFilter === 'tasks') {
+      h = ntAllTasksHTML();
+      // The header counts what's listed (the search applies); the sidebar keeps the total.
+      if (E.lcount) { let n = 0; _ntTaskIdx.forEach(t => { if (!t.done && ntTaskMatches(t)) n++; }); E.lcount.textContent = n ? String(n) : ''; }
+    }
     // A category also lists the tasks filed under it, from whichever note.
     const tsec = ntTaskSectionHTML();
     if (tsec) h = tsec + (arr.length ? h : (ntQuery ? '' : '<div class="nt-empty-lib">No notes here yet — start one with New.</div>'));
@@ -16052,7 +16118,7 @@ const VOICE = {
       _ntLibSig = h; E.list.innerHTML = h;
       if (tk) {
         const boxes = [...E.list.querySelectorAll('[data-nt-tkdone]')];
-        const to = boxes.find(b => b.getAttribute('data-nt-tkdone') === tk) || boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]');
+        const to = boxes.find(b => b.getAttribute('data-nt-tkdone') === tk) || boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]') || E.list.querySelector('[data-nt-tasksdone]');
         if (to) { try { to.focus({ preventScroll: true }); } catch {} }
       }
     }
@@ -16060,10 +16126,10 @@ const VOICE = {
   }
   // ---- notebooks: sidebar nav (≥1100) and the same list as a switcher popover ----
   function ntFilterLabel(f){
-    return f === 'all' ? 'All notes' : f === 'agenda' ? 'Agenda' : f === 'pinned' ? 'Pinned' : f === 'trash' ? 'Trash' : ntCatPath(f);
+    return f === 'all' ? 'All notes' : f === 'tasks' ? 'All tasks' : f === 'agenda' ? 'Agenda' : f === 'pinned' ? 'Pinned' : f === 'trash' ? 'Trash' : ntCatPath(f);
   }
   function ntFilterColor(f){
-    return (f === 'all' || f === 'agenda' || f === 'pinned' || f === 'trash') ? '' : ntCatColor(f);
+    return (f === 'all' || f === 'tasks' || f === 'agenda' || f === 'pinned' || f === 'trash') ? '' : ntCatColor(f);
   }
   function ntNavItemHTML(key, label, n, o){
     const opt = o || {};
@@ -16087,6 +16153,7 @@ const VOICE = {
     let h = `<div class="nt-navtop"><button class="nt-icon" type="button" data-nt-act="nav-shut" title="Collapse the sidebar (⌘⇧\\)" aria-label="Collapse the sidebar">${NT_SVG.chevL2}</button></div>`
       + '<div class="nt-navg">'
       + ntNavItemHTML('all', 'All notes', c.all, { icon: NT_SVG.doc })
+      + ntNavItemHTML('tasks', 'All tasks', ntOpenTaskCount(), { icon: NT_SVG.task })
       + ntNavItemHTML('agenda', 'Agenda', c.agenda, { icon: NT_SVG.cal })
       + ntNavItemHTML('pinned', 'Pinned', c.pinned, { icon: NT_SVG.pin, drop: '__pin' })
       + '</div>';
@@ -16128,7 +16195,7 @@ const VOICE = {
   function ntPopNav(anchor){
     const c = ntCounts();
     const it = (key, label, n, color, icon, sub) => `<button class="nt-pop-i${sub ? ' sub' : ''}${ntFilter === key ? ' on' : ''}" type="button" data-np-nav="${ntEsc(key)}"${color ? ` style="--c:${ntEsc(color)}"` : ''}>${color ? '<span class="d"></span>' : (icon || '')}${escHtml(label)}${n ? `<span class="k">${n}</span>` : ''}</button>`;
-    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
+    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('tasks', 'All tasks', ntOpenTaskCount(), '', NT_SVG.task) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
     if (c.pinned) h += it('pinned', 'Pinned', c.pinned, '', NT_SVG.pin);
     h += '<div class="nt-pop-h">Categories</div>';
     ntCats.filter(x => !x.parent).forEach(x => {
@@ -18014,6 +18081,7 @@ const VOICE = {
         + b('data-nt-rail="__search"', 'Search notes', NT_SVG.search)
         + '<span class="nt-rail-sep"></span>'
         + b('data-nt-rail="all"', 'All notes', NT_SVG.doc, ntFilter === 'all')
+        + b('data-nt-rail="tasks"', 'All tasks', NT_SVG.task, ntFilter === 'tasks')
         + b('data-nt-rail="agenda"', 'Agenda', NT_SVG.cal, ntFilter === 'agenda')
         + b('data-nt-rail="pinned" data-nt-drop="__pin"', 'Pinned', NT_SVG.pin, ntFilter === 'pinned')
         + '<span class="nt-rail-sep"></span>'
@@ -18385,7 +18453,12 @@ const VOICE = {
     E.search.addEventListener('input', () => { ntQuery = E.search.value; ntRenderLib(); });
     E.search.addEventListener('keydown', e => {
       if (e.key === 'Escape') { e.stopPropagation(); E.search.value = ''; ntQuery = ''; ntRenderLib(); }
-      else if (e.key === 'Enter') { const first = E.list.querySelector('[data-nt-open]'); if (first) ntOpenDoc(first.getAttribute('data-nt-open')); }
+      else if (e.key === 'Enter') {
+        const first = E.list.querySelector('[data-nt-open]');
+        if (first) { ntOpenDoc(first.getAttribute('data-nt-open')); return; }
+        const tr = E.list.querySelector('[data-nt-taskopen]');   // All tasks lists tasks, not notes
+        if (tr) ntOpenDoc(tr.getAttribute('data-nt-taskopen'), { line: tr.getAttribute('data-nt-tid') });
+      }
     });
     E.date.addEventListener('click', () => { try { E.date.showPicker(); } catch {} });
     E.date.addEventListener('change', () => {
