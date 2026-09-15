@@ -3939,6 +3939,44 @@
   @media (min-width: 761px) and (max-width: 1099.98px) { .nt-new { padding: 0 10px; } .nt-new span, .nt-lct { display: none; } }
   body.nt-focus .nt-rail { display: none !important; }
 
+  /* A category's Tasks section (tasks filed there, from any note). */
+  .nt-tasks { margin-bottom: 10px; }
+  .nt-taskrow { display: flex; align-items: flex-start; gap: 9px; padding: 7px 6px; border-radius: 10px; outline: none; }
+  .nt-taskrow[role="button"] { cursor: pointer; }
+  .nt-taskrow + .nt-taskrow { box-shadow: 0 -1px 0 var(--border); }
+  .nt-taskrow:hover { background: var(--fill); }
+  .nt-taskrow:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .nt-taskrow .ck {
+    width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; padding: 0; border-radius: 6px; cursor: pointer; box-sizing: border-box;
+    border: 1.5px solid var(--border-strong); background: var(--surface); color: var(--on-accent);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .nt-taskrow .ck:hover { border-color: var(--accent); }
+  .nt-taskrow.done .ck { background: var(--accent); border-color: var(--accent); }
+  .nt-taskrow .m { flex: 1; min-width: 0; }
+  .nt-taskrow .t { display: block; font-size: 13px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-taskrow.done .t { color: var(--ink-dim); text-decoration: line-through; }
+  .nt-taskrow .s { display: flex; align-items: center; gap: 4px; margin-top: 1px; min-width: 0; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
+  .nt-taskrow .s svg { width: 11px; height: 11px; flex-shrink: 0; }
+  .nt-taskrow .s .src { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .nt-taskrow .due { flex-shrink: 0; margin-top: 1px; padding: 0 6px; border-radius: 5px; line-height: 17px; font-size: 10.5px; font-weight: 800; background: var(--fill); color: var(--ink-mid); }
+  .nt-taskrow .due.now { background: var(--accent-soft); color: var(--accent); }
+  .nt-taskrow .due.late { background: rgba(220,75,62,.13); color: var(--red); }
+  .nt-tasks-more { border: none; background: transparent; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-dim); cursor: pointer; padding: 6px; }
+  .nt-tasks-more:hover { color: var(--ink); }
+  /* Personal task rows: the note a task came from. */
+  .ov-notelink { gap: 3px; align-items: center; max-width: 170px; font-family: inherit; }
+  .ov-notelink .tx { font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .planned-row-meta2 .ov-notelink { margin-left: 0; vertical-align: -2px; }
+  .ov-from-line { padding: 2px 0 2px 30px; }
+  .ov-from {
+    border: none; background: transparent; font-family: inherit; font-size: 12px; font-weight: 700; color: var(--accent); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 8px; max-width: 100%;
+  }
+  .ov-from span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ov-from:hover { background: var(--accent-soft); }
+  @media (max-width: 640px) { .ov-notelink { max-width: 110px; } }
+
   /* ===== COACH — voice planning chat (day/week plans via /api/plan-chat) ===== */
   .coach-fab {
     /* Sits one Add-pill to the left of the column's right edge. */
@@ -11951,6 +11989,7 @@ const VOICE = {
     if (jm) metaBits.push(`<span style="color:${jm.color}">${escHtml(jm.label)}</span>`);
     if (p.smartsheetRowId) metaBits.push('<span>ECM</span>');
     if (hasDet) metaBits.push('<span>notes</span>');
+    if (p.noteId) { const nl = _ovNoteLinkHTML(p.noteId, p.id); if (nl) metaBits.push(nl); }
     const row = document.createElement('div');
     row.className = `planned-row ${due ? 'due' : ''}`;
     row.innerHTML = `
@@ -11975,6 +12014,14 @@ const VOICE = {
       </span>
     `;
     wrap.appendChild(row);
+    const noteBtn = row.querySelector('[data-ov-note]');
+    if (noteBtn) noteBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Leaving the prompt this way is a dismissal like Later / Esc: it spends
+      // today's showing, so it can't come back over the note.
+      if (wrap.closest('#plannedPromptBody')) closePlannedPrompt(true);
+      ntGo({ id: noteBtn.getAttribute('data-ov-note'), taskId: noteBtn.getAttribute('data-ov-task') || null });
+    });
     const chevBtn = row.querySelector('.planned-row-chevron');
     if (chevBtn) chevBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -12784,7 +12831,11 @@ const VOICE = {
     // calendar, but it can't be deleted from here (and a delete wouldn't
     // stick anyway: the next sheet sync would bring it right back).
     const isEcm = !!(t && t.smartsheetRowId);
-    return `<div class="ov-acts">
+    // Made from a note line: say which, and open it right at that line.
+    const n = t && t.noteId ? ntNotes.get(t.noteId) : null;
+    const from = (n && !n.trashed)
+      ? `<div class="ov-from-line"><button class="ov-from" type="button" data-ov-note="${ntEsc(t.noteId)}" data-ov-task="${ntEsc(id)}">${NT_SVG.docS}<span>From “${escHtml(ntTitleOf(n))}”</span>→</button></div>` : '';
+    return `${from}<div class="ov-acts">
       <span class="ov-acts-lbl">Push</span>
       ${_ovPushDates().map(o => `<button class="ov-act" type="button" data-ov-push="${escHtml(id)}|${o.ds}">${o.label}</button>`).join('')}
       ${isEcm
@@ -12836,7 +12887,7 @@ const VOICE = {
       ${grip}
       <button class="ov-check ${done ? 'on' : ''}" type="button" data-ov-done="${escHtml(t.id)}" aria-label="${done ? 'Mark open' : 'Mark done'}">${done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</button>
       ${chip ? `<span class="ov-daychip today">${escHtml(chip)}</span>` : ''}
-      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}${t.noteId ? _ovNoteLinkHTML(t.noteId) : ''}${done ? '' : _ovDueChipHTML(t)}</span>
+      <span class="ov-text">${t.pinnedUntilDone && !done ? '<span class="ov-pin">📌</span>' : ''}${escHtml(t.text || '')}${t.noteId ? _ovNoteLinkHTML(t.noteId, t.id) : ''}${done ? '' : _ovDueChipHTML(t)}</span>
       ${t.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(t.id) : ''}`;
   }
@@ -12854,7 +12905,7 @@ const VOICE = {
     const open = _ovRowOpen === p.id;
     return `<div class="ov-row wk ${open ? 'open' : ''}" data-ov-open="${escHtml(p.id)}">
       <span class="ov-daychip">${escHtml(_ovDayChip(_ovPlanDay(p) || p.plannedFor))}</span>
-      <span class="ov-text">${escHtml(p.text || '')}${p.noteId ? _ovNoteLinkHTML(p.noteId) : ''}${_ovDueChipHTML(p)}</span>
+      <span class="ov-text">${escHtml(p.text || '')}${p.noteId ? _ovNoteLinkHTML(p.noteId, p.id) : ''}${_ovDueChipHTML(p)}</span>
       ${p.smartsheetRowId ? '<span class="ov-flag">ECM</span>' : ''}
     </div>${open ? _ovActsHTML(p.id) : ''}`;
   }
@@ -14033,7 +14084,7 @@ const VOICE = {
       if (sq) { openOvStats(sq.getAttribute('data-ovw-day')); return; }
       // Notes links sit inside task rows — handled before done/open.
       const noteLink = e.target.closest('[data-ov-note]');
-      if (noteLink) { e.stopPropagation(); ntGo({ id: noteLink.getAttribute('data-ov-note') }); return; }
+      if (noteLink) { e.stopPropagation(); ntGo({ id: noteLink.getAttribute('data-ov-note'), taskId: noteLink.getAttribute('data-ov-task') || null }); return; }
       const ag = e.target.closest('[data-ov-agenda]');
       if (ag) {
         const k = ag.getAttribute('data-ov-agenda');
@@ -14647,6 +14698,9 @@ const VOICE = {
   const _ntBodyCache = new Map();   // id -> html, so switching back is instant
   let _ntCal = { at: 0, byDate: null, status: '', busy: false, src: '', cacheAt: 0 };
   let _ntTask = null, _ntNewCat = null, _ntLayout = null, _ntTaskTok = 0, _ntTaskBusy = 0;   // task sheet · new-category form · pane layout
+  const _ntTaskIdx = new Map();     // tv_todos made from note lines (live) — the category Tasks section
+  const _ntTkBusy = new Set();      // task ids whose tick is still being written
+  let _ntTaskIdxOn = false, _ntTaskIdxLoaded = false, _ntShowDoneTasks = false, _ntPendingLine = null;
 
   // ---- small helpers ----
   const ntIso = () => new Date().toISOString();
@@ -15022,11 +15076,105 @@ const VOICE = {
       ntOnListChange();
     }, e => console.warn('[notes] config sub', e));
   }
+  // Tasks made from note lines, live — what a category's Tasks section lists.
+  // A single-field inequality (no composite index), and only linked tasks.
+  function ntEnsureTaskIdx(){
+    if (_ntTaskIdxOn) return;
+    _ntTaskIdxOn = true;
+    onSnapshot(query(collection(db, 'tv_todos'), where('noteId', '>', '')), snap => {
+      _ntTaskIdx.clear();
+      snap.forEach(d => _ntTaskIdx.set(d.id, { id: d.id, ...d.data() }));
+      _ntTaskIdxLoaded = true;
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] tasks render', e); } }
+    }, e => console.warn('[notes] task index', e));
+  }
+  // A task's category — the task sheet's rule: the one picked when it was
+  // made (noteCat) while it still matches the task's section (a task can be
+  // re-filed in Personal), else its note's category, else the section's own.
+  function ntTaskCat(t){
+    if (!t) return '';
+    const sec = sectionOf(t);
+    if (typeof t.noteCat === 'string' && (t.noteCat === '' || ntCat(t.noteCat)) && ntCatSection(t.noteCat) === sec) return t.noteCat;
+    const nk = ntKey(ntNotes.get(t.noteId));
+    if (ntCatSection(nk) === sec) return nk;
+    return ntCat(sec) ? sec : '';
+  }
+  function ntTaskInCat(t, f){
+    const k = ntTaskCat(t);
+    if (k === f) return true;
+    const c = k ? ntCat(k) : null;
+    return !!(c && f && c.parent === f);
+  }
+  // "due Fri" / "overdue 2d" for a YYYY-MM-DD deadline; null when there's none.
+  function ntDueInfo(ds){
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ds || '')) return null;
+    const d = _ovDayDiff(todayKey(), ds);
+    if (d === null) return null;
+    if (d < 0) return { lbl: `overdue ${-d}d`, cls: 'late' };
+    if (d === 0) return { lbl: 'due today', cls: 'now' };
+    if (d === 1) return { lbl: 'due tomorrow', cls: '' };
+    return { lbl: 'due ' + ntDay(ds, d < 7 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }), cls: '' };
+  }
+  function ntTaskWhen(t){
+    const today = todayKey();
+    return t.done ? 'Done' : t.plannedFor ? ntDay(t.plannedFor) : t.planned ? 'Someday' : (t.date && t.date !== today ? ntDay(t.date) : 'Today');
+  }
+  function ntHasGeneralTasks(){ return _ntTaskIdxLoaded && [..._ntTaskIdx.values()].some(t => ntTaskCat(t) === ''); }
+  function ntCatTasks(f){
+    const q = ntQuery.trim().toLowerCase();
+    return [..._ntTaskIdx.values()].filter(t => ntTaskInCat(t, f) && (!q || String(t.text || '').toLowerCase().includes(q)));
+  }
+  // Top of a category: the tasks filed under it, from any note — open ones
+  // first (the soonest deadline on top), done ones behind a toggle. A row
+  // opens its note at that line; the box ticks the real task.
+  function ntTaskSectionHTML(){
+    if (_ntSelMode) return '';   // select mode picks notes — its boxes look just like these
+    const f = ntFilter;
+    if (f === 'all' || f === 'agenda' || f === 'pinned' || f === 'trash' || !_ntTaskIdxLoaded) return '';
+    const all = ntCatTasks(f);
+    if (!all.length) return '';
+    const open = all.filter(t => !t.done), done = all.filter(t => t.done);
+    const key = t => (ntDueInfo(t.deadline) ? t.deadline : '9999') + '|' + (t.planned && !t.plannedFor ? '9998' : (t.plannedFor || t.date || '')) + '|' + String(t.createdAt || '');
+    open.sort((a, b) => key(a).localeCompare(key(b)));
+    done.sort((a, b) => String(b.completedAt || b.doneAt || '').localeCompare(String(a.completedAt || a.doneAt || '')));
+    const gkey = 'tasks:' + f, shut = ntGroupShut().has(gkey);
+    const row = t => {
+      const n = ntNotes.get(t.noteId);
+      const live = !!(n && !n.trashed);
+      const src = !n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n);
+      const due = !t.done && ntDueInfo(t.deadline);
+      const open = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
+      return `<div class="nt-taskrow${t.done ? ' done' : ''}"${open}>`
+        + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
+        + `<span class="m"><span class="t">${escHtml(t.text || '')}</span><span class="s">${NT_SVG.docS}<span class="src">${escHtml(src)}</span><span>·</span><span>${escHtml(ntTaskWhen(t))}</span></span></span>`
+        + (due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : '')
+        + '</div>';
+    };
+    let h = `<div class="nt-group nt-tasks${shut ? ' shut' : ''}"><button class="nt-group-h" type="button" data-nt-group="${ntEsc(gkey)}" aria-expanded="${shut ? 'false' : 'true'}">${NT_SVG.task}<span class="tx">Tasks</span><span class="n">${open.length}${done.length ? ` · ${done.length} done` : ''}</span>${NT_SVG.chevS}</button>`;
+    if (!shut) {
+      h += open.map(row).join('');
+      if (!open.length) h += '<div class="nt-empty-lib">All done here.</div>';
+      if (done.length) h += `<button class="nt-tasks-more" type="button" data-nt-tasksdone>${_ntShowDoneTasks ? 'Hide done' : `Show ${done.length} done`}</button>` + (_ntShowDoneTasks ? done.map(row).join('') : '');
+    }
+    return h + '</div>';
+  }
+  // Bring a task's line into view (opening its folded section) and flash it.
+  function ntRevealTaskLine(tid){
+    if (!_ntEls || !tid) return;
+    const li = [..._ntEls.editor.querySelectorAll('li[data-task-id]')].find(x => x.getAttribute('data-task-id') === tid);
+    if (!li) { ptToast('That task’s line isn’t in this note any more'); return; }
+    let top = li;
+    while (top.parentElement && top.parentElement !== _ntEls.editor) top = top.parentElement;
+    if (top.classList && top.classList.contains('nt-fold')) ntUnfoldAround(top);
+    try { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { try { li.scrollIntoView(); } catch {} }
+    li.classList.remove('nt-flash'); void li.offsetWidth; li.classList.add('nt-flash');
+    setTimeout(() => li.classList.remove('nt-flash'), 1400);
+  }
   // Snapshots never rebuild the page while you're in Notes — only the notes
   // UI, and that never touches the editor node.
   function ntOnListChange(){
     if (_tabNotes && _ntMounted) { try { ntRenderLib(); ntRenderDocChrome(); } catch (e) { console.warn('[notes] list render', e); } }
-    else if (_tabOverview) { try { render(); } catch {} }
+    else if (_tabOverview || _tabPlanned) { try { render(); } catch {} }
   }
 
   // ---- data: derived fields (library rows, outline, search) ----
@@ -15136,6 +15284,7 @@ const VOICE = {
       _ntEls.editor.contentEditable = 'false';
       _ntTitleEdited = false;
       _ntPendingFocus = null;
+      _ntPendingLine = null;
       _ntEls.title.value = m ? (m.title || '') : '';
       ntAfterContentSwap();
       ntSubBody(id);
@@ -15145,6 +15294,7 @@ const VOICE = {
     ntRenderAll();
     if (o.focus === 'title') setTimeout(() => { try { _ntEls.title.focus(); } catch {} }, 0);
     else if (o.focus === 'empty') { if (_ntBodyLoaded) setTimeout(() => ntFocusFirstEmpty(), 0); else _ntPendingFocus = 'empty'; }
+    if (o.line) { if (_ntBodyLoaded) setTimeout(() => ntRevealTaskLine(o.line), 0); else _ntPendingLine = o.line; }
   }
   function ntCloseDoc(){
     if (_ntFocus) ntSetFocus(false);
@@ -15173,6 +15323,7 @@ const VOICE = {
         ntRestoreDraft(id, d, !!(snap.metadata && snap.metadata.hasPendingWrites));
         ntSyncTaskChecks();
         if (_ntPendingFocus === 'empty') { _ntPendingFocus = null; setTimeout(() => ntFocusFirstEmpty(), 0); }
+        if (_ntPendingLine) { const l = _ntPendingLine; _ntPendingLine = null; setTimeout(() => ntRevealTaskLine(l), 60); }
         if (_ntDirty) ntMarkDirty();                     // a title typed while loading
         return;
       }
@@ -15269,7 +15420,10 @@ const VOICE = {
     clearTimeout(_ntDraftT);
     const id = ntOpenId;
     _ntDraftT = setTimeout(() => {
-      if (ntOpenId === id && _ntDirty) ntDraftPut({ id, html: _ntEls.editor.innerHTML, title: _ntEls.title.value, ts: Date.now(), rev: _ntRev });
+      // Never draft a copy that isn't the loaded body (a stale cached one
+      // would be restored over newer edits). A title typed while loading is
+      // drafted when the body lands (ntSubBody re-marks it dirty).
+      if (ntOpenId === id && _ntDirty && _ntBodyLoaded) ntDraftPut({ id, html: _ntEls.editor.innerHTML, title: _ntEls.title.value, ts: Date.now(), rev: _ntRev });
     }, 400);
   }
   // Snapshots the doc synchronously, so switching docs right after is safe.
@@ -15447,6 +15601,9 @@ const VOICE = {
     if (!lis.length) return;
     const rows = await Promise.all(lis.map(async li => {
       const tid = li.getAttribute('data-task-id');
+      // The live index (Notes keeps one) is the freshest copy there is.
+      const ix = _ntTaskIdxLoaded ? _ntTaskIdx.get(tid) : null;
+      if (ix) { ntTaskCacheSet(tid, ix); return { li, t: ix, fresh: true }; }
       let t = todos.find(x => x.id === tid) || (_plannedCache || []).find(x => x.id === tid);
       let fresh = false;
       // A cached copy can be hours old: before it's allowed to change the
@@ -15481,21 +15638,42 @@ const VOICE = {
     ntMarkDirty();
     ntRenderOutline();
     const tid = li.getAttribute('data-task-id');
-    if (!tid) return;
+    if (tid) await ntTaskSetDone(tid, on);
+  }
+  // Always the REAL toggle — it keeps the done-log, stats, shell analytics
+  // and Smartsheet push honest. A task outside today's array (planned, or
+  // another day's) is loaded first, the way ensureWorkTasksLoaded does.
+  async function ntTaskSetDone(tid, on){
+    if (_ntTkBusy.has(tid)) return;   // a second tap while the first is still writing
+    _ntTkBusy.add(tid);
     try {
-      // Always the REAL toggle — it keeps the done-log, stats, shell analytics
-      // and Smartsheet push honest. A task outside today's array (planned, or
-      // another day's) is loaded first, the way ensureWorkTasksLoaded does.
       let t = todos.find(x => x.id === tid);
       if (!t) {
         const s = await getDoc(doc(db, 'tv_todos', tid));
-        if (s.exists()) { t = { id: tid, ...(s.data() || {}) }; todos.push(t); }
+        t = todos.find(x => x.id === tid) || null;   // loaded by another path meanwhile?
+        if (!t && s.exists()) { t = { id: tid, ...(s.data() || {}) }; todos.push(t); }
       }
       if (!t) { ptToast('That task no longer exists'); return; }
+      // The live index is fresher than a cached copy (it was ticked elsewhere?).
+      const ix = _ntTaskIdx.get(tid);
+      if (ix && typeof ix.done === 'boolean') t.done = ix.done;
       if (!!t.done !== on) await toggleTodo(tid);
       const p = (_plannedCache || []).find(x => x.id === tid);
       if (p) p.done = on;
+      if (ix) ix.done = on;
+      // An open note's line follows — once its body has loaded. Before that
+      // the editor holds a cached copy, and a tick there could be drafted and
+      // restored over newer edits; ntSyncTaskChecks sets the line on load.
+      if (_ntEls && ntOpenId && _ntBodyLoaded) {
+        const li = [..._ntEls.editor.querySelectorAll('li[data-task-id]')].find(x => x.getAttribute('data-task-id') === tid);
+        if (li && li.parentElement && li.parentElement.classList.contains('nt-checklist') && li.getAttribute('data-checked') !== (on ? 'true' : 'false')) {
+          li.setAttribute('data-checked', on ? 'true' : 'false');
+          ntDecorateTasks(); ntMarkDirty(); ntRenderOutline();
+        }
+      }
+      if (_tabNotes && _ntMounted) ntRenderLib();
     } catch (e) { console.warn('[notes] task toggle', e); ptToast('Couldn’t update the linked task'); }
+    finally { _ntTkBusy.delete(tid); }
   }
   // when: 'today' | 'someday' | 'YYYY-MM-DD'. Same rails as the Coach accept.
   // o (from the task sheet): { text, due, cat }.
@@ -15515,7 +15693,7 @@ const VOICE = {
     const today = todayKey();
     // `deadline` is its own field: Overview rows show it ("Due Fri"); it
     // never moves when the task is pushed to another day.
-    const link = { section: sec, noteId: id, noteLineId: line, ...(due ? { deadline: due } : {}) };
+    const link = { section: sec, noteId: id, noteLineId: line, noteCat: cat, ...(due ? { deadline: due } : {}) };
     let tid = null, where = 'Today';
     if (when === 'today' || when === today) {
       tid = await addTodoItem(text, null, job ? { job } : {});
@@ -15604,7 +15782,7 @@ const VOICE = {
     ntSyncPane();
     ntEnsureMounted();
     const t = target || {};
-    if (t.id) ntOpenDoc(t.id);
+    if (t.id) ntOpenDoc(t.id, t.taskId ? { line: t.taskId } : undefined);
     else if (t.daily) ntOpenDaily(t.daily);
     else if (t.eventId) ntOpenEvent(t.eventId, t.date || todayKey());
     else if (ntIsPhone()) { ntScreen = 'lib'; ntRenderAll(); }
@@ -15617,6 +15795,7 @@ const VOICE = {
     const pane = document.getElementById('notesPane');
     if (!pane) return;
     ntEnsureSubs();
+    ntEnsureTaskIdx();
     if (!_ntMounted) {
       pane.innerHTML = ntShellHTML();
       const q = id => document.getElementById(id);
@@ -15861,7 +16040,22 @@ const VOICE = {
         h += (pinned.length && rest.length ? sub('Recent') : '') + rest.map(ntRowHTML).join('');
       }
     }
-    if (h !== _ntLibSig) { _ntLibSig = h; E.list.innerHTML = h; }
+    // A category also lists the tasks filed under it, from whichever note.
+    const tsec = ntTaskSectionHTML();
+    if (tsec) h = tsec + (arr.length ? h : (ntQuery ? '' : '<div class="nt-empty-lib">No notes here yet — start one with New.</div>'));
+    if (h !== _ntLibSig) {
+      // Keep a keyboard user on the Tasks box they just ticked (the row may
+      // have moved behind "Show done", or been rebuilt by the live index).
+      const ae = document.activeElement;
+      const tk = (ae && E.list.contains(ae)) ? ae.getAttribute('data-nt-tkdone') : null;
+      const at = tk ? [...E.list.querySelectorAll('[data-nt-tkdone]')].indexOf(ae) : -1;
+      _ntLibSig = h; E.list.innerHTML = h;
+      if (tk) {
+        const boxes = [...E.list.querySelectorAll('[data-nt-tkdone]')];
+        const to = boxes.find(b => b.getAttribute('data-nt-tkdone') === tk) || boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]');
+        if (to) { try { to.focus({ preventScroll: true }); } catch {} }
+      }
+    }
     ntRenderBulk();
   }
   // ---- notebooks: sidebar nav (≥1100) and the same list as a switcher popover ----
@@ -15905,7 +16099,7 @@ const VOICE = {
       h += ntNavItemHTML(x.id, x.label, c['t:' + x.id], { color: x.color, drop: x.id, addSub: x.id, kids: kids.length, shut, on });
       if (!shut) kids.forEach(k => { h += ntNavItemHTML(k.id, k.label, c[k.id], { color: k.color, drop: k.id, sub: true }); });
     });
-    if (c[''] || ntFilter === '') h += ntNavItemHTML('', 'General', c[''], { color: NT_GENERAL, drop: '' });
+    if (c[''] || ntFilter === '' || ntHasGeneralTasks()) h += ntNavItemHTML('', 'General', c[''], { color: NT_GENERAL, drop: '' });
     h += '</div>';
     if (c.trash || ntFilter === 'trash') h += '<div class="nt-navg nt-navfoot">' + ntNavItemHTML('trash', 'Trash', c.trash, { icon: NT_SVG.trash }) + '</div>';
     return h;
@@ -15941,7 +16135,7 @@ const VOICE = {
       h += it(x.id, x.label, c['t:' + x.id], x.color);
       ntCatKids(x.id).forEach(k => { h += it(k.id, k.label, c[k.id], k.color, '', true); });
     });
-    if (c['']) h += it('', 'General', c[''], NT_GENERAL);
+    if (c[''] || ntHasGeneralTasks()) h += it('', 'General', c[''], NT_GENERAL);
     if (c.trash) h += '<div class="nt-pop-sep"></div>' + it('trash', 'Trash', c.trash, '', NT_SVG.trash);
     h += `<div class="nt-pop-sep"></div><button class="nt-pop-i" type="button" data-np-newcat="none">${NT_SVG.plus}New category…</button><button class="nt-pop-i" type="button" data-np-act="manage">Edit categories…</button>`;
     ntPopOpen('nav', anchor, h);
@@ -16191,11 +16385,13 @@ const VOICE = {
     card.innerHTML = `<div class="ova-head"><span class="ova-title">Agenda</span><span class="ova-meta">${escHtml(meta)}</span><button class="ova-all" type="button" data-ov-agenda="all">All notes</button></div>${rows}`;
     return card;
   }
-  function _ovNoteLinkHTML(noteId){
+  function _ovNoteLinkHTML(noteId, taskId){
+    ntEnsureSubs();   // titles, even if Notes hasn't been opened this session
     const n = ntNotes.get(noteId);
     if (ntListLoaded && (!n || n.trashed)) return '';
-    const title = n ? 'Open “' + ntTitleOf(n) + '”' : 'Open note';
-    return `<button class="ov-notelink" type="button" data-ov-note="${ntEsc(noteId)}" title="${ntEsc(title)}" aria-label="${ntEsc(title)}">${NT_SVG.docS}</button>`;
+    const name = n ? ntTitleOf(n) : 'Note';
+    const title = n ? `From “${name}” — open it at this task` : 'Open the note this came from';
+    return `<button class="ov-notelink" type="button" data-ov-note="${ntEsc(noteId)}"${taskId ? ` data-ov-task="${ntEsc(taskId)}"` : ''} title="${ntEsc(title)}" aria-label="${ntEsc(title)}">${NT_SVG.docS}<span class="tx">${escHtml(name)}</span></button>`;
   }
 
   // ---- editor: selection + blocks ----
@@ -17056,11 +17252,14 @@ const VOICE = {
       k.sched = t.done ? 'Done' : t.plannedFor ? ntDay(t.plannedFor) : t.planned ? 'Someday' : (t.date && t.date !== today ? ntDay(t.date) : 'Today');
       k.ecm = !!t.smartsheetRowId;
       k.job0 = t.job || '';
+      k.noteCat0 = typeof t.noteCat === 'string' ? t.noteCat : null;
       // A line linked before v3 (or re-sectioned in Personal since) starts
       // from the section the task actually lives in — never the note's.
       const sec = sectionOf(t);
+      const saved = (typeof t.noteCat === 'string' && (t.noteCat === '' || ntCat(t.noteCat)) && ntCatSection(t.noteCat) === sec) ? t.noteCat : null;
       const lineOk = lineCat != null && (lineCat === '' || ntCat(lineCat)) && ntCatSection(lineCat) === sec;
-      if (!lineOk) k.cat = ntCat(sec) ? sec : '';
+      if (saved != null) k.cat = saved;
+      else if (!lineOk) k.cat = ntCat(sec) ? sec : '';
     }
     k.due0 = k.due; k.cat0 = k.cat;
     _ntTask = k;
@@ -17598,11 +17797,15 @@ const VOICE = {
     if (catChanged) {
       const sec = ntCatSection(k.cat);
       patch.section = sec;
+      patch.noteCat = k.cat;
       const job = ntCatJob(k.cat) || sectionJob(sec);
       // No board for the new section: drop the old one rather than leave the
       // task wearing another section's project pill.
       if (job) patch.job = job; else if (k.job0 && sectionOf({ job: k.job0 }) !== sec) patch.job = NT_DEL;
     }
+    // A noteCat that drifted (re-filed in Personal) or was never written is
+    // brought in line with what the sheet showed.
+    if (!k.ecm && k.noteCat0 !== undefined && !('noteCat' in patch) && k.cat !== k.noteCat0) patch.noteCat = k.cat;
     const writes = Object.keys(patch).length > 0;
     if (writes && !(await ntPatchTask(k.tid, patch))) { ptToast('Couldn’t update the task — it may have been deleted'); return; }
     // The line mirrors the task as the sheet read it — but a stale (offline)
@@ -17619,7 +17822,7 @@ const VOICE = {
     const bits = [];
     if ('deadline' in patch) bits.push(due ? 'due ' + ntDay(due) : 'no deadline');
     if (catChanged) bits.push(ntCatPath(k.cat));
-    ptToast('Task updated · ' + bits.join(' · '));
+    if (bits.length) ptToast('Task updated · ' + bits.join(' · '));
   }
   // A fresh tv_todos read mirrored into the page's copies (no listener).
   function ntTaskCacheSet(id, d){
@@ -17628,6 +17831,7 @@ const VOICE = {
       if ('deadline' in d) t.deadline = d.deadline; else delete t.deadline;
       if ('section' in d) t.section = d.section;
       if ('job' in d) t.job = d.job;
+      if ('noteCat' in d) t.noteCat = d.noteCat;
       // Done-ness too: ntToggleLine decides from this copy.
       ['done', 'completedAt', 'doneAt'].forEach(f => { if (f in d) t[f] = d[f]; });
     });
@@ -18030,6 +18234,12 @@ const VOICE = {
     pane.addEventListener('click', e => {
       const t = e.target;
       if (ntInEditor(t)) return;
+      const tdn = t.closest('[data-nt-tkdone]');
+      if (tdn) { e.stopPropagation(); e.preventDefault(); const id = tdn.getAttribute('data-nt-tkdone'); const ix = _ntTaskIdx.get(id); ntTaskSetDone(id, !(ix && ix.done)); return; }
+      const tsd = t.closest('[data-nt-tasksdone]');
+      if (tsd) { e.stopPropagation(); _ntShowDoneTasks = !_ntShowDoneTasks; ntRenderLib(); return; }
+      const tko = t.closest('[data-nt-taskopen]');
+      if (tko) { e.stopPropagation(); ntOpenDoc(tko.getAttribute('data-nt-taskopen'), { line: tko.getAttribute('data-nt-tid') }); return; }
       const rl = t.closest('[data-nt-rail]');
       if (rl) {
         e.stopPropagation();
@@ -18072,7 +18282,7 @@ const VOICE = {
       }
     }, true);
     pane.addEventListener('keydown', e => {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.nt-row[role="button"]')) { e.preventDefault(); e.target.click(); }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.nt-row[role="button"], .nt-taskrow[role="button"]')) { e.preventDefault(); e.target.click(); }
     });
     // Drag a note onto a category (sidebar or a section header) to file it,
     // or onto Pinned to pin it.
