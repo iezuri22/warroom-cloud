@@ -3971,6 +3971,22 @@
   .nt-alltasks .nt-sub:first-child { padding-top: 2px; }
   .nt-tasks-more { border: none; background: transparent; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--ink-dim); cursor: pointer; padding: 6px; }
   .nt-tasks-more:hover { color: var(--ink); }
+  /* All tasks: a row's actions open under it; parked items have no box to tick. */
+  .nt-taskrow.open { background: var(--fill); border-radius: 10px 10px 0 0; }
+  .nt-taskrow .top .pin { flex-shrink: 0; font-size: 11px; line-height: 1; }
+  .nt-taskrow .ck.ph { border-style: dashed; cursor: default; background: transparent; }
+  .nt-tacts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 2px 6px 9px 33px; }
+  .nt-taskrow.open + .nt-tacts { background: var(--fill); border-radius: 0 0 10px 10px; }
+  .nt-tacts + .nt-taskrow:not(:focus-visible) { box-shadow: 0 -1px 0 var(--border); }
+  .nt-tacts .lbl { font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: var(--ink-dim); margin-right: 1px; }
+  .nt-ta { border: 1px solid var(--border); background: var(--surface); color: var(--ink-mid); font-family: inherit; font-size: 11.5px; font-weight: 700; line-height: 1; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+  .nt-ta:hover { background: var(--fill-2); color: var(--ink); }
+  .nt-ta.go { color: var(--accent); }
+  .nt-ta.del { color: var(--red); }
+  .nt-ta.del.arm { background: var(--red); border-color: var(--red); color: #fff; }
+  .nt-ta-note { font-size: 11px; color: var(--ink-dim); padding: 0 2px; }
+  @media (pointer: coarse) { .nt-ta { padding: 8px 10px; } }
+  .nt-all-warn { font-size: 12px; font-weight: 700; color: var(--red); padding: 4px 6px 8px; }
   /* Personal task rows: the note a task came from. */
   .ov-notelink { gap: 3px; align-items: center; max-width: 170px; font-family: inherit; }
   .ov-notelink .tx { font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -6126,6 +6142,7 @@ const VOICE = {
         queueByText(q.text, addSecs);
       }
     }
+    let anyDone = false;
     for (const t of targets) {
       const newTimeSpent = ((t.local && Number(t.local.timeSpent)) || 0) + (t.addSecs || 0);
       if (t.local) { t.local.done = true; t.local.timeSpent = newTimeSpent; }
@@ -6133,6 +6150,7 @@ const VOICE = {
         const patch = { done: true };
         if (t.addSecs > 0) patch.timeSpent = newTimeSpent;
         await updateDoc(doc(db, 'tv_todos', t.id), patch);
+        anyDone = true;
         if (window.parent && window.parent !== window) {
           window.parent.postMessage({
             type: 'warroom:personal-done',
@@ -6144,6 +6162,9 @@ const VOICE = {
         }
       } catch (e) { console.warn('sprint completion update failed', e); }
     }
+    // Recounted by a fresh scan, not bumped: every open Personal document
+    // drains this same queue (and a target may not be loaded here).
+    if (anyDone) _statsSoon();
     try { localStorage.removeItem(QKEY); } catch {}
   }
   // ============ SPRINT → PERSONAL HANDOFF ============
@@ -6410,6 +6431,55 @@ const VOICE = {
     Object.assign(todo, patch);
     try { await updateDoc(doc(db, 'tv_todos', id), patch); } catch (e) { console.error('Update error:', e); }
   }
+  // The done counters the Completed pill and the shell's Stats page read. The
+  // one-task paths bump them (toggleTodo, the drawer's ECM status, Today's
+  // Plan); background paths ask for a fresh scan instead (_statsSoon). The
+  // full scan that reconciles them otherwise runs at most every 6 hours.
+  function _statsBumpDone(todo, done){
+    // Maintain a localStorage daily-done log so the stats bar can count
+    // completions across days WITHOUT needing to query all of Firestore.
+    // The `todos` array is scoped to today's view + pending range tasks, so
+    // done tasks from earlier this week aren't even loaded. The log fills
+    // that gap.
+    try {
+      const todayK = todayKey();
+      const log = JSON.parse(localStorage.getItem('personal-done-log') || '{}') || {};
+      if (done) {
+        log[todayK] = (log[todayK] || 0) + 1;
+      } else {
+        // Undone — decrement today's count if positive, but never go negative
+        // (un-toggling a task done on a different day shouldn't touch today).
+        if (log[todayK] && log[todayK] > 0) log[todayK] -= 1;
+      }
+      localStorage.setItem('personal-done-log', JSON.stringify(log));
+    } catch {}
+    // Per-project lifetime done counter — drives the Stats page's "By project"
+    // section in the daily-planner shell. Keyed by job ID (or '_none' if no
+    // project assigned). Only the lifetime count; for finer breakdowns we'd
+    // need a per-day-per-project log which is overkill for now.
+    try {
+      const byProj = JSON.parse(localStorage.getItem('personal-done-by-project') || '{}') || {};
+      const k = (todo.job && String(todo.job).trim()) ? todo.job : '_none';
+      if (done) {
+        byProj[k] = (byProj[k] || 0) + 1;
+      } else {
+        if (byProj[k] && byProj[k] > 0) byProj[k] -= 1;
+      }
+      localStorage.setItem('personal-done-by-project', JSON.stringify(byProj));
+    } catch {}
+    // Optimistic lifetime-completed pill update — only count tasks with a
+    // project (no-project chores excluded). The full scan (_statsMaybe)
+    // reconciles it from Firestore now and then.
+    try {
+      if (todo.job && String(todo.job).trim()) {
+        const cur = parseInt(localStorage.getItem('personal-completed-lifetime') || '0', 10) || 0;
+        const next = Math.max(0, cur + (done ? 1 : -1));
+        localStorage.setItem('personal-completed-lifetime', String(next));
+        const span = document.querySelector('.nav-tab.completed-pill .ct');
+        if (span) span.textContent = String(next);
+      }
+    } catch {}
+  }
   async function toggleTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
     const todo = todos.find(t => t.id === id);
@@ -6435,49 +6505,7 @@ const VOICE = {
       todo.completedAt = null;
       patch.completedAt = null;
     }
-    // Maintain a localStorage daily-done log so the stats bar can count
-    // completions across days WITHOUT needing to query all of Firestore.
-    // The `todos` array is scoped to today's view + pending range tasks, so
-    // done tasks from earlier this week aren't even loaded. The log fills
-    // that gap.
-    try {
-      const todayK = todayKey();
-      const log = JSON.parse(localStorage.getItem('personal-done-log') || '{}') || {};
-      if (todo.done) {
-        log[todayK] = (log[todayK] || 0) + 1;
-      } else {
-        // Undone — decrement today's count if positive, but never go negative
-        // (un-toggling a task done on a different day shouldn't touch today).
-        if (log[todayK] && log[todayK] > 0) log[todayK] -= 1;
-      }
-      localStorage.setItem('personal-done-log', JSON.stringify(log));
-    } catch {}
-    // Per-project lifetime done counter — drives the Stats page's "By project"
-    // section in the daily-planner shell. Keyed by job ID (or '_none' if no
-    // project assigned). Only the lifetime count; for finer breakdowns we'd
-    // need a per-day-per-project log which is overkill for now.
-    try {
-      const byProj = JSON.parse(localStorage.getItem('personal-done-by-project') || '{}') || {};
-      const k = (todo.job && String(todo.job).trim()) ? todo.job : '_none';
-      if (todo.done) {
-        byProj[k] = (byProj[k] || 0) + 1;
-      } else {
-        if (byProj[k] && byProj[k] > 0) byProj[k] -= 1;
-      }
-      localStorage.setItem('personal-done-by-project', JSON.stringify(byProj));
-    } catch {}
-    // Optimistic lifetime-completed pill update — only count tasks with a
-    // project (no-project chores excluded). The async fetch after render()
-    // resyncs from Firestore as a backup.
-    try {
-      if (todo.job && String(todo.job).trim()) {
-        const cur = parseInt(localStorage.getItem('personal-completed-lifetime') || '0', 10) || 0;
-        const next = Math.max(0, cur + (todo.done ? 1 : -1));
-        localStorage.setItem('personal-completed-lifetime', String(next));
-        const span = document.querySelector('.nav-tab.completed-pill .ct');
-        if (span) span.textContent = String(next);
-      }
-    } catch {}
+    _statsBumpDone(todo, !!todo.done);
     // When a priority-list task gets marked done, the chain rebalances:
     // strip done out of the priority list and pull the top of the next
     // priority list up to fill the slot. Treats First/Second/Third as
@@ -6672,6 +6700,7 @@ const VOICE = {
       const batch = writeBatch(db);
       done.forEach(t => batch.delete(doc(db, 'tv_todos', t.id)));
       await batch.commit();
+      _statsSoon();   // done tasks were deleted: recount with a fresh scan
     } catch {}
   }
   async function savePositions() {
@@ -7936,6 +7965,9 @@ const VOICE = {
           if (todo.done !== wantsDone) {
             todo.done = wantsDone;
             patch.done = wantsDone;
+            // Stamped like toggleTodo, so the full scan files it on the same day.
+            todo.completedAt = patch.completedAt = wantsDone ? new Date().toISOString() : null;
+            _statsBumpDone(todo, wantsDone);
           }
           await updateTodoFields(todo.id, patch);
           // Push to Smartsheets — include Completion Date alignment
@@ -8785,6 +8817,9 @@ const VOICE = {
         try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
         closedFromSheet++;
       }
+      // Closed on the sheet: recounted by a fresh scan rather than bumped —
+      // another open Personal document may close the same task.
+      if (closedFromSheet > 0) _statsSoon();
       let added = 0, updated = 0;
       for (const row of incomplete) {
         const text = (ssCellValue(row, colTask.id) || '').toString().trim();
@@ -13223,6 +13258,9 @@ const VOICE = {
     if (_parkedLoaded && !force) return _parkedCache;
     try {
       const snap = await getDocs(collection(db, 'coach_memory'));
+      // Offline, getDocs answers from the cache (nothing listens to this
+      // collection, so that's empty) — keep the last good list.
+      if (_parkedLoaded && snap.metadata && snap.metadata.fromCache) return _parkedCache;
       const open = [];
       snap.forEach(d => {
         const m = d.data() || {};
@@ -14592,7 +14630,8 @@ const VOICE = {
     completedTab.addEventListener('click', () => openCompletedBrowser());
     strip.appendChild(completedTab);
     // Async refresh from Firestore — counts only done tasks with a project
-    try { _updateCompletedPillCount(); } catch {}
+    // (throttled: see _statsMaybe).
+    try { _statsMaybe(); } catch {}
     view.appendChild(strip);
 
     // ---- NOTES TAB — strip here, docs in #notesPane (mounted once) ----
@@ -14708,6 +14747,14 @@ const VOICE = {
   const _ntTaskIdx = new Map();     // tv_todos made from note lines (live) — the category Tasks section
   const _ntTkBusy = new Set();      // task ids whose tick is still being written
   let _ntTaskIdxOn = false, _ntTaskIdxLoaded = false, _ntTaskIdxErr = false, _ntShowDoneTasks = false, _ntPendingLine = null;
+  // All tasks: every open tv_todos doc (live), what was ticked done there this
+  // session (so it can be un-ticked), and which row has its actions open.
+  const _ntOpenIdx = new Map();
+  const _ntAllDone = new Map();
+  const _ntAllBusy = new Set();     // task / parked ids with a push, delete or pull-in in flight
+  const _ntAllReopened = new Map(); // ECM row id → when it was re-opened here (the sheet may still say Completed)
+  let _ntOpenOn = false, _ntOpenLoaded = false, _ntOpenErr = false, _ntOpenFresh = false;   // fresh: the current listener has answered
+  let _ntAllRow = null, _ntAllDelArm = null, _ntParkAt = 0, _ntParkBusy = false;
 
   // ---- small helpers ----
   const ntIso = () => new Date().toISOString();
@@ -15101,6 +15148,45 @@ const VOICE = {
       if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
     });
   }
+  // Every open task, live — what All tasks lists. A single-field equality (no
+  // composite index); routine copies, closed sheet rows and duplicate ECM docs
+  // are dropped on this side (ntAllOpen).
+  function ntEnsureOpenIdx(){
+    if (_ntOpenOn) return;
+    _ntOpenOn = true;
+    onSnapshot(query(collection(db, 'tv_todos'), where('done', '==', false)), snap => {
+      _ntOpenIdx.clear();
+      snap.forEach(d => _ntOpenIdx.set(d.id, { id: d.id, ...d.data() }));
+      _ntOpenLoaded = true; _ntOpenErr = false; _ntOpenFresh = true;
+      // A re-opened ECM row stays listed until its sheet status stops saying
+      // closed AND a minute and a half has passed: the tick's own Completed
+      // write (a whole-sheet GET, then a PUT) can land after the un-tick.
+      _ntAllReopened.forEach((at, id) => {
+        const d = _ntOpenIdx.get(id);
+        if (d && (d.smartsheetStatus === 'Not feasible - close ticket' || (!NT_SS_CLOSED.has(d.smartsheetStatus) && Date.now() - at > 90000))) _ntAllReopened.delete(id);
+      });
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] all tasks render', e); } }
+    }, e => {
+      // A failed listener is gone for good: say so; the next visit to Notes
+      // (ntGo) starts a new one.
+      console.warn('[notes] open tasks', e);
+      _ntOpenErr = true; _ntOpenFresh = false;
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    });
+  }
+  // Parked items (the Coach's coach_memory) are listed in All tasks too. A
+  // plain read of the whole collection: they change from the Coach, so
+  // coming into Notes refreshes them — at most every half hour; a failed
+  // read waits for the next visit.
+  function ntEnsureParked(fresh){
+    if (_ntParkBusy) return;
+    if (_parkedLoaded ? !(fresh && Date.now() - _ntParkAt > 30 * 60000) : (_ntParkAt && !fresh)) return;
+    _ntParkBusy = true; _ntParkAt = Date.now();
+    loadParkedMemory(true).finally(() => {
+      _ntParkBusy = false;
+      if (_parkedLoaded && _tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    });
+  }
   // A task's category — the task sheet's rule: the one picked when it was
   // made (noteCat) while it still matches the task's section (a task can be
   // re-filed in Personal), else its note's category, else the section's own.
@@ -15163,58 +15249,256 @@ const VOICE = {
   function ntTaskKey(t){ return (ntDueInfo(t.deadline) ? t.deadline : '9999') + '|' + (t.planned && !t.plannedFor ? '9998' : (t.plannedFor || t.date || '')) + '|' + String(t.createdAt || ''); }
   function ntTaskOrder(a, b){ return ntTaskKey(a).localeCompare(ntTaskKey(b)); }
   function ntTaskDoneOrder(a, b){ return String(b.completedAt || b.doneAt || '').localeCompare(String(a.completedAt || a.doneAt || '')); }
-  function ntOpenTaskCount(){ let n = 0; _ntTaskIdx.forEach(t => { if (!t.done) n++; }); return n; }
+  // The sidebar's All tasks count: every open task, and what's parked.
+  function ntOpenTaskCount(){ return _ntOpenLoaded ? ntAllOpen().length + ntParked().length : 0; }
   // One task row, shared by a category's section and All tasks. o.cat adds
-  // the task's category (dot + path) to the meta line.
+  // the task's category (dot + path) to the meta line. o.all (All tasks'
+  // context) and o.place give the schedule and the due date as the Overview
+  // reads them — and, for a task that isn't from a live note, its actions.
   function ntTaskRowHTML(t, o){
-    const n = ntNotes.get(t.noteId);
+    const opt = o || {}, c = opt.all || null;
+    const n = t.noteId ? ntNotes.get(t.noteId) : null;
     const live = !!(n && !n.trashed);
-    const src = !n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n);
-    const due = !t.done && ntDueInfo(t.deadline);
-    const k = (o && o.cat) ? ntTaskCat(t) : null;
+    const due = !t.done && ntDueInfo(c ? ntAllBadgeDay(t) : t.deadline);
+    const k = opt.cat ? (t.noteId ? ntTaskCat(t) : ntSecCat(t)) : null;
     const cat = k != null ? `<span class="cat" style="--c:${ntEsc(ntCatColor(k))}"><span class="d"></span><span class="tx">${escHtml(ntCatPath(k))}</span></span><span>·</span>` : '';
-    const open = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
-    return `<div class="nt-taskrow${t.done ? ' done' : ''}"${open}>`
+    const src = t.noteId
+      ? `${NT_SVG.docS}<span class="src">${escHtml(!n ? 'Note deleted' : n.trashed ? ntTitleOf(n) + ' (in Trash)' : ntTitleOf(n))}</span><span>·</span>`
+      : (t.smartsheetTicket ? `<span class="src">#${escHtml(String(t.smartsheetTicket))}</span><span>·</span>` : '');
+    const when = c ? ntAllWhen(t, opt.place || {}, c) : ntTaskWhen(t);
+    // All tasks: a task that isn't from a live note opens its actions in place.
+    const acts = !!(c && !live && !t.done);
+    const open = acts && _ntAllRow === t.id;
+    const pin = (c && !t.done && t.pinnedUntilDone && c.order.has(t.id)) ? '<span class="pin" aria-hidden="true">📌</span>' : '';
+    const attrs = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"`
+      : acts ? ` role="button" tabindex="0" data-nt-tact="${ntEsc(t.id)}" aria-expanded="${open ? 'true' : 'false'}" title="Push it, or find it in Personal"` : '';
+    return `<div class="nt-taskrow${t.done ? ' done' : ''}${open ? ' open' : ''}"${attrs}>`
       + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
       // The due badge rides on the title line, so the meta line below keeps
       // the full width for category · note · schedule.
-      + `<span class="m"><span class="top"><span class="t">${escHtml(t.text || '')}</span>${due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : ''}</span>`
-      + `<span class="s">${cat}${NT_SVG.docS}<span class="src">${escHtml(src)}</span><span>·</span><span>${escHtml(ntTaskWhen(t))}</span></span></span>`
-      + '</div>';
+      + `<span class="m"><span class="top">${pin}<span class="t">${escHtml(t.text || '')}</span>${due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : ''}</span>`
+      + `<span class="s">${cat}${src}<span>${escHtml(when)}</span></span></span>`
+      + '</div>' + (open ? ntAllActsHTML(t, opt.place || {}, c) : '');
   }
   function ntDoneTasksHTML(done, row){
     if (!done.length) return '';
     return `<button class="nt-tasks-more" type="button" data-nt-tasksdone>${_ntShowDoneTasks ? 'Hide done' : `Show ${done.length} done`}</button>` + (_ntShowDoneTasks ? done.map(row).join('') : '');
   }
-  // "All tasks" (the sidebar's second entry): every task made from a note,
-  // grouped by when it's due, each row naming its category and note.
+  // ---- All tasks: every open task in Personal, not only the notes' ----
+  function ntIsDay(s){ return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+  const NT_SS_CLOSED = new Set(['Completed', 'Not feasible - close ticket']);   // ssSync's SS_CLOSED (a local there)
+  // Parked items — read safely (the Coach's store is declared elsewhere).
+  function ntParked(){ try { return _parkedLoaded ? _parkedCache : []; } catch { return []; } }
+  function ntAllParked(){ return ntParked().filter(ntTaskMatches); }
+  // What counts as an open task: not done, not a routine's daily copy (unless
+  // it's on Today), not a
+  // row the sheet has closed — and one doc per ECM row (the best copy, scored
+  // like the duplicate repair: accepted, then on today's list, then planned,
+  // then worked on; the oldest on a tie). A note task the note index has but
+  // this snapshot doesn't yet is unioned in (the two arrive separately).
+  // Today's list as task ids. A routine's 'tpl:' ref stands for the copy of it
+  // the Overview shows — resolveTaskRef's pick from todos, done or not (there
+  // can be several: duplicates, old copies carried over) — else, while another
+  // day is being viewed, one from the open index. Never resolveTaskRef
+  // itself: it materializes.
+  function ntWorkIds(refs){
+    const tk = todayKey(), out = [];
+    (refs || []).forEach(r => {
+      const k = String(r);
+      if (!k.startsWith('tpl:')) { out.push(k); return; }
+      const tpl = k.slice(4);
+      let pick = todos.find(t => t.fromTemplate === tpl && t.date === tk) || todos.find(t => t.fromTemplate === tpl && !t.date) || null;
+      if (!pick) {
+        let loose = null;
+        _ntOpenIdx.forEach(t => {
+          if (t.fromTemplate !== tpl) return;
+          if (t.date === tk) pick = pick || t; else if (!t.date) loose = loose || t;
+        });
+        pick = pick || loose;
+      }
+      if (pick) out.push(pick.id);
+    });
+    return out;
+  }
+  function ntAllOpen(){
+    const today = new Set(ntWorkIds(work.today));
+    const w = new Set([...today, ...ntWorkIds(work.morning)]);
+    const score = t => (t.ecmAccepted ? 8 : 0) + (w.has(t.id) ? 4 : 0) + (t.plannedFor ? 2 : 0) + ((+t.timeSpent || 0) > 0 ? 1 : 0);
+    const out = [], byRow = new Map();
+    const add = t => {
+      // A routine's daily copy is a task here only when it was put on Today
+      // (the Overview lists those in their section's card).
+      if (!t || t.done || (t.fromTemplate && !today.has(t.id))) return;
+      if (!t.smartsheetRowId) { out.push(t); return; }
+      // Exempt only from the status the tick's own late push can write.
+      if (NT_SS_CLOSED.has(t.smartsheetStatus) && !(t.smartsheetStatus === 'Completed' && _ntAllReopened.has(t.id))) return;
+      const k = String(t.smartsheetRowId), was = byRow.get(k);
+      if (!was) { byRow.set(k, t); return; }
+      const a = score(t), b = score(was);
+      if (a > b || (a === b && String(t.createdAt || '') < String(was.createdAt || ''))) byRow.set(k, t);
+    };
+    _ntOpenIdx.forEach(add);
+    _ntTaskIdx.forEach(t => { if (t.done === false && !_ntOpenIdx.has(t.id)) add(t); });
+    return out.concat([...byRow.values()]);
+  }
+  // Today, the week boundaries (the Planned tab's) and the working set.
+  function ntAllCtx(){
+    const tk = todayKey();
+    const base = new Date(tk + 'T12:00:00');
+    const mon = new Date(_mondayKeyFor(base) + 'T12:00:00').getTime();
+    const order = new Map();
+    ntWorkIds(work.today).forEach((id, i) => { if (!order.has(id)) order.set(id, i); });
+    return {
+      today: tk,
+      tomorrow: _ckey(new Date(base.getTime() + 86400000)),
+      weekEnd: _ckey(new Date(mon + 6 * 86400000)),
+      nextWeekEnd: _ckey(new Date(mon + 13 * 86400000)),
+      order,                                       // the Overview's Today order, by task id
+      morning: new Set(ntWorkIds(work.morning)),
+    };
+  }
+  // The day a task is due, as the Overview's due chip reads it: a note
+  // deadline, else the sheet's Due Date or the date it was first given, else a
+  // range task's end — else a planned day that has already come (a planned
+  // day still ahead is only the schedule).
+  function ntAllBadgeDay(t){
+    const dl = _ovDeadline(t);
+    if (dl && !t.sheetDue) return dl;
+    const td = String(_ovTrueDue(t) || '').slice(0, 10);
+    if (ntIsDay(td)) return td;
+    if (isRangeTask(t) && ntIsDay(t.dueDate)) return t.dueDate;
+    const pf = typeof t.plannedFor === 'string' ? t.plannedFor : '';
+    return (ntIsDay(pf) && pf <= todayKey()) ? pf : '';
+  }
+  // Where a task sits. g: late · today · tomorrow · week · next · later ·
+  // someday · ecm; day orders rows within a group. The Overview's rules, for
+  // every open task: today's list is today; a planned task sits on its planned
+  // day (or its deadline, when that comes first); a loose one on its date,
+  // carried up to today; ECM work nobody has planned yet waits in its own
+  // group. Overdue = the due date has passed — unless it's been pushed ahead.
+  function ntAllPlace(t, c){
+    const tk = c.today;
+    const inW = c.order.has(t.id) || c.morning.has(t.id);
+    if (!inW && t.smartsheetRowId && !t.plannedFor && !t.ecmAccepted) return { g: 'ecm', day: '' };
+    let day = '';
+    const rem = _isPendingReminder(t);
+    if (inW) day = tk;
+    // A planned day wins over a pending reminder (a push plans it — and the
+    // Planned tab files it by that day too).
+    else if (_isPlannedDoc(t) && (ntIsDay(t.plannedFor) || !rem)) day = _ovPlanDay(t);
+    else if (rem) day = String(t.remindOn).slice(0, 10);
+    else if (isRangeTask(t)) {
+      const st = ntIsDay(t.startDate) ? t.startDate : ntIsDay(t.date) ? t.date : '';
+      day = st > tk ? st : ntIsDay(t.dueDate) ? t.dueDate : tk;
+    } else {
+      day = ntIsDay(t.date) ? (t.date < tk ? tk : t.date) : '';
+      const dl = _ovDeadline(t);
+      if (dl && (!day || dl < day)) day = dl;
+    }
+    if (day && day > tk) return { g: day === c.tomorrow ? 'tomorrow' : day <= c.weekEnd ? 'week' : day <= c.nextWeekEnd ? 'next' : 'later', day };
+    const bd = ntAllBadgeDay(t);
+    if (bd && bd < tk) return { g: 'late', day: bd };
+    return { g: day ? 'today' : 'someday', day };
+  }
+  // The row's schedule, in words.
+  function ntAllWhen(t, p, c){
+    if (t.done) return 'Done';
+    if (p.g === 'ecm') return 'Not planned yet';
+    if (c.order.has(t.id)) return 'Today';
+    if (c.morning.has(t.id)) return 'Morning';
+    const rem = _isPendingReminder(t);
+    if (_isPlannedDoc(t) && (ntIsDay(t.plannedFor) || !rem)) return ntIsDay(t.plannedFor) ? (t.plannedFor === c.today ? 'Today' : ntDay(t.plannedFor)) : 'Someday';
+    if (rem) return 'Reminds ' + ntDay(String(t.remindOn).slice(0, 10));
+    if (isRangeTask(t)) return (ntIsDay(t.startDate) && t.startDate > c.today) ? 'Starts ' + ntDay(t.startDate) : 'Ongoing';
+    return !ntIsDay(t.date) ? 'No date' : t.date > c.today ? ntDay(t.date) : 'Today';
+  }
+  // Where Personal lists it: 'overview', 'planned', 'inbox' — or '' (nowhere:
+  // a loose task for a later day, or one with no date).
+  function ntAllHome(t, p, c){
+    if (p.g === 'ecm') return _isPlannedDoc(t) ? 'inbox' : '';
+    if (c.order.has(t.id) || c.morning.has(t.id)) return 'overview';
+    if (_isPlannedDoc(t)) { const d = _ovPlanDay(t); return (d && d <= c.today) ? 'overview' : 'planned'; }
+    // A loose task: only once it's dated today (carry-over moves older ones
+    // up; until it does, the Overview doesn't list them).
+    if (t.date === c.today) return 'overview';
+    return '';
+  }
+  // A task not from a note is filed under its section's category.
+  function ntSecCat(t){ const k = sectionOf(t); return ntCat(k) ? k : ''; }
+  const NT_ALL_GROUPS = [
+    ['late', 'Overdue', 'var(--red)'], ['today', 'Today', 'var(--accent)'], ['tomorrow', 'Tomorrow', 'var(--ink-dim)'],
+    ['week', 'This week', 'var(--ink-dim)'], ['next', 'Next week', 'var(--ink-dim)'], ['later', 'Later', 'var(--ink-dim)'],
+    ['someday', 'Someday', 'var(--ink-dim)'], ['ecm', 'ECM — assigned to me', ''],
+  ];
+  function ntAllGroupHTML(k, label, color, n, rows){
+    const key = 'all:' + k, shut = ntGroupShut().has(key);
+    return `<div class="nt-group nt-tasks${shut ? ' shut' : ''}"><button class="nt-group-h" type="button" data-nt-group="${ntEsc(key)}" aria-expanded="${shut ? 'false' : 'true'}"><span class="d" style="--c:${ntEsc(color)}"></span><span class="tx">${escHtml(label)}</span><span class="n">${n}</span>${NT_SVG.chevS}</button>${shut ? '' : rows}</div>`;
+  }
+  // The actions under an open row: the Overview's push menu, where Personal
+  // lists it, and Delete — never for ECM work (the sheet sync would bring it
+  // back) or a note's task (that's deleted from its note).
+  function ntAllActsHTML(t, p, c){
+    const id = ntEsc(t.id), home = ntAllHome(t, p, c), arm = _ntAllDelArm === t.id;
+    const go = home ? `<button class="nt-ta go" type="button" data-nt-tgo="${id}">${home === 'inbox' ? 'Open the ECM inbox' : home === 'planned' ? 'Show in Planned' : 'Show in Overview'} →</button>` : '';
+    const del = t.smartsheetRowId ? '<span class="nt-ta-note">Managed on ECM</span>'
+      : (t.noteId || t.fromTemplate) ? '' : `<button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}">${arm ? 'Sure?' : 'Delete'}</button>`;
+    return `<div class="nt-tacts"><span class="lbl">Push</span>`
+      + _ovPushDates().map(o => `<button class="nt-ta" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}">${escHtml(o.label)}</button>`).join('')
+      + go + del + '</div>';
+  }
+  // A parked item isn't a task yet: no box to tick — schedule it or drop it.
+  function ntParkRowHTML(m){
+    const key = 'park:' + m.id, open = _ntAllRow === key, arm = _ntAllDelArm === key, id = ntEsc(m.id);
+    return `<div class="nt-taskrow nt-park${open ? ' open' : ''}" role="button" tabindex="0" data-nt-tact="${ntEsc(key)}" aria-expanded="${open ? 'true' : 'false'}" title="Schedule it, or drop it">`
+      + '<span class="ck ph" aria-hidden="true"></span>'
+      + `<span class="m"><span class="top"><span class="t">${escHtml(m.text || '')}</span></span><span class="s"><span>Parked with Coach</span><span>·</span><span>Not scheduled</span></span></span></div>`
+      + (open ? `<div class="nt-tacts"><span class="lbl">Move to</span><button class="nt-ta" type="button" data-nt-park="today|${id}">Today</button><button class="nt-ta" type="button" data-nt-park="someday|${id}">Someday</button><button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-park="drop|${id}">${arm ? 'Sure?' : 'Drop'}</button></div>` : '');
+  }
+  // Done: the notes' done tasks, and whatever was ticked here this session.
+  function ntAllDoneList(){
+    const m = new Map();
+    _ntAllDone.forEach((t, id) => {
+      if (_ntOpenIdx.has(id)) return;
+      if (t.noteId && _ntTaskIdxLoaded && !_ntTaskIdx.has(id)) return;   // deleted since
+      m.set(id, t);
+    });
+    _ntTaskIdx.forEach(t => { if (t.done) m.set(t.id, t); });
+    return [...m.values()];
+  }
+  // "All tasks" (the sidebar's second entry): every open task in Personal —
+  // today's and overdue work in every section, what's planned, Someday, ECM
+  // assignments still waiting, parked items — and the notes' tasks, grouped
+  // by when they're due. Each row names its category, and its note when it
+  // came from one.
   function ntAllTasksHTML(){
-    if (!_ntTaskIdxLoaded) return _ntTaskIdxErr
+    if (!_ntOpenLoaded) return _ntOpenErr
       ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection, then open Notes again.</div>'
       : '<div class="nt-empty-lib">Loading tasks…</div>';
-    const q = ntQuery.trim().toLowerCase();
-    const all = [..._ntTaskIdx.values()].filter(ntTaskMatches);
-    if (!all.length) return q
-      ? `<div class="nt-empty-lib">No tasks match “${escHtml(ntQuery)}”.</div>`
-      : '<div class="nt-empty-lib">No tasks yet. Put the cursor on a line and press <b>Task</b> (or type /task) — it shows up here and in its category.</div>';
-    const open = all.filter(t => !t.done).sort(ntTaskOrder), done = all.filter(t => t.done).sort(ntTaskDoneOrder);
-    const today = todayKey();
-    const dd = t => ntDueInfo(t.deadline) ? _ovDayDiff(today, t.deadline) : null;
-    const groups = [
-      ['Overdue', t => dd(t) !== null && dd(t) < 0],
-      ['Due today', t => dd(t) === 0],
-      ['Due this week', t => dd(t) !== null && dd(t) >= 1 && dd(t) <= 7],
-      ['Due later', t => dd(t) !== null && dd(t) > 7],
-      ['No deadline', t => dd(t) === null],
-    ];
-    const row = t => ntTaskRowHTML(t, { cat: true });
-    let h = '';
-    groups.forEach(([label, test]) => {
-      const items = open.filter(test);
-      if (items.length) h += `<div class="nt-sub">${escHtml(label)} · ${items.length}</div>` + items.map(row).join('');
+    const c = ntAllCtx();
+    const open = ntAllOpen().filter(ntTaskMatches), parked = ntAllParked();
+    const G = {}, P = new Map();
+    NT_ALL_GROUPS.forEach(([k]) => { G[k] = []; });
+    open.forEach(t => { const p = ntAllPlace(t, c); P.set(t.id, p); G[p.g].push(t); });
+    const ca = t => String(t.createdAt || '');
+    const byDay = (a, b) => (P.get(a.id).day || '').localeCompare(P.get(b.id).day || '') || ntAllBadgeDay(a).localeCompare(ntAllBadgeDay(b)) || ca(a).localeCompare(ca(b));
+    // Today keeps the Overview's order: its list first, then the morning, then the rest.
+    const pos = t => c.order.has(t.id) ? c.order.get(t.id) : c.morning.has(t.id) ? 1e6 : 2e6;
+    G.today.sort((a, b) => pos(a) - pos(b) || (+a.position || 0) - (+b.position || 0) || ca(a).localeCompare(ca(b)));
+    ['late', 'tomorrow', 'week', 'next', 'later'].forEach(k => G[k].sort(byDay));
+    G.someday.sort((a, b) => ca(b).localeCompare(ca(a)));
+    G.ecm.sort((a, b) => ca(b).localeCompare(ca(a)));
+    const row = t => ntTaskRowHTML(t, { cat: true, all: c, place: P.get(t.id) });
+    let h = _ntOpenErr ? '<div class="nt-all-warn">Live updates stopped — open Notes again to refresh.</div>'
+      : !_ntOpenFresh ? '<div class="nt-all-warn">Reconnecting…</div>' : '';
+    NT_ALL_GROUPS.forEach(([k, label, color]) => {
+      if (G[k].length) h += ntAllGroupHTML(k, label, color || ntCatColor('ecm'), G[k].length, G[k].map(row).join(''));
     });
-    if (!open.length) h += '<div class="nt-empty-lib">All done — nothing open.</div>';
-    return `<div class="nt-alltasks">${h}${ntDoneTasksHTML(done, row)}</div>`;
+    if (parked.length) h += ntAllGroupHTML('parked', 'Parked', 'var(--ink-dim)', parked.length, parked.map(ntParkRowHTML).join(''));
+    const done = ntAllDoneList().filter(ntTaskMatches).sort(ntTaskDoneOrder);
+    if (!open.length && !parked.length) h += ntQuery.trim()
+      ? `<div class="nt-empty-lib">No tasks match “${escHtml(ntQuery)}”.</div>`
+      : '<div class="nt-empty-lib">Nothing open — you’re all caught up.</div>';
+    return `<div class="nt-alltasks">${h}${ntDoneTasksHTML(done, t => ntTaskRowHTML(t, { cat: true, all: c, place: { g: 'done', day: '' } }))}</div>`;
   }
   // Bring a task's line into view (opening its folded section) and flash it.
   function ntRevealTaskLine(tid){
@@ -15707,15 +15991,39 @@ const VOICE = {
     try {
       let t = todos.find(x => x.id === tid);
       if (!t) {
-        const s = await getDoc(doc(db, 'tv_todos', tid));
-        t = todos.find(x => x.id === tid) || null;   // loaded by another path meanwhile?
-        if (!t && s.exists()) { t = { id: tid, ...(s.data() || {}) }; todos.push(t); }
+        // Notes' live copies first — All tasks lists docs no other cache holds.
+        // (Never _ntAllDone's copy: the task may have been deleted since.)
+        const cp = _ntOpenIdx.get(tid) || _ntTaskIdx.get(tid);
+        if (cp) { t = { ...cp }; todos.push(t); }
+        else {
+          const s = await getDoc(doc(db, 'tv_todos', tid));
+          t = todos.find(x => x.id === tid) || null;   // loaded by another path meanwhile?
+          if (!t && s.exists()) { t = { id: tid, ...(s.data() || {}) }; todos.push(t); }
+        }
       }
-      if (!t) { ptToast('That task no longer exists'); return; }
-      // The live index is fresher than a cached copy (it was ticked elsewhere?).
+      if (!t) { _ntAllDone.delete(tid); ptToast('That task no longer exists'); if (_tabNotes && _ntMounted) ntRenderLib(); return; }
+      // The live indexes are fresher than a cached copy (ticked elsewhere?) —
+      // the open-task one only once its current listener has answered (a
+      // dead or just-restarted one still holds rows ticked since).
       const ix = _ntTaskIdx.get(tid);
       if (ix && typeof ix.done === 'boolean') t.done = ix.done;
+      else if (_ntOpenIdx.has(tid) && _ntOpenFresh) t.done = false;
+      // A routine's copy that was on Today goes back there when it's re-opened:
+      // ticking took it off Today, and off Today it isn't a task here.
+      const prev = _ntAllDone.get(tid);
+      const onToday = on ? !!(t.fromTemplate && ntWorkIds(work.today).includes(tid)) : !!(prev && prev.onToday);
+      // All tasks keeps what it ticks done (it leaves the open snapshot at
+      // once), so it can be un-ticked from "Show done". An ECM row re-opened
+      // here stays listed while the sheet still says Completed (ntAllOpen).
+      if (on) { _ntAllDone.set(tid, { ...t, done: true, completedAt: t.completedAt || new Date().toISOString(), onToday }); _ntAllReopened.delete(tid); }
+      else { _ntAllDone.delete(tid); if (t.smartsheetRowId) _ntAllReopened.set(tid, Date.now()); }
       if (!!t.done !== on) await toggleTodo(tid);
+      if (on) _ntAllDone.set(tid, { ...t, done: true, completedAt: t.completedAt || new Date().toISOString(), onToday });
+      else if (onToday && !ntWorkIds(work.today).includes(tid)) { try { addToToday(tid); render(); } catch {} }
+      // The open index follows too: with its listener gone (offline, over
+      // quota) nothing else moves the row, and a second tap would complete
+      // the task all over again.
+      if (on) _ntOpenIdx.delete(tid); else if (!t.done && !_ntOpenIdx.has(tid)) _ntOpenIdx.set(tid, { ...t, done: false });
       const p = (_plannedCache || []).find(x => x.id === tid);
       if (p) p.done = on;
       if (ix) ix.done = on;
@@ -15732,6 +16040,122 @@ const VOICE = {
       if (_tabNotes && _ntMounted) ntRenderLib();
     } catch (e) { console.warn('[notes] task toggle', e); ptToast('Couldn’t update the linked task'); }
     finally { _ntTkBusy.delete(tid); }
+  }
+  // ---- All tasks: acting on a task that isn't from a note ----
+  // Push: the Overview's push menu — a new planned day, off Today's list, and
+  // the date it was first given kept (origDue) so it still says when it was due.
+  async function ntAllPush(id, ds){
+    const t = _ntOpenIdx.get(id) || _ntTaskIdx.get(id);
+    if (!t || !ntIsDay(ds) || _ntAllBusy.has(id)) return;
+    _ntAllBusy.add(id);
+    const patch = { plannedFor: ds, date: ds, planned: true };
+    if (!t.sheetDue && !t.origDue && t.plannedFor) patch.origDue = t.plannedFor;
+    // If the task leaves its group, a keyboard user moves on to the row after
+    // it (the one before, if it was last) BEFORE the write — the live snapshot
+    // redraws it mid-write in its new group, far away. If it stays put, focus
+    // comes back to its own row (ntRenderLib's restore).
+    const c = ntAllCtx();
+    const off = { ...c, order: new Map([...c.order].filter(([k]) => k !== id)), morning: new Set([...c.morning].filter(k => k !== id)) };
+    const leaves = ntAllPlace(t, c).g !== ntAllPlace({ ...t, ...patch }, off).g;
+    const E = _ntEls, rows = E ? [...E.list.querySelectorAll('[data-nt-tact], [data-nt-taskopen]')] : [];
+    const keyOf = r => (r && r.getAttribute) ? (r.getAttribute('data-nt-tact') || r.getAttribute('data-nt-tid')) : null;
+    const i = rows.findIndex(r => r.getAttribute('data-nt-tact') === id);
+    const next = (leaves && i >= 0) ? (rows[i + 1] || rows[i - 1] || null) : null;
+    const hadFocus = !!(E && E.list.contains(document.activeElement)), nk = keyOf(next);
+    _ntAllRow = null; _ntAllDelArm = null;
+    if (next && hadFocus) { try { next.focus({ preventScroll: true }); } catch {} }
+    ntRenderLib();
+    let back = false;
+    try {
+      await updateDoc(doc(db, 'tv_todos', id), patch);
+      // Personal's own copies follow — the Overview and Planned read these.
+      const a = todos.find(x => x.id === id), p = (_plannedCache || []).find(x => x.id === id);
+      if (a) Object.assign(a, patch);
+      if (p) Object.assign(p, patch); else _plannedCache.push(a || { ...t, ...patch });
+      removeFromWork(id); saveWork();
+      ptToast('Moved to ' + ntDay(ds));
+      try { render(); } catch {}
+    } catch (e) {
+      console.warn('[notes] push', e); ptToast('Couldn’t move that task');
+      // Its actions come back — unless another row's are open by now, or the
+      // task is gone — and so does keyboard focus, if it's still where the
+      // push left it.
+      if (_ntAllRow == null && (_ntOpenIdx.has(id) || _ntTaskIdx.has(id))) { _ntAllRow = id; back = hadFocus; }
+    }
+    finally {
+      _ntAllBusy.delete(id);
+      if (_tabNotes && _ntMounted) ntRenderLib();
+      if (back && E) {
+        const ae = document.activeElement, ak = keyOf(ae);
+        if ((!E.list.contains(ae) && ae === document.body) || ak === nk || ak === id) {
+          const r = [...E.list.querySelectorAll('[data-nt-tact]')].find(x => x.getAttribute('data-nt-tact') === id);
+          if (r) { try { r.focus(); } catch {} }
+        }
+      }
+    }
+  }
+  // Delete: two taps. Never ECM work (it's closed on ECM — the sheet sync
+  // would bring it back) or a note's task (it's deleted from its note).
+  async function ntAllDelete(id){
+    const t = _ntOpenIdx.get(id);
+    if (!t || t.smartsheetRowId || t.noteId || t.fromTemplate || _ntAllBusy.has(id)) return;
+    if (_ntAllDelArm !== id) { _ntAllDelArm = id; ntRenderLib(); return; }
+    _ntAllDelArm = null; _ntAllRow = null; _ntAllBusy.add(id);
+    try {
+      if (activeTimerId === id) { try { await stopTimer(false); } catch {} }
+      await deleteDoc(doc(db, 'tv_todos', id));
+      _ntAllDone.delete(id);
+      todos = todos.filter(x => x.id !== id);
+      _plannedCache = (_plannedCache || []).filter(x => x.id !== id);
+      removeFromWork(id); saveWork();
+      ptToast('Task deleted');
+      try { render(); } catch {}
+    } catch (e) { console.warn('[notes] delete', e); ptToast('Couldn’t delete that task'); }
+    finally { _ntAllBusy.delete(id); if (_tabNotes && _ntMounted) ntRenderLib(); }
+  }
+  // "Show in …": leave Notes for the place Personal lists the task.
+  function ntAllShowInPersonal(id){
+    const t = _ntOpenIdx.get(id) || _ntTaskIdx.get(id);
+    if (!t) return;
+    const c = ntAllCtx(), home = ntAllHome(t, ntAllPlace(t, c), c);
+    if (!home) return;
+    _ntAllRow = null; _ntAllDelArm = null;
+    _tabNotes = false; _tabHabits = false; _tabTimer = false;
+    _tabOverview = home === 'overview'; _tabPlanned = !_tabOverview;
+    // The inbox lists the planned cache — read it fresh so this item is there.
+    loadPlannedTodos(home === 'inbox').then(() => {
+      try {
+        if (_tabOverview || _tabPlanned) render();
+        if (home === 'inbox' && _tabPlanned) openEcmInbox();
+      } catch {}
+    });
+    render();
+    try { window.scrollTo(0, 0); } catch {}
+  }
+  // Parked: pull one into Today or Someday (it becomes a task and the Coach's
+  // memory is resolved) — or drop it, with two taps.
+  async function ntAllPark(act, id){
+    const key = 'park:' + id;
+    const m = ntParked().find(x => x.id === id);
+    if (!m) { if (_tabNotes && _ntMounted) ntRenderLib(); return; }   // already gone (the Coach): clear the row
+    if (_ntAllBusy.has(key)) return;
+    if (act === 'drop' && _ntAllDelArm !== key) { _ntAllDelArm = key; ntRenderLib(); return; }
+    _ntAllDelArm = null; _ntAllRow = null; _ntAllBusy.add(key);
+    try {
+      // The Coach may have scheduled or dropped it since this list was read.
+      const ms = await getDoc(doc(db, 'coach_memory', id));
+      if (!(ms.metadata && ms.metadata.fromCache) && (!ms.exists() || ((ms.data() || {}).status || 'open') !== 'open')) {
+        _parkedCache = _parkedCache.filter(x => x.id !== id);
+        ptToast('The Coach already took care of that one');
+        return;
+      }
+      if (act === 'drop') { await parkedDrop(id); ptToast('Dropped'); }
+      else if (await parkedPullIn(id, m.text, act === 'today' ? 'today' : 'someday')) {
+        ptToast(act === 'today' ? 'Added to Today' : 'Moved to Someday');
+        try { render(); } catch {}
+      } else ptToast('Couldn’t schedule that');
+    } catch (e) { console.warn('[notes] parked', e); ptToast('Couldn’t update that'); }
+    finally { _ntAllBusy.delete(key); if (_tabNotes && _ntMounted) ntRenderLib(); }
   }
   // when: 'today' | 'someday' | 'YYYY-MM-DD'. Same rails as the Coach accept.
   // o (from the task sheet): { text, due, cat }.
@@ -15839,6 +16263,8 @@ const VOICE = {
     document.body.classList.add('notes-active');
     ntSyncPane();
     if (_ntTaskIdxErr) { _ntTaskIdxOn = false; _ntTaskIdxErr = false; }   // the task listener died: retry on entry
+    if (_ntOpenErr) { _ntOpenOn = false; _ntOpenErr = false; _ntOpenFresh = false; }   // …and All tasks' listener
+    ntEnsureParked(true);   // parked items change from the Coach — refresh on the way in
     ntEnsureMounted();
     const t = target || {};
     if (t.id) ntOpenDoc(t.id, t.taskId ? { line: t.taskId } : undefined);
@@ -15855,6 +16281,8 @@ const VOICE = {
     if (!pane) return;
     ntEnsureSubs();
     ntEnsureTaskIdx();
+    ntEnsureOpenIdx();   // the sidebar's All tasks count is always on screen
+    ntEnsureParked(false);
     if (!_ntMounted) {
       pane.innerHTML = ntShellHTML();
       const q = id => document.getElementById(id);
@@ -16047,6 +16475,7 @@ const VOICE = {
     if (E.lswitchLbl) E.lswitchLbl.textContent = label;
     if (E.lswitch) { E.lswitch.classList.toggle('dot', !!color); if (color) E.lswitch.style.setProperty('--c', color); }
     if (E.selBtn) { E.selBtn.classList.toggle('on', _ntSelMode); E.selBtn.hidden = ntFilter === 'tasks'; }
+    if (E.search) E.search.placeholder = ntFilter === 'tasks' ? 'Search tasks' : 'Search notes';
     ntRenderToday();
     const arr = ntVisible();
     if (E.lcount) E.lcount.textContent = arr.length ? String(arr.length) : '';
@@ -16100,26 +16529,49 @@ const VOICE = {
         h += (pinned.length && rest.length ? sub('Recent') : '') + rest.map(ntRowHTML).join('');
       }
     }
-    // "All tasks" lists every task made from a note, instead of notes.
+    // "All tasks" lists every open task (Personal's and the notes'), instead of notes.
     if (ntFilter === 'tasks') {
       h = ntAllTasksHTML();
       // The header counts what's listed (the search applies); the sidebar keeps the total.
-      if (E.lcount) { let n = 0; _ntTaskIdx.forEach(t => { if (!t.done && ntTaskMatches(t)) n++; }); E.lcount.textContent = n ? String(n) : ''; }
+      if (E.lcount) { const n = _ntOpenLoaded ? ntAllOpen().filter(ntTaskMatches).length + ntAllParked().length : 0; E.lcount.textContent = n ? String(n) : ''; }
     }
     // A category also lists the tasks filed under it, from whichever note.
     const tsec = ntTaskSectionHTML();
     if (tsec) h = tsec + (arr.length ? h : (ntQuery ? '' : '<div class="nt-empty-lib">No notes here yet — start one with New.</div>'));
     if (h !== _ntLibSig) {
-      // Keep a keyboard user on the Tasks box they just ticked (the row may
-      // have moved behind "Show done", or been rebuilt by the live index).
+      // Keep a keyboard user on the control they just used — a Tasks box, an
+      // All tasks row or one of its actions — as the list is rebuilt around
+      // it (a ticked row may have moved behind "Show done").
       const ae = document.activeElement;
-      const tk = (ae && E.list.contains(ae)) ? ae.getAttribute('data-nt-tkdone') : null;
-      const at = tk ? [...E.list.querySelectorAll('[data-nt-tkdone]')].indexOf(ae) : -1;
+      const ka = (ae && E.list.contains(ae)) ? ['data-nt-tkdone', 'data-nt-tact', 'data-nt-tdel', 'data-nt-park', 'data-nt-tpush', 'data-nt-tid'].find(a => ae.hasAttribute(a)) : null;
+      const kv = ka ? ae.getAttribute(ka) : null;
+      // The All tasks row a control belongs to — focus goes there when the
+      // control itself is gone (pushed, deleted, scheduled), else to the row
+      // now in its place.
+      const rk = (!ka || ka === 'data-nt-tkdone') ? null
+        : ka === 'data-nt-tpush' ? kv.slice(0, kv.lastIndexOf('|'))
+        : ka === 'data-nt-park' ? 'park:' + kv.slice(kv.indexOf('|') + 1) : kv;
+      const rowsOf = () => [...E.list.querySelectorAll('[data-nt-tact], [data-nt-taskopen]')];
+      const keyOf = r => r.getAttribute('data-nt-tact') || r.getAttribute('data-nt-tid');   // a note task's row: its task id
+      const ri = rk ? rowsOf().findIndex(r => keyOf(r) === rk) : -1;
+      const at = ka === 'data-nt-tkdone' ? [...E.list.querySelectorAll('[data-nt-tkdone]')].indexOf(ae) : -1;
       _ntLibSig = h; E.list.innerHTML = h;
-      if (tk) {
-        const boxes = [...E.list.querySelectorAll('[data-nt-tkdone]')];
-        const to = boxes.find(b => b.getAttribute('data-nt-tkdone') === tk) || boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]') || E.list.querySelector('[data-nt-tasksdone]');
-        if (to) { try { to.focus({ preventScroll: true }); } catch {} }
+      if (ka) {
+        let to = [...E.list.querySelectorAll('[' + ka + ']')].find(b => b.getAttribute(ka) === kv);
+        let moved = false;
+        if (!to && rk) {
+          // A pushed row has left for another group: stay in its place (the
+          // row there now), as after a delete; otherwise follow the row.
+          const rows = rowsOf(), here = ri >= 0 ? rows[Math.min(ri, rows.length - 1)] : null;
+          to = (ka === 'data-nt-tpush' ? here : null) || rows.find(r => keyOf(r) === rk) || here || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]');
+          moved = true;
+        }
+        if (!to && ka === 'data-nt-tkdone') {
+          const boxes = [...E.list.querySelectorAll('[data-nt-tkdone]')];
+          to = boxes[Math.min(at, boxes.length - 1)] || E.list.querySelector('[data-nt-group^="tasks:"]') || E.list.querySelector('[data-nt-group^="all:"]') || E.list.querySelector('[data-nt-tasksdone]');
+        }
+        // The same control stays put; a stand-in scrolls into view if it must.
+        if (to) { try { to.focus({ preventScroll: !moved }); } catch {} }
       }
     }
     ntRenderBulk();
@@ -18303,11 +18755,24 @@ const VOICE = {
       const t = e.target;
       if (ntInEditor(t)) return;
       const tdn = t.closest('[data-nt-tkdone]');
-      if (tdn) { e.stopPropagation(); e.preventDefault(); const id = tdn.getAttribute('data-nt-tkdone'); const ix = _ntTaskIdx.get(id); ntTaskSetDone(id, !(ix && ix.done)); return; }
+      // The box flips what its row shows (All tasks' rows aren't all in the note index).
+      if (tdn) { e.stopPropagation(); e.preventDefault(); const id = tdn.getAttribute('data-nt-tkdone'), row = tdn.closest('.nt-taskrow'); ntTaskSetDone(id, !(row && row.classList.contains('done'))); return; }
       const tsd = t.closest('[data-nt-tasksdone]');
       if (tsd) { e.stopPropagation(); _ntShowDoneTasks = !_ntShowDoneTasks; ntRenderLib(); return; }
       const tko = t.closest('[data-nt-taskopen]');
       if (tko) { e.stopPropagation(); ntOpenDoc(tko.getAttribute('data-nt-taskopen'), { line: tko.getAttribute('data-nt-tid') }); return; }
+      // All tasks: a task that isn't from a note (or a parked item) opens its
+      // actions in place — push, show in Personal, delete / schedule, drop.
+      const tpu = t.closest('[data-nt-tpush]');
+      if (tpu) { e.stopPropagation(); const v = tpu.getAttribute('data-nt-tpush'), i = v.lastIndexOf('|'); ntAllPush(v.slice(0, i), v.slice(i + 1)); return; }
+      const tgo = t.closest('[data-nt-tgo]');
+      if (tgo) { e.stopPropagation(); ntAllShowInPersonal(tgo.getAttribute('data-nt-tgo')); return; }
+      const tdl = t.closest('[data-nt-tdel]');
+      if (tdl) { e.stopPropagation(); ntAllDelete(tdl.getAttribute('data-nt-tdel')); return; }
+      const tpk = t.closest('[data-nt-park]');
+      if (tpk) { e.stopPropagation(); const v = tpk.getAttribute('data-nt-park'), i = v.indexOf('|'); ntAllPark(v.slice(0, i), v.slice(i + 1)); return; }
+      const tac = t.closest('[data-nt-tact]');
+      if (tac) { e.stopPropagation(); const id = tac.getAttribute('data-nt-tact'); _ntAllRow = _ntAllRow === id ? null : id; _ntAllDelArm = null; ntRenderLib(); return; }
       const rl = t.closest('[data-nt-rail]');
       if (rl) {
         e.stopPropagation();
@@ -18456,8 +18921,15 @@ const VOICE = {
       else if (e.key === 'Enter') {
         const first = E.list.querySelector('[data-nt-open]');
         if (first) { ntOpenDoc(first.getAttribute('data-nt-open')); return; }
-        const tr = E.list.querySelector('[data-nt-taskopen]');   // All tasks lists tasks, not notes
-        if (tr) ntOpenDoc(tr.getAttribute('data-nt-taskopen'), { line: tr.getAttribute('data-nt-tid') });
+        // All tasks lists tasks, not notes: open the first one's note — or its actions.
+        const tr = E.list.querySelector('[data-nt-taskopen], [data-nt-tact]');
+        if (tr && tr.hasAttribute('data-nt-taskopen')) ntOpenDoc(tr.getAttribute('data-nt-taskopen'), { line: tr.getAttribute('data-nt-tid') });
+        else if (tr) {
+          const id = tr.getAttribute('data-nt-tact');
+          _ntAllRow = id; _ntAllDelArm = null; ntRenderLib();
+          const row = [...E.list.querySelectorAll('[data-nt-tact]')].find(x => x.getAttribute('data-nt-tact') === id);
+          if (row) { try { row.focus(); } catch {} }
+        }
       }
     });
     E.date.addEventListener('click', () => { try { E.date.showPicker(); } catch {} });
@@ -19118,7 +19590,8 @@ const VOICE = {
   //     stats bar's done-today / done-week / PR pills
   //   - Lifetime project count: counts ONLY done tasks WITH a project — powers
   //     the green Completed pill
-  let _statsRefreshing = false;
+  let _statsRefreshing = false, _statsAt = 0;
+  const STATS_EVERY = 6 * 3600 * 1000, STATS_RETRY = 15 * 60 * 1000;
   async function _refreshStatsFromFirestore(){
     if (_statsRefreshing) return;
     _statsRefreshing = true;
@@ -19130,6 +19603,14 @@ const VOICE = {
         getDocs(query(todosCol, where('done', '==', true))),
         getDocs(query(todosCol, where('done', '==', false)))
       ]);
+      // Offline or over quota, getDocs answers from the (partial) local cache.
+      // Never write that as the truth — these keys sync to every device. The
+      // strip tries again in a quarter of an hour.
+      if ((doneSnap.metadata && doneSnap.metadata.fromCache) || (openSnap.metadata && openSnap.metadata.fromCache)) {
+        _statsAt = Date.now() - STATS_EVERY + STATS_RETRY;
+        return;
+      }
+      _statsAt = Date.now();
       const log = {};
       const byProject = {}; // job ID → lifetime done count
       const openByProject = {}; // job ID → current open count
@@ -19203,12 +19684,24 @@ const VOICE = {
       } catch {}
     } catch (e) {
       console.error('stats refresh failed', e);
+      _statsAt = Date.now() - STATS_EVERY + STATS_RETRY;   // retry soon, not in 6 hours
     } finally {
       _statsRefreshing = false;
     }
   }
   // Back-compat alias — older call sites may reach for this name
   const _updateCompletedPillCount = _refreshStatsFromFirestore;
+  // The strip's call. It runs on every render (the 60s tick included), and a
+  // scan reads every task ever made — it ran through Firestore's daily read
+  // quota. From there: once per page load, then at most every 6 hours.
+  // _statsBumpDone keeps the counts current in between, and the Stats page's
+  // refresh or a project re-file still scan straight away.
+  function _statsMaybe(){ if (Date.now() - _statsAt >= STATS_EVERY) _refreshStatsFromFirestore(); }
+  // A background path finished or re-opened tasks without counting them (the
+  // sheet sync, Sprint's queue, an ECM push, a Coach accept): the strip's next
+  // render scans afresh. Its counts are absolute, so two open Personal
+  // documents handling the same task can't count it twice.
+  function _statsSoon(){ try { _statsAt = 0; } catch {} }
   async function openCompletedBrowser(){
     const bd = document.getElementById('completedBrowserBackdrop');
     if (!bd) return;
@@ -19446,6 +19939,7 @@ const VOICE = {
               const patch = { done: false, completedAt: null };
               Object.assign(todo, patch);
               try { await updateDoc(doc(db, 'tv_todos', todo.id), patch); } catch {}
+              _statsSoon();   // re-opened: recounted by a fresh scan
             }
             // Planned push — carries a date; parks in the Planned tab instead
             // of landing on the lists.
@@ -19744,6 +20238,12 @@ const VOICE = {
         }
       });
       open.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      // Same collection and filter as Parked — keep that list in step too
+      // (never from a cache-only read, which would be empty).
+      if (!(snap.metadata && snap.metadata.fromCache)) {
+        _parkedCache = open; _parkedLoaded = true; _ntParkAt = Date.now();
+        if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+      }
       _coachMemory = open.slice(0, 30).map(m => ({ id: m.id, text: m.text }));
       _coachRenderMemory();
     } catch (e) { console.warn('coach memory load failed', e); }
@@ -19753,6 +20253,8 @@ const VOICE = {
       await updateDoc(doc(db, 'coach_memory', id), { status: 'dropped', resolvedAt: new Date().toISOString() });
     } catch (e) { console.warn('coach memory drop failed', e); }
     _coachMemory = _coachMemory.filter(m => m.id !== id);
+    _parkedCache = _parkedCache.filter(m => m.id !== id);
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
     _coachRenderMemory();
   }
   function _coachRenderMemory(){
@@ -19977,7 +20479,11 @@ const VOICE = {
           _coachHistory.push({ role: 'assistant', content: j.historyEntry || j.reply || '' });
           _coachHistory = _coachHistory.slice(-16);
           _coachMsgs.push({ who: 'ai', text: j.reply || '…' });
-          if (Array.isArray(j.memory)) { _coachMemory = j.memory; _coachRenderMemory(); }
+          if (Array.isArray(j.memory)) {
+            _coachMemory = j.memory; _coachRenderMemory();
+            // The reply may have parked or resolved items: Parked re-reads.
+            _ntParkAt = 0; if (_ntMounted) ntEnsureParked(true);
+          }
           if (Array.isArray(j.plan) && j.plan.length) {
             _coachPlan = j.plan.map(p => ({ ...p, accepted: true }));
           }
@@ -20010,7 +20516,7 @@ const VOICE = {
     const future = p.date > today;
     if (todo) {
       const patch = { ecmAccepted: true, section: 'ecm' };
-      if (todo.done) { patch.done = false; patch.completedAt = null; }
+      if (todo.done) { patch.done = false; patch.completedAt = null; _statsSoon(); }
       if (future) { patch.plannedFor = p.date; patch.date = p.date; patch.planned = true; }
       else { patch.plannedFor = ''; patch.planned = false; patch.date = today; }
       try { await updateDoc(doc(db, 'tv_todos', todo.id), patch); } catch (e) { console.warn(e); }
@@ -20179,8 +20685,10 @@ const VOICE = {
         const want = !!d.done;
         if (!!todo.done === want) return; // already in sync — prevents loops
         if (activeTimerId === todo.id) await stopTimer(false);
-        todo.done = want; render();
-        try { await updateDoc(doc(db, 'tv_todos', todo.id), { done: want }); } catch {}
+        // Stamped like toggleTodo, so the full scan files it on the same day.
+        const patch = { done: want, completedAt: want ? new Date().toISOString() : null };
+        Object.assign(todo, patch); _statsBumpDone(todo, want); render();
+        try { await updateDoc(doc(db, 'tv_todos', todo.id), patch); } catch {}
         return;
       }
     } catch (e) { console.warn('personal-todos message handler failed', e); }
@@ -20190,6 +20698,7 @@ const VOICE = {
   // If the page stays open across midnight (or the iframe stays cached),
   // jump currentDate forward to today, reload, and trigger carry-over.
   let _lastKnownTodayKey = todayKey();
+  let _carryAt = Date.now();   // boot's loadTodos just ran carry-over
   function maybeRolloverToToday() {
     const tk = todayKey();
     if (tk !== _lastKnownTodayKey) {
@@ -20197,8 +20706,11 @@ const VOICE = {
       currentDate = new Date();
       updateHeader();
       loadTodos();
-    } else if (isToday()) {
-      // Same day, but re-run carry-over in case stale tasks were added from another device
+    } else if (isToday() && Date.now() - _carryAt >= 30 * 60 * 1000) {
+      // Same day, but re-run carry-over in case stale tasks were added from
+      // another device — at most every 30 minutes: it reads every open task,
+      // and this runs on every focus and every 5 minutes.
+      _carryAt = Date.now();
       carryOverIncompleteTasks().then(n => { if (n > 0) render(); });
     }
   }
