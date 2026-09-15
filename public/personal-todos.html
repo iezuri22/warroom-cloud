@@ -5402,7 +5402,7 @@
 
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, query, where, orderBy, writeBatch, runTransaction, waitForPendingWrites, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, getCountFromServer, query, where, orderBy, writeBatch, runTransaction, waitForPendingWrites, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
     authDomain: "tv-todos.firebaseapp.com",
@@ -6307,9 +6307,11 @@ const VOICE = {
     let anyDone = false;
     for (const t of targets) {
       const newTimeSpent = ((t.local && Number(t.local.timeSpent)) || 0) + (t.addSecs || 0);
-      if (t.local) { t.local.done = true; t.local.timeSpent = newTimeSpent; }
+      // Stamped like toggleTodo, so the done scan files it on the day it was done.
+      const completedAt = (t.local && t.local.completedAt) || new Date().toISOString();
+      if (t.local) { t.local.done = true; t.local.timeSpent = newTimeSpent; t.local.completedAt = completedAt; }
       try {
-        const patch = { done: true };
+        const patch = { done: true, completedAt };
         if (t.addSecs > 0) patch.timeSpent = newTimeSpent;
         await updateDoc(doc(db, 'tv_todos', t.id), patch);
         anyDone = true;
@@ -8096,7 +8098,8 @@ const VOICE = {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const newJob = btn.dataset.job || '';
-          await updateTodoFields(todo.id, { job: newJob });
+          // A done task re-filed: refiledAt lets the incremental done scan see it.
+          await updateTodoFields(todo.id, todo.done ? { job: newJob, refiledAt: new Date().toISOString() } : { job: newJob });
           render();
         });
       });
@@ -12924,6 +12927,7 @@ const VOICE = {
     const t = todos.find(x => x.id === id) || _plannedCache.find(x => x.id === id);
     if (!t || migrateJobId(t.job || '') === jobId) return;
     const patch = { job: jobId };
+    if (t.done) patch.refiledAt = new Date().toISOString();   // seen by the incremental done scan
     // Section follows the board — EXCEPT for sheet-synced work, where `ecm`
     // is the sheet's fact, not a filing choice. Those keep their ECM card in
     // Section view while still being filable under whatever board you like.
@@ -19402,6 +19406,9 @@ const VOICE = {
       // No board for the new section: drop the old one rather than leave the
       // task wearing another section's project pill.
       if (job) patch.job = job; else if (k.job0 && sectionOf({ job: k.job0 }) !== sec) patch.job = NT_DEL;
+      // The task may be done: refiledAt lets the incremental done scan re-file
+      // it (an open task is read once by that scan and ignored).
+      if ('job' in patch) patch.refiledAt = new Date().toISOString();
     }
     // A noteCat that drifted (re-filed in Personal) or was never written is
     // brought in line with what the sheet showed.
@@ -20713,53 +20720,129 @@ const VOICE = {
   //     the green Completed pill
   let _statsRefreshing = false, _statsAt = 0, _statsWanted = false, _statsAsk = 0;   // _statsWanted: a background path asked for a recount
   const STATS_EVERY = 6 * 3600 * 1000, STATS_RETRY = 15 * 60 * 1000;
+  // Incremental done scan. Every done task used to be read on every load,
+  // and ticked routine copies alone add ~7 a day. Each device now keeps a
+  // ledger in IndexedDB (never synced): id → [day it's filed under, job]. A
+  // refresh reads the open tasks (as before), the tasks completed or re-filed
+  // since the last refresh (2 hours of overlap for clock skew and late
+  // writes), and Firestore's done count, 1 read per 1,000 docs. A count that
+  // doesn't match the ledger means a deletion, a completion written without
+  // completedAt, or one that landed after the overlap: that refresh scans in
+  // full. So does a ledger a day old, for anything neither catches (a date
+  // edit on an old done task). The counts written match a full scan's.
+  const STATS_FULL_EVERY = 24 * 3600 * 1000, STATS_OVERLAP = 2 * 3600 * 1000;
+  let _statsIdbP = null;
+  function _statsIdb(){
+    if (_statsIdbP) return _statsIdbP;
+    _statsIdbP = new Promise((res, rej) => {
+      try {
+        const r = indexedDB.open('personal-stats', 1);
+        r.onupgradeneeded = () => { try { r.result.createObjectStore('ledger', { keyPath: 'id' }); } catch {} };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      } catch (e) { rej(e); }
+    });
+    _statsIdbP.catch(() => { _statsIdbP = null; });
+    return _statsIdbP;
+  }
+  // No ledger (a new device, private mode, an open that never answers): the
+  // refresh scans in full.
+  function _statsLedgerGet(){
+    const get = (async () => {
+      try {
+        const idb = await _statsIdb();
+        return await new Promise(res => {
+          const r = idb.transaction('ledger').objectStore('ledger').get('done');
+          r.onsuccess = () => res(r.result || null);
+          r.onerror = () => res(null);
+        });
+      } catch { return null; }
+    })();
+    return Promise.race([get, new Promise(r => setTimeout(r, 3000, null))]);
+  }
+  async function _statsLedgerPut(rec){
+    try { const idb = await _statsIdb(); idb.transaction('ledger', 'readwrite').objectStore('ledger').put(rec); } catch {}
+  }
+  // Where a done task is filed: its completion day, and its raw job (the
+  // counts migrate legacy job ids). completedAt first, falling back to
+  // t.date for legacy tasks completed before completedAt stamping shipped.
+  // Without the fallback, only recently-toggled tasks count and the week
+  // total looks way lower than reality.
+  function _statsFile(t){
+    let dk = '';
+    if (t.completedAt) {
+      try { dk = _ckey(new Date(t.completedAt)); } catch {}
+    }
+    if (!dk && t.date) {
+      dk = String(t.date).slice(0, 10);
+    }
+    return [dk, (t.job && String(t.job).trim()) ? t.job : ''];
+  }
   async function _refreshStatsFromFirestore(){
     if (_statsRefreshing) return;
     _statsRefreshing = true;
     const ask = _statsAsk;   // a recount asked for mid-scan must still happen
     try {
-      // Two scans: done + open. Done powers the lifetime counts; open powers
-      // the new per-project "still open" bar in the Stats page so we can
-      // show open vs closed side-by-side.
-      const [doneSnap, openSnap] = await Promise.all([
-        getDocs(query(todosCol, where('done', '==', true))),
-        getDocs(query(todosCol, where('done', '==', false)))
-      ]);
+      const startedAt = Date.now();
+      const led = await _statsLedgerGet();
+      let full = !led || led.v !== 1 || !led.tasks || startedAt - (led.full || 0) >= STATS_FULL_EVERY;
       // Offline or over quota, getDocs answers from the (partial) local cache.
       // Never write that as the truth — these keys sync to every device. The
       // strip tries again in a quarter of an hour.
-      if ((doneSnap.metadata && doneSnap.metadata.fromCache) || (openSnap.metadata && openSnap.metadata.fromCache)) {
-        _statsAt = Date.now() - STATS_EVERY + STATS_RETRY;
-        return;
+      const cached = s => !!(s && s.metadata && s.metadata.fromCache);
+      const retry = () => { _statsAt = Date.now() - STATS_EVERY + STATS_RETRY; };
+      const doneQ = query(todosCol, where('done', '==', true));
+      const openQ = query(todosCol, where('done', '==', false));
+      // Open tasks are read in full every time: they're few, and the Stats
+      // page's per-project "still open" bar needs every one.
+      let openSnap = null, tasks = null;
+      if (!full) {
+        const since = new Date(Math.max(0, (led.mark || 0) - STATS_OVERLAP)).toISOString();
+        const [os, compSnap, refSnap, countSnap] = await Promise.all([
+          getDocs(openQ),
+          getDocs(query(todosCol, where('completedAt', '>', since))),
+          getDocs(query(todosCol, where('refiledAt', '>', since))),
+          getCountFromServer(doneQ)
+        ]);
+        if (cached(os) || cached(compSnap) || cached(refSnap)) { retry(); return; }
+        openSnap = os;
+        tasks = { ...led.tasks };
+        // Open now: re-opened since the ledger filed it.
+        openSnap.forEach(d => { delete tasks[d.id]; });
+        // Completed or re-filed since the last refresh: file it afresh.
+        [compSnap, refSnap].forEach(s => s.forEach(d => {
+          const t = d.data() || {};
+          if (t.done === true) tasks[d.id] = _statsFile(t); else delete tasks[d.id];
+        }));
+        if (Object.keys(tasks).length !== countSnap.data().count) full = true;
+      }
+      if (full) {
+        const [doneSnap, os] = await Promise.all([getDocs(doneQ), openSnap || getDocs(openQ)]);
+        if (cached(doneSnap) || cached(os)) { retry(); return; }
+        openSnap = os;
+        tasks = {};
+        doneSnap.forEach(d => { tasks[d.id] = _statsFile(d.data() || {}); });
       }
       if (_statsAsk === ask) { _statsAt = Date.now(); _statsWanted = false; } else _statsAt = 0;
+      _statsLedgerPut({ id: 'done', v: 1, full: full ? startedAt : led.full, mark: startedAt, tasks });
       const log = {};
       const byProject = {}; // job ID → lifetime done count
       const openByProject = {}; // job ID → current open count
       let projectDoneCount = 0;
-      doneSnap.forEach(d => {
-        const t = d.data() || {};
-        // Stats: group by completion date — prefer completedAt, fall back to
-        // t.date for legacy tasks completed before completedAt stamping shipped.
-        // Without the fallback, only recently-toggled tasks count and the week
-        // total looks way lower than reality.
-        let dk = '';
-        if (t.completedAt) {
-          try { dk = _ckey(new Date(t.completedAt)); } catch {}
-        }
-        if (!dk && t.date) {
-          dk = String(t.date).slice(0, 10);
-        }
+      // In document-id order, as a full scan returns them, so every key comes
+      // out in the same order and writeIfChanged writes nothing new.
+      Object.keys(tasks).sort().forEach(id => {
+        const [dk, j] = tasks[id];
         if (dk) log[dk] = (log[dk] || 0) + 1;
         // Per-project lifetime done — used by the Stats page's "By project"
         // section in the shell. Migrate legacy job IDs so chips/badges line up.
-        const rawJob = (t.job && String(t.job).trim()) ? t.job : '_none';
+        const rawJob = j || '_none';
         const job = (typeof migrateJobId === 'function' && rawJob !== '_none')
           ? migrateJobId(rawJob)
           : rawJob;
         byProject[job] = (byProject[job] || 0) + 1;
         // Completed pill: only count done tasks with a project
-        if (t.job && String(t.job).trim()) projectDoneCount++;
+        if (j) projectDoneCount++;
       });
       openSnap.forEach(d => {
         const t = d.data() || {};
@@ -20813,11 +20896,11 @@ const VOICE = {
   }
   // Back-compat alias — older call sites may reach for this name
   const _updateCompletedPillCount = _refreshStatsFromFirestore;
-  // The strip's call. It runs on every render (the 60s tick included), and a
-  // scan reads every task ever made — it ran through Firestore's daily read
-  // quota. From there: once per page load, then at most every 6 hours.
+  // The strip's call. It runs on every render (the 60s tick included); back
+  // when a refresh read every task ever made, that ran through Firestore's
+  // daily read quota. Once per page load, then at most every 6 hours;
   // _statsBumpDone keeps the counts current in between, and the Stats page's
-  // refresh or a project re-file still scan straight away.
+  // refresh or a project re-file still refresh straight away.
   function _statsMaybe(){ if (Date.now() - _statsAt >= STATS_EVERY) _refreshStatsFromFirestore(); }
   // A background path finished or re-opened tasks without counting them (the
   // sheet sync, Sprint's queue, an ECM push, a Coach accept): the strip's next
@@ -20997,7 +21080,9 @@ const VOICE = {
           const newJob = b.getAttribute('data-cbjob') || '';
           if (!id) return;
           try {
-            await updateDoc(doc(db, 'tv_todos', id), { job: newJob });
+            // refiledAt: a project change leaves the done count alone, so the
+            // incremental done scan finds re-filed tasks by it, on every device.
+            await updateDoc(doc(db, 'tv_todos', id), { job: newJob, refiledAt: new Date().toISOString() });
           } catch (err) { console.error('cb project update failed', err); }
           // Update cache so re-render shows the new state without re-fetching
           if (_cbDoneCache) {
