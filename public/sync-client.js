@@ -28,6 +28,9 @@
     'pt-nt-list-shut',   // Notes list collapsed — per-device layout
     'pt-nt-w',           // Notes sidebar/list widths (px) — per-device layout
     'pt-nt-page',        // Notes page width (standard / wide / full) — per-device
+    'pt-nt-tfilt',       // All tasks filter (category / when / source) — per-device
+    'pt-nt-filter',      // Notes' last notebook (Personal's home lands there) — per-device
+    'pt-nt-last',        // Notes' last open note — per-device, so two devices don't both hold it open
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
