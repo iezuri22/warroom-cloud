@@ -3973,11 +3973,30 @@
     .nt-shell.nt-tasks-wide .nt-lib.nt-lib { display: flex !important; }   /* beats a shut list's display:none !important */
     .nt-shell.nt-tasks-wide .nt-taskrow .t { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.4; }
     .nt-shell.nt-tasks-wide .nt-taskrow .s { flex-wrap: wrap; white-space: normal; }
-    .nt-wrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; border-radius: 10px; }
-    .nt-wrow:hover { background: var(--fill); }
-    .nt-wrow > .nt-taskrow { flex: 1 1 340px; min-width: 0; }
-    .nt-wrow > .nt-tacts { flex: 0 1 auto; padding: 4px 8px; background: none !important; border-radius: 0; justify-content: flex-end; }
+    .nt-shell.nt-tasks-wide .nt-lib { container-type: inline-size; }
+    .nt-wrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 20px; padding-right: 6px; border-radius: 10px; }
     .nt-wrow + .nt-wrow { box-shadow: 0 -1px 0 var(--border); }
+    .nt-wrow:hover, .nt-wrow:focus-within { background: var(--fill); }
+    .nt-wrow > .nt-taskrow { background: none !important; box-shadow: none !important; }
+    .nt-shell.nt-tasks-wide .nt-taskrow .top { justify-content: flex-start; }
+    .nt-shell.nt-tasks-wide .nt-taskrow .top .t { flex: 0 1 auto; }
+    .nt-wacts { display: grid !important; grid-template-columns: 214px 66px 80px 60px; align-items: center; column-gap: 6px; padding: 0 !important; background: none !important; }
+    .nt-ws { display: flex; align-items: center; min-width: 0; }
+    .nt-wseg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+    .nt-wa { height: 26px; padding: 0 8px; border: 0; background: transparent; border-radius: 7px; font: 700 12px var(--font-family); color: var(--ink-mid); cursor: pointer; white-space: nowrap; }
+    .nt-wseg .nt-wa { border-radius: 0; flex: 1 1 auto; padding: 0 9px; }
+    .nt-wseg .nt-wa + .nt-wa { border-left: 1px solid var(--border); }
+    .nt-wa:hover { background: var(--surface); color: var(--ink); }
+    .nt-wseg .nt-wa:hover { background: var(--accent-soft); color: var(--accent); }
+    .nt-wa.go, .nt-wa.del { color: var(--ink-dim); }
+    .nt-wa.go:hover { color: var(--accent); }
+    .nt-wa.del:hover, .nt-wa.del.arm { color: var(--red); background: rgba(220,75,62,.1); }
+    .nt-wnote { padding: 0 8px; font-size: 11px; color: var(--ink-dim); white-space: nowrap; }
+    @media (hover: hover) { .nt-wrow:not(:hover):not(:focus-within) .nt-wacts { opacity: .75; } }
+    @container (max-width: 860px) {
+      .nt-wrow { grid-template-columns: minmax(0, 1fr); }
+      .nt-wacts { padding: 0 0 8px 33px !important; justify-content: start; }
+    }
     .nt-widebtn { margin-left: auto; }
   }
   @media (min-width: 1100px) {
@@ -16302,7 +16321,7 @@ const VOICE = {
     const det = ntDetStr(t), hasDet = !!det.trim();
     const acts = !t.done || live || hasDet;
     const wide = expand && _ntTasksWide && !ntIsPhone();
-    const acts2 = (open || wide) ? ntAllActsHTML(t, opt.place, c, nid) : '';
+    const acts2 = wide ? ntAllActsWideHTML(t, opt.place, c, nid) : open ? ntAllActsHTML(t, opt.place, c, nid) : '';
     const strip = open ? ntTaskDetHTML(t, det) + acts2 : acts2;
     const pin = (c && !t.done && t.pinnedUntilDone && c.order.has(t.id)) ? '<span class="pin" aria-hidden="true">📌</span>' : '';
     const id = ntEsc(t.id);
@@ -16504,6 +16523,24 @@ const VOICE = {
     return `<div class="nt-tacts" id="nt-ta-${id}">${note}<span class="lbl">Push</span>`
       + _ovPushDates().map(o => `<button class="nt-ta" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}">${escHtml(o.label)}</button>`).join('')
       + move + go + del + '</div>';
+  }
+  // The wide view's actions: the same buttons and hooks, in fixed slots, so
+  // every row's Push, Move, link and Delete line up in columns.
+  function ntAllActsWideHTML(t, p, c, nid){
+    const id = ntEsc(t.id), nn = nid != null ? nid : t.noteId, n = nn ? ntNotes.get(nn) : null;
+    const slot = (k, h) => `<span class="nt-ws ${k}">${h}</span>`;
+    const note = (n && !n.trashed) ? `<button class="nt-wa go" type="button" data-nt-taskopen="${ntEsc(nn)}" data-nt-tid="${id}" title="Open “${ntEsc(ntTitleOf(n))}” at this task">Note ↗</button>` : '';
+    if (t.done) return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', '')}${slot('move', '')}${slot('go', note)}${slot('del', '')}</div>`;
+    c = c || ntAllCtx(); p = p || ntAllPlace(t, c);
+    const home = ntAllHome(t, p, c), arm = _ntAllDelArm === t.id;
+    const short = l => String(l).replace(/^Tomorrow$/, 'Tmrw').replace(/^\+(\d+) days?$/, '+$1d').replace(/^\+(\d+) wks?$/, '+$1w');
+    const push = '<span class="nt-wseg" role="group" aria-label="Push to">'
+      + _ovPushDates().map(o => `<button class="nt-wa" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}" title="Push to ${ntEsc(o.label)}">${escHtml(short(o.label))}</button>`).join('') + '</span>';
+    const move = (t.fromTemplate || _ntTkBusy.has(t.id)) ? '' : `<button class="nt-wa" type="button" data-nt-move="${id}">Move…</button>`;
+    const go = note || (home ? `<button class="nt-wa go" type="button" data-nt-tgo="${id}" title="${home === 'inbox' ? 'Open the ECM inbox' : 'Show in Planned'}">${home === 'inbox' ? 'Inbox ↗' : 'Planned ↗'}</button>` : '');
+    const del = t.smartsheetRowId ? '<span class="nt-wnote" title="Managed on ECM">On ECM</span>'
+      : t.fromTemplate ? '' : `<button class="nt-wa del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}"${t.noteId ? ' title="Deletes the task and its line in its note"' : ''}>${arm ? 'Sure?' : 'Delete'}</button>`;
+    return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', push)}${slot('move', move)}${slot('go', go)}${slot('del', del)}</div>`;
   }
   // A parked item isn't a task yet: no box to tick — schedule it or drop it.
   function ntParkRowHTML(m){
