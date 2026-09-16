@@ -870,6 +870,7 @@
     transition: all .12s;
   }
   .planned-row .pl-del:hover { color: #ff7b6b; border-color: rgba(255,107,107,.45); background: rgba(255,107,107,.08) }
+  .planned-row .pl-ecm-note { font-size: 10.5px; font-weight: 700; color: var(--ink-dim); white-space: nowrap; padding: 0 2px; }
   .planned-row .pl-notes:hover { color: #FFC84D; border-color: rgba(255,200,77,.45); background: rgba(255,200,77,.08) }
   .planned-row .pl-notes.has { color: #FFC84D; border-color: rgba(255,200,77,.4) }
   .planned-item { display: flex; flex-direction: column; gap: 6px }
@@ -4704,6 +4705,19 @@
     transition: opacity .18s, transform .18s; max-width: 84vw; text-align: center;
   }
   #ptToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* Undo toast — its own element, because #ptToast has pointer-events:none and no room for a button. */
+  #ptUndo { position: fixed; left: 50%; bottom: max(26px, calc(env(safe-area-inset-bottom) + 16px)); transform: translateX(-50%) translateY(8px);
+    display: flex; align-items: center; gap: 14px; max-width: min(480px, calc(100vw - 32px));
+    background: var(--ink); color: #FFF7EF; padding: 8px 8px 8px 17px; border-radius: 12px; font-family: inherit; font-size: 13px; font-weight: 600;
+    z-index: 12001; box-shadow: var(--shadow-float); opacity: 0; pointer-events: none; visibility: hidden;
+    transition: opacity .18s, transform .18s, visibility 0s linear .18s; }   /* hidden: out of the tab order and the a11y tree */
+  #ptUndo.show { opacity: 1; pointer-events: auto; visibility: visible; transform: translateX(-50%) translateY(0); transition-delay: 0s; }
+  #ptUndo .tx { flex: 1 1 auto; min-width: 0; }
+  #ptUndo .act { flex: none; font: inherit; font-weight: 800; color: inherit; background: rgba(255,255,255,.14); border: 0; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  #ptUndo .act:focus-visible { outline: 2px solid #FFF7EF; outline-offset: 2px; }
+  body.pt-undo-on #ptToast { bottom: 84px; }                /* a plain toast stacks above; it never knocks Undo out */
+  @media (pointer: coarse) { #ptUndo .act { min-height: 44px; } }
+  @media (max-width: 760px) { body.nt-editing #ptUndo { top: calc(env(safe-area-inset-top) + 60px); bottom: auto; } }   /* the keyboard never shrinks the iframe */
   @media (max-width: 640px) {
     .hb-in { font-size: 16px; }          /* iOS zoom guard */
     .tmr-clock { font-size: 38px; }
@@ -5383,6 +5397,7 @@
 </button>
 
 <div id="ptToast" role="status" aria-live="polite"></div>
+<div id="ptUndo" role="status" aria-live="polite" aria-atomic="true"><span class="tx"></span><button type="button" class="act">Undo</button></div>
 
 <!-- Planned-priority daily knock — fires once per day while anything planned
      is due, and keeps firing each day until it's listed, re-dated, or deleted. -->
@@ -6732,6 +6747,7 @@ const VOICE = {
   }
   async function removeTodo(id) {
     if (activeTimerId === id) await stopTimer(false);
+    if (ntDeleteTaskNow(id)) return;                 // a note's task: its line goes too, through the journal
     todos = todos.filter(t => t.id !== id); render();
     try { await deleteDoc(doc(db, 'tv_todos', id)); } catch {}
   }
@@ -9910,6 +9926,57 @@ const VOICE = {
     _ptToastT = setTimeout(() => el.classList.remove('show'), 3400);
   }
 
+  // The Undo toast: its own element. Its time runs only while the page is on
+  // screen and it isn't hovered or focused — a hidden frame or tab gets a fresh
+  // window once shown (ptWake / visibilitychange / pageshow resume it).
+  let _ptUndo = null;   // {o:{ms,onUndo,onExpire}, left, t0, timer, hold:Set}
+  function ptUndoLive(){ return document.visibilityState === 'visible' && ptRendered(); }
+  function ptUndoToast(msg, o){
+    const el = document.getElementById('ptUndo'); if (!el) return null;
+    ptUndoClose();
+    const u = _ptUndo = { o: o || {}, left: (o && o.ms) || 6000, t0: 0, timer: null, hold: new Set() };
+    el.querySelector('.tx').textContent = String(msg || '');
+    el.classList.add('show'); document.body.classList.add('pt-undo-on');
+    ptUndoRun(); return u;
+  }
+  function ptUndoText(u, msg){ if (u && _ptUndo === u) document.querySelector('#ptUndo .tx').textContent = String(msg || ''); }
+  function ptUndoRun(){ const u = _ptUndo; if (!u || u.timer || u.hold.size || !ptUndoLive()) return; u.t0 = Date.now(); u.timer = setTimeout(ptUndoExpire, u.left); }
+  function ptUndoPause(why){
+    const u = _ptUndo; if (!u) return;
+    if (why) u.hold.add(why);
+    if (u.timer) { clearTimeout(u.timer); u.timer = null; u.left = Math.max(0, u.left - (Date.now() - u.t0)); }
+    // A pointer resting on it (or focus left there) can't hold the window
+    // open all day: after a minute it runs out anyway.
+    if (!u.maxT) u.maxT = setTimeout(() => { const v = _ptUndo; if (!v) return; v.maxT = null; v.hold.clear(); ptUndoRun(); }, 60000);
+  }
+  function ptUndoResume(why){
+    const u = _ptUndo; if (!u) return;
+    if (why) u.hold.delete(why);
+    if (!u.hold.size && u.maxT) { clearTimeout(u.maxT); u.maxT = null; }
+    ptUndoRun();
+  }
+  function ptUndoExpire(){
+    const u = _ptUndo; if (!u) return; u.timer = null;
+    if (!ptUndoLive()) { u.left = u.o.ms || 6000; return; }        // never seen out: a fresh window when shown
+    ptUndoClose(); try { u.o.onExpire && u.o.onExpire(); } catch (e) { console.warn('[toast]', e); }
+  }
+  function ptUndoClose(){ const u = _ptUndo; _ptUndo = null; if (u && u.timer) clearTimeout(u.timer); if (u && u.maxT) clearTimeout(u.maxT); const el = document.getElementById('ptUndo'); if (el) el.classList.remove('show'); document.body.classList.remove('pt-undo-on'); }
+  function ptUndoAct(){ const u = _ptUndo; if (!u) return; ptUndoClose(); try { u.o.onUndo && u.o.onUndo(); } catch (e) { console.warn('[toast]', e); } }
+  document.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('#ptUndo .act')) e.preventDefault(); }, true);   // the editor keeps its caret
+  document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#ptUndo .act')) { e.preventDefault(); ptUndoAct(); } });
+  document.addEventListener('mouseover', e => { if (e.target.closest && e.target.closest('#ptUndo')) ptUndoPause('hover'); });
+  document.addEventListener('mouseout', e => { if (e.target.closest && e.target.closest('#ptUndo') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('#ptUndo'))) ptUndoResume('hover'); });
+  document.addEventListener('focusin', e => { if (e.target.closest && e.target.closest('#ptUndo')) ptUndoPause('focus'); });
+  document.addEventListener('focusout', e => { if (e.target.closest && e.target.closest('#ptUndo')) ptUndoResume('focus'); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ptUndoPause('vis'); else ptUndoResume('vis'); });
+  // ⌘Z / Ctrl+Z outside an editable field while the toast is up = Undo (inside the editor, the browser's own undo does it).
+  document.addEventListener('keydown', e => {
+    if (!_ptUndo || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.key || '').toLowerCase() !== 'z') return;
+    const a = document.activeElement;
+    if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.nodeName))) return;
+    e.preventDefault(); ptUndoAct();
+  });
+
   // ====================================================================
   // HABITS — the old standalone Habits page (daily-goals.html), folded in.
   //
@@ -12213,6 +12280,11 @@ const VOICE = {
     try { renderPlannedPrompt(); } catch {}
   }
   async function plannedDelete(id){
+    // ECM work is closed on ECM: deleting it here only made the sheet sync
+    // bring it back under a new id (the UI shows no × for it; a backstop).
+    const pt = (_plannedCache || []).find(x => x.id === id) || todos.find(x => x.id === id);
+    if (pt && pt.smartsheetRowId) { ptToast('ECM tasks are closed on the ECM page'); return; }
+    if (ntDeleteTaskNow(id)) { try { renderPlannedPrompt(); } catch {} return; }   // a note's task: its line goes too
     _plannedCache = _plannedCache.filter(x => x.id !== id);
     todos = todos.filter(x => x.id !== id);
     try { await deleteDoc(doc(db, 'tv_todos', id)); } catch (e) { console.warn(e); }
@@ -12273,7 +12345,7 @@ const VOICE = {
         <button type="button" class="pl-notes ${hasDet ? 'has' : ''}" title="${hasDet ? 'View / edit details' : 'Add details'}">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         </button>
-        <button type="button" class="pl-del" title="Delete this planned priority">×</button>
+        ${p.smartsheetRowId ? '<span class="pl-ecm-note" title="Close it on the ECM page — the sheet sync would bring it back">Managed on ECM</span>' : '<button type="button" class="pl-del" title="Delete this planned priority">×</button>'}
       </span>
     `;
     wrap.appendChild(row);
@@ -12308,7 +12380,8 @@ const VOICE = {
       const v = e.target.value;
       if (v) plannedRedate(p.id, v);
     });
-    row.querySelector('.pl-del').addEventListener('click', () => {
+    const delBtn = row.querySelector('.pl-del');
+    if (delBtn) delBtn.addEventListener('click', () => {
       if (opts && opts.confirmDelete && !confirm(`Delete planned priority “${p.text || ''}”?`)) return;
       plannedDelete(p.id);
     });
@@ -13131,6 +13204,7 @@ const VOICE = {
     // Guard: ECM-sourced work isn't deletable from Personal (the UI hides the
     // button; this backstops any other caller). Close it on the ECM page.
     if (t && t.smartsheetRowId) { _ovRowOpen = null; _ovDelArm = null; return; }
+    if (ntDeleteTaskNow(id)) { _ovRowOpen = null; _ovDelArm = null; return; }   // a note's task: its line goes too
     try {
       await deleteDoc(doc(db, 'tv_todos', id));
       todos = todos.filter(x => x.id !== id);
@@ -14771,6 +14845,9 @@ const VOICE = {
   // 60s tick's render are the fallbacks.
   let _ptHeld = false, _ntReopenLast = null;   // _ntReopenLast: the last note, for once a hidden load is shown
   function ptWake(){
+    // An Undo window paused while the frame was hidden resumes here — before
+    // the held-load return, because a shown frame isn't always a held one.
+    try { ptUndoResume(); ntPdelOnShow(); ntPdelKick(); } catch {}
     if (!_ptHeld || !ptRendered()) return;
     _ptHeld = false;
     try {
@@ -15059,6 +15136,21 @@ const VOICE = {
   const _ntMirrorAsk = new Map();   // task id → when the open-note mirror last asked the server about it
   // Move to…: the picker's task ({tid, from, cat, text, q, form}) and the one move in flight.
   let _ntMove = null, _ntMoveBusy = false;
+  // Delete on removal: a note task whose line was removed on this page waits
+  // here (journal: localStorage pt-nt-pdel, per device) for Undo, then the delete.
+  const NT_PDEL_KEY = 'pt-nt-pdel';
+  const NT_PDEL_MS = 6000;              // Undo window, on-screen time
+  const NT_CUT_HOLD = 120000;           // a cut line's task waits this long for its paste
+  const NT_GONE_MS = 10 * 60000;        // Cmd+Z / paste brings back a task deleted here this long
+  const NT_PDEL_BACK = [30e3, 120e3, 600e3, 1800e3, 3600e3];
+  let _ntPdel = null;                   // Map tid → entry (lazy: ntPdelMap)
+  const _ntPdelSkip = new Map();        // tid → ms: lines code removed on purpose — never a delete
+  const _ntPdelWhy = new Map();         // tid → 'list' (All tasks' Delete wording)
+  const _ntPdelGone = new Map();        // tid → {snap, nid, line, li, text, at, work, inTodos, inPlanned}
+  const _ntDelHere = new Set();         // every task id this page deleted
+  const _ntPdelRel = new Set();         // tids released at pagehide (bfcache reclaim)
+  let _ntCut = null;                    // {nid, ids:Set, at}: the last cut/drag of task lines
+  let _ntPdelT = null, _ntPdelBusy = false, _ntPdelBooted = false, _ntPdelErrToasted = false, _ntPdelUndo = null;
 
   // ---- small helpers ----
   const ntIso = () => new Date().toISOString();
@@ -15564,7 +15656,7 @@ const VOICE = {
   function ntHasGeneralTasks(){ return _ntTaskIdxLoaded && [..._ntTaskIdx.values()].some(t => ntTaskCat(t) === ''); }
   function ntTaskMatches(t){ const q = ntQuery.trim().toLowerCase(); return !q || String(t.text || '').toLowerCase().includes(q); }
   function ntCatTasks(f){
-    return [..._ntTaskIdx.values()].filter(t => ntTaskInCat(t, f) && ntTaskMatches(t));
+    return [..._ntTaskIdx.values()].filter(t => !ntPdelHidden(t.id) && ntTaskInCat(t, f) && ntTaskMatches(t));
   }
   // Top of a category: the tasks filed under it, from any note — open ones
   // first (the soonest deadline on top), done ones behind a toggle. A row
@@ -15678,8 +15770,9 @@ const VOICE = {
     const out = [], byRow = new Map();
     const add = t => {
       // A routine's daily copy is a task here only when it was put on Today
-      // (the Overview lists those in their section's card).
-      if (!t || t.done || (t.fromTemplate && !today.has(t.id))) return;
+      // (the Overview lists those in their section's card). A task whose line
+      // this device removed is already gone here — its delete is only waiting.
+      if (!t || t.done || ntPdelHidden(t.id) || (t.fromTemplate && !today.has(t.id))) return;
       if (!t.smartsheetRowId) { out.push(t); return; }
       // Exempt only from the status the tick's own late push can write.
       if (NT_SS_CLOSED.has(t.smartsheetStatus) && !(t.smartsheetStatus === 'Completed' && _ntAllReopened.has(t.id))) return;
@@ -15788,9 +15881,10 @@ const VOICE = {
   }
   // The actions under an open row: its note (when it's live), the Overview's
   // push menu, Move to… another note, where Personal lists it, and Delete —
-  // never for ECM work (the sheet sync would bring it back) or a note's task
-  // (that's deleted from its note). A done task only opens its note. p and c
-  // are All tasks' placement and context; a category's section passes neither.
+  // never for ECM work (the sheet sync would bring it back) or a routine's
+  // copy. A note's task can be deleted from here too: its line goes with it,
+  // which the second tap says. A done task only opens its note. p and c are
+  // All tasks' placement and context; a category's section passes neither.
   function ntAllActsHTML(t, p, c, nid){
     const id = ntEsc(t.id), nn = nid != null ? nid : t.noteId, n = nn ? ntNotes.get(nn) : null;
     const note = (n && !n.trashed) ? `<button class="nt-ta go" type="button" data-nt-taskopen="${ntEsc(nn)}" data-nt-tid="${id}">Open in note →</button>` : '';
@@ -15802,7 +15896,7 @@ const VOICE = {
     // tick is still being written moves once that lands.
     const move = (t.fromTemplate || _ntTkBusy.has(t.id)) ? '' : `<button class="nt-ta" type="button" data-nt-move="${id}">Move to…</button>`;
     const del = t.smartsheetRowId ? '<span class="nt-ta-note">Managed on ECM</span>'
-      : (t.noteId || t.fromTemplate) ? '' : `<button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}">${arm ? 'Sure?' : 'Delete'}</button>`;
+      : t.fromTemplate ? '' : `<button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}"${t.noteId ? ' title="Deletes the task and its line in its note"' : ''}>${arm ? (t.noteId ? 'Sure? Its line goes too' : 'Sure?') : 'Delete'}</button>`;
     return `<div class="nt-tacts" id="nt-ta-${id}">${note}<span class="lbl">Push</span>`
       + _ovPushDates().map(o => `<button class="nt-ta" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}">${escHtml(o.label)}</button>`).join('')
       + move + go + del + '</div>';
@@ -15849,6 +15943,7 @@ const VOICE = {
       : !_ntOpenFresh ? '<div class="nt-all-warn">Reconnecting…</div>' : '';
     // A remembered filter never hides tasks silently: the list says so, first.
     if (tfOn && _ntAllShown) h = `<div class="nt-tf-line">Showing ${_ntAllShown} of ${_ntAllTotal} · <button class="nt-tf-clr" type="button" data-nt-tfclear>Clear</button></div>` + h;
+    h = ntPdelNoticeHTML() + h;   // a delete this device owes and couldn't send comes first
     NT_ALL_GROUPS.forEach(([k, label, color]) => {
       if (G[k].length) h += ntAllGroupHTML(k, label, color || ntCatColor('ecm'), G[k].length, G[k].map(row).join(''));
     });
@@ -16029,7 +16124,8 @@ const VOICE = {
   // closing rows) marks the list stale instead: the next open reads it all.
   function ntDoneCatchUp(ids){
     if (!_ntDoneList) return;   // not read yet: that read will have them
-    const want = ids.filter(id => !_ntAllDone.has(id) && !(_ntTaskIdxLoaded && !_ntTaskIdxErr && _ntTaskIdx.has(id)));
+    // A task this page deleted left the index because it is gone, not done: no read. (P5)
+    const want = ids.filter(id => !_ntDelHere.has(id) && !_ntAllDone.has(id) && !(_ntTaskIdxLoaded && !_ntTaskIdxErr && _ntTaskIdx.has(id)));
     if (want.length > 20) { _ntDoneStale = true; return; }
     want.forEach(id => {
       getDoc(doc(db, 'tv_todos', id)).then(snap => {
@@ -16076,6 +16172,9 @@ const VOICE = {
     const openRows = new Set(ntAllOpen().filter(t => t.smartsheetRowId).map(t => String(t.smartsheetRowId)));
     const out = [], byRow = new Map();
     m.forEach((t, id) => {
+      // Deleted on this page, or its line removed here and the delete pending:
+      // a copy of it left in a cache isn't news.
+      if (_ntDelHere.has(id) || ntPdelHidden(id)) return;
       if ((t.fromTemplate && !_ntAllDone.has(id)) || _ntOpenIdx.has(id)) return;
       if (!t.smartsheetRowId) { out.push(t); return; }
       const k = String(t.smartsheetRowId);
@@ -16168,6 +16267,9 @@ const VOICE = {
   // Snapshots never rebuild the page while you're in Notes — only the notes
   // UI, and that never touches the editor node.
   function ntOnListChange(){
+    // A window boot offered before the list was in names its note 'Untitled':
+    // re-word it now that the titles are here.
+    try { ntPdelToast(false); } catch (e) { console.warn('[notes] pdel reword', e); }
     if (_tabNotes && _ntMounted) { try { ntRenderLib(); ntRenderDocChrome(); } catch (e) { console.warn('[notes] list render', e); } }
     else if (_tabOverview || _tabPlanned) { try { render(); } catch {} }
   }
@@ -16326,7 +16428,7 @@ const VOICE = {
         if (mutate(t2, { draft: true })) await ntDraftPut({ ...dr, html: ntSanitize(t2.innerHTML) });
       }
     } catch {}
-    return { ok: true, html: out.html };
+    return { ok: true, html: out.html, rev: out.rev };   // the rev a journaled removal diffs against
   }
   // New is always a plain note — in the category you're looking at, if any.
   // Agendas come from "Today's agenda", a calendar event, or a date chip.
@@ -16403,7 +16505,7 @@ const VOICE = {
         _ntBodyLoaded = true;
         _ntEls.editor.classList.remove('nt-loading');
         _ntEls.editor.contentEditable = 'true';
-        ntApplyHtml(d ? String(d.html || '') : '');   // read-only until now, so nothing typed to keep
+        ntApplyHtml(d ? String(d.html || '') : '', { load: true });   // read-only until now, so nothing typed to keep
         _ntRev = Math.max(_ntRev, rev);
         // The draft first (IndexedDB is async), then the lines take their
         // tasks' state: synced first, a restored draft put back ticks whose
@@ -16413,6 +16515,10 @@ const VOICE = {
           .finally(() => {
             if (ntOpenId !== id || !_ntBodyLoaded) return;
             ntSyncTaskChecks();
+            // What this device holds is settled now (server, then the draft): a
+            // line that came back cancels its removal, a put goes in, and the
+            // commits that were waiting on the body can run.
+            try { ntPdelLineBack('apply'); ntPdelApplyPutsOpen(); ntPdelKick(); } catch (e) { console.warn('[notes] pdel load', e); }
             if (_ntPendingFocus === 'empty') { _ntPendingFocus = null; setTimeout(() => ntFocusFirstEmpty(), 0); }
             if (_ntPendingLine) { const l = _ntPendingLine; _ntPendingLine = null; setTimeout(() => ntRevealTaskLine(l), 60); }
             // A title typed while loading. Not under the banner: ntMarkDirty
@@ -16459,6 +16565,10 @@ const VOICE = {
     if (ntOpenId) _ntBodyCache.set(ntOpenId, clean);
     ntAfterContentSwap();
     if (opts && opts.keepScroll && sc) sc.scrollTop = top;
+    // Their copy may have the line we removed: that cancels the removal. A load
+    // (the first snapshot, a draft restore) is checked once afterwards instead,
+    // because the draft applied over it decides what this device really holds.
+    if (!(opts && opts.load)) { try { ntPdelLineBack('apply'); } catch (e) { console.warn('[notes] pdel back', e); } }
   }
   // A draft is text that never reached the server. Restore it silently only
   // if the server hasn't moved past the rev it was written on; otherwise put
@@ -16474,7 +16584,7 @@ const VOICE = {
     const behind = typeof dr.rev === 'number'
       ? remoteRev > dr.rev
       : (Date.parse((remote && remote.updatedAt) || '') || 0) > (dr.ts || 0);
-    ntApplyHtml(mine);
+    ntApplyHtml(mine, { load: true });   // the body-load finally checks the lines once, after this
     if (typeof dr.title === 'string' && dr.title !== _ntEls.title.value) { _ntEls.title.value = dr.title; _ntTitleEdited = true; }
     if (behind) {
       _ntRemote = { html: theirsRaw, rev: remoteRev };
@@ -16507,7 +16617,8 @@ const VOICE = {
     let added = false;
     tmp.querySelectorAll('li[data-task-id]').forEach(li => {
       const tid = li.getAttribute('data-task-id');
-      if (!tid || have.has(tid) || gone.has(tid)) return;
+      // A removal of ours still in the journal must not be carried back in.
+      if (!tid || have.has(tid) || gone.has(tid) || _ntDelHere.has(tid) || ['del', 'now', 'strip'].includes((ntPdelMap().get(tid) || {}).op)) return;
       const t = _ntTaskIdx.get(tid) || _ntOpenIdx.get(tid);
       if (!t || t.noteId !== ntOpenId) return;
       const c = li.cloneNode(true);
@@ -16530,6 +16641,9 @@ const VOICE = {
     ntSetState('saved');
     ntRenderBanner();
     ntMirrorOpenChecks();   // ticks made elsewhere while the banner was up
+    // The banner is gone: the puts and commits it held can go (ntApplyHtml has
+    // already cancelled the removals whose lines their copy still had).
+    try { ntPdelApplyPutsOpen(); ntPdelKick(); } catch (e) { console.warn('[notes] pdel take', e); }
   }
 
   // ---- data: save ----
@@ -16569,6 +16683,7 @@ const VOICE = {
     if (!_ntBodyLoaded || _ntRemote) return;
     const m = ntNotes.get(id);
     if (ntListLoaded && !m) { _ntDirty = false; ntSetState('saved'); return; }   // deleted elsewhere
+    const base = _ntBodyCache.get(id);   // the copy this save replaces — read before the cache moves below
     const ed = _ntEls.editor;
     const html = ntSanitize(ed.innerHTML);
     const derived = ntDerive(ed);
@@ -16579,6 +16694,9 @@ const VOICE = {
     _ntTitleEdited = false;
     const rev = (_ntRev | 0) + 1;
     const now = ntIso();
+    // A task line this device took out starts its Undo window here — never a
+    // remote body's removal, because ntApplyHtml moves the baseline.
+    if (m && !m.trashed) { try { ntPdelDetect(id, base, ed, rev); } catch (e) { console.warn('[notes] pdel', e); } }
     _ntRev = rev; _ntDirty = false; _ntInflight++;
     ntSetState('saving');
     _ntBodyCache.set(id, html);
@@ -16588,6 +16706,7 @@ const VOICE = {
     b.set(doc(db, NT_BODY_COL, id), { html, rev, updatedAt: now, deviceId: NT_DEVICE });
     b.set(doc(db, NT_COL, id), { ...derived, ...(withTitle ? { title } : {}), rev, updatedAt: now }, { merge: true });
     b.commit().then(() => {
+      try { ntPdelSaved(id, html); } catch (e) { console.warn('[notes] pdel', e); }   // the removal has landed: the delete can go
       _ntErrToasted = false;
       if (!(ntOpenId === id && _ntDirty)) ntDraftDel(id);
     }).catch(e => {
@@ -16601,8 +16720,18 @@ const VOICE = {
     ntRenderLib();
   }
   function ntFlush(){ if (_ntDirty) ntSave(); }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ntFlush(); });
-  window.addEventListener('pagehide', () => ntFlush());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { ntFlush(); return; }
+    ntPdelOnShow(); ntPdelKick();   // a window nobody saw out is offered again, and the runner catches up
+  });
+  // The flush can journal a removal here, so the release comes after it: own
+  // entries are handed back for the next load (or another tab) to adopt.
+  window.addEventListener('pagehide', () => { ntFlush(); try { ntPdelRelease(); } catch (e) { console.warn('[notes] pdel release', e); } });
+  window.addEventListener('pageshow', e => {
+    if (e.persisted) ntPdelClaim();   // bfcache: this page is live again, so its work is its own
+    try { ptUndoResume(); ntPdelOnShow(); ntPdelKick(); } catch (err) { console.warn('[notes] pdel show', err); }
+  });
+  window.addEventListener('online', () => ntPdelKick(true));   // the backoff is about the network: start again
 
   // ---- data: trash / duplicate ----
   function ntTrash(id){
@@ -16623,6 +16752,8 @@ const VOICE = {
     b.delete(doc(db, NT_BODY_COL, id));
     b.commit().catch(e => { console.warn('[notes] delete', e); ptToast('Couldn’t delete — check your connection'); });
     _ntDelArm = null;
+    try { ntDelNoteTasks(id); } catch (e) { console.warn('[notes] note tasks', e); }   // its own tasks go too
+    try { render(); } catch {}
     ntRenderAll();
   }
   async function ntDuplicate(id){
@@ -16799,6 +16930,9 @@ const VOICE = {
       // Open again: its next departure is news, so it may be asked at once.
       else if (_ntOpenFresh && _ntOpenIdx.has(tid)) { want = false; _ntMirrorAsk.delete(tid); }
       else {
+        // This page deleted it (a line another device's Keep mine carried back,
+        // say): unlink it without asking the server what we already know.
+        if (_ntDelHere.has(tid)) { ntUnlinkLine(li); changed = true; return; }
         // An unticked line whose task has left the open index: done
         // elsewhere, or deleted. Only the server can say — at most 10 reads
         // a run, and each task once a minute (both listeners fire per write).
@@ -16844,6 +16978,8 @@ const VOICE = {
   // A line whose task was deleted stays in the note as a plain checklist
   // line: the link, deadline and category go; data-line (its own id) stays.
   function ntUnlinkLine(li){
+    const utid = li.getAttribute('data-task-id');
+    if (utid) _ntPdelSkip.set(utid, Date.now());   // we took this link out on purpose: never a delete
     li.removeAttribute('data-task-id');
     ['data-due', 'data-task-cat', 'data-due-lbl'].forEach(a => li.removeAttribute(a));
     li.classList.remove('nt-late'); li.style.removeProperty('--tc');
@@ -17024,11 +17160,15 @@ const VOICE = {
     }
   }
   // Delete: two taps. Never ECM work (it's closed on ECM — the sheet sync
-  // would bring it back) or a note's task (it's deleted from its note).
+  // would bring it back) or a routine's copy. A note's task goes through its
+  // note, so its line leaves too (ntDeleteNoteTask). Done rows have no Delete,
+  // so the index that has the task is the open one, with the full index as a
+  // fallback for a row a category's section drew.
   async function ntAllDelete(id){
-    const t = _ntOpenIdx.get(id);
-    if (!t || t.smartsheetRowId || t.noteId || t.fromTemplate || _ntAllBusy.has(id)) return;
+    const t = _ntOpenIdx.get(id) || ((_ntTaskIdxLoaded && !_ntTaskIdxErr) ? _ntTaskIdx.get(id) : null);
+    if (!t || t.done || t.smartsheetRowId || t.fromTemplate || _ntAllBusy.has(id)) return;
     if (_ntAllDelArm !== id) { _ntAllDelArm = id; ntRenderLib(); return; }
+    if (t.noteId) { _ntAllDelArm = null; _ntAllRow = null; return ntDeleteNoteTask(t); }
     _ntAllDelArm = null; _ntAllRow = null; _ntAllBusy.add(id);
     try {
       if (activeTimerId === id) { try { await stopTimer(false); } catch {} }
@@ -17222,6 +17362,10 @@ const VOICE = {
       if (!t) { ptToast('That task no longer exists'); return; }
       if (t.done) { ptToast('That task is done — there’s nothing to move'); return; }
       if (t.fromTemplate) { ptToast('A routine’s copy stays with its routine'); return; }
+      // A move isn't a removal: drop any window this page was holding for it.
+      const pend = ntPdelMap().get(tid);
+      if (pend && pend.op === 'del' && ntPdelMine(pend)) { ntPdelWrite([[tid, null]]); ntPdelToast(false); }
+      if (_ntCut) _ntCut.ids.delete(tid);
       // It keeps its category (the section is the truth) — a General target
       // like a daily agenda mustn't re-file work as Life.
       const A = t.noteId || '', cat = ntRowCat(t);
@@ -17271,6 +17415,7 @@ const VOICE = {
       if (!(await ntPatchTask(tid, link))) {
         // The task can't point there (deleted?): take back the line this move
         // put into an existing note. A new note stays, with the text in it.
+        if (T === ntOpenId) _ntPdelSkip.set(tid, Date.now());   // taking our own line back out
         if (tg.id && added) await ntNoteEdit(T, root => ntMoveStrip(root, tid, line));
         ptToast('Couldn’t move — the task may have been deleted');
         return;
@@ -17281,6 +17426,7 @@ const VOICE = {
       // task only linked from a daily agenda has no note of its own).
       let left = '';
       if (A && A !== T && ntNotes.has(A)) {
+        if (A === ntOpenId) _ntPdelSkip.set(tid, Date.now());   // the old note's line goes on purpose
         const r = await ntNoteEdit(A, root => ntMoveStrip(root, tid));
         if (!r.ok && r.reason !== 'gone') left = ntTitleOf(ntNotes.get(A));
       }
@@ -17298,6 +17444,1140 @@ const VOICE = {
     } catch (e) { console.warn('[notes] move', e); ptToast('Couldn’t move that task — try again'); }
     finally { _ntTaskBusy = Math.max(0, _ntTaskBusy - 1); _ntMoveBusy = false; ntMoveFocus(tid); }
   }
+
+  // ==== DELETE ON REMOVAL ================================================
+  // Take a task's line out of a note and the task goes too — but only after
+  // an Undo window, and only through one transaction that re-checks the
+  // server. Every removal is journaled first (localStorage pt-nt-pdel, per
+  // device, in SKIP_SYNC), so a reload, a crash or an offline spell can't
+  // lose a delete or land one after an Undo.
+  // ---- journal ----
+  function ntPdelMap(){
+    if (!_ntPdel) _ntPdel = ntPdelRead() || new Map();
+    return _ntPdel;
+  }
+  // The stored array as a validated Map — null when localStorage threw, so
+  // the caller keeps the in-memory copy instead of wiping it.
+  function ntPdelRead(){
+    try {
+      const raw = localStorage.getItem(NT_PDEL_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      const m = new Map();
+      if (Array.isArray(arr)) arr.forEach(x => { const e = ntPdelClean(x, 0); if (e && !m.has(e.tid)) m.set(e.tid, e); });
+      return m;
+    } catch (e) { console.warn('[notes] pdel read', e); return null; }
+  }
+  // Entries come from another tab or an older build: ids, enums, numbers and
+  // string caps are all checked before one can reach a DOM or a transaction.
+  function ntPdelClean(x, depth){
+    if (!x || typeof x !== 'object') return null;
+    const ID = /^[A-Za-z0-9_-]{1,120}$/;
+    const tid = String(x.tid == null ? '' : x.tid), nid = String(x.nid == null ? '' : x.nid), to = String(x.to == null ? '' : x.to);
+    if (!ID.test(tid) || !ID.test(nid)) return null;
+    if (!['del', 'put', 'link', 'now', 'strip'].includes(x.op)) return null;
+    const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+    const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+    const e = {
+      v: 1, op: x.op, tid, nid, to: ID.test(to) ? to : '',
+      line: str(x.line, 40), li: str(x.li, 2000), after: str(x.after, 40), before: str(x.before, 40),
+      afterText: str(x.afterText, 80), prevText: str(x.prevText, 2000), text: str(x.text, 2000),
+      ord: num(x.ord, 0), rev: num(x.rev, 0), at: num(x.at, 0), hold: num(x.hold, 0),
+      n: num(x.n, 0), next: num(x.next, 0), waitSince: num(x.waitSince, 0), elsewhereAt: num(x.elsewhereAt, 0),
+      w: num(x.w, 0), dep: num(x.dep, 0),
+      conv: !!x.conv, ecm: !!x.ecm, folded: !!x.folded, expired: !!x.expired, replay: !!x.replay, stripped: !!x.stripped,
+      src: x.src === 'list' ? 'list' : '', st: ['cut', 'wait', 'due'].includes(x.st) ? x.st : 'wait',
+      pg: str(x.pg, 40)
+    };
+    if (x.prev && !(depth | 0)) { const p = ntPdelClean(x.prev, 1); if (p) e.prev = p; }   // one level: a link's original del
+    if (e.at && Date.now() - e.at > 7 * 864e5 && e.st !== 'due') return null;              // a week old and not due: nobody's coming back
+    return e;
+  }
+  // Read-modify-write, because another tab may have written since we parsed.
+  // `changes` are entries (upsert) or [tid, null] (delete).
+  function ntPdelWrite(changes){
+    const list = Array.isArray(changes) ? changes : [changes];
+    const read = ntPdelRead();
+    const base = read || ntPdelMap();
+    list.forEach(c => {
+      if (Array.isArray(c)) { base.delete(String(c[0])); return; }
+      const e = ntPdelClean(c, 0);
+      if (e) base.set(e.tid, e);
+    });
+    let out = [...base.values()];
+    // Cap: a delete still owed stays ahead of a fresh window.
+    if (out.length > 200) {
+      const sorted = out.sort((a, b) => (b.st === 'due') - (a.st === 'due') || (b.at || 0) - (a.at || 0));
+      console.warn('[notes] pdel: journal over 200 — dropping', sorted.length - 200, 'of the oldest settled entries');
+      out = sorted.slice(0, 200);
+    }
+    _ntPdel = new Map(out.map(e => [e.tid, e]));
+    // Storage we couldn't read is storage we must not overwrite: another
+    // tab's pending deletes would go with it. Memory only until it reads.
+    if (read) { try { localStorage.setItem(NT_PDEL_KEY, JSON.stringify(out)); } catch (e) { console.warn('[notes] pdel write', e); } }
+    else console.warn('[notes] pdel: journal unreadable — keeping it in memory only');
+    return _ntPdel;
+  }
+  function ntPdelMine(e){ return !!e && e.pg === NT_DEVICE; }
+  // Settle one step's entry — only if the journal still holds the one it ran
+  // on. Undo, a paste or another tab may have replaced it while we awaited.
+  function ntPdelDone(e, op){
+    const o = (ntPdelRead() || ntPdelMap()).get(e.tid);
+    if (!o || o.op !== (op || e.op) || (o.at || 0) > (e.at || 0)) return;
+    ntPdelWrite([[e.tid, null]]);
+  }
+  // Hidden in Notes on this device — another tab's pending removal counts too.
+  function ntPdelHidden(tid){
+    const e = tid ? ntPdelMap().get(String(tid)) : null;
+    return !!e && (e.op === 'now' || e.op === 'strip' || (e.op === 'del' && e.st !== 'cut'));
+  }
+  function ntPdelTxt(s){
+    const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    return t.length > 48 ? t.slice(0, 47).trim() + '…' : (t || 'Task');
+  }
+  // ---- detection: the diff in ntSave ----
+  function ntPdelDetect(nid, base, ed, rev){
+    if (typeof base !== 'string' || base.indexOf('data-task-id') < 0) return;      // fast path
+    const tmp = document.createElement('div'); tmp.innerHTML = base;                // already sanitized
+    const was = [...tmp.querySelectorAll('li[data-task-id]')];
+    if (!was.length) return;
+    const now = Date.now(), J = ntPdelMap();
+    const cur = new Set([...ed.querySelectorAll('li[data-task-id]')].map(x => x.getAttribute('data-task-id')));
+    const agenda = ntIsAgenda(ntNotes.get(nid));
+    const cut = (_ntCut && _ntCut.nid === nid && now - _ntCut.at < NT_CUT_HOLD) ? _ntCut.ids : null;
+    const folded = ntFoldedSet(tmp), blocks = ntPdelBlockTexts(ed), wasBlocks = ntPdelBlockTexts(tmp);
+    const add = [], seen = new Set();
+    was.forEach((li, ord) => {
+      const tid = li.getAttribute('data-task-id');
+      if (seen.has(tid) || cur.has(tid)) return; seen.add(tid);
+      if (_ntPdelSkip.has(tid)) { _ntPdelSkip.delete(tid); return; }                 // moved / unlinked / stripped on purpose
+      const had = J.get(tid);
+      // Pasted here from a cut, removed again before the move landed: the original delete stands.
+      if (had && had.op === 'link' && had.to === nid) { add.push(had.prev ? { ...had.prev, st: 'wait', at: now, n: 0, next: 0, pg: NT_DEVICE } : [tid, null]); return; }
+      if (had && (had.op === 'del' || had.op === 'now' || had.op === 'strip')) return;
+      const { own, t } = ntPdelOwned(tid, nid);
+      if (own === 'no' || (own === '?' && agenda) || (t && t.done)) return;          // a reference line · D1
+      const isCut = !!(cut && cut.has(tid));
+      add.push({ v: 1, op: 'del', tid, nid, ...ntPdelCapture(tmp, li, ord), rev, at: now,
+        folded: folded.has(li), ecm: !!(t && (t.smartsheetRowId || t.fromTemplate)),
+        // Converted means this text BECAME a block in this edit — a note that
+        // already had a heading with the same words is a coincidence, and
+        // Undo must not replace that heading with the restored line.
+        conv: (tx0 => blocks.has(tx0) && !wasBlocks.has(tx0))(ntOwnText(li).replace(/\s+/g, ' ').trim()),
+        src: _ntPdelWhy.get(tid) || '', hold: isCut ? now + NT_CUT_HOLD : 0, st: isCut ? 'cut' : 'wait', pg: NT_DEVICE, n: 0, next: 0 });
+      _ntPdelWhy.delete(tid);
+    });
+    _ntPdelSkip.forEach((at, k) => { if (now - at > 60000) _ntPdelSkip.delete(k); });
+    if (add.length) { ntPdelWrite(add); ntPdelToast(true); ntPdelArm(); }
+  }
+  // 'yes' | 'no' | '?' — the freshest copy that needs no read decides; the transaction re-checks.
+  function ntPdelOwned(tid, nid){
+    const ixOk = _ntTaskIdxLoaded && !_ntTaskIdxErr;
+    const t = (ixOk && _ntTaskIdx.get(tid)) || (_ntOpenFresh && _ntOpenIdx.get(tid)) || todos.find(x => x.id === tid)
+      || (_plannedCache || []).find(x => x.id === tid) || (!ixOk && _ntTaskIdx.get(tid)) || null;
+    if (t) return { own: (t.noteId || '') === nid ? 'yes' : 'no', t };
+    return { own: ixOk ? 'no' : '?', t: null };      // healthy index without it: no note owns it (an agenda's reference)
+  }
+  // A line's own text, without anything in a list nested inside it. Raw:
+  // callers that compare normalize it themselves.
+  function ntOwnText(el){
+    return Array.from(el.childNodes).filter(x => !(x.nodeType === 1 && /^(UL|OL)$/.test(x.nodeName))).map(x => x.textContent).join('');
+  }
+  // Everything Undo needs to put the line back where it was.
+  function ntPdelCapture(root, li, ord){
+    const line = li.getAttribute('data-line') || '';
+    const text = ntOwnText(li).slice(0, 2000);
+    const c = li.cloneNode(true);
+    c.querySelectorAll('ul, ol').forEach(x => x.remove());
+    let html = c.outerHTML;
+    // A huge line (pasted markup) goes back as its text, which always fits.
+    if (html.length > 2000) html = ntMoveLi(li.getAttribute('data-task-id') || '', line || ntLineId(), li.getAttribute('data-due') || '',
+      li.getAttribute('data-task-cat') || '', text.replace(/\s+/g, ' ').trim().slice(0, 400)).outerHTML;
+    // The nearest line either side that has an id, its own nested lines
+    // excluded. Walking every li (not just the ones with an id) keeps the
+    // anchors when the removed line itself never had one.
+    const all = [...root.querySelectorAll('li')].filter(x => x === li || !li.contains(x));
+    const i = all.indexOf(li);
+    const lineOf = x => x.getAttribute('data-line') || '';
+    let after = '', before = '';
+    for (let k = i - 1; k >= 0 && !after; k--) after = lineOf(all[k]);
+    for (let k = i + 1; k < all.length && !before; k++) before = lineOf(all[k]);
+    const ps = li.previousElementSibling;
+    const prevText = (ps && ps.nodeName === 'LI') ? ntOwnText(ps).slice(0, 2000) : '';   // raw: the un-merge check is exact
+    let top = li; while (top.parentElement && top.parentElement !== root) top = top.parentElement;
+    const pb = top.previousElementSibling;
+    const afterText = pb ? ntOwnText(pb).replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+    // How deep it sat, so Undo doesn't put a top-level line inside a nested
+    // list when the line above it has one.
+    let dep = 0, pp = li.parentElement;
+    while (pp && pp !== root) { if (/^(UL|OL)$/.test(pp.nodeName)) dep++; pp = pp.parentElement; }
+    return { line, li: html, after, before, afterText, prevText, text, ord: ord | 0, dep };
+  }
+  // The task lines that were under a collapsed heading: they went without
+  // being seen, so the toast says how many. Mirrors ntApplyFolds.
+  function ntFoldedSet(root){
+    const out = new Set();
+    let hide = 0;
+    Array.from(root.children).forEach(el => {
+      const lv = /^H[123]$/.test(el.nodeName) ? +el.nodeName[1] : 0;
+      if (lv && !(hide && lv > hide)) { hide = el.hasAttribute('data-collapsed') ? lv : 0; return; }
+      if (hide) el.querySelectorAll('li[data-task-id]').forEach(li => out.add(li));
+    });
+    return out;
+  }
+  // The normalized own texts of everything in the editor that is NOT a task
+  // line: a line turned into a heading, a paragraph or a plain bullet was
+  // converted, not removed, and the toast says so (D2).
+  function ntPdelBlockTexts(ed){
+    const out = new Set();
+    const add = el => { const t = ntOwnText(el).replace(/\s+/g, ' ').trim(); if (t.length >= 3) out.add(t); };
+    Array.from(ed.children).forEach(el => { if (!/^(UL|OL)$/.test(el.nodeName)) add(el); });
+    // Turning a checklist off leaves the words as loose text, not a block.
+    Array.from(ed.childNodes).forEach(n => { if (n.nodeType === 3) { const t = n.textContent.replace(/\s+/g, ' ').trim(); if (t.length >= 3) out.add(t); } });
+    ed.querySelectorAll('li:not([data-task-id])').forEach(add);
+    return out;
+  }
+  // ---- the Undo window ----
+  // One toast covers every removal this page is holding: a new one re-shows it
+  // with a fresh window (earlier entries get the extra time too), entries
+  // leaving re-word it, and nothing left closes it.
+  function ntPdelToast(fresh){
+    const mine = [...ntPdelMap().values()].filter(e => e.op === 'del' && ntPdelMine(e));
+    const wait = mine.filter(e => e.st === 'wait');
+    const es = wait.length ? wait : mine.filter(e => e.st === 'cut');   // a cut's toast only while nothing waits
+    if (!es.length) {
+      if (_ntPdelUndo && _ptUndo === _ntPdelUndo) ptUndoClose();
+      _ntPdelUndo = null; return;
+    }
+    const ids = es.map(e => e.tid), msg = ntPdelMsg(es, !wait.length);
+    if (!fresh) {
+      // Re-word what is on screen; never bring a toast back (a cut's hold
+      // would pop up again on every notes-list snapshot). ntPdelOnShow is
+      // what decides to offer an unseen window again.
+      if (_ntPdelUndo && _ptUndo === _ntPdelUndo) ptUndoText(_ntPdelUndo, msg);
+      return;
+    }
+    // Stale ids in the closures are harmless: both re-filter the journal.
+    _ntPdelUndo = ptUndoToast(msg, { ms: NT_PDEL_MS, onUndo: () => ntPdelUndo(ids), onExpire: wait.length ? () => ntPdelServe(ids) : null });
+  }
+  // §13's wording: task text in double curly quotes, note titles in single.
+  function ntPdelMsg(es, cutOnly){
+    const one = es.length === 1 ? es[0] : null;
+    const title = n => ntTitleOf(ntNotes.get(n));
+    if (cutOnly) return one ? `Cut “${ntPdelTxt(one.text)}” — paste it into a note within 2 minutes to keep the task`
+      : `Cut ${es.length} tasks — paste them into a note within 2 minutes to keep them`;
+    if (one) {
+      const t = ntPdelTxt(one.text);
+      if (one.ecm) return `Took “${t}” out of this note — ECM work stays in All tasks`;
+      if (one.expired) return `Deleted “${t}” — its line was cut and not pasted`;
+      if (one.replay) return `Deleting “${t}” — you removed its line in ‘${title(one.nid)}’`;
+      if (one.conv) return `Deleted “${t}” — its line isn’t a task any more`;
+      if (one.src === 'list') return `Deleted “${t}” and its line in ‘${title(one.nid)}’`;
+      return `Deleted “${t}”`;
+    }
+    const ecm = es.filter(e => e.ecm).length, keep = es.length - ecm;
+    if (!keep) return `Took ${ecm} lines out of this note — ECM work stays in All tasks`;
+    if (ecm) return `Deleted ${keep} task${keep > 1 ? 's' : ''} · ${ecm} ECM task${ecm > 1 ? 's stay' : ' stays'} in All tasks`;
+    const fold = es.filter(e => e.folded).length;
+    return `Deleted ${es.length} tasks with their lines` + (fold ? (fold > 1 ? ` — ${fold} were in folded sections` : ' — 1 was in a folded section') : '');
+  }
+  // The window ran out with the page on screen: these removals are now due.
+  function ntPdelServe(ids){
+    const J = ntPdelMap(), now = Date.now();
+    const es = (ids || []).map(t => J.get(t)).filter(e => e && e.op === 'del' && e.st === 'wait' && ntPdelMine(e));
+    if (!es.length) return;
+    ntPdelWrite(es.map(e => ({ ...e, st: 'due', next: now + 300 })));   // one breath, then the transaction
+    ntPdelToast(false);
+    ntPdelArm();
+  }
+  // Shown again (tab, frame, bfcache): a window nobody saw out is offered again.
+  function ntPdelOnShow(){
+    if (_ptUndo && _ptUndo === _ntPdelUndo) return;
+    if ([...ntPdelMap().values()].some(e => e.op === 'del' && e.st === 'wait' && ntPdelMine(e))) ntPdelToast(true);
+  }
+  // ---- cut, copy, paste, drag ----
+  // The clipboard for task lines, written here instead of left to the browser:
+  // a single selected line otherwise comes out without its list wrapper, and
+  // the paste can't tell it from a paragraph. Either way the ids we are cutting
+  // are remembered, so the removal that follows reads as a move, not a delete.
+  function ntNoteClip(e, isCut){
+    if (!_ntEls || !ntOpenId) return;
+    const s = ntSel();
+    if (!s || s.isCollapsed || !s.rangeCount) return;
+    const r = s.getRangeAt(0);
+    if (!ntInEditor(r.startContainer) || !ntInEditor(r.endContainer)) return;
+    let lis = [];
+    try { lis = [..._ntEls.editor.querySelectorAll('li[data-task-id]')].filter(li => r.intersectsNode(li)); } catch { return; }
+    if (!lis.length) return;                             // no task line in the selection: the browser's own copy is fine
+    if (isCut) _ntCut = { nid: ntOpenId, ids: new Set(lis.map(li => li.getAttribute('data-task-id'))), at: Date.now() };
+    const cd = e && e.clipboardData;
+    if (!cd) return;                                     // a drag: remembering the ids was the whole job
+    const one = lis.length === 1 ? lis[0] : null;
+    let html;
+    // One whole task line: give the paste a real checklist item to keep the
+    // link on. Anything else goes as selected — partly selected lines may carry
+    // an id, and the paste rules (P2) take those off.
+    if (one && r.toString().trim() === ntOwnText(one).trim()) {
+      const c = one.cloneNode(true);
+      c.querySelectorAll('ul, ol').forEach(x => x.remove());
+      const ul = document.createElement('ul');
+      ul.className = 'nt-checklist';
+      ul.appendChild(c);
+      html = ul.outerHTML;
+    } else {
+      const d = document.createElement('div');
+      d.appendChild(r.cloneContents());
+      // A selection can come out without its list's class: keep the checkbox
+      // so a pasted task line doesn't land as a plain bullet.
+      d.querySelectorAll('li[data-task-id]').forEach(x => { const p = x.parentElement; if (p && p.nodeName === 'UL') p.classList.add('nt-checklist'); });
+      html = d.innerHTML;
+    }
+    try { cd.setData('text/html', ntSanitize(html)); cd.setData('text/plain', s.toString()); }
+    catch (err) { console.warn('[notes] clip', err); return; }   // couldn't write it: let the browser do it
+    e.preventDefault();
+    if (isCut) ntExec('delete');                                 // the input listener runs ntAfterMutation
+  }
+  // The source note's copy on this device (flushed when you left it) has no
+  // line with text for this task: the cut left an empty line, or none at all,
+  // so the pasted line may take the link. No copy to judge by means no.
+  function ntSrcLineEmpty(from, tid){
+    const html = from ? _ntBodyCache.get(from) : '';
+    if (typeof html !== 'string' || !html) return false;
+    if (html.indexOf(tid) < 0) return true;                      // fast path: no line for it at all
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;                                        // already sanitized
+    return ![...tmp.querySelectorAll('li[data-task-id]')].some(li => li.getAttribute('data-task-id') === tid && ntOwnText(li).trim());
+  }
+  // A pasted line kept its link to a task another note owns: journal the move,
+  // so one transaction re-points the task (and takes out the empty line it left
+  // behind) even if this page reloads first.
+  function ntPdelAfterPaste(rl){
+    if (!_ntEls || !ntOpenId) return;
+    const now = Date.now(), add = [];
+    (rl || []).forEach(r => {
+      if (!r || !r.tid || !r.from || r.from === ntOpenId) return;
+      const li = ntTaskLineEl(r.tid);
+      if (!li) return;
+      if (!li.getAttribute('data-line')) { li.setAttribute('data-line', ntLineId()); ntMarkDirty(); }
+      add.push({ v: 1, op: 'link', tid: r.tid, nid: r.from, to: ntOpenId, line: li.getAttribute('data-line'),
+        text: ntOwnText(li).slice(0, 2000), prev: r.prev || null, st: 'due', at: now, pg: NT_DEVICE, n: 0, next: 0 });
+      if (_ntCut) _ntCut.ids.delete(r.tid);              // pasted: this one's removal was a move
+    });
+    if (!add.length) return;
+    ntPdelWrite(add);                                    // upsert: it replaces any del for that task
+    ntPdelToast(false);
+    ntPdelKick(true);
+  }
+  // A cut line pasted into another note: the task follows its line. One
+  // transaction, like ntNoteEdit's — never a queued write, so a re-point can't
+  // land after the line has moved on again. The task must still be where the
+  // paste thought it was: its old note, or already this one.
+  async function ntPdelLink(e){
+    const ref = doc(db, 'tv_todos', e.tid);
+    let dead = false, out = null, timer = null;
+    const run = runTransaction(db, async tx => {
+      out = null;                                        // a retry starts again from the server's copy
+      const s = await tx.get(ref);
+      if (dead) throw new Error('timeout');              // given up on: a late retry mustn't write after all
+      if (!s.exists()) { out = { v: 'gone' }; return; }
+      const d = s.data() || {};
+      const at = d.noteId || '';
+      if (at !== e.nid && at !== e.to) { out = { v: 'elsewhere' }; return; }
+      const cat = ntRowCat({ id: e.tid, ...d });         // the category rule a move uses
+      tx.update(ref, { noteId: e.to, noteLineId: e.line, noteCat: cat });
+      out = { v: 'linked', cat, text: d.text || '' };
+    });
+    try { await Promise.race([run, new Promise((_, no) => { timer = setTimeout(() => { dead = true; no(new Error('timeout')); }, 8000); })]); }
+    catch (err) { console.warn('[notes] pdel link', err); ntPdelBackoff(e); return; }
+    finally { clearTimeout(timer); }
+    if (!out) { ntPdelBackoff(e); return; }
+    if (out.v === 'gone') {
+      // Deleted meanwhile: the pasted line stays as plain text.
+      const li = e.to === ntOpenId ? ntTaskLineEl(e.tid) : null;
+      if (li) { ntUnlinkLine(li); ntAfterMutation(); ntFlush(); }
+      ntPdelDone(e);
+      return;
+    }
+    if (out.v === 'elsewhere') { ntPdelDone(e); return; }   // a third note owns it now: the pasted line is a reference
+    const patch = { noteId: e.to, noteLineId: e.line, noteCat: out.cat };
+    [_ntOpenIdx.get(e.tid), _ntTaskIdx.get(e.tid), todos.find(x => x.id === e.tid), (_plannedCache || []).find(x => x.id === e.tid)]
+      .forEach(t => { if (t) Object.assign(t, patch); });
+    // Only the text was cut: the empty line it left behind goes too. A line
+    // there that still has text reads as a line, so nothing is touched.
+    if (e.nid === ntOpenId) _ntPdelSkip.set(e.tid, Date.now());
+    await ntNoteEdit(e.nid, root => {
+      const hit = [...root.querySelectorAll('li[data-task-id]')].filter(x => x.getAttribute('data-task-id') === e.tid);
+      if (!hit.length || hit.some(x => ntOwnText(x).trim())) return false;
+      return ntMoveStrip(root, e.tid);
+    });
+    ntPdelDone(e);
+    ptToast(`Moved “${ntPdelTxt(e.text || out.text)}” to ‘${ntTitleOf(ntNotes.get(e.to))}’`);
+  }
+  // ---- the runner ----
+  // One timer for the whole journal: the nearest own deadline. `minMs` raises
+  // the floor when we have just been told to wait, so a held or offline page
+  // can't spin; an hour is the ceiling, because a long backoff re-arms itself.
+  function ntPdelArm(minMs){
+    clearTimeout(_ntPdelT); _ntPdelT = null;
+    const now = Date.now();
+    let at = Infinity;
+    ntPdelMap().forEach(e => {
+      // A stale foreign entry is adopted by whoever wakes next, so its adoption
+      // moment counts too — otherwise a dead tab's delete waits for a boot.
+      // Nobody's (released at pagehide): ours to take now. Another tab's: only
+      // once it has said nothing for ten minutes.
+      const when = !ntPdelMine(e) ? (e.pg ? Math.max(e.at || 0, e.next || 0) + 6e5 : now)
+        : (e.op === 'del' && e.st === 'wait') ? Infinity                                  // the Undo toast owns it
+        : (e.op === 'del' && e.st === 'cut') ? Math.max(e.hold || 0, e.next || 0)
+        : (e.next || 0);
+      if (when < at) at = when;
+    });
+    if (at === Infinity) return;
+    _ntPdelT = setTimeout(() => { _ntPdelT = null; ntPdelRun(); }, Math.min(36e5, Math.max(minMs || 250, at - now)));
+  }
+  // Something a pending entry was waiting on has changed. `now` also clears the
+  // backoff on own entries: Retry, a paste, a save ack, coming back online.
+  function ntPdelKick(now){
+    if (now) {
+      const t = Date.now(), ch = [];
+      ntPdelMap().forEach(e => { if (ntPdelMine(e) && (e.next || 0) > t) ch.push({ ...e, next: 0 }); });
+      if (ch.length) ntPdelWrite(ch);
+    }
+    ntPdelArm();
+  }
+  // The journal's one worker: single-flight, and every step it takes is safe to
+  // repeat after a reload.
+  async function ntPdelRun(){
+    if (_ntPdelBusy) return;
+    clearTimeout(_ntPdelT); _ntPdelT = null;
+    // A held (hidden) load and an offline device both wait: ptWake and the
+    // `online` listener kick, and the floor keeps this from polling meanwhile.
+    if (_ptHeld || navigator.onLine === false) { ntPdelArm(30000); return; }
+    let J = ntPdelMap();
+    const now = Date.now(), ch = [];
+    let expired = false;
+    J.forEach(e => {
+      // A tab that went away mid-delete: after 10 minutes its work is ours.
+      if (!ntPdelMine(e)) {
+        // Released at pagehide, or a tab silent for ten minutes. `next` is
+        // stamped so the entry isn't instantly re-adoptable by every tab.
+        if (!e.pg || now - Math.max(e.at || 0, e.next || 0) > 6e5) ch.push({ ...e, pg: NT_DEVICE, next: Math.max(e.next || 0, now) });
+        return;
+      }
+      // Cut and never pasted: it reads as a delete now, with its own window.
+      if (e.op === 'del' && e.st === 'cut' && now >= (e.hold || 0)) { ch.push({ ...e, st: 'wait', expired: true }); expired = true; }
+    });
+    if (ch.length) J = ntPdelWrite(ch);
+    if (expired) ntPdelToast(true);            // the hold is up: its Undo window starts now
+    else if (ch.length) ntPdelOnShow();        // work we just adopted gets its window offered here
+    const due = [...J.values()].filter(e => ntPdelMine(e) && (e.next || 0) <= now && (e.op !== 'del' || e.st === 'due'));
+    if (!due.length) { ntPdelArm(); return; }
+    // A move or a task sheet is writing the same docs: let it finish first.
+    if (_ntMoveBusy || _ntTaskBusy > 0) { ntPdelArm(3000); return; }
+    // Our own save is still in flight: the transaction would read the copy that
+    // save is about to replace. Waiting for the ack is what makes `back` mean back.
+    if (_ntInflight > 0) {
+      try { await Promise.race([waitForPendingWrites(db), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 8000))]); }
+      catch (e) { console.warn('[notes] pdel wait', e); ntPdelBackoff(due); ntPdelArm(); return; }
+      // A kick during that wait (the save ack itself does one) can start a
+      // second run: single-flight means it owns these now, not us.
+      if (_ntPdelBusy) return;
+    }
+    _ntPdelBusy = true;
+    try {
+      const pick = op => due.filter(e => e.op === op);
+      for (const e of pick('put')) await ntPdelPut(e);
+      for (const e of pick('link')) await ntPdelLink(e);
+      for (const e of pick('now')) await ntPdelNow(e);
+      for (const e of pick('strip')) await ntPdelStrip(e);
+      // Removals share their note's body read, so they go one note at a time.
+      const groups = new Map();
+      pick('del').forEach(e => { if (!groups.has(e.nid)) groups.set(e.nid, []); groups.get(e.nid).push(e); });
+      for (const [gid, es] of groups) await ntPdelCommit(gid, es);
+    // A step that threw leaves its entry as it was: back the batch off rather
+    // than come straight back to it (entries already settled are skipped).
+    } catch (e) { console.warn('[notes] pdel run', e); try { ntPdelBackoff(due); } catch {} }
+    finally { _ntPdelBusy = false; }
+    try { ntPdelLineBack('edit'); } catch (e) { console.warn('[notes] pdel back', e); }   // a line typed back mid-flight cancels its entry
+    ntPdelArm();
+    try { render(); } catch {}
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+  }
+  // One note's group of removals. Every check here reads a local copy — the
+  // server is read once, inside the transaction.
+  async function ntPdelCommit(nid, es){
+    const now = Date.now(), title = ntTitleOf(ntNotes.get(nid));
+    // Undone or replaced while we queued: leave whatever is there now alone.
+    const fresh = e => { const o = ntPdelMap().get(e.tid); return (o && o.op === 'del' && o.nid === nid) ? o : null; };
+    // The open note's body isn't in yet, or Load theirs / Keep mine is up:
+    // nothing here can tell whether the line is back. The body load,
+    // ntTakeRemote and Keep mine each kick again.
+    if (nid === ntOpenId && (!_ntBodyLoaded || _ntRemote)) {
+      const c = es.map(fresh).filter(Boolean).map(o => ({ ...o, next: now + 15000 }));
+      if (c.length) ntPdelWrite(c);
+      return;
+    }
+    const draft = await ntDraftGet(nid);
+    // This device's own copy of the note: the editor when it's open, the draft
+    // when it isn't. A line back in either cancels the delete.
+    let dset = null;
+    if (nid !== ntOpenId) {
+      const html = (draft && typeof draft.html === 'string') ? draft.html : '';
+      if (html.indexOf('data-task-id') >= 0) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = ntSanitize(html);
+        dset = new Set([...tmp.querySelectorAll('li[data-task-id]')].map(x => x.getAttribute('data-task-id')));
+      }
+    }
+    const lineBack = tid => (nid === ntOpenId ? !!ntTaskLineEl(tid) : !!(dset && dset.has(tid)));
+    // Another note claims the line: another device may be mid-move. Two minutes
+    // lets its write land; after that the transaction decides. Agendas are
+    // skipped — their lines are references, not owners.
+    const elsewhere = tid => {
+      if (ntOpenId && ntOpenId !== nid && !ntIsAgenda(ntNotes.get(ntOpenId)) && ntTaskLineEl(tid)) return true;
+      for (const n of ntNotes.values()) {
+        if (!n || n.id === nid || n.trashed || ntIsAgenda(n)) continue;
+        if (Array.isArray(n.links) && n.links.slice(0, 100).indexOf(tid) >= 0) return true;
+      }
+      return false;
+    };
+    const run = [], ch = [], msgs = [];
+    es.forEach(e => {
+      const o = fresh(e);
+      if (!o) return;
+      if (_ntTkBusy.has(o.tid) || _ntAllBusy.has(o.tid)) { ch.push({ ...o, next: now + 15000 }); return; }   // its tick or its row is being written
+      if (lineBack(o.tid)) { ch.push([o.tid, null]); msgs.push(`Kept “${ntPdelTxt(o.text)}” — its line is back in ‘${title}’`); return; }
+      if (elsewhere(o.tid)) {
+        const since = o.elsewhereAt || now;
+        if (now - since < 120000) { ch.push({ ...o, elsewhereAt: since, next: now + 15000 }); return; }
+      }
+      run.push(o);
+    });
+    if (ch.length) ntPdelWrite(ch);
+    if (msgs.length) ptToast(msgs[0]);          // ptToast holds one message; the rest of the group is settled either way
+    if (!run.length) return;
+    // The timer's seconds land on the task before it goes.
+    if (activeTimerId && run.some(e => e.tid === activeTimerId)) { try { await stopTimer(false); } catch (err) { console.warn('[notes] pdel timer', err); } }
+    const pendingCopy = (ntOpenId === nid && (_ntDirty || _ntInflight > 0)) || !!draft;
+    for (let i = 0; i < run.length; i += 25) {   // slices of 25: one body read plus one per task, inside an 8 s transaction
+      const part = run.slice(i, i + 25);
+      // Where the task was, for Undo and bring-back — read before it goes.
+      const pre = new Map(part.map(e => [e.tid, { work: ntWorkPos(e.tid), inTodos: todos.some(x => x.id === e.tid), inPlanned: (_plannedCache || []).some(x => x.id === e.tid) }]));
+      const r = await ntPdelTx(nid, part, pendingCopy);
+      if (!r.ok) { ntPdelBackoff(part); continue; }
+      ntPdelApply(nid, part, r.res, pre);
+    }
+  }
+  // The delete itself: one transaction per note that re-checks everything the
+  // Undo window assumed. A transaction never queues offline, so a delete can
+  // never land after an Undo — it fails and is asked again later.
+  async function ntPdelTx(nid, es, pendingCopy){
+    const bref = doc(db, NT_BODY_COL, nid);
+    let dead = false, out = null, timer = null;
+    const run = runTransaction(db, async tx => {
+      out = null;
+      const bs = await tx.get(bref);
+      const ts = await Promise.all(es.map(e => tx.get(doc(db, 'tv_todos', e.tid))));   // every read before any write, together
+      if (dead) throw new Error('timeout');                        // abandoned: a late retry mustn't write
+      const body = bs.exists() ? (bs.data() || {}) : null, brev = body ? (body.rev | 0) : 0, have = new Set();
+      if (body) { const t = document.createElement('div'); t.innerHTML = ntSanitize(body.html); t.querySelectorAll('li[data-task-id]').forEach(x => have.add(x.getAttribute('data-task-id'))); }
+      const r = new Map();
+      es.forEach((e, i) => {
+        const s = ts[i];
+        if (!s.exists()) { r.set(e.tid, { v: 'gone' }); return; }
+        const d = s.data() || {};
+        if ((d.noteId || '') !== nid) { r.set(e.tid, { v: 'moved', to: d.noteId || '' }); return; }
+        // The line is still there: either our removal hasn't landed (wait) or
+        // the note really has it back (a lost save, or Keep mine elsewhere).
+        if (have.has(e.tid)) { r.set(e.tid, { v: (brev < (e.rev | 0) && pendingCopy) ? 'wait' : 'back' }); return; }
+        if (d.done === true) { r.set(e.tid, { v: 'done' }); return; }                                   // D1
+        if (d.smartsheetRowId || d.fromTemplate) { tx.update(s.ref, { noteId: deleteField(), noteLineId: deleteField(), noteCat: deleteField() }); r.set(e.tid, { v: 'unlinked' }); return; }
+        tx.delete(s.ref); r.set(e.tid, { v: 'del', snap: d });
+      });
+      out = r;
+    });
+    try { await Promise.race([run, new Promise((_, no) => { timer = setTimeout(() => { dead = true; no(new Error('timeout')); }, 8000); })]); }
+    catch (e) { console.warn('[notes] pdel tx', e); return { ok: false }; }
+    finally { clearTimeout(timer); }
+    return out ? { ok: true, res: out } : { ok: false };
+  }
+  // The transaction's answers. Each one settles its entry — dropped, or (only
+  // `wait`) asked again once this device's own save has landed.
+  function ntPdelApply(nid, es, res, pre){
+    const now = Date.now(), ch = [], msgs = [], title = ntTitleOf(ntNotes.get(nid));
+    es.forEach(e => {
+      const r = res ? res.get(e.tid) : null;
+      if (!r) { ntPdelBackoff(e); return; }                        // no answer for it: ask again
+      if (r.v === 'del' || r.v === 'gone') {
+        // Deleted here: keep everything Cmd+Z needs for 10 minutes. `gone`
+        // (deleted elsewhere, or a timed-out transaction that committed) has no
+        // snapshot and says nothing.
+        if (r.v === 'del') _ntPdelGone.set(e.tid, { snap: r.snap, nid, line: e.line, li: e.li, text: e.text, at: now, ...((pre && pre.get(e.tid)) || {}) });
+        _ntDelHere.add(e.tid); ntTaskGoneLocal(e.tid);
+        // Undo turned it into a put while the transaction ran: leave that be —
+        // ntPdelPut brings the line back, and the task with it.
+        if ((ntPdelMap().get(e.tid) || {}).op === 'put') return;
+        ch.push([e.tid, null]); return;
+      }
+      if (r.v === 'unlinked') { ntTaskUnlinkedLocal(e.tid); ch.push([e.tid, null]); return; }   // D5: ECM work and routine copies stay
+      if (r.v === 'moved') {
+        const to = r.to ? ntNotes.get(r.to) : null;
+        ch.push([e.tid, null]);
+        msgs.push(`Kept “${ntPdelTxt(e.text)}” — it’s in ${to ? `‘${ntTitleOf(to)}’` : 'another note'} now`);
+        return;
+      }
+      if (r.v === 'back') { ch.push([e.tid, null]); msgs.push(`Kept “${ntPdelTxt(e.text)}” — its line is back in ‘${title}’`); return; }
+      if (r.v === 'done') { ch.push([e.tid, null]); return; }       // D1: a ticked task keeps its history and its place in Completed
+      // 'wait': ntPdelSaved kicks it as soon as the save acks — unless Undo
+      // turned it into a put while the transaction ran, which must not come back.
+      if ((ntPdelMap().get(e.tid) || {}).op !== 'del') return;
+      // Each ask waits longer, and after ten minutes the note's copy is what
+      // it is: the save is never landing, so the task is kept. Without this a
+      // dropped save polls every 15 s forever, at a read per task each time.
+      const since = e.waitSince || now, w = (e.w | 0) + 1;
+      if (now - since > 6e5) { ch.push([e.tid, null]); msgs.push(`Kept “${ntPdelTxt(e.text)}” — its line is back in ‘${title}’`); return; }
+      ch.push({ ...e, w, next: now + Math.min(3e5, 15000 * w), waitSince: since });
+    });
+    if (ch.length) ntPdelWrite(ch);
+    if (msgs.length) ptToast(msgs[0]);
+  }
+  // A step that couldn't reach the server: each failure waits longer (30 s to
+  // an hour), and the page says so once a session — but only while someone is
+  // looking, because the entry survives a reload either way.
+  function ntPdelBackoff(es){
+    const list = (Array.isArray(es) ? es : [es]).filter(Boolean);
+    if (!list.length) return;
+    const now = Date.now(), base = ntPdelRead() || ntPdelMap(), ch = [];
+    list.forEach(e => {
+      const o = base.get(e.tid);
+      if (!o || o.op !== e.op) return;                             // undone or moved on meanwhile: never write it back
+      const n = (o.n | 0) + 1;
+      ch.push({ ...o, n, next: now + NT_PDEL_BACK[Math.min(n - 1, NT_PDEL_BACK.length - 1)] });
+    });
+    if (!ch.length) return;
+    ntPdelWrite(ch);
+    if (_ntPdelErrToasted || !ptUndoLive()) return;
+    _ntPdelErrToasted = true;
+    ptToast(ch.length === 1 ? `Couldn’t delete “${ntPdelTxt(ch[0].text)}” yet — it’ll go through when this device is back online`
+      : `Couldn’t delete ${ch.length} tasks yet — they’ll go through when this device is back online`);
+  }
+  // A save of this note has been acked. Whatever was waiting on it moves now
+  // instead of waiting out its backoff: a put whose line is stored is done, and
+  // a delete the server said it couldn't see yet can be asked again.
+  function ntPdelSaved(nid, html){
+    const mine = [...ntPdelMap().values()].filter(e => e.nid === nid && ntPdelMine(e));
+    if (!mine.length) return;
+    let have = null;
+    if (mine.some(e => e.op === 'put')) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = String(html || '');                          // ntSave sanitized it
+      have = new Set([...tmp.querySelectorAll('li[data-task-id]')].map(x => x.getAttribute('data-task-id')));
+    }
+    const now = Date.now(), ch = [];
+    mine.forEach(e => {
+      if (e.op === 'put') { if (have && have.has(e.tid)) ch.push([e.tid, null]); return; }   // the line is in the saved copy: nothing left to put back
+      if (e.op === 'del' && e.st === 'due' && (e.next || 0) > now) ch.push({ ...e, next: 0 });
+    });
+    if (!ch.length) return;
+    ntPdelWrite(ch);
+    ntPdelKick();
+  }
+  // A delete the user already confirmed elsewhere (Planned, the drawer, the
+  // Overview). The transaction only makes sure it happened: `deleteDoc` ran
+  // first for the latency compensation, and a reload can drop that write, so
+  // replaying it here is safe — nothing about this delete is in doubt.
+  async function ntPdelNow(e){
+    const ref = doc(db, 'tv_todos', e.tid);
+    let dead = false, out = null, timer = null;
+    const run = runTransaction(db, async tx => {
+      out = null;                                        // a retry starts again from the server's copy
+      const s = await tx.get(ref);
+      if (dead) throw new Error('timeout');              // given up on: a late retry mustn't write after all
+      if (!s.exists()) { out = 'gone'; return; }
+      tx.delete(ref);
+      out = 'del';
+    });
+    try { await Promise.race([run, new Promise((_, no) => { timer = setTimeout(() => { dead = true; no(new Error('timeout')); }, 8000); })]); }
+    catch (err) { console.warn('[notes] pdel now', err); ntPdelBackoff(e); return; }
+    finally { clearTimeout(timer); }
+    if (!out) { ntPdelBackoff(e); return; }               // either answer confirms it: gone is gone
+    _ntDelHere.add(e.tid); ntTaskGoneLocal(e.tid);
+    if (e.stripped) { ntPdelDone(e); return; }
+    const o = { ...e, op: 'strip', n: 0, next: 0 };       // the line is still in its note: take it out now
+    ntPdelWrite([o]);
+    await ntPdelStrip(o);
+  }
+  // The line of a task that is already deleted. `busy` is the open note not
+  // being ready (loading, or Load theirs / Keep mine up): the body load,
+  // ntTakeRemote and Keep mine each kick the journal again.
+  async function ntPdelStrip(e){
+    if (e.nid === ntOpenId) _ntPdelSkip.set(e.tid, Date.now());   // our own removal: never read as a delete
+    const r = await ntNoteEdit(e.nid, root => ntMoveStrip(root, e.tid));
+    if (r.ok || r.reason === 'gone') { ntPdelDone(e); return; }
+    if (r.reason === 'busy') { ntPdelWrite([{ ...e, next: Date.now() + 15000 }]); return; }
+    ntPdelBackoff(e);
+  }
+  // ---- cleanup after a delete ----
+  // Exact id only — never removeFromWork, whose resolveTaskRef can schedule a
+  // routine's materialize for a 'tpl:' ref.
+  function ntWorkPos(tid){ const s = String(tid); let i = work.today.findIndex(r => String(r) === s); if (i >= 0) return { k: 'today', i }; i = work.morning.findIndex(r => String(r) === s); return i >= 0 ? { k: 'morning', i } : null; }
+  function ntWorkDrop(tid){ const w = ntWorkPos(tid); if (w) { work[w.k].splice(w.i, 1); saveWork(); } return w; }
+  // The task is gone from the server: take it out of everything this page holds,
+  // so no render, tick or timer can reach it. Idempotent — a repeated step is
+  // the whole design.
+  function ntTaskGoneLocal(tid){
+    if (activeTimerId === tid) { try { stopTimer(false); } catch {} }
+    todos = todos.filter(x => x.id !== tid);
+    _plannedCache = (_plannedCache || []).filter(x => x.id !== tid);
+    ntWorkDrop(tid);
+    _ntOpenIdx.delete(tid); _ntTaskIdx.delete(tid); _ntAllDone.delete(tid); _ntAllReopened.delete(tid); _ntMirrorAsk.delete(tid);
+    if (_ntDoneList) _ntDoneList = _ntDoneList.filter(x => x.id !== tid);
+    if (_ntAllRow === tid) _ntAllRow = null;
+    if (_ntAllDelArm === tid) _ntAllDelArm = null;
+    if (expandedTaskId === tid) expandedTaskId = null;
+    if (_ovRowOpen === tid) { _ovRowOpen = null; _ovDelArm = null; }
+    try { _plannedRowOpen.delete(tid); _plannedDetailsOpen.delete(tid); } catch {}
+  }
+  // ECM work and routine copies keep their task and lose the note (D5): the
+  // three note fields go, and the note index no longer holds it.
+  function ntTaskUnlinkedLocal(tid){
+    [_ntOpenIdx.get(tid), _ntTaskIdx.get(tid), todos.find(x => x.id === tid), (_plannedCache || []).find(x => x.id === tid)]
+      .forEach(t => { if (t) { delete t.noteId; delete t.noteLineId; delete t.noteCat; } });
+    _ntTaskIdx.delete(tid);
+  }
+  // ---- Undo, the line coming back, bringing a task back ----
+  // Undo: each removal becomes a `put` — the line goes back where it was and
+  // the task is never touched. An entry with nothing captured (an orphan row
+  // from All tasks) is simply forgotten. A group already mid-transaction
+  // converges the other way: the runner's own line-back brings the task back
+  // from the snapshot the delete kept.
+  function ntPdelUndo(ids){
+    const J = ntPdelMap(), ch = [];
+    (ids || []).forEach(t => {
+      const e = J.get(t);
+      if (!e || e.op !== 'del' || !ntPdelMine(e)) return;
+      ch.push(e.li ? { ...e, op: 'put', st: 'due', n: 0, next: 0 } : [e.tid, null]);
+    });
+    if (!ch.length) return;
+    ntPdelWrite(ch);
+    ntPdelToast(false);
+    ntPdelApplyPutsOpen();
+    ntPdelKick(true);
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+  }
+  // The puts whose note is open and ready go straight into the editor, in the
+  // order the lines were removed. The entry stays until a save of this note
+  // acks with the line in it (ntPdelSaved) — that is what makes an Undo survive
+  // a reload. Called again whenever the body settles: the load, Load theirs,
+  // Keep mine, and the runner.
+  function ntPdelApplyPutsOpen(){
+    if (!_ntEls || !ntOpenId || !_ntBodyLoaded || _ntRemote) return;
+    const es = [...ntPdelMap().values()].filter(e => e.op === 'put' && e.nid === ntOpenId && ntPdelMine(e) && e.li)
+      .sort((a, b) => (a.ord | 0) - (b.ord | 0));
+    if (!es.length) return;
+    const done = [];
+    ntKeepSel(() => { es.forEach(e => { try { if (ntPdelInsert(_ntEls.editor, e)) done.push(e); } catch (err) { console.warn('[notes] pdel insert', err); } }); });
+    if (!done.length) return;
+    ntAfterMutation();
+    ntFlush();
+    // A flash says where they went; one line on its own also scrolls to.
+    done.forEach(e => {
+      const el = ntTaskLineEl(e.tid);
+      if (!el) return;
+      el.classList.remove('nt-flash'); void el.offsetWidth; el.classList.add('nt-flash');
+      setTimeout(() => el.classList.remove('nt-flash'), 1300);
+      if (done.length === 1) { try { el.scrollIntoView({ block: 'nearest' }); } catch {} }
+    });
+    ptToast(done.length === 1 ? `Restored “${ntPdelTxt(done[0].text)}”` : `Restored ${done.length} tasks`);
+  }
+  // Put one line back into a note's body — the live editor, or a detached copy
+  // (a transaction's, a draft's). Idempotent: a line for the task already there
+  // means there is nothing to do, so every caller can try.
+  function ntPdelInsert(root, e){
+    if (!root || !e || !e.li || !e.tid) return false;
+    if ([...root.querySelectorAll('li[data-task-id]')].some(x => x.getAttribute('data-task-id') === e.tid)) return false;
+    const holder = document.createElement('div');
+    holder.innerHTML = ntSanitize('<ul class="nt-checklist">' + e.li + '</ul>');   // stored HTML never reaches a DOM unsanitized
+    const li = holder.querySelector('li[data-task-id]');
+    if (!li || li.getAttribute('data-task-id') !== e.tid) return false;
+    // Its own line id may be in use now (the line was typed again, or split).
+    const lid = li.getAttribute('data-line');
+    if (lid && [...root.querySelectorAll('[data-line]')].some(x => x.getAttribute('data-line') === lid)) li.removeAttribute('data-line');
+    if (!li.getAttribute('data-line')) li.setAttribute('data-line', ntLineId());
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const want = norm(e.text);
+    // 1. Un-convert (D2): the text is still there, as a block or a plain bullet.
+    if (e.conv && want) {
+      // Nothing but the line's own words may be in it: a heading with a list
+      // folded under it, or a quote around more text, is never swallowed.
+      const b = [...root.children].find(x => /^(P|H1|H2|H3|BLOCKQUOTE)$/.test(x.nodeName) && norm(ntOwnText(x)) === want
+        && !x.querySelector('ul, ol') && norm(x.textContent) === want);
+      if (b) { const ul = document.createElement('ul'); ul.className = 'nt-checklist'; ul.appendChild(li); b.replaceWith(ul); return true; }
+      // The same words as loose text (a checklist turned off): that text node
+      // holds nothing else, so the restored line takes its place — and the
+      // line break that came with it goes too.
+      const tn = [...root.childNodes].find(x => x.nodeType === 3 && norm(x.textContent) === want);
+      if (tn) {
+        const ul = document.createElement('ul'); ul.className = 'nt-checklist'; ul.appendChild(li);
+        const br = (tn.nextSibling && tn.nextSibling.nodeName === 'BR') ? tn.nextSibling : null;
+        tn.replaceWith(ul);
+        if (br) br.remove();
+        return true;
+      }
+      const pl = [...root.querySelectorAll('li:not([data-task-id])')].find(x => norm(ntOwnText(x)) === want);
+      if (pl) {
+        pl.setAttribute('data-task-id', e.tid);
+        if (!pl.getAttribute('data-line')) pl.setAttribute('data-line', li.getAttribute('data-line'));
+        ['data-due', 'data-task-cat'].forEach(a => { const v = li.getAttribute(a); if (v) pl.setAttribute(a, v); });
+        const list = pl.parentElement;
+        // A checkbox needs a checklist: a plain bullet or a numbered line gets
+        // its own list back, the way the toolbar's checklist button does.
+        if (list && !(list.nodeName === 'UL' && list.classList.contains('nt-checklist'))) ntIsolateLi(pl, 'check');
+        else pl.setAttribute('data-checked', li.getAttribute('data-checked') === 'true' ? 'true' : 'false');
+        return true;
+      }
+    }
+    // 2. Un-merge: Backspace joined this line onto the one above it. Exact text
+    //    or nothing — a guess here would eat what has been typed since.
+    if (e.prevText && e.text) {
+      const joined = e.prevText + e.text;
+      const cands = [...root.querySelectorAll('li')].filter(x => ntOwnText(x) === joined);
+      // Only the line it was merged into: the one that sat above it, or a
+      // single unambiguous match. Cutting the tail off any other line would
+      // eat what has been typed since.
+      const host = (e.after ? cands.find(x => x.getAttribute('data-line') === e.after) : null) || (cands.length === 1 ? cands[0] : null);
+      if (host && ntPdelCutTail(host, e.text.length)) { ntPdelPlace(host, li, true); return true; }
+    }
+    // 3. Where it was: after the line before it, else before the line after it,
+    //    else a new checklist under the block it followed, else the note's end.
+    const at = a => (a ? [...root.querySelectorAll('li[data-line]')].find(x => x.getAttribute('data-line') === a) : null);
+    // The anchor may sit deeper than the line did (it has indented children
+    // now): climb to the level the line came from, so it goes back at its own.
+    const depth = x => { let d = 0, p = x.parentElement; while (p && p !== root) { if (/^(UL|OL)$/.test(p.nodeName)) d++; p = p.parentElement; } return d; };
+    const lift = x => { let a = x; while (a && depth(a) > (e.dep | 0)) { const up = a.parentElement && a.parentElement.closest ? a.parentElement.closest('li') : null; if (!up || up === a) break; a = up; } return a; };
+    const prev = at(e.after);
+    if (prev) { ntPdelPlace(lift(prev), li, true); return true; }
+    const next = at(e.before);
+    if (next) { ntPdelPlace(lift(next), li, false); return true; }
+    if (e.afterText) {
+      const b = [...root.children].find(x => norm(ntOwnText(x)) === norm(e.afterText));
+      if (b) { const ul = document.createElement('ul'); ul.className = 'nt-checklist'; ul.appendChild(li); b.after(ul); return true; }
+    }
+    ntMoveAppend(root, li);
+    return true;
+  }
+  // Take the last `n` characters off a line's own text — the merged copy of the
+  // line that went — leaving anything nested under it alone. The caller has
+  // already matched the whole text, so this always has the characters to take.
+  function ntPdelCutTail(el, n){
+    let left = n | 0;
+    if (left <= 0) return false;
+    const nodes = [];
+    (function walk(p){
+      Array.from(p.childNodes).forEach(c => {
+        if (c.nodeType === 3) nodes.push(c);
+        else if (c.nodeType === 1 && !/^(UL|OL)$/.test(c.nodeName)) walk(c);
+      });
+    })(el);
+    for (let i = nodes.length - 1; i >= 0 && left > 0; i--) {
+      const t = nodes[i], cut = Math.min(t.nodeValue.length, left);
+      t.nodeValue = t.nodeValue.slice(0, t.nodeValue.length - cut);
+      left -= cut;
+      if (!t.nodeValue) t.remove();   // an inline wrapper left empty goes on the next sanitize
+    }
+    return left === 0;
+  }
+  // Next to the line it sat by. A plain bullet or numbered list can't hold a
+  // checkbox, so the restored line goes into its own checklist beside it.
+  function ntPdelPlace(sib, li, after){
+    const list = sib.parentElement;
+    if (list && list.nodeName === 'UL' && list.classList.contains('nt-checklist')) { if (after) sib.after(li); else sib.before(li); return; }
+    const ul = document.createElement('ul');
+    ul.className = 'nt-checklist';
+    ul.appendChild(li);
+    const host = list || sib;
+    if (after) host.after(ul); else host.before(ul);
+  }
+  // A put whose note isn't open: the line goes back through one transaction,
+  // like every other body change from outside the editor. The task may already
+  // be gone (the commit won the race with Undo), so it comes back first.
+  async function ntPdelPut(e){
+    const now = Date.now(), title = ntTitleOf(ntNotes.get(e.nid));
+    // The open note belongs to the editor: ntPdelApplyPutsOpen puts the line
+    // back and the save's ack settles the entry. Anything still here waits for
+    // the body to load, or for Load theirs / Keep mine to go.
+    if (e.nid === ntOpenId) {
+      if (_ntBodyLoaded && !_ntRemote) ntPdelApplyPutsOpen();
+      const o = ntPdelMap().get(e.tid);
+      if (o && o.op === 'put') ntPdelWrite([{ ...o, next: now + 15000 }]);
+      return;
+    }
+    if (_ntPdelGone.has(e.tid)) ntPdelRevive(e.tid, e.nid, null);   // the delete landed first: the line can't come back linked to nothing
+    const r = await ntNoteEdit(e.nid, root => ntPdelInsert(root, e));
+    if (!r.ok) {
+      if (r.reason === 'gone') { ntPdelDone(e); return; }   // the note went: nowhere to put it
+      const first = !(e.n | 0);
+      ntPdelBackoff(e);
+      if (first) ptToast(`Kept “${ntPdelTxt(e.text)}” — its line goes back into ‘${title}’ when you’re online`);
+      return;
+    }
+    // ntNoteEdit leaves this device's draft alone when the server copy already
+    // had the line, so the draft is patched here: keeping that draft would
+    // otherwise take the line straight back out.
+    try {
+      const dr = await ntDraftGet(e.nid);
+      if (dr && typeof dr.html === 'string') {
+        const t = document.createElement('div');
+        t.innerHTML = ntSanitize(dr.html);
+        if (ntPdelInsert(t, e)) await ntDraftPut({ ...dr, html: ntSanitize(t.innerHTML) });
+      }
+    } catch (err) { console.warn('[notes] pdel put draft', err); }
+    ntPdelDone(e);
+    ptToast(`Kept “${ntPdelTxt(e.text)}” — its line is back in ‘${title}’`);
+  }
+  // The line is back in the open note: typed again, Cmd+Z, a paste, a drop, a
+  // put, or their copy applied over ours. A pending removal is cancelled, and a
+  // task this page already deleted comes back — from our own editing only
+  // (`src` 'edit'), never because a remote body still had the line.
+  function ntPdelLineBack(src){
+    if (!_ntEls || !ntOpenId || !_ntBodyLoaded || _ntRemote) return;
+    const J = ntPdelMap();
+    if (!J.size && !_ntPdelGone.size) return;                    // the usual case: nothing pending
+    const now = Date.now(), ch = [], msgs = [], title = ntTitleOf(ntNotes.get(ntOpenId));
+    [..._ntEls.editor.querySelectorAll('li[data-task-id]')].forEach(li => {
+      const tid = li.getAttribute('data-task-id');
+      if (!tid) return;
+      const e = J.get(tid);
+      if (e) {
+        // Cancel: our own removal of a line that is here again. A cut-held
+        // entry counts too — pasting it back in the same note is not a move.
+        if (e.op === 'del' && e.nid === ntOpenId && ntPdelMine(e)) { ch.push([tid, null]); msgs.push(`Kept “${ntPdelTxt(e.text)}” — its line is back in ‘${title}’`); }
+        return;
+      }
+      const g = _ntPdelGone.get(tid);
+      // Only the note it was deleted from: another note's reference line (a
+      // daily agenda's Priorities) must never bring the task back and claim
+      // it, which would make that agenda its owner.
+      if (g && src === 'edit' && g.nid === ntOpenId && now - g.at < NT_GONE_MS) ntPdelRevive(tid, ntOpenId, li);
+    });
+    if (!ch.length) return;
+    ntPdelWrite(ch);
+    ntPdelToast(false);
+    // The task is no longer hidden (ntPdelHidden): its row and the counts come back.
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    // Typing it back needs no telling; a body applied over yours does.
+    if (src === 'apply' && msgs.length) ptToast(msgs[0]);
+  }
+  // Cmd+Z or a paste within 10 minutes of the delete: the task comes back with
+  // the same id, from the snapshot the transaction kept. Never journaled — if a
+  // reload drops the write, the mirror unlinks the line and the text stays.
+  function ntPdelRevive(tid, nid, li){
+    const g = _ntPdelGone.get(tid);
+    if (!g || !g.snap) return false;
+    _ntPdelGone.delete(tid); _ntDelHere.delete(tid);
+    let line = g.line || '';
+    if (li) {
+      line = li.getAttribute('data-line') || '';
+      if (!line) { line = ntLineId(); li.setAttribute('data-line', line); ntMarkDirty(); }
+    }
+    const t = { ...g.snap, id: tid, noteId: nid, noteLineId: line };
+    setDoc(doc(db, 'tv_todos', tid), { ...g.snap, noteId: nid, noteLineId: line }).catch(err => {
+      console.warn('[notes] pdel revive', err);
+      // It couldn't come back: the line must not keep pointing at nothing.
+      const el = (ntOpenId === nid) ? ntTaskLineEl(tid) : null;
+      if (el) { ntUnlinkLine(el); ntAfterMutation(); ntFlush(); }
+      ntTaskGoneLocal(tid);
+      ptToast(`Couldn’t bring back “${ntPdelTxt(g.text)}” — its line stays as plain text`);
+      try { render(); } catch {}
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    });
+    // The local copies take it back at once, so the row, the line and Today
+    // agree before the listeners catch up.
+    _ntTaskIdx.set(tid, t);
+    if (t.done !== true) _ntOpenIdx.set(tid, t);
+    if (g.inTodos && !todos.some(x => x.id === tid)) todos.push(t);
+    if (g.inPlanned) { _plannedCache = _plannedCache || []; if (!_plannedCache.some(x => x.id === tid)) _plannedCache.push(t); }
+    // Back where it was on Today or Morning — spliced by exact id, never
+    // addToToday: its removeFromWork resolves every ref, and a 'tpl:' one can
+    // schedule a routine's materialize.
+    if (g.work && g.work.k && !ntWorkPos(tid)) {
+      const arr = work[g.work.k];
+      if (Array.isArray(arr)) { arr.splice(Math.max(0, Math.min(g.work.i | 0, arr.length)), 0, tid); saveWork(); }
+    }
+    ptToast(`Brought back “${ntPdelTxt(g.text)}”`);
+    try { render(); } catch {}
+    if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
+    return true;
+  }
+  // ---- the deletes ----
+  // All tasks' Delete for a note's task: its line goes out first, and the same
+  // journal and Undo window cover it. The open note goes through the editor,
+  // so Cmd+Z works and ntSave's own diff journals it; a closed one goes
+  // through a transaction, and nothing is journaled unless that landed.
+  async function ntDeleteNoteTask(t){
+    const tid = t.id, nid = t.noteId || '', n = nid ? ntNotes.get(nid) : null, title = n ? ntTitleOf(n) : '';
+    // Refused: the row's arm was cleared, so the list is drawn again either way.
+    if (_ntMoveBusy || _ntTkBusy.has(tid) || _ntAllBusy.has(tid)) { ptToast('That task is busy — try again in a moment'); if (_tabNotes && _ntMounted) ntRenderLib(); return; }
+    const had = ntPdelMap().get(tid);
+    if (had && had.op === 'del' && had.st === 'cut' && ntPdelMine(had)) ntPdelWrite([[tid, null]]);   // cut and waiting for a paste: this is the answer
+    if (nid === ntOpenId) {
+      if (!_ntEls || !_ntBodyLoaded || _ntRemote || (n && n.trashed)) {
+        ptToast(`Couldn’t delete — ‘${title}’ is still loading, or waiting on Load theirs / Keep mine`);
+        if (_tabNotes && _ntMounted) ntRenderLib();
+        return;
+      }
+      let hit = false;
+      _ntPdelWhy.set(tid, 'list');                      // the toast says the line went too
+      ntKeepSel(() => { hit = ntMoveStrip(_ntEls.editor, tid); });
+      if (hit) { ntAfterMutation(); ntFlush(); return; }
+      _ntPdelWhy.delete(tid);                           // no line for it: the orphan path below
+    }
+    const entry = { v: 1, op: 'del', tid, nid, text: String(t.text || ''), rev: 0, src: 'list', st: 'wait', at: Date.now(), pg: NT_DEVICE, n: 0, next: 0 };
+    if (nid !== ntOpenId && (n || !ntListLoaded)) {
+      _ntAllBusy.add(tid);
+      let cap = null, r = null;
+      try {
+        r = await ntNoteEdit(nid, (root, o) => {
+          const li = [...root.querySelectorAll('li[data-task-id]')].find(x => x.getAttribute('data-task-id') === tid);
+          if (!li) return false;
+          if (!(o && o.draft)) cap = ntPdelCapture(root, li, 0);   // Undo puts the server's line back, not the draft's
+          return ntMoveStrip(root, tid);
+        });
+      } finally { _ntAllBusy.delete(tid); }
+      // The line stayed: nothing is journaled, so nothing is deleted either.
+      if (!r.ok && r.reason !== 'gone') {
+        ptToast(r.reason === 'offline' ? `Couldn’t reach ‘${title}’ — check your connection` : 'Couldn’t delete that task — try again');
+        if (_tabNotes && _ntMounted) ntRenderLib();
+        return;
+      }
+      Object.assign(entry, cap || {}, { rev: r.rev || 0 });
+    }
+    // Orphan (its note is gone, or was never there): no line, so Undo just forgets it.
+    ntPdelWrite([entry]);
+    ntPdelToast(true);
+    ntPdelArm();
+    if (_tabNotes && _ntMounted) ntRenderLib();
+  }
+  // Planned, the drawer and the Overview delete at once, with no Undo — the
+  // user confirmed there. The line goes too: out of the editor when the note
+  // is open, else through the journal's `strip`, which survives a reload.
+  // False means the task has no note, so the caller keeps its own path.
+  function ntDeleteTaskNow(id){
+    const t = todos.find(x => x.id === id) || (_plannedCache || []).find(x => x.id === id) || _ntOpenIdx.get(id) || _ntTaskIdx.get(id) || null;
+    const nid = (t && t.noteId) || ((_ntTaskIdx.get(id) || {}).noteId) || '';
+    if (!nid) return false;
+    // ECM work is closed on ECM (the sheet sync brings a deleted row back),
+    // and a routine's copy belongs to its routine. Every other delete path
+    // refuses them, so this one answers for the caller too.
+    if (t && (t.smartsheetRowId || t.fromTemplate)) {
+      ptToast(t.smartsheetRowId ? 'ECM tasks are closed on the ECM page' : 'A routine’s copy stays with its routine');
+      return true;
+    }
+    const n = ntNotes.get(nid), title = n ? ntTitleOf(n) : '', text = ntPdelTxt(t ? t.text : '');
+    let stripped = !!(ntListLoaded && !n);                                   // its note is gone: no line to take out
+    if (!stripped && nid === ntOpenId && _ntEls && _ntBodyLoaded && !_ntRemote) {
+      _ntPdelSkip.set(id, Date.now());                                       // our own removal: never read as a delete
+      ntKeepSel(() => { stripped = ntMoveStrip(_ntEls.editor, id); });
+      if (stripped) { ntAfterMutation(); ntFlush(); }
+    }
+    ntPdelWrite([{ v: 1, op: 'now', tid: id, nid, text, stripped, st: 'due', at: Date.now(), pg: NT_DEVICE, n: 0, next: 0 }]);
+    deleteDoc(doc(db, 'tv_todos', id)).catch(e => console.warn('[notes] delete', e));   // as before: latency-compensated; the journal re-checks it
+    _ntDelHere.add(id); ntTaskGoneLocal(id);
+    ntPdelToast(false);                                                      // an Undo window this delete has just overtaken
+    try { render(); } catch {}
+    if (_tabNotes && _ntMounted) ntRenderLib();
+    ptToast(!n ? `Deleted “${text}”` : stripped ? `Deleted “${text}” and its line in ‘${title}’` : `Deleted “${text}” — its line in ‘${title}’ goes too`);
+    ntPdelKick(true);
+    return true;
+  }
+  // A note deleted forever takes its own tasks with it — trashing one keeps
+  // them. No Undo: that was the second tap. They go through the journal's
+  // usual `del` run, so each one is still re-checked in a transaction: one
+  // that has moved to another note is kept, and ECM work and routine copies
+  // are only unlinked (D5). Nothing strips a line — the note is gone.
+  function ntDelNoteTasks(nid){
+    // Without the note-task index we can't tell what the note owned, and a
+    // silent miss would leave tasks pointing at a note that is gone.
+    if (!_ntTaskIdxLoaded || _ntTaskIdxErr) { ptToast('Deleted the note — its tasks are still loading, so they stay in All tasks'); return; }
+    const now = Date.now(), add = [];
+    _ntTaskIdx.forEach(t => {
+      if (!t || (t.noteId || '') !== nid || t.done === true) return;          // D1: a ticked task keeps its history
+      add.push({ v: 1, op: 'del', tid: t.id, nid, text: String(t.text || ''), rev: 0, st: 'due', at: now, pg: NT_DEVICE, n: 0, next: 0,
+        ecm: !!(t.smartsheetRowId || t.fromTemplate) });
+    });
+    if (!add.length) return;
+    ntPdelWrite(add);                                                        // hidden in Notes at once (ntPdelHidden)
+    const ecm = add.filter(e => e.ecm).length, keep = add.length - ecm;
+    ptToast(!keep ? `Deleted the note — its ${ecm} ECM task${ecm > 1 ? 's stay' : ' stays'} in All tasks`
+      : ecm ? `Deleted the note and ${keep} task${keep > 1 ? 's' : ''} · ${ecm} ECM task${ecm > 1 ? 's stay' : ' stays'} in All tasks`
+      : keep === 1 ? `Deleted the note and “${ntPdelTxt(add[0].text)}”` : `Deleted the note and its ${keep} tasks`);
+    ntPdelKick(true);
+  }
+  // ---- durability: boot, pagehide, tabs ----
+  // One boot per load. Work a page left behind is taken over here: entries
+  // released at pagehide, and a tab that has said nothing for ten minutes. A
+  // window nobody saw out is offered again rather than committed silently.
+  function ntPdelBoot(){
+    if (_ntPdelBooted) return;
+    _ntPdelBooted = true;
+    _ntPdel = null;                                    // another tab may have written while this one loaded
+    const now = Date.now(), ch = [];
+    ntPdelMap().forEach(e => {
+      if (ntPdelMine(e)) return;
+      if (e.pg && now - Math.max(e.at || 0, e.next || 0) <= 6e5) return;     // another tab is still on it
+      const o = { ...e, pg: NT_DEVICE };
+      if (o.op === 'del' && o.st === 'cut' && now >= (o.hold || 0)) { o.st = 'wait'; o.expired = true; }
+      if (o.op === 'del' && o.st === 'wait') o.replay = true;                // "Deleting “X” — you removed its line in ‘N’"
+      ch.push(o);
+    });
+    if (ch.length) ntPdelWrite(ch);
+    if (_ptHeld) return;                               // a hidden load: ptWake shows and kicks once it's on screen
+    ntPdelOnShow();
+    ntPdelKick();
+  }
+  // Going away (reload, close, bfcache): own entries are handed back, so the
+  // next load or another tab adopts them at once instead of waiting out the
+  // ten-minute staleness rule.
+  function ntPdelRelease(){
+    const ch = [];
+    ntPdelMap().forEach(e => { if (ntPdelMine(e)) { ch.push({ ...e, pg: '' }); _ntPdelRel.add(e.tid); } });
+    if (ch.length) ntPdelWrite(ch);
+  }
+  // bfcache gave the page back: take our own work back — but only what we
+  // released, and only while it's still nobody's.
+  function ntPdelClaim(){
+    if (!_ntPdelRel.size) return;
+    _ntPdel = null;
+    const J = ntPdelMap(), ch = [];
+    _ntPdelRel.forEach(tid => { const e = J.get(tid); if (e && !e.pg) ch.push({ ...e, pg: NT_DEVICE }); });
+    _ntPdelRel.clear();
+    if (ch.length) ntPdelWrite(ch);
+  }
+  // A delete this device owes but couldn't send: only entries that have really
+  // failed, or have waited two minutes on a save, so the usual few seconds are
+  // silent. The wording never changes with time — the 60 s tick must not
+  // rebuild this list.
+  function ntPdelStuck(){
+    const now = Date.now();
+    return [...ntPdelMap().values()].filter(e => ntPdelMine(e)
+      && (e.op === 'now' || e.op === 'strip' || e.op === 'link' || (e.op === 'del' && e.st === 'due'))
+      && ((e.n | 0) > 0 || (e.waitSince && now - e.waitSince > 120000)));
+  }
+  function ntPdelNoticeHTML(){
+    const es = ntPdelStuck();
+    if (!es.length) return '';
+    const what = es.length === 1 ? `“${escHtml(ntPdelTxt(es[0].text))}” is waiting to be deleted` : `${es.length} tasks are waiting to be deleted`;
+    // Keep is for removals only: a delete confirmed elsewhere has no going back.
+    const dels = es.filter(e => e.op === 'del').length;
+    const keep = dels ? ` · <button class="nt-retry" type="button" data-nt-pdel="keep"${_ntPdelBusy ? ' disabled' : ''}>${dels > 1 ? 'Keep them' : 'Keep it'}</button>` : '';
+    return `<div class="nt-all-warn">${what} — this device couldn’t reach the server · <button class="nt-retry" type="button" data-nt-pdel="retry">Retry</button>${keep}</div>`;
+  }
+  // notes-rig only (rig-boot.js sets __RIG__): a test reads the journal and
+  // drives the steps instead of waiting the window out.
+  if (window.__RIG__) window.__ntPdel = {
+    list: () => [...ntPdelMap().values()], run: ntPdelRun, gone: () => [..._ntPdelGone.keys()],
+    serve: () => ntPdelServe([...ntPdelMap().values()].filter(e => ntPdelMine(e) && e.st === 'wait').map(e => e.tid)),
+  };
+
   // Parked: pull one into Today or Someday (it becomes a task and the Coach's
   // memory is resolved) — or drop it, with two taps.
   async function ntAllPark(act, id){
@@ -17451,6 +18731,7 @@ const VOICE = {
     const shown = ptRendered();
     if (!shown) _ptHeld = true;
     ntEnsureSubs();
+    ntPdelBoot();   // deletes a previous load left owing: adopted, then offered or committed
     ntEnsureTaskIdx();
     if (shown) ntEnsureOpenIdx();   // the sidebar's All tasks count is always on screen
     ntEnsureParked(false);
@@ -18271,37 +19552,79 @@ const VOICE = {
   }
   // Paste/drop like Docs: one paragraph goes in inline (no stray split); many
   // blocks landing inside a list item become one item per line.
+  // → the relinks: pasted lines that kept a link to a task another note owns,
+  // for ntPdelAfterPaste to journal.
   function ntInsertClean(html, text){
-    if (!html) { ntInsertPlain(text); return; }
+    if (!html) { ntInsertPlain(text); return []; }
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
-    // A pasted task link would tie a second line to the same task. Keep it
-    // only for a cut-and-paste move inside the note that owns the task. The
-    // live note index first: a task moved here (Move to…) may be in no other
-    // cache, or a stale copy there may still name its old note.
+    // A pasted task link would tie a second line to the same task. Keep it for
+    // a paste inside the note that owns the task, and for a line this page cut
+    // or just deleted whose source line is empty or gone — that paste is a
+    // move, and dropping the id would turn it into a delete (P2). A line that
+    // still has text and the same id means this is a copy: then the id goes.
+    // The live note index first: a task moved here (Move to…) may be in no
+    // other cache, or a stale copy there may still name its old note.
+    const relinks = [], J = ntPdelMap(), now = Date.now(), edLis = [..._ntEls.editor.querySelectorAll('li[data-task-id]')];
     tmp.querySelectorAll('[data-task-id], [data-line]').forEach(li => {
-      const tid = li.getAttribute('data-task-id');
-      const line = li.getAttribute('data-line');
-      const t = tid ? (_ntTaskIdx.get(tid) || todos.find(x => x.id === tid) || (_plannedCache || []).find(x => x.id === tid)) : null;
-      const keep = !!(tid && t && t.noteId === ntOpenId && !_ntEls.editor.querySelector(`[data-task-id="${tid}"]`));
+      const tid = li.getAttribute('data-task-id'), line = li.getAttribute('data-line');
+      let keep = false;
+      if (tid) {
+        const t = _ntTaskIdx.get(tid) || _ntOpenIdx.get(tid) || todos.find(x => x.id === tid) || (_plannedCache || []).find(x => x.id === tid) || null;
+        const pend = J.get(tid), pdel = !!(pend && pend.op === 'del'), g = _ntPdelGone.get(tid), gFresh = !!(g && now - g.at < NT_GONE_MS);
+        const cutHere = !!(_ntCut && _ntCut.ids.has(tid) && now - _ntCut.at < NT_CUT_HOLD);
+        const clash = edLis.some(x => x.getAttribute('data-task-id') === tid && ntOwnText(x).trim());
+        const from = pdel ? pend.nid : cutHere ? _ntCut.nid : gFresh ? g.nid : ((t && t.noteId) || '');
+        const srcEmpty = from === ntOpenId || pdel || gFresh || ntSrcLineEmpty(from, tid);
+        keep = !clash && ((t && t.noteId === ntOpenId) || ((pdel || cutHere || gFresh) && srcEmpty));
+        if (keep && !gFresh && from && from !== ntOpenId) relinks.push({ tid, from, prev: pdel ? pend : null });
+      }
       if (!keep) { li.removeAttribute('data-task-id'); li.removeAttribute('data-due'); li.removeAttribute('data-task-cat'); }
-      if (!keep || (line && _ntEls.editor.querySelector(`[data-line="${line}"]`))) li.removeAttribute('data-line');
+      if (!keep || (line && [..._ntEls.editor.querySelectorAll('[data-line]')].some(x => x.getAttribute('data-line') === line))) li.removeAttribute('data-line');
     });
     html = tmp.innerHTML;
     const blocks = Array.from(tmp.children);
-    if (!blocks.length) { ntExec('insertHTML', html); return; }
-    if (blocks.length === 1 && blocks[0].nodeName === 'P') { ntExec('insertHTML', blocks[0].innerHTML); return; }
-    if (ntCurLi()) {
+    if (!blocks.length) { ntExec('insertHTML', html); return relinks; }
+    if (blocks.length === 1 && blocks[0].nodeName === 'P') { ntExec('insertHTML', blocks[0].innerHTML); return relinks; }
+    const cur = ntCurLi();
+    if (cur) {
+      const list = cur.parentElement;
+      // A kept link has to land as a list item: the text path below would drop
+      // the id, and the cut that fed this paste would then read as a removal (P1).
+      if (list && tmp.querySelector('li[data-task-id]')) {
+        const items = [];
+        blocks.forEach(b => {
+          if (/^(UL|OL)$/.test(b.nodeName)) b.querySelectorAll('li').forEach(li => { if (ntOwnText(li).trim()) items.push(li); });
+          else { const t = b.textContent.replace(/\s+/g, ' ').trim(); if (t) { const li = document.createElement('li'); li.textContent = t; items.push(li); } }
+        });
+        if (!items.length) return relinks;
+        const check = list.classList.contains('nt-checklist');
+        let ref = cur;
+        items.forEach(li => {
+          li.querySelectorAll('ul, ol').forEach(x => x.remove());   // nested items came along flattened
+          if (check) li.setAttribute('data-checked', li.getAttribute('data-checked') === 'true' ? 'true' : 'false');
+          else li.removeAttribute('data-checked');
+          list.insertBefore(li, ref.nextSibling);
+          ref = li;
+        });
+        // Pasted onto an empty line: that line was only the caret's placeholder
+        // (unless a sub-list hangs off it, which would go with it, or it is
+        // still a task's line — emptied text doesn't make it free to delete).
+        if (!ntOwnText(cur).trim() && !cur.querySelector('ul, ol') && !cur.getAttribute('data-task-id')) cur.remove();
+        ntCaretIn(ref, true);
+        return relinks;
+      }
       const lines = [];
-      const own = li => Array.from(li.childNodes).filter(x => !(x.nodeType === 1 && /^(UL|OL)$/.test(x.nodeName))).map(x => x.textContent).join('').replace(/\s+/g, ' ').trim();
+      const own = li => ntOwnText(li).replace(/\s+/g, ' ').trim();
       blocks.forEach(b => {
         if (/^(UL|OL)$/.test(b.nodeName)) b.querySelectorAll('li').forEach(li => { const t = own(li); if (t) lines.push(t); });
         else { const t = b.textContent.replace(/\s+/g, ' ').trim(); if (t) lines.push(t); }
       });
       lines.forEach((l, i) => { if (i) ntExec('insertParagraph'); ntExec('insertText', l); });
-      return;
+      return relinks;
     }
     ntExec('insertHTML', html);
+    return relinks;
   }
   function ntNormalizeLive(){
     const ed = _ntEls.editor;
@@ -18342,6 +19665,9 @@ const VOICE = {
     ntScheduleOutline();
     ntUpdateToolbar();
     ntDecorateTasks();
+    // A line back in the editor — typed again, Cmd+Z, redo, a paste, a drop, a
+    // put — cancels its pending removal, and brings its task back if it went.
+    try { ntPdelLineBack('edit'); } catch (e) { console.warn('[notes] pdel back', e); }
   }
 
   // ---- editor: formatting commands ----
@@ -18448,6 +19774,25 @@ const VOICE = {
     if (!li) return;
     const wasCheck = !!(li.parentElement && li.parentElement.classList.contains('nt-checklist'));
     const ck = li.getAttribute('data-checked') === 'true' ? 'true' : 'false';
+    // execCommand rebuilds every line it touches and drops their attributes.
+    // The links have to ride along — an unlinked line reads as one the user
+    // removed, and its task would be deleted (ntPdelDetect). Not just the
+    // caret's line: a selection over several lines loses all of them.
+    const NT_LI_KEEP = ['data-task-id', 'data-line', 'data-due', 'data-task-cat'];
+    // A line's own words, with anything nested inside it left out — including
+    // a stray li, which Chrome's own outdent can produce (li inside li).
+    const liTx = el => Array.from(el.childNodes).filter(c => !(c.nodeType === 1 && /^(UL|OL|LI)$/.test(c.nodeName))).map(c => c.textContent).join('').replace(/\s+/g, ' ').trim();
+    const sel = ntSel(), rng = (sel && sel.rangeCount && !sel.isCollapsed) ? sel.getRangeAt(0) : null;
+    const keep = [];
+    _ntEls.editor.querySelectorAll('li[data-task-id]').forEach(x => {
+      if (x !== li && !(rng && rng.intersectsNode(x))) return;
+      keep.push({
+        at: NT_LI_KEEP.map(a => [a, x.getAttribute(a)]).filter(p => p[1] != null),
+        tx: liTx(x),
+        ck: x.getAttribute('data-checked') === 'true' ? 'true' : 'false',
+        chk: !!(x.parentElement && x.parentElement.classList.contains('nt-checklist')),
+      });
+    });
     ntExec(out ? 'outdent' : 'indent');
     const nli = ntCurLi();
     const pl = nli && nli.parentElement;
@@ -18458,6 +19803,33 @@ const VOICE = {
       }
       if (wasCheck && pl.nodeName === 'UL') { pl.classList.add('nt-checklist'); nli.setAttribute('data-checked', ck); }
       else if (pl.classList.contains('nt-checklist')) nli.setAttribute('data-checked', ck);
+    }
+    // Match the rebuilt lines by their own text, in order, and only onto a line
+    // that came back without a link; a line that kept its id is already fine.
+    if (keep.length) {
+      const lis = [..._ntEls.editor.querySelectorAll('li')];
+      let from = 0;
+      keep.forEach(k => {
+        if (!k.at.length) return;
+        const tid = (k.at.find(p => p[0] === 'data-task-id') || [])[1];
+        if (tid && lis.some(x => x.getAttribute('data-task-id') === tid)) return;
+        const i = lis.findIndex((x, n) => n >= from && !x.getAttribute('data-task-id') && liTx(x) === k.tx);
+        if (i < 0) return;
+        from = i + 1;
+        const t = lis[i];
+        k.at.forEach(([a, v]) => { if (t.getAttribute(a) == null) t.setAttribute(a, v); });
+        if (k.chk && t.parentElement && t.parentElement.nodeName === 'UL') {
+          t.parentElement.classList.add('nt-checklist');
+          if (t.getAttribute('data-checked') == null) t.setAttribute('data-checked', k.ck);
+        }
+      });
+      // Anything that couldn't be re-homed: never read that line as a removal.
+      // The worst case is a line that lost its link, never a deleted task.
+      const back = [..._ntEls.editor.querySelectorAll('li[data-task-id]')].map(x => x.getAttribute('data-task-id'));
+      keep.forEach(k => {
+        const tid = (k.at.find(p => p[0] === 'data-task-id') || [])[1];
+        if (tid && back.indexOf(tid) < 0) _ntPdelSkip.set(tid, Date.now());
+      });
     }
     ntAfterMutation();
   }
@@ -18828,12 +20200,15 @@ const VOICE = {
       e.preventDefault();
       const html = cd.getData('text/html'), text = cd.getData('text/plain');
       if (!html && !text) { if (cd.files && cd.files.length) ptToast('Images can’t go in notes yet'); return; }
-      ntInsertClean(html ? ntSanitize(html) : '', text);
+      const rl = ntInsertClean(html ? ntSanitize(html) : '', text);
       ntAfterMutation();
+      ntPdelAfterPaste(rl || []);
     });
-    ed.addEventListener('cut', () => ntUnfoldForDelete(null));
-    ed.addEventListener('copy', () => ntUnfoldForDelete(null));
-    ed.addEventListener('dragstart', () => { _ntDragInside = true; ntUnfoldForDelete(null); });
+    // The clipboard for task lines is written by hand (P9), so a pasted line
+    // can still carry its task.
+    ed.addEventListener('cut', e => { ntUnfoldForDelete(null); ntNoteClip(e, true); });
+    ed.addEventListener('copy', e => { ntUnfoldForDelete(null); ntNoteClip(e, false); });
+    ed.addEventListener('dragstart', () => { _ntDragInside = true; ntUnfoldForDelete(null); ntNoteClip(null, true); });
     ed.addEventListener('dragend', () => { _ntDragInside = false; });
     ed.addEventListener('drop', e => {
       if (_ntDragInside) { _ntDragInside = false; setTimeout(ntAfterMutation, 0); return; }
@@ -18845,8 +20220,9 @@ const VOICE = {
       const pos = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
       if (pos && ntInEditor(pos.startContainer)) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(pos); }
       else ntRestoreRange();
-      ntInsertClean(html ? ntSanitize(html) : '', text);
+      const rl = ntInsertClean(html ? ntSanitize(html) : '', text);
       ntAfterMutation();
+      ntPdelAfterPaste(rl || []);
     });
     const editing = on => {
       if (on) { document.body.classList.add('nt-editing'); return; }
@@ -20140,6 +21516,22 @@ const VOICE = {
       if (tmv) { e.stopPropagation(); e.preventDefault(); ntPopMove(tmv, tmv.getAttribute('data-nt-move')); return; }
       const tdl = t.closest('[data-nt-tdel]');
       if (tdl) { e.stopPropagation(); ntAllDelete(tdl.getAttribute('data-nt-tdel')); return; }
+      // The stuck-delete notice: try again now, or keep the tasks after all
+      // (removals only — Keep waits while a transaction is running).
+      const pdl = t.closest('[data-nt-pdel]');
+      if (pdl) {
+        e.stopPropagation();
+        if (pdl.getAttribute('data-nt-pdel') === 'retry') {
+          ntPdelKick(true);
+          // Say why nothing happened, rather than look ignored.
+          if (navigator.onLine === false) ptToast('Still offline — it’ll go through when you’re back');
+          else if (_ntPdelBusy) ptToast('Already trying…');
+        }
+        else if (_ntPdelBusy) ptToast('One moment — that delete is on its way');
+        else ntPdelUndo(ntPdelStuck().filter(x => x.op === 'del').map(x => x.tid));
+        ntRenderLib();
+        return;
+      }
       const tpk = t.closest('[data-nt-park]');
       if (tpk) { e.stopPropagation(); const v = tpk.getAttribute('data-nt-park'), i = v.indexOf('|'); ntAllPark(v.slice(0, i), v.slice(i + 1)); return; }
       const tac = t.closest('[data-nt-tact]');
@@ -20265,6 +21657,9 @@ const VOICE = {
         // A task moved into this note meanwhile has its line in their copy,
         // not yours: carry those lines over so keeping yours doesn't drop it.
         try { if (theirs && typeof theirs.html === 'string') ntKeepMovedLines(theirs.html, theirs.base); } catch {}
+        // Yours is the copy now: a line you kept cancels its removal, and the
+        // puts and commits the banner held can go.
+        try { ntPdelLineBack('edit'); ntPdelApplyPutsOpen(); ntPdelKick(); } catch (e) { console.warn('[notes] pdel keep', e); }
         ntMirrorOpenChecks();   // ticks made elsewhere while the banner was up go into the save
         ntRenderBanner(); ntMarkDirty();
         break;
@@ -21667,6 +23062,12 @@ const VOICE = {
       drainSprintCompletions().then(() => render()).catch(() => {});
     } else if (e.key === 'calendar-gcal-cache-v1' || e.key === 'cal-events-cache') {
       try { ntCalFromCache(true); } catch {}
+    } else if (e.key === NT_PDEL_KEY) {
+      // Another tab changed the journal: re-read it, and follow it in the UI —
+      // its pending removals are hidden here too (ntPdelHidden).
+      _ntPdel = null;
+      try { ntPdelToast(false); ntPdelArm(); } catch (err) { console.warn('[notes] pdel storage', err); }
+      if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch {} }
     }
   });
 
