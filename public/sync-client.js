@@ -32,6 +32,7 @@
     'pt-nt-filter',      // Notes' last notebook (Personal's home lands there) — per-device
     'pt-nt-last',        // Notes' last open note — per-device, so two devices don't both hold it open
     'pt-nt-pdel',        // Notes: task lines removed on this device, waiting on Undo / the delete — per device
+    'pt-nt-det-open',    // Notes: which task details are unfolded — per device
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
