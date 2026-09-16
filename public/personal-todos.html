@@ -22386,6 +22386,25 @@ const VOICE = {
       if (t) { try { t.focus({ preventScroll: true }); } catch {} }
     }
   }
+  // ⌘⇧ on its own: both side panels fold away so it's just the page, and
+  // the same chord brings back whichever were open.
+  let _ntPanesWas = null;
+  function ntTogglePanes(){
+    const L = ntLayout();
+    if (L.nav && L.list) {
+      // Back to how they were — or both open when nothing is remembered (a
+      // reload since, or they were shut by hand).
+      const w = _ntPanesWas;
+      _ntPanesWas = null;
+      ntSetPane('nav', w ? !!w.nav : false);
+      ntSetPane('list', w ? !!w.list : false);
+      return;
+    }
+    if (!ntOpenId) return;                           // nothing to leave on screen
+    _ntPanesWas = { nav: L.nav, list: L.list };
+    ntSetPane('nav', true);
+    ntSetPane('list', true);
+  }
   function ntResizeTo(k, w){
     const [lo, hi] = NT_W[k];
     ntLayout().w[k] = Math.round(Math.max(lo, Math.min(hi, w)));
@@ -23001,6 +23020,27 @@ const VOICE = {
       if (_ntPopKind === 'bubble' && ntInEditor(e.target)) return;
       ntPopClose();
     }, true);
+    // A chord of modifiers alone has no keydown of its own to catch: it's a
+    // ⌘ and a ⇧ both held, let go with nothing else pressed (any other key
+    // made it ⌘⇧X, ⌘⇧7… and a click made it a selection), within 1.5 s.
+    let chord = null;
+    const isMod = k => k === 'Meta' || k === 'Control' || k === 'Shift';
+    document.addEventListener('keydown', e => {
+      if (!isMod(e.key)) { chord = null; return; }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !chord) chord = Date.now();
+    }, true);
+    document.addEventListener('keyup', e => {
+      if (!isMod(e.key)) return;
+      const at = chord;
+      chord = null;
+      if (!at || Date.now() - at > 1500 || e.altKey) return;
+      if (!_tabNotes || !_ntMounted || _ntFocus || ntIsPhone()) return;
+      const bd = document.getElementById('ntCatsBd');
+      if (bd && !bd.hidden) return;
+      ntTogglePanes();
+    }, true);
+    document.addEventListener('pointerdown', () => { chord = null; }, true);
+    window.addEventListener('blur', () => { chord = null; });
     window.addEventListener('resize', () => {
       if (!_ntPopKind) return;
       // A phone keyboard opening counts as a resize: a sheet you're typing
