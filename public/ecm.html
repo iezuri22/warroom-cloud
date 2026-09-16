@@ -8124,6 +8124,27 @@ function _sageCellTD(r){
 // blur handler in _wireDrawer triggers a deferred render after pushField
 // finishes so the UI catches up without losing the active edit.
 let _renderDeferred = false;
+// A drawer <select> whose menu is open. A render rebuilds the drawer (the side
+// panel wholesale), which closes the native menu before you can pick — so while
+// one is open, renders wait. Set on the press that opens it; cleared once a
+// value is picked, or on a press elsewhere, or when focus leaves.
+let _selOpen = null;
+function _selOpenRelease(){
+  if (!_selOpen) return;
+  _selOpen = null;
+  if (_renderDeferred) setTimeout(() => { try { render(); } catch {} }, 0);
+}
+document.addEventListener('mousedown', (e) => {
+  const s = e.target && e.target.closest ? e.target.closest('.drawer select') : null;
+  if (s) _selOpen = s; else _selOpenRelease();
+}, true);
+document.addEventListener('keydown', (e) => {
+  const s = e.target;
+  if (s && s.tagName === 'SELECT' && s.closest && s.closest('.drawer') && [' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) _selOpen = s;
+}, true);
+// Capture phase: cleared before the field's own change handler saves and renders.
+document.addEventListener('change', (e) => { if (e.target === _selOpen) _selOpen = null; }, true);
+document.addEventListener('focusout', (e) => { if (e.target === _selOpen) _selOpenRelease(); }, true);
 function render(){
   // If the user is mid-typing in any drawer input/textarea, a Firestore
   // snapshot (ack/internal/notif/priorities/etc.) that fires render() in the
@@ -8133,6 +8154,10 @@ function render(){
   // blur via pushField, and the post-blur render hook below re-applies it.
   try {
     const ae = document.activeElement;
+    if (_selOpen && ae === _selOpen && _selOpen.isConnected) {
+      _renderDeferred = true;
+      return;
+    }
     if (ae && ae.closest && ae.closest('.drawer') &&
         (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
       _renderDeferred = true;
