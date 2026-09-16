@@ -3900,12 +3900,16 @@
   .md tr:last-child td { border-bottom: 0; }
   .md .al-c { text-align: center; } .md .al-r { text-align: right; } .md del { color: var(--ink-mid); }
   .md .md-empty { color: var(--ink-dim); font-style: italic; }
+  .md .md-img { display: block; max-width: 100%; max-height: 320px; width: auto; border-radius: 8px; border: 1px solid var(--border); margin: 4px 0; background: var(--fill); }
+  .md a:has(> .md-img) { display: inline-block; text-decoration: none; }
   @media (max-width: 760px) { .md { font-size: 14.5px; } .md pre, .md table { font-size: 13px; } }
 
   /* The Details box (the task sheet and the Details-only sheet) */
   #ntPop[data-kind="det"] { width: 560px; max-width: calc(100vw - 24px); max-height: min(86vh, 760px); padding: 10px 12px; }
   .nt-det-box { display: flex; flex-direction: column; gap: 6px; }
   .nt-det-bh { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .nt-det-bts { display: inline-flex; align-items: center; gap: 4px; }
+  .nt-det-box.drop .nt-det-ta { border-color: var(--accent); border-style: dashed; background: var(--fill); }
   .nt-det-seg { display: inline-flex; background: var(--fill); border-radius: 8px; padding: 2px; }
   .nt-det-seg button { border: 0; background: none; height: 22px; padding: 0 8px; border-radius: 6px; font: 700 11px var(--font-family); color: var(--ink-mid); cursor: pointer; }
   .nt-det-seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-card, 0 1px 2px rgba(0,0,0,.08)); }
@@ -15574,7 +15578,11 @@ const VOICE = {
     if (!noLinks) {
       s = s.replace(/!\[([^\]\n]{0,300})\]\(\s*<?((?:[^\s()<>]|\([^\s()<>]*\)){1,2000})>?(?:\s+"[^"\n]{0,300}")?\s*\)/g, (m, alt, u) => {
         const href = ntMdUrl(u), t = ntMdInline(alt || 'image', true);
-        return put(href ? '<a href="' + ntEsc(href) + '" target="_blank" rel="noopener noreferrer">Image: ' + t + ' \u2197</a>' : t);
+        if (!href) return put(t);
+        // The picture itself, and a link to it at full size. Only an http(s)
+        // URL gets here, and both the source and the alt text are escaped.
+        return put('<a href="' + ntEsc(href) + '" target="_blank" rel="noopener noreferrer">'
+          + '<img class="md-img" src="' + ntEsc(href) + '" alt="' + ntEsc(String(alt || 'image').slice(0, 300)) + '" loading="lazy"></a>');
       });
       s = s.replace(/\[([^\[\]\n]{1,500})\]\(\s*<?((?:[^\s()<>]|\([^\s()<>]*\)){1,2000})>?(?:\s+"[^"\n]{0,300}")?\s*\)/g, (m, t, u) => {
         const href = ntMdUrl(u), inner = ntMdInline(t, true);
@@ -21073,6 +21081,26 @@ const VOICE = {
     p.addEventListener('submit', ntPopSubmit);
     p.addEventListener('input', ntPopInput);
     p.addEventListener('paste', e => { if (e.target && e.target.id === 'ntTDet') ntDetPaste(e); });
+    p.addEventListener('dragover', e => {
+      if (!e.target || !e.target.closest || !e.target.closest('.nt-det-box')) return;
+      const dt = e.dataTransfer;
+      if (!dt || [...(dt.types || [])].indexOf('Files') < 0) return;
+      e.preventDefault(); dt.dropEffect = 'copy';
+      const box = document.getElementById('ntTkDet');
+      if (box) box.classList.add('drop');
+    });
+    p.addEventListener('dragleave', e => {
+      if (e.target && e.target.id === 'ntTkDet') { const box = document.getElementById('ntTkDet'); if (box) box.classList.remove('drop'); }
+    });
+    p.addEventListener('drop', e => {
+      const box = document.getElementById('ntTkDet');
+      if (box) box.classList.remove('drop');
+      if (!e.target || !e.target.closest || !e.target.closest('.nt-det-box')) return;
+      const dt = e.dataTransfer;
+      if (!dt || !dt.files || !dt.files.length) return;
+      e.preventDefault();
+      ntDetAttach([...dt.files]);
+    });
     p.addEventListener('change', ntPopChange);
     p.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
@@ -21289,6 +21317,7 @@ const VOICE = {
     if (ntMdClick(e)) return;                       // a code block's Copy
     const df = t.closest('[data-nt-dface]');
     if (df) { ntDetFace(df.getAttribute('data-nt-dface')); return; }
+    if (t.closest('[data-nt-dfile]')) { const fi = document.getElementById('ntTFile'); if (fi) fi.click(); return; }
     if (t.closest('[data-nt-ddiscard]')) {
       const k = ntDetCtx();
       if (k) { k.det = k.det0; _ntDetDraft = null; ntDetMount(k); ntDetHint(k); }
@@ -21744,6 +21773,80 @@ const VOICE = {
 
   // ---- task details: the box, and the sheet that holds only it ----
   function ntDetCtx(){ return _ntPopKind === 'det' ? _ntDetK : _ntTask; }
+  // ---- attachments ----
+  // Storage is loaded the first time something is actually attached: the
+  // page itself never pays for it.
+  const NT_UP_MAX = 10 * 1024 * 1024;
+  let _ntUpLib = null, _ntUpN = 0;
+  function ntUpLib(){
+    if (!_ntUpLib) _ntUpLib = import('https://www.gstatic.com/firebasejs/11.0.1/firebase-storage.js')
+      .catch(e => { _ntUpLib = null; throw e; });
+    return _ntUpLib;
+  }
+  async function ntDetUpload(file){
+    const lib = await ntUpLib();
+    const st = lib.getStorage(app);
+    const raw = String(file.name || 'file');
+    const dot = raw.lastIndexOf('.');
+    const ext = dot > 0 ? raw.slice(dot).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 10) : '';
+    const stem = (dot > 0 ? raw.slice(0, dot) : raw).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'file';
+    const key = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const name = key + '-' + stem + ext;
+    const opt = { contentType: file.type || 'application/octet-stream' };
+    const put = async path => {
+      const ref = lib.ref(st, path);
+      await Promise.race([lib.uploadBytes(ref, file, opt), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 60000))]);
+      return { url: await lib.getDownloadURL(ref), name: raw, image: /^image\//.test(file.type || '') };
+    };
+    try { return await put('task-media/' + name); }
+    catch (e) {
+      // The bucket's rules may only open the folder the Meals page writes to.
+      // Rather than fail in your face, put it there instead.
+      if (!/unauthorized|permission|denied|403/i.test(String((e && e.code) || '') + ' ' + String((e && e.message) || ''))) throw e;
+      console.warn('[notes] task-media refused, using step-media', e);
+      return await put('step-media/task-' + name);
+    }
+  }
+  // Written into the box at the caret, so ⌘Z takes it back out.
+  function ntDetInsert(md){
+    const k = ntDetCtx();
+    if (!k) return;
+    if (k.face !== 'write') ntDetFace('write', true);
+    const ta = document.getElementById('ntTDet');
+    if (!ta) return;
+    const pre = ta.value.slice(0, ta.selectionStart);
+    const lead = (!pre || /\n$/.test(pre)) ? '' : '\n';
+    try { ta.focus(); } catch {}
+    if (!document.execCommand('insertText', false, lead + md + '\n')) {
+      ta.setRangeText(lead + md + '\n', ta.selectionStart, ta.selectionEnd, 'end');
+    }
+    k.det = ta.value;
+    ntDetCount(k); ntDetGrow(ta);
+  }
+  async function ntDetAttach(files){
+    const k = ntDetCtx();
+    if (!k || !files || !files.length) return;
+    const list = [...files].slice(0, 10);
+    const n = ++_ntUpN;
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      if (f.size > NT_UP_MAX) { ptToast('“' + f.name + '” is over 10 MB — it stays out'); continue; }
+      ntDetHint(k, 'Uploading ' + (list.length > 1 ? (i + 1) + ' of ' + list.length + '…' : (f.name || 'file') + '…'));
+      let r = null;
+      try { r = await ntDetUpload(f); }
+      catch (e) {
+        console.warn('[notes] attach', e);
+        ptToast(navigator.onLine === false ? 'Offline — that file didn’t go up' : 'Couldn’t upload “' + (f.name || 'that file') + '”');
+        break;
+      }
+      // Moved on while it uploaded: the file is safe in Storage, but this
+      // box isn't the one that asked for it any more.
+      if (n !== _ntUpN || ntDetCtx() !== k) return;
+      const alt = String(r.name || 'file').replace(/[\[\]\n]/g, ' ').trim().slice(0, 80) || 'file';
+      ntDetInsert((r.image ? '!' : '') + '[' + alt + '](' + r.url + ')');
+    }
+    if (n === _ntUpN && ntDetCtx() === k) ntDetHint(k);
+  }
   function ntDetDraftKey(k){
     if (k.tid) return 't:' + k.tid;
     const li = k.li || k.block;
@@ -21754,9 +21857,12 @@ const VOICE = {
     const lbl = k.ecm ? 'Description · syncs to Smartsheet' : 'Details';
     return '<div class="nt-det-box" id="ntTkDet" data-face="write">'
       + '<div class="nt-det-bh"><span class="nt-tk-lbl">' + escHtml(lbl) + '</span>'
+      + '<span class="nt-det-bts">'
+      + '<button type="button" class="nt-det-btn" data-nt-dfile title="Attach an image or a file">Attach</button>'
       + '<span class="nt-det-seg" role="group" aria-label="Details view">'
       + '<button type="button" data-nt-dface="write" aria-pressed="true">Markdown</button>'
-      + '<button type="button" data-nt-dface="view" aria-pressed="false">Preview</button></span></div>'
+      + '<button type="button" data-nt-dface="view" aria-pressed="false">Preview</button></span></span></div>'
+      + '<input type="file" id="ntTFile" multiple hidden aria-hidden="true" tabindex="-1">'
       + '<textarea id="ntTDet" class="nt-det-ta" rows="2" spellcheck="true" aria-label="Details (Markdown)"'
       + ' placeholder="Paste details — from Claude, a doc, anywhere. Lists, tables and code keep their formatting."></textarea>'
       + '<div class="nt-det-view md" hidden></div>'
@@ -21829,10 +21935,11 @@ const VOICE = {
     if (!cd) return;
     let html = '', plain = '';
     try { html = cd.getData('text/html') || ''; plain = cd.getData('text/plain') || ''; } catch {}
-    if (!html && !plain) {
-      if (cd.files && cd.files.length) { e.preventDefault(); ptToast('Images can’t go in details'); }
-      return;
-    }
+    // A screenshot, or a copied image: upload it and link it. HTML that came
+    // with it only wins when the files aren't all images (Word, Docs).
+    const fl = (cd.files && cd.files.length) ? [...cd.files] : [];
+    if (fl.length && (!html || fl.every(f => /^image\//.test(f.type || '')))) { e.preventDefault(); ntDetAttach(fl); return; }
+    if (!html && !plain) return;
     const wasEmpty = !ta.value.trim();
     const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
     const url = ntMdUrl(plain.trim());
@@ -22055,6 +22162,12 @@ const VOICE = {
     }
   }
   function ntPopChange(e){
+    if (e.target && e.target.id === 'ntTFile') {
+      const fs = [...(e.target.files || [])];
+      e.target.value = '';                           // the same file again still counts as a change
+      ntDetAttach(fs);
+      return;
+    }
     const w = e.target && e.target.getAttribute && e.target.getAttribute('data-nt-tk-date');
     if (!w || !_ntTask) return;
     const v = e.target.value;
