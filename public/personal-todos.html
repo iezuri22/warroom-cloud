@@ -3964,6 +3964,31 @@
     .nt-det-ta { font-size: 16px; max-height: 28vh; } .nt-det-view { max-height: 28vh; }
   }
 
+
+  /* All tasks, wide: the list takes the page, each task reads in full, and
+     its actions sit beside it (under it when the window is narrow). */
+  @media (min-width: 761px) {
+    .nt-shell.nt-tasks-wide .nt-doc, .nt-shell.nt-tasks-wide .nt-outline,
+    .nt-shell.nt-tasks-wide .nt-resize[data-nt-resize="list"] { display: none !important; }
+    .nt-shell.nt-tasks-wide .nt-lib.nt-lib { display: flex !important; }   /* beats a shut list's display:none !important */
+    .nt-shell.nt-tasks-wide .nt-taskrow .t { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.4; }
+    .nt-shell.nt-tasks-wide .nt-taskrow .s { flex-wrap: wrap; white-space: normal; }
+    .nt-wrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; border-radius: 10px; }
+    .nt-wrow:hover { background: var(--fill); }
+    .nt-wrow > .nt-taskrow { flex: 1 1 340px; min-width: 0; }
+    .nt-wrow > .nt-tacts { flex: 0 1 auto; padding: 4px 8px; background: none !important; border-radius: 0; justify-content: flex-end; }
+    .nt-wrow + .nt-wrow { box-shadow: 0 -1px 0 var(--border); }
+    .nt-widebtn { margin-left: auto; }
+  }
+  @media (min-width: 1100px) {
+    .nt-shell.nt-tasks-wide { grid-template-columns: minmax(150px, var(--nt-nav-w, 196px)) minmax(0, 1fr) !important; }
+    .nt-shell.nt-tasks-wide.nt-nav-shut { grid-template-columns: 48px minmax(0, 1fr) !important; }
+  }
+  @media (min-width: 761px) and (max-width: 1099.98px) {
+    .nt-shell.nt-tasks-wide { grid-template-columns: minmax(0, 1fr) !important; }
+    .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
+  }
+
   /* Linked lines: "Task · due Fri" in the category's colour, red once late. */
   /* --tc must not inherit into nested lines (a General sub-task would wear its parent's colour). */
   .nt-editor li { --tc: initial; --nt-dh: initial; }
@@ -15239,6 +15264,9 @@ const VOICE = {
   let _ntDoneList = null, _ntDoneAt = 0, _ntDoneTry = 0, _ntDoneBusy = false, _ntDoneErr = '', _ntDoneStale = false, _ntDoneAll = false;
   const NT_DONE_CAP = 250;   // completed rows shown before "Show all"
   const _ntMirrorAsk = new Map();   // task id → when the open-note mirror last asked the server about it
+  // All tasks' wide view: the list takes the page, every task reads in full
+  // with its actions beside it. For this visit only — opening a note ends it.
+  let _ntTasksWide = false;
   // Task details. The open set is per device (pt-nt-det-open, in SKIP_SYNC);
   // everything else lasts as long as the page.
   const NT_DET_KEY = 'pt-nt-det-open';
@@ -16273,18 +16301,20 @@ const VOICE = {
     const expand = !!opt.expand, open = expand && _ntAllRow === t.id;
     const det = ntDetStr(t), hasDet = !!det.trim();
     const acts = !t.done || live || hasDet;
-    const strip = open ? ntTaskDetHTML(t, det) + ntAllActsHTML(t, opt.place, c, nid) : '';
+    const wide = expand && _ntTasksWide && !ntIsPhone();
+    const acts2 = (open || wide) ? ntAllActsHTML(t, opt.place, c, nid) : '';
+    const strip = open ? ntTaskDetHTML(t, det) + acts2 : acts2;
     const pin = (c && !t.done && t.pinnedUntilDone && c.order.has(t.id)) ? '<span class="pin" aria-hidden="true">📌</span>' : '';
     const id = ntEsc(t.id);
     const attrs = expand ? ` role="button" tabindex="0" data-nt-tact="${id}" data-nt-tid="${id}" aria-expanded="${open ? 'true' : 'false'}"${acts ? ` aria-controls="nt-ta-${id}"` : ''} title="${acts ? 'Show the whole task and its actions' : 'Show the whole task'}"`
       : live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(nid)}" data-nt-tid="${id}" title="Open “${ntEsc(ntTitleOf(n))}” at this task"` : '';
-    return `<div class="nt-taskrow${t.done ? ' done' : ''}${open ? ' open' : ''}${open && !strip ? ' solo' : ''}"${attrs}>`
+    return (wide ? '<div class="nt-wrow">' : '') + `<div class="nt-taskrow${t.done ? ' done' : ''}${open ? ' open' : ''}${open && !strip ? ' solo' : ''}"${attrs}>`
       + `<button class="ck" type="button" data-nt-tkdone="${ntEsc(t.id)}" aria-label="${t.done ? 'Mark open' : 'Mark done'}">${t.done ? HB_CHECK_SVG.replace('<svg ', '<svg width="11" height="11" ') : ''}</button>`
       // The due badge rides on the title line, so the meta line below keeps
       // the full width for category · note · schedule.
       + `<span class="m"><span class="top">${pin}<span class="t">${escHtml(t.text || '')}</span>${hasDet ? `<span class="dt" title="Has details" aria-label="Has details">${NT_SVG.detS}</span>` : ''}${due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : ''}</span>`
       + `<span class="s">${cat}${src}<span>${escHtml(when)}</span></span></span>`
-      + '</div>' + strip;
+      + '</div>' + (wide ? acts2 + '</div>' + (open ? ntTaskDetHTML(t, det) : '') : strip);
   }
   // An open row's details: its own block, above the actions, so the actions
   // strip stays exactly what it was.
@@ -16632,6 +16662,7 @@ const VOICE = {
     const E = _ntEls;
     if (!E || !E.filters) return;
     E.filters.hidden = ntFilter !== 'tasks';
+    E.shell.classList.toggle('nt-tasks-wide', _ntTasksWide && ntFilter === 'tasks' && !ntIsPhone());
     if (E.filters.hidden) return;
     const f = ntTaskFilter();
     const name = (list, v) => (list.find(w => w[0] === v) || [])[1] || null;
@@ -16641,7 +16672,8 @@ const VOICE = {
     const h = tgl + chip('cat', 'Category', 'Filter by category', f.cat != null ? ntCatPath(f.cat) : null, f.cat != null ? ntCatColor(f.cat) : '')
       + (done ? '' : chip('when', 'When', 'Filter by schedule', name(NT_TF_WHEN, f.when), ''))
       + chip('src', 'Source', 'Filter by where it came from', name(NT_TF_SRC, f.src), '')
-      + (ntTfOn(f) ? '<button class="nt-chip clr" type="button" data-nt-tfclear title="Show every task"><span aria-hidden="true">×</span>Clear</button>' : '');
+      + (ntTfOn(f) ? '<button class="nt-chip clr" type="button" data-nt-tfclear title="Show every task"><span aria-hidden="true">×</span>Clear</button>' : '')
+      + (ntIsPhone() ? '' : `<button class="nt-chip tgl nt-widebtn${_ntTasksWide ? ' on' : ''}" type="button" data-nt-tfwide aria-pressed="${_ntTasksWide ? 'true' : 'false'}" title="${_ntTasksWide ? 'Back to the list beside your note' : 'Read every task in full, with its actions beside it'}"><span class="tx">${_ntTasksWide ? 'Narrow' : 'Wide'}</span></button>`);
     if (E.filters.dataset.sig !== h) { E.filters.dataset.sig = h; E.filters.innerHTML = h; }
   }
   // A chip's values, each with what it would list; a zero is dimmed but
@@ -17024,6 +17056,7 @@ const VOICE = {
   function ntOpenDoc(id, opts){
     const o = opts || {};
     if (!id || !_ntEls) return;
+    if (_ntTasksWide) { _ntTasksWide = false; _ntEls.shell.classList.remove('nt-tasks-wide'); }
     if (ntOpenId && ntOpenId !== id) ntFlush();
     ntPopClose();
     const same = ntOpenId === id;
@@ -22780,6 +22813,15 @@ const VOICE = {
         e.stopPropagation();
         if (_ntPopKind === 'tfilt') ntPopClose();
         ntClearTaskFilter(); _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFocusTfChip('cat');
+        return;
+      }
+      const twd = t.closest('[data-nt-tfwide]');
+      if (twd) {
+        e.stopPropagation(); e.preventDefault();
+        _ntTasksWide = !_ntTasksWide; _ntAllRow = null; _ntAllDelArm = null;
+        ntRenderLib();
+        const b = _ntEls && _ntEls.filters.querySelector('[data-nt-tfwide]');
+        if (b) { try { b.focus({ preventScroll: true }); } catch {} }
         return;
       }
       const tfp = t.closest('[data-nt-tfchip]');
