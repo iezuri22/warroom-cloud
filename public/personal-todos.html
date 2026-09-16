@@ -19651,7 +19651,7 @@ const VOICE = {
             <button class="nt-icon nt-ol-btn" type="button" data-nt-act="outline" title="Outline" aria-label="Outline">${NT_SVG.outline}</button>
             <button class="nt-icon" type="button" id="ntPinBtn" data-nt-act="pin" title="Pin to top" aria-label="Pin">${NT_SVG.pin}</button>
             <button class="nt-icon nt-pw-btn" type="button" data-nt-act="page-width" title="Page width" aria-label="Page width">${NT_SVG.widen}</button>
-            <button class="nt-icon nt-fs" type="button" data-nt-act="focus" title="Writing mode — full screen (⌘⇧F · Esc to leave)" aria-label="Full-screen writing"><span class="ic-enter">${NT_SVG.expand}</span><span class="ic-exit">${NT_SVG.collapse}</span></button>
+            <button class="nt-icon nt-fs" type="button" data-nt-act="focus" title="Writing mode — full screen (⌘⌃ or ⌘⇧F · Esc to leave)" aria-label="Full-screen writing"><span class="ic-enter">${NT_SVG.expand}</span><span class="ic-exit">${NT_SVG.collapse}</span></button>
             <button class="nt-icon" type="button" data-nt-act="more" title="More" aria-label="More">${NT_SVG.more}</button>
             </span>
           </div>
@@ -23020,26 +23020,43 @@ const VOICE = {
       if (_ntPopKind === 'bubble' && ntInEditor(e.target)) return;
       ntPopClose();
     }, true);
-    // A chord of modifiers alone has no keydown of its own to catch: it's a
-    // ⌘ and a ⇧ both held, let go with nothing else pressed (any other key
-    // made it ⌘⇧X, ⌘⇧7… and a click made it a selection), within 1.5 s.
-    let chord = null;
-    const isMod = k => k === 'Meta' || k === 'Control' || k === 'Shift';
+    // Chords of modifiers alone — ⌘⇧ folds the side panels, ⌘⌃ goes full
+    // screen. They have no keydown of their own to catch: the modifiers are
+    // held, then let go with nothing else pressed (another key made it ⌘⇧X or
+    // ⌃⌘F, a click made it a selection) within 1.5 s. Adding a modifier that
+    // turns one chord into the other spoils both until every key is up.
+    let chord = null;                                 // { at, kind: null | 'panes' | 'full' | 'x' }
+    const isMod = k => k === 'Meta' || k === 'Control' || k === 'Shift' || k === 'Alt';
+    const kindOf = e => {
+      if (e.altKey) return 'x';
+      if (e.metaKey && e.ctrlKey) return e.shiftKey ? 'x' : 'full';
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey) return 'panes';
+      return null;
+    };
     document.addEventListener('keydown', e => {
-      if (!isMod(e.key)) { chord = null; return; }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && !chord) chord = Date.now();
+      if (!isMod(e.key)) { if (chord) chord.kind = 'x'; return; }
+      const alone = [e.metaKey, e.ctrlKey, e.shiftKey, e.altKey].filter(Boolean).length <= 1;
+      if (!chord || alone) { chord = { at: Date.now(), kind: kindOf(e) }; return; }   // alone: a fresh start heals a lost keyup
+      if (chord.kind === 'x') return;
+      const k = kindOf(e);
+      if (chord.kind && k !== chord.kind) chord.kind = 'x';
+      else if (!chord.kind && k) { chord.kind = k; chord.at = Date.now(); }
     }, true);
     document.addEventListener('keyup', e => {
-      if (!isMod(e.key)) return;
-      const at = chord;
-      chord = null;
-      if (!at || Date.now() - at > 1500 || e.altKey) return;
-      if (!_tabNotes || !_ntMounted || _ntFocus || ntIsPhone()) return;
+      if (!isMod(e.key) || !chord) return;
+      const c = chord;
+      if (!(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) chord = null;   // everything is up
+      else chord = { at: c.at, kind: 'x' };                                     // fire once, on the first release
+      if (c.kind !== 'panes' && c.kind !== 'full') return;
+      if (Date.now() - c.at > 1500) return;
+      if (!_tabNotes || !_ntMounted) return;
       const bd = document.getElementById('ntCatsBd');
       if (bd && !bd.hidden) return;
+      if (c.kind === 'full') { ntSetFocus(!_ntFocus); return; }
+      if (_ntFocus || ntIsPhone()) return;
       ntTogglePanes();
     }, true);
-    document.addEventListener('pointerdown', () => { chord = null; }, true);
+    document.addEventListener('pointerdown', () => { if (chord) chord.kind = 'x'; }, true);
     window.addEventListener('blur', () => { chord = null; });
     window.addEventListener('resize', () => {
       if (!_ntPopKind) return;
