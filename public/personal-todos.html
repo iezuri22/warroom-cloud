@@ -4104,6 +4104,10 @@
   .nt-editor img:hover { box-shadow: 0 0 0 3px var(--accent-soft); }
   .nt-editor img { cursor: pointer; }
   .nt-editor img.nt-img-on { box-shadow: 0 0 0 3px var(--accent); }
+  .nt-editor p:has(> img + img) { display: flex; gap: 8px; align-items: flex-start; }
+  .nt-editor p:has(> img + img) > img { flex: 1 1 0; min-width: 0; margin: 6px 0; object-fit: contain; }
+  .nt-editor p:has(> img + img) > br { display: none; }
+  .nt-imgbar button[hidden] { display: none; }
   .nt-imgbar { position: fixed; z-index: 80; display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface, #fff); border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(0, 0, 0, .16); }
   .nt-imgbar[hidden] { display: none; }
   .nt-imgbar button { height: 28px; min-width: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: none; font: 700 12.5px var(--font-family); color: var(--ink); cursor: pointer; white-space: nowrap; }
@@ -5444,19 +5448,6 @@
 
 
 
-<!-- ECM inbox — review assigned items, optionally date them, move to Planned -->
-<div class="priority-overflow-backdrop" id="ecmInboxBackdrop" aria-hidden="true">
-  <div class="priority-overflow" role="dialog" aria-modal="true" aria-labelledby="ecmInboxTitle">
-    <div class="pof-head">
-      <div class="pof-title" id="ecmInboxTitle">ECM — assigned to me</div>
-      <div class="pof-sub" id="ecmInboxSub"></div>
-    </div>
-    <div class="pof-body" id="ecmInboxBody"></div>
-    <div class="pof-foot">
-      <button class="pof-cancel" id="ecmInboxClose" type="button">Close</button>
-    </div>
-  </div>
-</div>
 
 <!-- Coach — voice planning chat. Speech-to-text into the textarea, plans come
      back as accept/decline proposals that write through the normal task rails. -->
@@ -9065,7 +9056,6 @@ const VOICE = {
   // when a synced todo is marked done. Token + sheet id come from War Room
   // Settings panel; stored in localStorage on the user's device only.
   const SS_KEY = 'smartsheets-config';
-  const SS_INCOMPLETE_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT'];
   function ssGetConfig(){
     try { return JSON.parse(localStorage.getItem(SS_KEY) || '{}'); } catch { return {}; }
   }
@@ -9137,6 +9127,7 @@ const VOICE = {
       const colTicket = ssColumnByTitle(sheet, 'Ticket #');
       const colDetails = ssColumnByTitle(sheet, 'Details');
       const colOutcome = ssColumnByTitle(sheet, 'Outcome Details');
+      const colDel = ssColumnByTitle(sheet, 'Marked for Deletion');
       // The sheet's real deadline. Without it every synced row used to be
       // stamped "today", which is why all of ECM read as due now.
       const colDue = ssColumnByTitle(sheet, 'Due Date')
@@ -9183,7 +9174,10 @@ const VOICE = {
         byRowIdAllStatuses.set(String(r.id), { row: r, status: s, owner: o });
         // Incomplete pool: user is one of the owners (handles multi-contact)
         const isOwner = o.split(/[,;]+/).map(s => s.trim()).includes(ownerName);
-        if (isOwner && SS_INCOMPLETE_STATUSES.includes(s)) incomplete.push(r);
+        // Open the way the ECM page counts it: anything not closed (a blank
+        // status too) — but not a row marked for deletion.
+        const marked = colDel ? /^(true|1)$/i.test(String(ssCellValue(r, colDel.id) ?? '')) : false;
+        if (isOwner && s !== 'Completed' && s !== 'Not feasible - close ticket' && !marked) incomplete.push(r);
       });
       // Reassignment + deletion sweep — drop the local copy if:
       //   1) Sheet row exists but is owned by someone else (and not me)
@@ -12471,14 +12465,11 @@ const VOICE = {
     const weekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 6 * 86400000));
     const nextWeekEnd = _ckey(new Date(new Date(monday + 'T12:00:00').getTime() + 13 * 86400000));
     // Buckets: due (today/overdue) → tomorrow → week → next → later → someday.
-    // 'ecm' is the INBOX: undated, not-yet-reviewed ECM assignments. They stay
-    // out of the main groups until accepted ("moved to Planned") from the ECM
-    // review modal — accepting sets ecmAccepted (and optionally a date).
+    // An ECM row is a task like any other: undated, it's Someday.
     // Items already on a working set are excluded entirely.
-    const b = { due: [], ecm: [], tomorrow: [], week: [], next: [], later: [], someday: [] };
+    const b = { due: [], tomorrow: [], week: [], next: [], later: [], someday: [] };
     _plannedCache.filter(p => !p.done && !inWork(p.id)).forEach(p => {
       const d = typeof p.plannedFor === 'string' ? p.plannedFor : '';
-      if (p.smartsheetRowId && !d && !p.ecmAccepted) { b.ecm.push(p); return; }
       if (!d) { b.someday.push(p); return; }
       if (d <= tk) b.due.push(p);
       else if (d === tomorrow) b.tomorrow.push(p);
@@ -12486,13 +12477,11 @@ const VOICE = {
       else if (d <= nextWeekEnd) b.next.push(p);
       else b.later.push(p);
     });
-    // Sort dated buckets by plannedFor ascending; someday + ecm inbox by
-    // createdAt newest first.
+    // Sort dated buckets by plannedFor ascending; someday by createdAt newest first.
     ['due','tomorrow','week','next','later'].forEach(k => {
       b[k].sort((a, c) => (a.plannedFor || '').localeCompare(c.plannedFor || ''));
     });
     b.someday.sort((a, c) => (c.createdAt || '').localeCompare(a.createdAt || ''));
-    b.ecm.sort((a, c) => (c.createdAt || '').localeCompare(a.createdAt || ''));
     return b;
   }
   // ---- Auto-promotion: a dated planned item lands at the TOP of First
@@ -12781,22 +12770,6 @@ const VOICE = {
       ['later', 'Later', ''],
       ['someday', 'Someday', 'someday']
     ];
-    // ECM inbox — assigned items wait behind a review button instead of
-    // flooding the list. Review → set a date (optional) → move to Planned.
-    if (b.ecm.length) {
-      const inboxBtn = document.createElement('button');
-      inboxBtn.type = 'button';
-      inboxBtn.className = 'planned-ecm-inbox';
-      inboxBtn.innerHTML = `
-        <span class="pei-icon">📥</span>
-        <span class="pei-main">
-          <span class="pei-head">ECM — assigned to me</span>
-          <span class="pei-line">${b.ecm.length} waiting to be planned</span>
-        </span>
-        <span class="pei-go">Review →</span>`;
-      inboxBtn.addEventListener('click', openEcmInbox);
-      groups.appendChild(inboxBtn);
-    }
     let any = false;
     SECTIONS.forEach(([key, label, cls]) => {
       const items = b[key];
@@ -12873,80 +12846,6 @@ const VOICE = {
     });
     view.appendChild(wrap);
   }
-  // ---- ECM inbox modal ----
-  // Assigned-from-ECM items wait here until reviewed. "Plan" accepts the
-  // item into the Planned buckets — with a date it schedules (and will
-  // auto-promote + pin on its day); without one it lands in Someday.
-  function openEcmInbox(){
-    renderEcmInbox();
-    const bd = document.getElementById('ecmInboxBackdrop');
-    if (bd) { bd.classList.add('show'); bd.setAttribute('aria-hidden', 'false'); }
-  }
-  function closeEcmInbox(){
-    const bd = document.getElementById('ecmInboxBackdrop');
-    if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
-  }
-  function renderEcmInbox(){
-    const body = document.getElementById('ecmInboxBody');
-    if (!body) return;
-    const items = plannedBuckets().ecm;
-    const sub = document.getElementById('ecmInboxSub');
-    if (sub) sub.textContent = items.length
-      ? `${items.length} item${items.length === 1 ? '' : 's'} assigned to you. Pick a day (optional), then Plan.`
-      : 'All reviewed.';
-    body.innerHTML = '';
-    if (!items.length) {
-      body.innerHTML = `<div class="planned-empty">Nothing waiting — every ECM assignment has been planned.</div>`;
-      return;
-    }
-    items.forEach(p => {
-      const row = document.createElement('div');
-      row.className = 'ecm-inbox-row';
-      row.innerHTML = `
-        <div class="eir-main">
-          <div class="eir-text">${escHtml(p.text || '')}</div>
-          ${(p.details || '').trim() ? `<div class="eir-notes">${escHtml(ntMdPlain(p.details, 140))}</div>` : ''}
-        </div>
-        <div class="eir-controls">
-          <input type="date" class="eir-date" min="${todayKey()}" title="Optional — when should this land?">
-          <button type="button" class="eir-plan">Plan</button>
-        </div>`;
-      const dateInp = row.querySelector('.eir-date');
-      row.querySelector('.eir-plan').addEventListener('click', async () => {
-        const ds = dateInp.value || '';
-        const today = todayKey();
-        const future = ds && ds > today;
-        try {
-          // No date (or today/past) = "work it TODAY": land on the Personal
-          // page now — ECM section, top of the working list. The old behavior
-          // (ecmAccepted only) dropped undated accepts into Planned→Someday,
-          // which read as the button doing nothing.
-          const patch = { ecmAccepted: true, section: 'ecm' };
-          if (future) { patch.plannedFor = ds; patch.date = ds; patch.planned = true; }
-          else { patch.plannedFor = ''; patch.planned = false; patch.date = today; }
-          await updateDoc(doc(db, 'tv_todos', p.id), patch);
-          Object.assign(p, patch);
-          const t = todos.find(x => x.id === p.id);
-          if (t) Object.assign(t, patch);
-          else if (!future) todos.push(p);
-          if (!future) {
-            addToToday(p.id, 0);
-            _plannedCache = _plannedCache.filter(x => x.id !== p.id);
-          }
-        } catch (e) { console.warn('ecm inbox accept failed', e); }
-        renderEcmInbox();
-        try { render(); } catch {}
-      });
-      body.appendChild(row);
-    });
-  }
-  (function wireEcmInbox(){
-    const bd = document.getElementById('ecmInboxBackdrop');
-    if (!bd) return;
-    const closeBtn = document.getElementById('ecmInboxClose');
-    if (closeBtn) closeBtn.addEventListener('click', closeEcmInbox);
-    bd.addEventListener('click', (e) => { if (e.target === bd) closeEcmInbox(); });
-  })();
   // ---- Daily knock ----
   // The daily knock shows the WEEK ahead, not just today — the user plans in
   // weeks; overdue and today still sort first.
@@ -14655,15 +14554,7 @@ const VOICE = {
     } else {
       _ovCards = _ovGroupCards(flat, effGroup, otherWeek);
       _ovCards.forEach(spec => {
-        // Unaccepted ECM assignments surface as an inbox chip on the ECM card
-        // — whichever grouping happens to be showing it.
-        let inboxChip = '';
-        if (spec.sec === 'ecm' && !otherWeek) {
-          const inbox = (_plannedCache || []).filter(p =>
-            p.smartsheetRowId && !p.done && !(typeof p.plannedFor === 'string' && p.plannedFor) &&
-            !p.ecmAccepted && !inWork(p.id)).length;
-          if (inbox) inboxChip = `<button class="ov-inbox" type="button" data-ov-inbox="1">Inbox · ${inbox}</button>`;
-        }
+        const inboxChip = '';
         col.appendChild(buildCard(spec,
           (spec.sec === 'meals' && !otherWeek) ? _ovMealChips() : '', inboxChip));
       });
@@ -14853,7 +14744,6 @@ const VOICE = {
         render();
         return;
       }
-      if (e.target.closest('[data-ov-inbox]')) { try { openEcmInbox(); } catch {} return; }
       if (e.target.closest('[data-ov-meals]')) {
         try {
           if (window.parent && window.parent !== window) {
@@ -17065,7 +16955,6 @@ const VOICE = {
   function ntAllPlace(t, c){
     const tk = c.today;
     const inW = c.order.has(t.id) || c.morning.has(t.id);
-    if (!inW && t.smartsheetRowId && !t.plannedFor && !t.ecmAccepted) return { g: 'ecm', day: '' };
     let day = '';
     const rem = _isPendingReminder(t);
     if (inW) day = tk;
@@ -17089,7 +16978,6 @@ const VOICE = {
   // The row's schedule, in words.
   function ntAllWhen(t, p, c){
     if (t.done) { const d = ntDoneDay(t, c.today); return !d ? 'Done' : d === c.today ? 'Done today' : 'Done ' + ntDay(d, { month: 'short', day: 'numeric' }); }
-    if (p.g === 'ecm') return 'Not planned yet';
     if (c.order.has(t.id)) return 'Today';
     if (c.morning.has(t.id)) return 'Morning';
     const rem = _isPendingReminder(t);
@@ -17103,7 +16991,6 @@ const VOICE = {
   // group now the Overview is gone; later or undated loose tasks were never
   // listed anywhere else).
   function ntAllHome(t, p, c){
-    if (p.g === 'ecm') return _isPlannedDoc(t) ? 'inbox' : '';
     // Planned leaves out anything on a working set (plannedBuckets' inWork);
     // c.order / c.morning are that set, resolved without materializing.
     if (c.order.has(t.id) || c.morning.has(t.id)) return '';
@@ -17115,7 +17002,7 @@ const VOICE = {
   const NT_ALL_GROUPS = [
     ['late', 'Overdue', 'var(--red)'], ['today', 'Today', 'var(--accent)'], ['tomorrow', 'Tomorrow', 'var(--ink-dim)'],
     ['week', 'This week', 'var(--ink-dim)'], ['next', 'Next week', 'var(--ink-dim)'], ['later', 'Later', 'var(--ink-dim)'],
-    ['someday', 'Someday', 'var(--ink-dim)'], ['ecm', 'ECM — assigned to me', ''],
+    ['someday', 'Someday', 'var(--ink-dim)'],
   ];
   function ntAllGroupHTML(k, label, color, n, rows){
     const key = 'all:' + k, shut = ntGroupShut().has(key);
@@ -17133,7 +17020,7 @@ const VOICE = {
     if (t.done) return note ? `<div class="nt-tacts" id="nt-ta-${id}">${note}</div>` : '';
     c = c || ntAllCtx(); p = p || ntAllPlace(t, c);
     const home = ntAllHome(t, p, c), arm = _ntAllDelArm === t.id;
-    const go = home ? `<button class="nt-ta go" type="button" data-nt-tgo="${id}">${home === 'inbox' ? 'Open the ECM inbox' : 'Show in Planned'} →</button>` : '';
+    const go = home ? `<button class="nt-ta go" type="button" data-nt-tgo="${id}">Show in Planned →</button>` : '';
     // A routine's daily copy stays where its routine puts it; a task whose
     // tick is still being written moves once that lands.
     const move = (t.fromTemplate || _ntTkBusy.has(t.id)) ? '' : `<button class="nt-ta" type="button" data-nt-move="${id}">Move to…</button>`;
@@ -17159,7 +17046,7 @@ const VOICE = {
     const push = '<span class="nt-wseg" role="group" aria-label="Push to">'
       + _ovPushDates().map(o => `<button class="nt-wa" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}" title="Push to ${ntEsc(o.label)}">${escHtml(short(o.label))}</button>`).join('') + '</span>';
     const move = (t.fromTemplate || _ntTkBusy.has(t.id)) ? '' : `<button class="nt-wa" type="button" data-nt-move="${id}">Move…</button>`;
-    const go = note || (home ? `<button class="nt-wa go" type="button" data-nt-tgo="${id}" title="${home === 'inbox' ? 'Open the ECM inbox' : 'Show in Planned'}">${home === 'inbox' ? 'Inbox ↗' : 'Planned ↗'}</button>` : '');
+    const go = note || (home ? `<button class="nt-wa go" type="button" data-nt-tgo="${id}" title="Show in Planned">Planned ↗</button>` : '');
     const del = t.smartsheetRowId ? '<span class="nt-wnote" title="Managed on ECM">On ECM</span>'
       : t.fromTemplate ? '' : `<button class="nt-wa del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}"${t.noteId ? ' title="Deletes the task and its line in its note"' : ''}>${arm ? 'Sure?' : 'Delete'}</button>`;
     return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', push)}${slot('due', ntDueCtlHTML(t, 'nt-wa', true))}${slot('move', move)}${slot('go', go)}${slot('del', del)}</div>`;
@@ -17220,7 +17107,6 @@ const VOICE = {
     G.today.sort((a, b) => pos(a) - pos(b) || (+a.position || 0) - (+b.position || 0) || ca(a).localeCompare(ca(b)));
     ['late', 'tomorrow', 'week', 'next', 'later'].forEach(k => G[k].sort(byDay));
     G.someday.sort((a, b) => ca(b).localeCompare(ca(a)));
-    G.ecm.sort((a, b) => ca(b).localeCompare(ca(a)));
     const row = t => ntTaskRowHTML(t, { cat: true, all: c, place: P.get(t.id), expand: true });
     let h = _ntOpenErr ? '<div class="nt-all-warn">Live updates stopped · <button class="nt-retry" type="button" data-nt-act="retry-live">Retry</button></div>'
       : !_ntOpenFresh ? '<div class="nt-all-warn">Reconnecting…</div>' : '';
@@ -17254,7 +17140,7 @@ const VOICE = {
   // ---- All tasks: filters — Category · When · Source, one value each ----
   // They combine with the search and stick per device (pt-nt-tfilt is in
   // sync-client's SKIP_SYNC); the list then says "Showing 12 of 48 · Clear".
-  const NT_TF_WHEN = [['late', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['next', 'Next week'], ['later', 'Later'], ['someday', 'Someday'], ['ecm', 'ECM inbox'], ['parked', 'Parked']];
+  const NT_TF_WHEN = [['late', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['next', 'Next week'], ['later', 'Later'], ['someday', 'Someday'], ['parked', 'Parked']];
   const NT_TF_SRC = [['note', 'From a note'], ['free', 'Not in a note']];
   // Task line highlights: a color per task, kept on its line (data-hl). New
   // tasks start with the last color used (pt-nt-hl, per device).
@@ -18510,13 +18396,7 @@ const VOICE = {
     _ntAllRow = null; _ntAllDelArm = null;
     _tabNotes = false; _tabHabits = false; _tabTimer = false;
     _tabOverview = false; _tabPlanned = true;
-    // The inbox lists the planned cache — read it fresh so this item is there.
-    loadPlannedTodos(home === 'inbox').then(() => {
-      try {
-        if (_tabPlanned) render();
-        if (home === 'inbox' && _tabPlanned) openEcmInbox();
-      } catch {}
-    });
+    loadPlannedTodos(false).then(() => { try { if (_tabPlanned) render(); } catch {} });
     render();
     try { window.scrollTo(0, 0); } catch {}
   }
@@ -21839,6 +21719,7 @@ const VOICE = {
     ed.addEventListener('keydown', e => {
       if (!_ntImgSel) return;
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); e.stopImmediatePropagation(); ntImgMove(e.key === 'ArrowUp' ? -1 : 1); return; }
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); e.stopImmediatePropagation(); ntImgShift(e.key === 'ArrowLeft' ? -1 : 1); return; }
       if (e.key === 'Escape') { e.stopImmediatePropagation(); ntImgBarHide(); return; }
       ntImgBarHide();
     }, true);
@@ -22756,15 +22637,23 @@ const VOICE = {
     if (_ntImgBar && _ntImgBar.isConnected) return _ntImgBar;
     const b = document.createElement('div');
     b.className = 'nt-imgbar'; b.hidden = true; b.setAttribute('role', 'toolbar'); b.setAttribute('aria-label', 'Image');
-    b.innerHTML = '<button type="button" data-nt-img="up" title="Move up (⌥↑)" aria-label="Move the image up">↑ Up</button>'
-      + '<button type="button" data-nt-img="down" title="Move down (⌥↓)" aria-label="Move the image down">↓ Down</button>'
+    b.innerHTML = '<button type="button" data-nt-img="up" title="Up a line (⌥↑)" aria-label="Move the image up a line">↑</button>'
+      + '<button type="button" data-nt-img="down" title="Down a line (⌥↓)" aria-label="Move the image down a line">↓</button>'
+      + '<button type="button" data-nt-img="left" title="Left (⌥←)" aria-label="Move the image left in its row">←</button>'
+      + '<button type="button" data-nt-img="right" title="Right (⌥→)" aria-label="Move the image right in its row">→</button>'
+      + '<button type="button" data-nt-img="join" title="Put it beside the image above or below">◫ Side by side</button>'
+      + '<button type="button" data-nt-img="split" title="Take it out of the row">▭ Own line</button>'
       + '<button type="button" data-nt-img="del" title="Remove the image" aria-label="Remove the image">🗑</button>';
     b.addEventListener('mousedown', e => e.preventDefault());   // the editor keeps its caret
     b.addEventListener('click', e => {
       const x = e.target.closest && e.target.closest('[data-nt-img]');
       if (!x) return;
       const a = x.getAttribute('data-nt-img');
-      if (a === 'del') ntImgDelete(); else ntImgMove(a === 'up' ? -1 : 1);
+      if (a === 'del') ntImgDelete();
+      else if (a === 'join') ntImgJoin();
+      else if (a === 'split') ntImgSplit();
+      else if (a === 'left' || a === 'right') ntImgShift(a === 'left' ? -1 : 1);
+      else ntImgMove(a === 'up' ? -1 : 1);
     });
     document.body.appendChild(b);
     window.addEventListener('scroll', () => { if (_ntImgSel) ntImgBarPlace(); }, true);
@@ -22782,6 +22671,7 @@ const VOICE = {
     _ntImgSel = img;
     img.classList.add('nt-img-on');
     ntImgBarEl().hidden = false;
+    ntImgBarSync();
     ntImgBarPlace();
   }
   function ntImgBarHide(){
@@ -22810,25 +22700,102 @@ const VOICE = {
     while (b && b.parentNode !== ed) b = b.parentNode;
     return b;
   }
-  function ntImgMove(dir){
-    const img = _ntImgSel;
-    if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
-    const ed = _ntEls.editor, blk = ntImgBlock(img);
-    if (!blk) return;
-    // Sharing its line (text, a list item): step out onto a line of its own first.
-    const alone = blk.nodeName === 'P' && !blk.textContent.trim() && blk.querySelectorAll('img').length === 1;
-    if (blk !== img && !alone) {
-      const p = document.createElement('p');
-      p.appendChild(img);
-      ed.insertBefore(p, dir < 0 ? blk : blk.nextSibling);
-    } else {
-      const sib = dir < 0 ? blk.previousElementSibling : blk.nextElementSibling;
-      if (!sib) { ptToast(dir < 0 ? 'Already at the top' : 'Already at the bottom'); return; }
-      ed.insertBefore(blk, dir < 0 ? sib : sib.nextSibling);
-    }
+  // An image row: a top-level <p> holding only images (one, or several side by side).
+  function ntImgIsRow(p){
+    return !!p && p.nodeName === 'P' && !!_ntEls && p.parentNode === _ntEls.editor && !p.textContent.trim() && !!p.querySelector('img')
+      && [...p.childNodes].every(n => n.nodeName === 'IMG' || n.nodeName === 'BR' || (n.nodeType === 3 && !n.nodeValue.trim()));
+  }
+  const ntImgIsList = n => !!n && (n.nodeName === 'UL' || n.nodeName === 'OL');
+  const ntImgSameList = (a, b) => ntImgIsList(a) && ntImgIsList(b) && a.nodeName === b.nodeName && a.className === b.className;
+  function ntImgNewList(like){ const l = like.cloneNode(false); l.removeAttribute('id'); l.removeAttribute('start'); return l; }
+  // Put a row right before / after one item of a list, splitting the list there.
+  function ntImgAtItem(row, list, li, after){
+    const kids = [...list.children], i = kids.indexOf(li) + (after ? 1 : 0);
+    const tail = kids.slice(i);
+    if (i <= 0) { list.before(row); return; }
+    if (!tail.length) { list.after(row); return; }
+    const nl = ntImgNewList(list);
+    tail.forEach(x => nl.appendChild(x));
+    list.after(row); row.after(nl);
+  }
+  function ntImgDone(img){
     ntAfterMutation();
     try { img.scrollIntoView({ block: 'nearest' }); } catch {}
     ntImgBarShow(img);
+  }
+  // One line at a time; a list is stepped through item by item.
+  function ntImgMove(dir){
+    const img = _ntImgSel;
+    if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
+    const ed = _ntEls.editor;
+    let row = img.parentNode;
+    if (!ntImgIsRow(row)) {
+      // Sharing a line with text, or inside a list item: onto a row of its own,
+      // just above / below that line.
+      const li = img.closest('li'), top = ntImgBlock(img);
+      let item = li;
+      while (item && top && item.parentElement !== top) item = item.parentElement ? item.parentElement.closest('li') : null;
+      row = document.createElement('p');
+      row.appendChild(img);
+      if (item && ntImgIsList(top)) ntImgAtItem(row, top, item, dir > 0);
+      else if (top && top !== img) ed.insertBefore(row, dir < 0 ? top : top.nextSibling);
+      else ed.appendChild(row);
+      ntImgDone(img);
+      return;
+    }
+    const sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+    if (!sib) { ptToast(dir < 0 ? 'Already at the top' : 'Already at the bottom'); return; }
+    if (ntImgIsList(sib) && sib.firstElementChild) {
+      // Past one item: it joins the list on the far side (or starts one).
+      const other = dir < 0 ? row.nextElementSibling : row.previousElementSibling;
+      const li = dir < 0 ? sib.lastElementChild : sib.firstElementChild;
+      if (ntImgSameList(other, sib)) { if (dir < 0) other.insertBefore(li, other.firstChild); else other.appendChild(li); }
+      else { const nl = ntImgNewList(sib); nl.appendChild(li); if (dir < 0) row.after(nl); else row.before(nl); }
+      if (!sib.children.length) sib.remove();
+    } else {
+      if (dir < 0) sib.before(row); else sib.after(row);   // not a list: nothing splits or joins
+    }
+    ntImgDone(img);
+  }
+  // Side by side: into the image row above (or below).
+  function ntImgJoin(){
+    const img = _ntImgSel, row = img && img.parentNode;
+    if (!ntImgIsRow(row)) { ptToast('Move it onto its own line first (↑ or ↓)'); return; }
+    const up = row.previousElementSibling, dn = row.nextElementSibling;
+    const to = ntImgIsRow(up) ? up : ntImgIsRow(dn) ? dn : null;
+    if (!to) { ptToast('Put another image right above or below it first'); return; }
+    to.querySelectorAll('br').forEach(b => b.remove());
+    if (to === up) to.appendChild(img); else to.insertBefore(img, to.firstChild);
+    if (!row.querySelector('img')) row.remove();
+    ntImgDone(img);
+  }
+  // Out of a row, onto a line of its own right below it.
+  function ntImgSplit(){
+    const img = _ntImgSel, row = img && img.parentNode;
+    if (!ntImgIsRow(row) || row.querySelectorAll('img').length < 2) return;
+    const p = document.createElement('p');
+    p.appendChild(img);
+    row.after(p);
+    ntImgDone(img);
+  }
+  // ← / → within a row.
+  function ntImgShift(dir){
+    const img = _ntImgSel, row = img && img.parentNode;
+    if (!ntImgIsRow(row)) return;
+    const imgs = [...row.querySelectorAll(':scope > img')], j = imgs.indexOf(img) + dir;
+    if (j < 0 || j >= imgs.length) return;
+    if (dir < 0) row.insertBefore(img, imgs[j]); else row.insertBefore(img, imgs[j].nextSibling);
+    ntImgDone(img);
+  }
+  // Which buttons make sense for this image right now.
+  function ntImgBarSync(){
+    const b = _ntImgBar, img = _ntImgSel;
+    if (!b || !img) return;
+    const row = img.parentNode, isRow = ntImgIsRow(row), many = isRow && row.querySelectorAll(':scope > img').length > 1;
+    const nb = isRow && (ntImgIsRow(row.previousElementSibling) || ntImgIsRow(row.nextElementSibling));
+    b.querySelectorAll('[data-nt-img="left"], [data-nt-img="right"], [data-nt-img="split"]').forEach(x => { x.hidden = !many; });
+    const j = b.querySelector('[data-nt-img="join"]');
+    if (j) j.hidden = !nb;
   }
   // Put an image's block where the spot is. In a list: the list splits after
   // the line holding the caret. An empty line: the image takes its place. A
@@ -22863,10 +22830,10 @@ const VOICE = {
   function ntImgDelete(){
     const img = _ntImgSel;
     if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
-    const blk = ntImgBlock(img);
     ntImgBarHide();
-    if (blk && blk !== img && blk.nodeName === 'P' && !blk.textContent.trim() && blk.querySelectorAll('img').length === 1) blk.remove();
-    else img.remove();
+    const row = img.parentNode;
+    img.remove();
+    if (row && row.nodeName === 'P' && !row.textContent.trim() && !row.querySelector('img')) row.remove();
     ntAfterMutation();
     ptToast('Image removed');
   }
