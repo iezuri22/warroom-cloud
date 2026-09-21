@@ -3338,6 +3338,9 @@
   }
   .nt-icon:hover { background: var(--fill); color: var(--ink); }
   .nt-icon.on { color: var(--accent); }
+  .nt-tmrbtn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--ink-mid); font: 700 12px var(--font-family); font-variant-numeric: tabular-nums; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
+  .nt-tmrbtn:hover { background: var(--fill); color: var(--ink); }
+  .nt-tmrbtn.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
   .nt-title {
     display: block; width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent;
     font-family: inherit; font-size: 28px; font-weight: 800; letter-spacing: -.03em; color: var(--ink);
@@ -4108,6 +4111,14 @@
   .nt-editor p:has(> img + img) > img { flex: 1 1 0; min-width: 0; margin: 6px 0; object-fit: contain; }
   .nt-editor p:has(> img + img) > br { display: none; }
   .nt-imgbar button[hidden] { display: none; }
+  .nt-tb[data-nt-cmd="dictate"].on { color: #fff; background: #D64B3E; }
+  .nt-dict { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 85; display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100vw - 32px)); padding: 7px 7px 7px 14px; border-radius: 999px; background: var(--surface, #fff); border: 1px solid var(--border); box-shadow: 0 10px 28px rgba(0, 0, 0, .16); font-size: 13px; color: var(--ink); }
+  .nt-dict[hidden] { display: none; }
+  .nt-dict .dot { width: 9px; height: 9px; border-radius: 50%; background: #D64B3E; flex-shrink: 0; animation: ntDictPulse 1.2s ease-in-out infinite; }
+  @keyframes ntDictPulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .nt-dict .dot { animation: none; } }
+  .nt-dict .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-mid); }
+  .nt-dict button { flex-shrink: 0; height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: #D64B3E; color: #fff; font: 700 12.5px var(--font-family); cursor: pointer; }
   .nt-editor img { -webkit-user-drag: none; user-select: none; }
   .nt-editor img[width] { max-height: none; height: auto; }
   .nt-editor p:has(> img + img) > img[width] { flex: 0 1 auto; }
@@ -11872,6 +11883,7 @@ const VOICE = {
     });
   }
   function tmrPaintCapsule(){
+    try { ntNoteTmrPaint(); } catch {}   // the open note's Timer button (try: at boot Notes isn't declared yet)
     const cap = document.getElementById('tmrCapsule');
     if (!cap) return;
     // The Timer tab already shows a clock the size of a house — and inside the
@@ -15319,6 +15331,7 @@ const VOICE = {
     chevS: NT_I('<polyline points="6 9 12 15 18 9"/>', 2.8, 11),
     chevR: NT_I('<polyline points="9 6 15 12 9 18"/>', 2.8, 11),
     star: NT_I('<polygon points="12 3 14.8 8.8 21 9.6 16.5 13.9 17.6 20.1 12 17.1 6.4 20.1 7.5 13.9 3 9.6 9.2 8.8"/>', 2.1),
+    mic: NT_I('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/>', 2.2),
     clip: NT_I('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>', 2.2),
     detS: NT_I('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/>', 2.4, 12),
     pin: NT_I('<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>', 2),
@@ -17680,6 +17693,8 @@ const VOICE = {
   }
   function ntOpenDoc(id, opts){
     const o = opts || {};
+    setTimeout(() => { try { ntNoteTmrPaint(); } catch {} }, 0);
+    try { if (ntDictOn() && _ntDict.nid !== id) ntDictStop(); } catch {}   // dictation belongs to the note it started in (try: at boot it isn't declared yet)
     if (!id || !_ntEls) return;
     if (_ntTasksWide) { _ntTasksWide = false; _ntEls.shell.classList.remove('nt-tasks-wide'); }
     if (ntOpenId && ntOpenId !== id) ntFlush();
@@ -20307,7 +20322,7 @@ const VOICE = {
             <span class="nt-dchip ev" id="ntEvChip" hidden></span>
             <span class="nt-dbr">
             <span class="nt-state" id="ntState">Saved</span>
-            <button class="nt-icon" type="button" data-nt-act="timer" title="Timer for this note — count up or down" aria-label="Timer for this note">${NT_SVG.clock}</button>
+            <button class="nt-tmrbtn" type="button" id="ntNoteTmr" data-nt-act="timer" title="Timer for this note — count up, or down from 15 / 25 / 45 / 60 minutes" aria-label="Timer for this note">${NT_SVG.clock}<span class="lb">Timer</span></button>
             <button class="nt-icon nt-ol-btn" type="button" data-nt-act="outline" title="Outline" aria-label="Outline">${NT_SVG.outline}</button>
             <button class="nt-icon" type="button" id="ntPinBtn" data-nt-act="pin" title="Pin to top" aria-label="Pin">${NT_SVG.pin}</button>
             <button class="nt-icon nt-pw-btn" type="button" data-nt-act="page-width" title="Page width" aria-label="Page width">${NT_SVG.widen}</button>
@@ -20349,6 +20364,7 @@ const VOICE = {
       + b('indent', NT_SVG.indent, 'Indent (Tab)', 'wide')
       + b('clear', NT_SVG.clear, 'Clear formatting', 'wide')
       + b('attach', NT_SVG.clip, 'Attach an image or file (you can also paste or drop one)')
+      + b('dictate', NT_SVG.mic, 'Dictate — speak and it types at the cursor · say “new line”, “period”, “comma”')
       + b('more', NT_SVG.more, 'More formatting', 'nt-tb-more')
       + b('task', NT_SVG.task + '<span>Task</span>', 'Make this line a Personal task — deadline and category too (⌘⇧↵) · a new task: ⌃N', 'task');
   }
@@ -21393,6 +21409,7 @@ const VOICE = {
       case 'link': ntPopLink(anchor); return;
       case 'task': ntPopTask(anchor); return;
       case 'attach': ntNotePick(); return;
+      case 'dictate': ntDictToggle(); return;
       case 'more': ntPopMore(anchor); return;
       default: return;
     }
@@ -22671,6 +22688,111 @@ const VOICE = {
   // While the task flow is open or still writing, it holds a line node, so
   // remote bodies wait in the banner instead of replacing the editor.
 
+  // The note header's Timer button: the countdown (or time so far) while
+  // the timer runs on this note.
+  function ntNoteTmrPaint(){
+    const b = document.getElementById('ntNoteTmr');
+    if (!b) return;
+    const on = !!(tmrRun && ntOpenId && tmrRun.noteId === ntOpenId);
+    b.classList.toggle('on', on);
+    const lb = b.querySelector('.lb');
+    const txt = !on ? 'Timer' : tmrRun.until ? tmrFmtClock(Math.max(0, (tmrRun.until - Date.now()) / 1000)) + ' left' : tmrFmtClock(tmrLiveSecs());
+    if (lb && lb.textContent !== txt) lb.textContent = txt;
+  }
+  // ---- dictation: speech to text at the cursor ----
+  let _ntDict = null;
+  function ntDictOn(){ return !!(_ntDict && _ntDict.on); }
+  function ntDictToggle(){ if (ntDictOn()) ntDictStop(); else ntDictStart(); }
+  function ntDictStart(){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { ptToast('Dictation needs Chrome, Edge or Safari'); return; }
+    if (!_ntEls || !ntOpenId) { ptToast('Open a note first'); return; }
+    if (ntDictOn()) return;
+    ntSaveRange();
+    const d = { on: true, nid: ntOpenId, r: new SR(), interim: '', heard: false };
+    _ntDict = d;
+    d.r.continuous = true; d.r.interimResults = true;
+    d.r.lang = navigator.language || 'en-US';
+    d.r.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i], txt = String((res[0] && res[0].transcript) || '');
+        if (res.isFinal) ntDictType(d, txt); else interim += txt;
+      }
+      d.interim = interim.trim(); d.heard = true;
+      if (_ntDict === d) ntDictPaint();
+    };
+    d.r.onerror = e => {
+      const c = e && e.error;
+      if (c === 'no-speech' || c === 'aborted') return;   // quiet: it just listens again
+      d.on = false;
+      ptToast(c === 'not-allowed' || c === 'service-not-allowed' ? 'Microphone blocked — allow it for this site in the browser, then try again'
+        : c === 'network' ? 'Dictation needs an internet connection' : c === 'audio-capture' ? 'No microphone found' : 'Dictation stopped (' + c + ')');
+    };
+    // The recognizer ends on its own after a pause: start it again while on.
+    d.r.onend = () => {
+      if (d.on && _ntDict === d) { try { d.r.start(); return; } catch {} }
+      if (_ntDict === d) ntDictStop();
+    };
+    try { d.r.start(); } catch (e) { _ntDict = null; ptToast('Couldn’t start dictation'); return; }
+    document.addEventListener('keydown', ntDictKey, true);
+    document.addEventListener('visibilitychange', ntDictHidden);
+    ntDictPaint();
+  }
+  function ntDictStop(){
+    const d = _ntDict;
+    _ntDict = null;
+    if (d) { d.on = false; try { d.r.stop(); } catch {} }   // a phrase still in flight is typed in as it lands
+    document.removeEventListener('keydown', ntDictKey, true);
+    document.removeEventListener('visibilitychange', ntDictHidden);
+    ntDictPaint();
+  }
+  function ntDictKey(e){ if (e.key === 'Escape' && ntDictOn()) { e.preventDefault(); e.stopImmediatePropagation(); ntDictStop(); } }
+  function ntDictHidden(){ if (document.hidden) ntDictStop(); }
+  // A finished phrase: spoken punctuation and line breaks, then typed in at
+  // the cursor with a space and a capital where they belong.
+  function ntDictType(d, raw){
+    if (!_ntEls || ntOpenId !== d.nid) return;
+    let t = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!t) return;
+    t = t.replace(/\s*\b(?:period|full stop)\b/gi, '.')
+      .replace(/\s*\bcomma\b/gi, ',')
+      .replace(/\s*\bquestion mark\b/gi, '?')
+      .replace(/\s*\bexclamation (?:point|mark)\b/gi, '!')
+      .replace(/\s*\bcolon\b/gi, ':');
+    const s = window.getSelection();
+    if (!(s && s.rangeCount && ntInEditor(s.anchorNode))) ntRestoreRange();
+    t.split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i).forEach((seg, i) => {
+      if (i) ntExec('insertParagraph');
+      seg = seg.trim();
+      if (!seg) return;
+      const blk = ntCurBlock();
+      let before = '';
+      try { before = blk ? ntTextBeforeCaret(blk) : ''; } catch {}
+      if (!before.trim() || /[.!?]\s*$/.test(before)) seg = seg.charAt(0).toUpperCase() + seg.slice(1);
+      if (before && !/\s$/.test(before) && !/^[.,!?:;]/.test(seg)) seg = ' ' + seg;
+      ntExec('insertText', seg);
+    });
+    ntSaveRange();
+  }
+  function ntDictPaint(){
+    const d = _ntDict, on = ntDictOn();
+    try { _ntEls.toolbar.querySelectorAll('[data-nt-cmd="dictate"]').forEach(b => { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); } catch {}
+    let p = document.getElementById('ntDictPill');
+    if (!on) { if (p) p.hidden = true; return; }
+    if (!p) {
+      p = document.createElement('div');
+      p.id = 'ntDictPill'; p.className = 'nt-dict'; p.setAttribute('role', 'status');
+      p.innerHTML = '<span class="dot" aria-hidden="true"></span><span class="tx"></span><button type="button">Stop</button>';
+      const b = p.querySelector('button');
+      b.addEventListener('mousedown', e => e.preventDefault());   // the cursor stays in the note
+      b.addEventListener('click', () => ntDictStop());
+      document.body.appendChild(p);
+    }
+    p.hidden = false;
+    p.querySelector('.tx').textContent = d.interim || (d.heard ? 'Listening…' : 'Listening — speak, and it types where your cursor is');
+    try { const r = (_ntEls.doc || _ntEls.editor).getBoundingClientRect(); if (r.width) p.style.left = (r.left + r.width / 2) + 'px'; } catch {}
+  }
   // ---- images and files in a note ----
   // The image bar: fixed, outside the editor (so never saved), placed over
   // the image's top-right corner and kept there while things scroll.
@@ -24071,6 +24193,8 @@ const VOICE = {
     { k: 'task',  label: 'Make it a task', svg: 'task', words: 'task todo personal action deadline due' },
     { k: 'details', label: 'Details',     svg: 'detS', words: 'details description notes paste claude markdown' },
     { k: 'attach', label: 'Image or file', svg: 'clip', words: 'image picture photo screenshot file attach upload pdf document' },
+    { k: 'dictate', label: 'Dictate', svg: 'mic', words: 'dictate speech voice talk speak mic microphone transcribe' },
+    { k: 'timer', label: 'Timer for this note', svg: 'clock', words: 'timer countdown journal time clock stopwatch minutes' },
     { k: 'date',  label: 'Today’s date',  svg: 'cal', words: 'date today day' },
     { k: 'time',  label: 'Current time',  svg: 'clock', words: 'time now clock' },
   ];
@@ -24181,6 +24305,8 @@ const VOICE = {
       case 'link': ntPopLink(tb('link')); break;
       case 'task': ntPopTask(tb('task')); break;
       case 'attach': ntNotePick(); break;
+      case 'dictate': ntDictToggle(); break;
+      case 'timer': if (ntOpenId) ntPopTimer(document.getElementById('ntNoteTmr') || tb('more'), 'note', ntOpenId); break;
       case 'details': {
         const li = ntCurLi(), tid = li && li.getAttribute('data-task-id');
         if (tid) ntPopDet(tid, tb('task'), 'editor'); else ntPopTask(tb('task'), { focusDet: true });
