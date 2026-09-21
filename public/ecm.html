@@ -815,6 +815,9 @@
   .prog-mn-row .ty { flex-shrink: 0; font-size: 12px; color: var(--w55) }
   .prog-mn-row .cv { flex-shrink: 0; width: 12px; color: var(--w50) }
   .prog-mn-body { padding: 6px 14px 14px }
+  .prog-mn-item.open > .prog-mn-row { position: sticky; top: var(--mn-top, 0px); z-index: 4; padding: 10px 10px 8px; border-radius: 10px 10px 0 0; background: var(--bg-elev); box-shadow: 0 1px 0 var(--w10) }
+  .prog-mn-item.open > .prog-mn-row .cv { width: auto; color: var(--orange); font-size: 12px; font-weight: 700 }
+  .prog-mn-end { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 4px }
   .prog-mn-body .mn-doc { margin-bottom: 12px }
   @media (max-width: 700px) { .prog-mn-row .dt { width: auto } .prog-mn-tog .last { display: none } }
   .mn-doc { font-size: 14.5px; line-height: 1.65; color: var(--w90); overflow-wrap: anywhere }
@@ -11063,13 +11066,15 @@ function _progMeetingNotesPanelHTML(program){
     return `<div class="prog-mn-item${on ? ' open' : ''}">`
       + `<button type="button" class="prog-mn-row" data-mn-inline="${mnEsc(n.id)}" aria-expanded="${on}" title="${mnEsc(n.summary || n.title)}">`
       + `<span class="dt">${mnEsc(mnDay(ds))}</span><span class="t">${mnEsc(mnShort(n.title))}</span>`
-      + (n.type ? `<span class="ty">${mnEsc(n.type)}</span>` : '') + `<span class="cv">${on ? '▾' : '▸'}</span></button>`
+      + (n.type ? `<span class="ty">${mnEsc(n.type)}</span>` : '') + `<span class="cv">${on ? 'Collapse ▴' : '▸'}</span></button>`
       + (on ? '<div class="prog-mn-body">'
           + (n.summary ? `<div class="mn-sum">${mnEsc(n.summary)}</div>` : '')
           + (c && c.err ? `<div class="mn-empty err">${mnEsc(c.err)}</div>`
             : (!c || !c.d) ? '<div class="mn-empty">Loading the notes…</div>'
             : `<div class="mn-doc">${c.d.html || '<p><em>This page is empty.</em></p>'}</div>`)   // escaped on the server
+          + '<div class="prog-mn-end">'
           + (url ? `<a class="mn-open" href="${mnEsc(url)}" target="_blank" rel="noopener noreferrer">Open in Notion ↗</a>` : '')
+          + `<button type="button" class="mn-lnk" data-mn-inline="${mnEsc(n.id)}">▴ Collapse</button></div>`
           + '</div>' : '')
       + '</div>';
   }).join('') + '</div><div class="prog-mn-foot">'
@@ -11078,6 +11083,26 @@ function _progMeetingNotesPanelHTML(program){
     + `<button type="button" class="mn-lnk quiet" data-mn-tog="${mnEsc(key)}">Close</button></div>`;
   return h + '</div>';
 }
+// After a collapse, the meeting's row where you can see it (not far above).
+function mnProgRowIntoView(id){
+  setTimeout(() => {
+    const row = document.querySelector('#list .prog-mn-row[data-mn-inline="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    if (!row) return;
+    const r = row.getBoundingClientRect();
+    if (r.top < 120 || r.bottom > window.innerHeight) row.scrollIntoView({ block: 'center' });
+  }, 0);
+}
+// Esc closes an open meeting on a program page (not while typing).
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || currentView !== 'programs' || !_mnProgOpen) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (expandedId != null || document.querySelector('.modal-backdrop:not([hidden])')) return;   // Esc closes those first
+  const id = _mnProgOpen;
+  _mnProgOpen = '';
+  try { render(); } catch {}
+  mnProgRowIntoView(id);
+});
 // One page's notes, into the shared cache; repaint whichever view shows it.
 async function mnFetchPage(id){
   const c = _mn.pages.get(id);
@@ -11100,6 +11125,7 @@ async function mnFetchPage(id){
         _mnProgOpen = _mnProgOpen === id ? '' : id;
         try { render(); } catch {}
         if (_mnProgOpen) mnFetchPage(id);
+        else mnProgRowIntoView(id);
         return;
       }
       const all = t.closest('[data-mn-all]');
@@ -11796,6 +11822,7 @@ function _progJumpHTML(progs, openCount, starSet, where){
     + '</select>';
 }
 function _wireProgramShared(list){
+  try { const tp = list.querySelector('.today-picker'); list.style.setProperty('--mn-top', tp ? tp.offsetHeight + 'px' : '0px'); } catch {}
   list.querySelectorAll('[data-prog-jump-sel]').forEach(sel => sel.addEventListener('change', () => {
     const v = sel.value;
     if (!v) return;
