@@ -11470,6 +11470,17 @@ const VOICE = {
     if (d.action === 'stop') { if (tmrRun) tmrStop(); }
     else if (d.action === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); } }
     else if (d.action === 'day') { ntDayPub(); return; }
+    else if (d.action === 'info' && typeof d.id === 'string') { ntWrTaskInfo(d.id.slice(0, 200)); return; }
+    else if (d.action === 'start' && typeof d.id === 'string') {
+      const m = [0, 15, 25, 45, 60].includes(+d.mins) ? +d.mins : 0;
+      if (!ntTmrIsOn('task', d.id)) ntTmrStart('task', d.id.slice(0, 200), m);
+      return;
+    }
+    else if (d.action === 'setdone' && typeof d.id === 'string') {
+      const id = d.id.slice(0, 200);
+      Promise.resolve(ntTaskSetDone(id, !!d.on, 'list')).finally(() => { try { ntRenderLib(); } catch {} ntDayPub(); });
+      return;
+    }
     else if (d.action === 'today' || d.action === 'pick' || d.action === 'task') { ntWrOpenToday(d.action, typeof d.id === 'string' ? d.id.slice(0, 200) : ''); return; }
     try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}
   });
@@ -16798,6 +16809,15 @@ const VOICE = {
   }
   window.addEventListener('storage', e => { if (e.key === 'wr-timer-ui') ntDayPub(); });
   setInterval(() => { try { ntDayPub(); } catch {} }, 60000);   // past midnight, and a done list that re-arms
+  // The card asks about one task: its text, done or not, details rendered
+  // (ntMd is the sanitizer; the shell cleans again). Waits for the open list.
+  function ntWrTaskInfo(id, tries){
+    const t = ntDetAny(id) || (_ntDoneToday || []).find(x => x.id === id);
+    if (!t && (tries || 0) < 12 && !(_ntOpenLoaded && Array.isArray(_ntDoneToday))) { setTimeout(() => ntWrTaskInfo(id, (tries || 0) + 1), 500); return; }
+    let detHtml = '';
+    try { const md = t ? ntDetStr(t) : ''; if (md.trim()) detHtml = ntMd(md.slice(0, 8000)); } catch {}
+    try { window.parent.postMessage({ type: 'warroom:taskinfo', id, ok: !!t, done: !!(t && t.done), detHtml }, location.origin); } catch {}
+  }
   // The card's buttons: Today, its task picker, or one task's menu.
   function ntWrOpenToday(a, id){
     try {

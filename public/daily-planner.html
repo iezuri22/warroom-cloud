@@ -11345,6 +11345,14 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-row .late { flex-shrink: 0; font-size: 10.5px; font-weight: 800; color: #C8453A; }
   .wrt-row.done { color: #7a6f63; } .wrt-row.done .tx { text-decoration: line-through; } .wrt-row.done .mk { color: #3FA66B; }
   .wrt-more, .wrt-dnote { padding: 2px 6px; font-size: 12px; color: #7a6f63; }
+  .wrt-row.open { background: rgba(255, 255, 255, .75); }
+  .wrt-tk { margin: 2px 0 8px 19px; padding: 8px; border-radius: 10px; background: rgba(255, 255, 255, .55); }
+  .wrt-tk .wrt-tk-det { margin-top: 0; max-height: 24vh; }
+  .wrt-tk-acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center; }
+  .wrt-chip { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(33, 30, 25, .14); background: #fff; color: #211E19; font: 700 12.5px inherit; font-family: inherit; cursor: pointer; }
+  .wrt-chip.primary { background: #F07E28; border-color: #F07E28; color: #fff; }
+  .wrt-chip:hover { filter: brightness(.96); }
+  .wrt-tk-edit { display: inline-block; margin-top: 6px; }
   .wrt-dlink { border: 0; background: none; padding: 0; font: 700 12px inherit; font-family: inherit; color: #E0701F; cursor: pointer; }
   .tabs .header-right .header-btn.wrt-pin-on { color: #E0701F; background: rgba(240, 126, 40, .14); }
   .wrt-dtog { margin-top: 8px; border: 0; background: none; padding: 2px 0; font: 700 13px inherit; font-family: inherit; color: #E0701F; cursor: pointer; }
@@ -11400,13 +11408,19 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     const secs = timedNow(d), goal = num(d.goal), doneN = num(d.doneN), all = doneN + num(d.plannedN);
     const bar = (v, max) => '<div class="wrt-bar' + (max && v >= max ? ' ok' : '') + '"><i style="width:' + (max ? Math.min(100, Math.round(v / max * 100)) : 0) + '%"></i></div>';
     let h = '';
-    if (!idle) h += '<div class="wrt-stat"><span>Timed today</span><b>' + esc(hm(secs)) + (goal ? ' / ' + esc(hm(goal)) : '') + '</b></div>';
-    if (goal) h += bar(secs, goal);
+    if (!idle) h += '<div class="wrt-stat"><span>Timed today</span><b id="wrtDayTimed">' + esc(hm(secs)) + (goal ? ' / ' + esc(hm(goal)) : '') + '</b></div>';
+    if (goal) h += bar(secs, goal).replace('<i ', '<i id="wrtDayBar" ');
     h += '<div class="wrt-stat"><span>Planned vs done</span><b>' + (d.doneN == null ? '…' : doneN) + ' / ' + all + ' done</b></div>' + bar(doneN, all);
     const open = idle ? ui.planIdle !== false : ui.planRun === true;
     h += '<button type="button" class="wrt-dtog" data-wrt="plan" aria-expanded="' + open + '">' + (open ? 'Hide plan & priorities ▴' : 'Plan & priorities ▾') + '</button>';
     if (open) {
-      const row = (t, cls, mk) => '<button type="button" class="wrt-row ' + (cls || '') + '" data-wrt="task" data-id="' + esc(t && t.id) + '"><span class="mk">' + mk + '</span><span class="tx">' + esc((t && t.text) || '(untitled)') + '</span>' + (t && t.late ? '<span class="late">late</span>' : '') + '</button>';
+      let panelShown = false;
+      const row = (t, cls, mk) => {
+        const on = !!(t && t.id === openTask && !panelShown);
+        if (on) panelShown = true;
+        return '<button type="button" class="wrt-row ' + (cls || '') + (on ? ' open' : '') + '" data-wrt="task" data-id="' + esc(t && t.id) + '" aria-expanded="' + on + '"><span class="mk">' + mk + '</span><span class="tx">' + esc((t && t.text) || '(untitled)') + '</span>' + (t && t.late ? '<span class="late">late</span>' : '') + '</button>'
+          + (on ? tkPanel(t.id) : '');
+      };
       const list = a => Array.isArray(a) ? a.filter(t => t && typeof t.id === 'string') : [];
       const p = (d.prio && typeof d.prio === 'object') ? d.prio : {};
       const sec = (lbl, n, items, cls, mk) => (n ? '<div class="wrt-h">' + lbl + '<span>' + n + '</span></div>' + items.map(t => row(t, cls, mk)).join('') + (n > items.length ? '<div class="wrt-more">+' + (n - items.length) + ' more</div>' : '') : '');
@@ -11418,8 +11432,49 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       L += sec('Done today', doneN, list(d.done), 'done', '✓');
       h += '<div class="wrt-list">' + (L || '<div class="wrt-more">Nothing planned for today.</div>') + '</div>';
     }
+    const ls = box.querySelector('.wrt-list'), st = ls ? ls.scrollTop : 0;
+    const ds = box.querySelector('.wrt-tk-det'), dst = ds ? ds.scrollTop : 0;
     box.innerHTML = h;
+    if (st) { const n = box.querySelector('.wrt-list'); if (n) n.scrollTop = st; }
+    if (dst) { const n = box.querySelector('.wrt-tk-det'); if (n) n.scrollTop = dst; }
   }
+  // One task, open in the card: details, a timer, done.
+  let openTask = '';
+  const info = new Map();   // id → { ok, done, detHtml } from Personal
+  function tkPanel(id){
+    const x = info.get(id), i = esc(id);
+    let h = '<div class="wrt-tk">';
+    if (!x) h += '<div class="wrt-more">Loading…</div>';
+    else if (!x.ok) h += '<div class="wrt-more">Couldn’t load this task — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>';
+    else {
+      h += x.detHtml ? '<div class="wrt-det wrt-tk-det">' + clean(x.detHtml) + '</div>' : '<div class="wrt-more">No details yet.</div>';
+      h += '<div class="wrt-tk-acts">';
+      if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
+      else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
+        + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
+      h += '<button type="button" class="wrt-chip" data-wrt="tdone" data-id="' + i + '">' + (x.done ? '↺ Not done' : '✓ Done') + '</button></div>'
+        + '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
+    }
+    return h + '</div>';
+  }
+  // Ask Personal (loading it first if it isn't).
+  function ask(msg){
+    const f = document.getElementById('todosFrame');
+    if (!f) return;
+    const post = () => { try { f.contentWindow && f.contentWindow.postMessage(Object.assign({ type: 'warroom:timer' }, msg), '*'); } catch (e) {} };
+    if (!f.src || f.src === 'about:blank' || !f.src.includes('personal-todos.html')) {
+      f.src = '/personal-todos.html?embed=1';
+      f.addEventListener('load', () => setTimeout(post, 2500), { once: true });
+      return;
+    }
+    post();
+  }
+  window.addEventListener('message', ev => {
+    const f = document.getElementById('todosFrame'), d = ev.data;
+    if (!f || ev.source !== f.contentWindow || !d || d.type !== 'warroom:taskinfo' || typeof d.id !== 'string') return;
+    info.set(d.id, { ok: !!d.ok, done: !!d.done, detHtml: typeof d.detHtml === 'string' ? d.detHtml : '' });
+    if (d.id === openTask && !el.hidden) { paintDay(); place(); }
+  });
   // Personal renders the details (its renderer is the sanitizer); this keeps
   // only that renderer's tags and safe attributes anyway — localStorage is
   // restored from the cloud on load, so it's input, not trusted markup.
@@ -11469,7 +11524,15 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       paintDay(); place();
       return;
     }
-    if (!full && !wasHidden && Date.now() - dayAt > 30000) paintDay();   // the time bar moves with the clock
+    if (!full && !wasHidden) {   // the time stat moves with the clock, in place
+      const d = today(), tb = document.getElementById('wrtDayTimed');
+      if (d && tb) {
+        const secs = timedNow(d), goal = num(d.goal);
+        tb.textContent = hm(secs) + (goal ? ' / ' + hm(goal) : '');
+        const bi = document.getElementById('wrtDayBar');
+        if (bi && goal) { bi.style.width = Math.min(100, Math.round(secs / goal * 100)) + '%'; bi.parentNode.classList.toggle('ok', secs >= goal); }
+      }
+    }
     const left = run.until ? Math.max(0, (run.until - Date.now()) / 1000) : null;
     const t = left != null ? clock(left) : clock((Date.now() - run.startedAt) / 1000);
     $('wrtClock').textContent = t; $('wrtPTime').textContent = t + (left != null ? ' left' : '');
@@ -11508,7 +11571,13 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (a === 'det') { ui.det = !ui.det; saveUi(); paint(true); return; }
     if (a === 'plan') { if (run) ui.planRun = ui.planRun !== true; else ui.planIdle = ui.planIdle === false; saveUi(); paintDay(); place(); return; }
     if (a === 'unpin') { ui.pin = false; saveUi(); paintPin(); paint(true); return; }
-    if (a === 'today' || a === 'pick' || a === 'task') { go(a, a === 'task' ? b.getAttribute('data-id') : ''); return; }
+    if (a === 'today' || a === 'pick') { go(a, ''); return; }
+    const tid = b.getAttribute('data-id') || '';
+    if (a === 'task') { openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
+    if (a === 'tinfo') { info.delete(tid); ask({ action: 'info', id: tid }); paintDay(); return; }
+    if (a === 'tstart') { ask({ action: 'start', id: tid, mins: +b.getAttribute('data-m') || 0 }); openTask = ''; return; }
+    if (a === 'tdone') { const x = info.get(tid); if (!x) return; x.done = !x.done; ask({ action: 'setdone', id: tid, on: x.done }); paintDay(); return; }
+    if (a === 'tedit') { go('task', tid); return; }
     send(a);
   });
   // Open Personal on Today — its task picker, or one task's menu.
