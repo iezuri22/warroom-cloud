@@ -1,4 +1,4 @@
-// One function, two chat endpoints. Vercel's Hobby plan caps a deployment at
+// One function, three endpoints (two chats + read-only Notion). Vercel's Hobby plan caps a deployment at
 // 12 serverless functions and this repo sits exactly at the cap, so the
 // Daily-Goals health Q&A and the Personal-page planning coach share this
 // file. vercel.json rewrites keep the semantic URLs the pages already call:
@@ -470,6 +470,166 @@ async function handlePlan(req, res, body) {
   res.status(200).json({ reply: parsed.reply, plan, memory: memoryOut, historyEntry });
 }
 
+/* ============================== notion mode ==============================
+   Read-only Notion for Personal's Notes — the ECM notes live there. POST
+   {op:'search', q?, cursor?} → pages the integration can see, newest edits
+   first; {op:'page', id} → one page as Markdown (Notes renders it with its
+   sanitizing Markdown renderer). NOTION_TOKEN is an internal integration with
+   "Read content"; it only sees pages shared with it. It never writes. */
+const NOTION_API = 'https://api.notion.com/v1';
+const NOTION_VER = '2022-06-28';
+
+function notionId(s) {
+  const x = String(s || '').replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{32}$/.test(x) ? x : '';
+}
+function notionUrl(id) { return 'https://www.notion.so/' + String(id).replace(/-/g, ''); }
+async function notionCall(token, path, init) {
+  const r = await fetch(NOTION_API + path, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, 'Notion-Version': NOTION_VER, 'Content-Type': 'application/json' },
+  });
+  let j = null;
+  try { j = await r.json(); } catch {}
+  if (!r.ok) {
+    const e = new Error((j && j.message) || ('Notion ' + r.status));
+    e.status = r.status; e.code = (j && j.code) || '';
+    throw e;
+  }
+  return j || {};
+}
+function rtPlain(rt) { return (Array.isArray(rt) ? rt : []).map(t => (t && t.plain_text) || '').join(''); }
+// Rich text → Markdown: bold / italic / strike / code / links.
+function rtMd(rt) {
+  return (Array.isArray(rt) ? rt : []).map(t => {
+    let s = String((t && t.plain_text) || '');
+    if (!s) return '';
+    const a = t.annotations || {};
+    if (a.code) s = '`' + s.replace(/`/g, "'") + '`';
+    else {
+      const m = s.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      let core = m[2];
+      if (core) {
+        if (a.bold) core = '**' + core + '**';
+        if (a.italic) core = '*' + core + '*';
+        if (a.strikethrough) core = '~~' + core + '~~';
+      }
+      s = m[1] + core + m[3];
+    }
+    const href = t.href || (t.text && t.text.link && t.text.link.url) || '';
+    if (href && /^https?:\/\//i.test(href)) s = '[' + s.replace(/[\[\]\n]/g, ' ') + '](' + href + ')';
+    return s;
+  }).join('');
+}
+function pageTitle(p) {
+  const props = (p && p.properties) || {};
+  for (const k of Object.keys(props)) { const v = props[k]; if (v && v.type === 'title') return rtPlain(v.title).trim(); }
+  return '';
+}
+function pageIcon(p) { return (p && p.icon && p.icon.type === 'emoji') ? p.icon.emoji : ''; }
+function linkText(s) { return String(s || '').replace(/[\[\]\n]/g, ' ').trim() || 'link'; }
+
+async function notionTableMd(token, id, budget) {
+  if (budget.calls-- <= 0) return '';
+  const j = await notionCall(token, '/blocks/' + id + '/children?page_size=100', { method: 'GET' });
+  const rows = (j.results || []).filter(r => r.type === 'table_row')
+    .map(r => ((r.table_row && r.table_row.cells) || []).map(c => rtMd(c).replace(/\|/g, '\\|').replace(/\n/g, ' ')));
+  if (!rows.length) return '';
+  const n = Math.max(...rows.map(r => r.length));
+  const fmt = r => '| ' + Array.from({ length: n }, (_, i) => r[i] || ' ').join(' | ') + ' |';
+  return [fmt(rows[0]), '| ' + Array(n).fill('---').join(' | ') + ' |', ...rows.slice(1).map(fmt)].join('\n');
+}
+// A page's blocks → Markdown entries ({md, list}). Lists and a list's children
+// sit on consecutive lines; everything else is its own paragraph. Nested
+// content is read three levels deep, within a budget of API calls.
+async function notionBlocks(token, id, depth, budget, out) {
+  let cursor = null, num = 0;
+  do {
+    if (budget.calls-- <= 0) { out.push({ md: '*… more on the Notion page*', list: false }); budget.cut = true; return; }
+    const q = '?page_size=100' + (cursor ? '&start_cursor=' + encodeURIComponent(cursor) : '');
+    const j = await notionCall(token, '/blocks/' + id + '/children' + q, { method: 'GET' });
+    for (const b of (j.results || [])) {
+      if (budget.cut) return;
+      const t = b.type, v = b[t] || {}, ind = '  '.repeat(depth), text = rtMd(v.rich_text);
+      let md = null, list = false, kids = !!b.has_children && depth < 3, kidDepth = depth + 1;
+      if (t !== 'numbered_list_item') num = 0;
+      switch (t) {
+        case 'paragraph': md = text ? ind + text : ''; list = depth > 0; break;
+        case 'heading_1': md = '# ' + text; break;
+        case 'heading_2': md = '## ' + text; break;
+        case 'heading_3': md = '### ' + text; break;
+        case 'bulleted_list_item': md = ind + '- ' + text; list = true; break;
+        case 'numbered_list_item': num++; md = ind + num + '. ' + text; list = true; break;
+        case 'to_do': md = ind + '- [' + (v.checked ? 'x' : ' ') + '] ' + text; list = true; break;
+        case 'toggle': md = ind + '- ' + text; list = true; break;
+        case 'quote': md = '> ' + text; break;
+        case 'callout': md = '> ' + ((v.icon && v.icon.emoji) ? v.icon.emoji + ' ' : '') + text; break;
+        case 'code': md = '```' + String(v.language || '').replace(/[^\w+-]/g, '') + '\n' + rtPlain(v.rich_text) + '\n```'; kids = false; break;
+        case 'divider': md = '---'; break;
+        case 'equation': md = '`' + String(v.expression || '').replace(/`/g, "'") + '`'; break;
+        case 'child_page': md = ind + '- 📄 [' + linkText(v.title || 'Untitled') + '](' + notionUrl(b.id) + ')'; list = true; kids = false; break;
+        case 'child_database': md = ind + '- 🗂 [' + linkText(v.title || 'Database') + '](' + notionUrl(b.id) + ')'; list = true; kids = false; break;
+        case 'image': case 'file': case 'pdf': case 'video': case 'audio': {
+          const u = (v.external && v.external.url) || (v.file && v.file.url) || '';
+          const cap = rtPlain(v.caption) || v.name || (t === 'image' ? 'Image' : t.toUpperCase());
+          md = u ? ind + '[' + (t === 'image' ? '🖼 ' : '📎 ') + linkText(cap) + '](' + u + ')' : null;
+          list = depth > 0; break;
+        }
+        case 'bookmark': case 'embed': case 'link_preview': {
+          const u = v.url || '';
+          md = /^https?:\/\//i.test(u) ? ind + '[' + linkText(rtPlain(v.caption) || u) + '](' + u + ')' : null;
+          list = depth > 0; break;
+        }
+        case 'table': md = await notionTableMd(token, b.id, budget); kids = false; break;
+        case 'column_list': case 'column': case 'synced_block': kidDepth = depth; break;   // their children carry it
+        default: md = null;
+      }
+      if (md != null && md !== '') out.push({ md, list });
+      if (kids) await notionBlocks(token, b.id, kidDepth, budget, out);
+    }
+    cursor = j.has_more ? j.next_cursor : null;
+  } while (cursor);
+}
+function notionJoin(out) {
+  let s = '';
+  out.forEach((e, i) => { s += (i === 0 ? '' : (e.list && out[i - 1].list ? '\n' : '\n\n')) + e.md; });
+  return s;
+}
+async function handleNotion(req, res, body) {
+  const token = process.env.NOTION_TOKEN || '';
+  if (!token) { res.status(501).json({ error: 'notion_not_configured' }); return; }
+  const op = String(body.op || '');
+  try {
+    if (op === 'search') {
+      const payload = { filter: { property: 'object', value: 'page' }, sort: { direction: 'descending', timestamp: 'last_edited_time' }, page_size: 30 };
+      const q = String(body.q || '').trim().slice(0, 200);
+      if (q) payload.query = q;
+      if (body.cursor) payload.start_cursor = String(body.cursor).slice(0, 200);
+      const j = await notionCall(token, '/search', { method: 'POST', body: JSON.stringify(payload) });
+      const pages = (j.results || []).filter(p => p && p.object === 'page' && !p.archived && !p.in_trash).map(p => ({
+        id: String(p.id).replace(/-/g, ''), title: pageTitle(p) || 'Untitled', icon: pageIcon(p),
+        url: p.url || notionUrl(p.id), edited: p.last_edited_time || '',
+      }));
+      res.status(200).json({ pages, next: j.has_more ? j.next_cursor : null });
+      return;
+    }
+    if (op === 'page') {
+      const id = notionId(body.id);
+      if (!id) { res.status(400).json({ error: 'bad_id' }); return; }
+      const p = await notionCall(token, '/pages/' + id, { method: 'GET' });
+      const out = [];
+      await notionBlocks(token, id, 0, { calls: 30, cut: false }, out);
+      res.status(200).json({ id, title: pageTitle(p) || 'Untitled', icon: pageIcon(p), url: p.url || notionUrl(id), edited: p.last_edited_time || '', md: notionJoin(out).slice(0, 200000) });
+      return;
+    }
+    res.status(400).json({ error: 'bad_op' });
+  } catch (e) {
+    // Notion's own 401 (a bad token) is not the War Room session: 502.
+    const st = [403, 404, 429].includes(e.status) ? e.status : 502;
+    res.status(st).json({ error: e.code || 'notion_error', message: String(e.message || '').slice(0, 300) });
+  }
+}
+
 /* ============================== shared gates ============================== */
 
 export default async function handler(req, res) {
@@ -482,15 +642,15 @@ export default async function handler(req, res) {
     res.status(405).json({ error: 'method_not_allowed' });
     return;
   }
+  let body = req.body || {};
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+  const mode = (req.query && req.query.mode || '').toString();
+  if (mode === 'notion') return handleNotion(req, res, body);   // no Claude involved
+
   if (!process.env.ANTHROPIC_API_KEY) {
     res.status(501).json({ error: 'not_configured' });
     return;
   }
-
-  let body = req.body || {};
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
-
-  const mode = (req.query && req.query.mode || '').toString();
   if (mode === 'plan') return handlePlan(req, res, body);
   return handleHealth(req, res, body);
 }
