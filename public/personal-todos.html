@@ -4033,6 +4033,12 @@
   .nt-tday-row.done .t { color: var(--ink-mid); }
   .nt-tday-row .m { flex-shrink: 0; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
   .nt-tday-empty { padding: 10px 6px; font-size: 12.5px; color: var(--ink-dim); }
+  .nt-tday-dtog { margin-top: 8px; border: 0; background: none; padding: 2px 0; font: 700 12.5px var(--font-family); color: var(--accent); cursor: pointer; }
+  .nt-tday-det { margin-top: 6px; max-height: 40vh; overflow: auto; padding: 8px 10px; border-radius: 10px; background: var(--surface); font-size: 12.5px; }
+  .nt-det-fmt { display: flex; flex-wrap: wrap; gap: 2px; }
+  .nt-det-box[data-face="view"] .nt-det-fmt { display: none; }
+  .nt-det-fmt button { min-width: 28px; height: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: none; font: 700 12.5px var(--font-family); color: var(--ink-mid); cursor: pointer; }
+  .nt-det-fmt button:hover { background: var(--fill); color: var(--ink); }
   /* A task line's pill opens its sheet */
   .nt-editor li[data-task-id]::after { cursor: pointer; }
   .nt-editor li[data-task-id]:hover::after { filter: brightness(.94); }
@@ -11446,7 +11452,11 @@ const VOICE = {
   function tmrSaveRun(){
     try {
       // label: what the War Room's floating timer shows (it can't work it out).
-      if (tmrRun) localStorage.setItem(TMR_RUN_KEY, JSON.stringify({ ...tmrRun, label: tmrRunLabel() }));
+      // detHtml: the task's details, rendered (ntMd is the sanitizer), so the
+      // floating timer can show them. try: at boot the Notes state may not exist yet.
+      let detHtml = '';
+      try { if (tmrRun && tmrRun.taskId) { const md = ntDetOf(tmrRun.taskId) || ''; if (md.trim()) detHtml = ntMd(md.slice(0, 8000)); } } catch {}
+      if (tmrRun) localStorage.setItem(TMR_RUN_KEY, JSON.stringify({ ...tmrRun, label: tmrRunLabel(), detHtml }));
       else localStorage.removeItem(TMR_RUN_KEY);
     } catch {}
   }
@@ -16711,6 +16721,27 @@ const VOICE = {
     return isNaN(d) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
   function ntTodayCount(){ return Array.isArray(_ntDoneToday) ? _ntDoneToday.length : 0; }
+  let _ntTdayDet = false;          // Today's timer card: its task's details shown
+  function ntAgoLabel(ms){
+    const d = new Date(ms), tk = todayKey(), dk = dkey(d);
+    const t = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (dk === tk) return 'Today ' + t;
+    if (dk === ntAddDays(tk, -1)) return 'Yesterday ' + t;
+    return d.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + t;
+  }
+  // A task on Today: its timer again, done or not, details, priority, its note.
+  function ntPopTaskActs(anchor, tid){
+    const t = ntDetAny(tid) || (_ntDoneToday || []).find(x => x.id === tid);
+    if (!t) { ptToast('That task isn’t loaded — find it in All tasks'); return; }
+    const id = ntEsc(tid), n = t.noteId ? ntNotes.get(t.noteId) : null;
+    const h = '<div class="nt-pop-h">Task</div>' + `<div class="nt-tmr-name">${escHtml(t.text || '')}</div>`
+      + `<button class="nt-pop-i" type="button" data-np-tact="timer|${id}">⏱ ${ntTmrIsOn('task', tid) ? 'Timer — running' : 'Start the timer again'}</button>`
+      + `<button class="nt-pop-i" type="button" data-np-tact="done|${id}">${t.done ? '↺ Mark not done' : '✓ Mark done'}</button>`
+      + `<button class="nt-pop-i" type="button" data-np-tact="det|${id}">📝 ${ntDetStr(t).trim() ? 'Details' : 'Add details'}</button>`
+      + (t.done || t.fromTemplate ? '' : `<button class="nt-pop-i" type="button" data-np-tact="prio|${id}">${ntPrioOf(t) ? '★ ' + escHtml(ntPrioLabel(ntPrioOf(t))) : '☆ Priority'}…</button>`)
+      + (n && !n.trashed ? `<button class="nt-pop-i" type="button" data-np-tact="note|${id}">↗ Open in “${escHtml(ntTitleOf(n))}”</button>` : '');
+    ntPopOpen('tfilt', anchor, h, { alignRight: true, focus: '.nt-pop-i' });
+  }
   function ntTodayHTML(){
     try { tmrEnsureSubs(); } catch {}
     ntEnsureDoneToday();
@@ -16723,6 +16754,9 @@ const VOICE = {
         + `<div class="nt-tday-what">${escHtml(tmrRun.taskName || tmrRunLabel())}</div>`
         + `<div class="nt-tday-clock" id="ntTodayClock">${escHtml(left != null ? tmrFmtClock(left) : tmrFmtClock(tmrLiveSecs()))}</div>`
         + `<div class="nt-tday-sub">${escHtml(tmrRunLabel())}${left != null ? ' · counting down' : ''}</div>`
+        + (() => { const md = tmrRun.taskId ? (ntDetOf(tmrRun.taskId) || '') : ''; if (!md.trim()) return '';
+            return `<button class="nt-tday-dtog" type="button" data-nt-tday="det" aria-expanded="${_ntTdayDet}">${_ntTdayDet ? 'Hide details ▴' : 'Details ▾'}</button>`
+              + (_ntTdayDet ? `<div class="nt-tday-det md">${ntMd(md)}</div>` : ''); })()
         + '<div class="nt-tday-acts"><button class="nt-btn primary" type="button" data-nt-tday="stop">■ Stop and log it</button>'
         + (tmrRun.until ? '<button class="nt-btn" type="button" data-nt-tday="add5">+5 min</button>' : '') + '</div></section>';
     } else {
@@ -16740,7 +16774,8 @@ const VOICE = {
     if (!sessions.length) h += '<div class="nt-tday-empty">Nothing timed yet today.</div>';
     else h += sessions.slice(0, 40).map(x => {
       const m = tmrProjMeta(x.proj) || {};
-      return `<div class="nt-tday-row"><span class="d" style="--c:${ntEsc(m.color || '#8a8a8a')}"></span>`
+      const act = x.taskId ? ` role="button" tabindex="0" data-nt-tdayrow="${ntEsc(x.taskId)}"` : '';
+      return `<div class="nt-tday-row"${act}><span class="d" style="--c:${ntEsc(m.color || '#8a8a8a')}"></span>`
         + `<span class="t">${escHtml(x.taskName || m.label || 'Time')}</span>`
         + `<span class="m">${escHtml(ntClockOf(x.startedAt))} · ${escHtml(tmrFmtSecsShort(+x.secs || 0))}</span></div>`;
     }).join('');
@@ -16753,11 +16788,21 @@ const VOICE = {
     else h += done.map(t => {
       const n = t.noteId ? ntNotes.get(t.noteId) : null, live = !!(n && !n.trashed);
       const secs = byTask.get(t.id) || 0;
-      const attrs = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open it in “${ntEsc(ntTitleOf(n))}”"` : '';
+      const attrs = ` role="button" tabindex="0" data-nt-tdayrow="${ntEsc(t.id)}"${live ? ` title="Timer, status, details — or open it in “${ntEsc(ntTitleOf(n))}”"` : ''}`;
       return `<div class="nt-tday-row done"${attrs}><span class="ck">${HB_CHECK_SVG.replace('<svg ', '<svg width="10" height="10" ')}</span>`
         + `<span class="t">${escHtml(t.text || '(untitled)')}</span>`
         + `<span class="m">${escHtml(ntClockOf(t.completedAt))}${secs ? ' · ⏱ ' + escHtml(tmrFmtSecsShort(secs)) : ''}</span></div>`;
     }).join('');
+    h += '</section>';
+    // Notes worked on in the last five days, newest first (the live list: 0 reads).
+    const since = Date.now() - 5 * 86400000;
+    const recent = ntLive().map(n => ({ n, at: Date.parse(n.updatedAt || '') || 0 })).filter(x => x.at >= since)
+      .sort((a, b) => b.at - a.at).slice(0, 30);
+    h += `<section class="nt-tday-sec"><div class="nt-tday-h"><b>Notes · last 5 days</b><span class="k">${recent.length || ''}</span></div>`;
+    if (!recent.length) h += '<div class="nt-tday-empty">No notes touched in the last 5 days.</div>';
+    else h += recent.map(({ n, at }) => `<div class="nt-tday-row" role="button" tabindex="0" data-nt-open="${ntEsc(n.id)}">`
+      + `<span class="d" style="--c:${ntEsc(ntCatColor(ntKey(n)))}"></span><span class="t">${escHtml(ntTitleOf(n))}</span>`
+      + `<span class="m">${escHtml(ntAgoLabel(at))}</span></div>`).join('');
     h += '</section>';
     return h + '</div>';
   }
@@ -21958,6 +22003,8 @@ const VOICE = {
   function ntPopClick(e){
     const t = e.target;
     if (ntMdClick(e)) return;                       // a code block's Copy
+    const dfm = t.closest('[data-nt-dfmt]');
+    if (dfm) { ntDetFmt(dfm.getAttribute('data-nt-dfmt')); return; }
     const df = t.closest('[data-nt-dface]');
     if (df) { ntDetFace(df.getAttribute('data-nt-dface')); return; }
     if (t.closest('[data-nt-dfile]')) { const fi = document.getElementById('ntTFile'); if (fi) fi.click(); return; }
@@ -21986,6 +22033,18 @@ const VOICE = {
     if (nav) { const was = ntFilter; ntPopClose(); ntFilter = nav.getAttribute('data-np-nav'); _ntDelArm = null; _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFilterPicked(was); return; }
     // All tasks' filter: one value per chip. The open row closes (it may
     // not be listed any more).
+    const tac2 = t.closest('[data-np-tact]');
+    if (tac2) {
+      const v = tac2.getAttribute('data-np-tact'), i = v.indexOf('|'), a = v.slice(0, i), tid = v.slice(i + 1), anc = _ntPopAnchor;
+      const task = ntDetAny(tid) || (_ntDoneToday || []).find(x => x.id === tid);
+      ntPopClose();
+      if (a === 'timer') ntPopTimer(anc, 'task', tid);
+      else if (a === 'done') Promise.resolve(ntTaskSetDone(tid, !(task && task.done), 'list')).finally(() => { try { ntRenderLib(); } catch {} });
+      else if (a === 'det') ntPopDet(tid, anc, 'list');
+      else if (a === 'prio') ntPopPrio(anc, tid);
+      else if (a === 'note' && task && task.noteId) ntOpenDoc(task.noteId, { line: tid });
+      return;
+    }
     const tmb = t.closest('[data-np-tmr]');
     if (tmb) {
       const v = tmb.getAttribute('data-np-tmr').split('|'), a = v[0], kind = v[1], id = v.slice(2).join('|');
@@ -22652,6 +22711,40 @@ const VOICE = {
     // step-media/ is the one folder the rules open; the prefix says where it came from.
     return await put('step-media/' + (folder === 'note-media' ? 'note-' : 'task-') + name);
   }
+  // The formatting bar: Markdown around the selection (or a placeholder to
+  // type over), or at the start of each selected line. Undo takes it back out.
+  function ntDetFmt(kind){
+    const k = ntDetCtx();
+    if (!k) return;
+    if (k.face !== 'write') ntDetFace('write', true);
+    const ta = document.getElementById('ntTDet');
+    if (!ta) return;
+    try { ta.focus(); } catch {}
+    const v = ta.value, a = ta.selectionStart, b = ta.selectionEnd, sel = v.slice(a, b);
+    const put = (from, to, text, pick) => {
+      ta.setSelectionRange(from, to);
+      if (!document.execCommand('insertText', false, text)) { ta.setRangeText(text, from, to, 'end'); ta.dispatchEvent(new Event('input', { bubbles: true })); }
+      if (pick) ta.setSelectionRange(pick[0], pick[1]);
+      k.det = ta.value; ntDetCount(k); ntDetGrow(ta);
+    };
+    const wrap = (l, r, ph) => { const inner = sel || ph; put(a, b, l + inner + r, sel ? null : [a + l.length, a + l.length + inner.length]); };
+    const lines = pfx => {
+      const ls = v.lastIndexOf('\n', a - 1) + 1;
+      let le = v.indexOf('\n', Math.max(b - (b > a ? 1 : 0), a));
+      if (le < 0) le = v.length;
+      put(ls, le, v.slice(ls, le).split('\n').map((x, i) => pfx(i) + x).join('\n'));
+    };
+    if (kind === 'bold') wrap('**', '**', 'bold text');
+    else if (kind === 'italic') wrap('*', '*', 'italic text');
+    else if (kind === 'strike') wrap('~~', '~~', 'text');
+    else if (kind === 'code') { if (sel.indexOf('\n') >= 0) wrap('```\n', '\n```', ''); else wrap('`', '`', 'code'); }
+    else if (kind === 'link') { if (/^https?:\/\//i.test(sel.trim())) put(a, b, '[link](' + sel.trim() + ')', [a + 1, a + 5]); else wrap('[', '](https://)', 'link text'); }
+    else if (kind === 'h') lines(() => '## ');
+    else if (kind === 'ul') lines(() => '- ');
+    else if (kind === 'ol') lines(i => (i + 1) + '. ');
+    else if (kind === 'check') lines(() => '- [ ] ');
+    else if (kind === 'quote') lines(() => '> ');
+  }
   // Written into the box at the caret, so ⌘Z takes it back out.
   function ntDetInsert(md){
     const k = ntDetCtx();
@@ -22708,6 +22801,12 @@ const VOICE = {
       + '<button type="button" data-nt-dface="write" aria-pressed="true">Markdown</button>'
       + '<button type="button" data-nt-dface="view" aria-pressed="false">Preview</button></span></span></div>'
       + '<input type="file" id="ntTFile" multiple hidden aria-hidden="true" tabindex="-1">'
+      + '<div class="nt-det-fmt" role="toolbar" aria-label="Formatting">'
+      + [['bold', '<b>B</b>', 'Bold'], ['italic', '<i>I</i>', 'Italic'], ['strike', '<s>S</s>', 'Strikethrough'], ['h', 'H', 'Heading'],
+         ['ul', '•', 'Bulleted list'], ['ol', '1.', 'Numbered list'], ['check', '☐', 'Checklist'], ['quote', '❝', 'Quote'],
+         ['code', '&lt;/&gt;', 'Code'], ['link', '🔗', 'Link']]
+        .map(([k, l, t]) => `<button type="button" data-nt-dfmt="${k}" title="${t}" aria-label="${t}">${l}</button>`).join('')
+      + '</div>'
       + '<textarea id="ntTDet" class="nt-det-ta" rows="2" spellcheck="true" aria-label="Details (Markdown)"'
       + ' placeholder="Paste details — from Claude, a doc, anywhere. Lists, tables and code keep their formatting."></textarea>'
       + '<div class="nt-det-view md" hidden></div>'
@@ -22834,6 +22933,7 @@ const VOICE = {
     d.used = true;
   }
   function ntDetMirror(tid, det){
+    try { if (tmrRun && tmrRun.taskId === tid) setTimeout(() => { try { tmrSaveRun(); } catch {} }, 0); } catch {}   // the floating timer shows them
     [_ntTaskIdx.get(tid), _ntOpenIdx.get(tid), (_ntDoneList || []).find(x => x.id === tid), _ntAllDone.get(tid)].forEach(t => { if (t) t.details = det; });
     if (_ntDetSeen.has(tid)) ntDetSeenSet(tid, det);
     ntDetSchedule();
@@ -23670,6 +23770,8 @@ const VOICE = {
       const t = e.target;
       if (ntInEditor(t)) return;
       if (ntMdClick(e)) return;                       // a code block's Copy, in a row or a note card
+      const tdrw = t.closest('[data-nt-tdayrow]');
+      if (tdrw) { e.stopPropagation(); e.preventDefault(); ntPopTaskActs(tdrw, tdrw.getAttribute('data-nt-tdayrow')); return; }
       const tdy = t.closest('[data-nt-tday]');
       if (tdy) {
         e.stopPropagation(); e.preventDefault();
@@ -23678,6 +23780,7 @@ const VOICE = {
         else if (a === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); } }
         else if (a === 'pick') { ntPopTdayPick(tdy); return; }
         else if (a === 'note') { if (ntOpenId) ntPopTimer(tdy, 'note', ntOpenId); return; }
+        else if (a === 'det') { _ntTdayDet = !_ntTdayDet; }
         ntRenderLib();
         return;
       }
@@ -23851,7 +23954,7 @@ const VOICE = {
       }
     }, true);
     pane.addEventListener('keydown', e => {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.nt-row[role="button"], .nt-taskrow[role="button"]')) { e.preventDefault(); e.target.click(); return; }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.nt-row[role="button"], .nt-taskrow[role="button"], .nt-tday-row[role="button"]')) { e.preventDefault(); e.target.click(); return; }
       // Esc closes the open task row: from the row or its strip focus goes back
       // to the row, from another row it stays put. A popover (Move to…) first.
       if (e.key === 'Escape' && _ntAllRow != null && e.target.closest && e.target.closest('.nt-taskrow, .nt-tacts, .nt-tdet')) {

@@ -11268,6 +11268,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     <div class="wrt-what" id="wrtWhat"></div>
     <div class="wrt-clock" id="wrtClock">0:00</div>
     <div class="wrt-sub" id="wrtSub"></div>
+    <button type="button" class="wrt-dtog" data-wrt="det" id="wrtDTog" hidden>Details ▾</button>
+    <div class="wrt-det" id="wrtDet" hidden></div>
     <div class="wrt-acts"><button type="button" class="wrt-btn primary" data-wrt="stop">■ Stop and log it</button>
       <button type="button" class="wrt-btn" data-wrt="add5" id="wrtAdd">+5 min</button></div>
   </div>
@@ -11308,6 +11310,17 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-pill .wrt-ic:first-of-type { margin-left: auto; }
   .wrt-ic.stop { color: #E0701F; font-size: 13px; }
   .wrt.over .wrt-big, .wrt.over .wrt-pill { border-color: rgba(214, 75, 62, .5); }
+  .wrt-dtog { margin-top: 8px; border: 0; background: none; padding: 2px 0; font: 700 13px inherit; font-family: inherit; color: #E0701F; cursor: pointer; }
+  .wrt-det { margin-top: 6px; max-height: 40vh; overflow: auto; padding: 8px 10px; border-radius: 12px; background: #fff; font-size: 13px; line-height: 1.5; color: #211E19; cursor: auto; user-select: text; -webkit-user-select: text; touch-action: pan-y; overflow-wrap: anywhere; }
+  .wrt-det p { margin: 0 0 6px; } .wrt-det ul, .wrt-det ol { margin: 0 0 6px; padding-left: 20px; } .wrt-det li { margin: 1px 0; } .wrt-det li > p { margin: 0; }
+  .wrt-det .md-h { font-weight: 800; margin: 10px 0 4px; } .wrt-det .md-h1, .wrt-det .md-h2 { font-size: 14.5px; } .wrt-det .md-h3 { font-size: 13.5px; }
+  .wrt-det code { font: 500 .9em ui-monospace, Menlo, monospace; background: #F4F1EC; border-radius: 4px; padding: 1px 4px; }
+  .wrt-det pre { margin: 4px 0 8px; padding: 8px 10px; background: #F4F1EC; border-radius: 8px; overflow-x: auto; } .wrt-det pre code { background: none; padding: 0; }
+  .wrt-det .md-code-h { display: none; } .wrt-det blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid #ddd; color: #7a6f63; }
+  .wrt-det table { border-collapse: collapse; font-size: 12px; } .wrt-det th, .wrt-det td { border: 1px solid #eee; padding: 4px 6px; }
+  .wrt-det a { color: #1f6feb; } .wrt-det img { max-width: 100%; border-radius: 8px; }
+  .wrt-det li.md-task { list-style: none; display: flex; align-items: baseline; gap: 7px; margin-left: -18px; } .wrt-det .md-cb { flex-shrink: 0; width: 10px; height: 10px; border: 1.5px solid #bbb; border-radius: 3px; transform: translateY(1px); }
+  .wrt-det li.md-task.on .md-cb { background: #F07E28; border-color: #F07E28; }
 </style>
 <script>
 (function () {
@@ -11328,6 +11341,30 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (run && !(run.startedAt > 0)) run = null;
     paint(true);
   };
+  // Personal renders the details (its renderer is the sanitizer); this keeps
+  // only that renderer's tags and safe attributes anyway — localStorage is
+  // restored from the cloud on load, so it's input, not trusted markup.
+  const TAGS = /^(DIV|P|BR|STRONG|EM|DEL|CODE|PRE|BLOCKQUOTE|UL|OL|LI|HR|TABLE|THEAD|TBODY|TR|TH|TD|A|SPAN|IMG)$/;
+  function clean(html){
+    const src = new DOMParser().parseFromString('<body>' + String(html || '') + '</body>', 'text/html').body;
+    const out = document.createElement('div');
+    const walk = (from, to) => Array.from(from.childNodes).forEach(n => {
+      if (n.nodeType === 3) { to.appendChild(document.createTextNode(n.nodeValue)); return; }
+      if (n.nodeType !== 1) return;
+      const t = n.tagName.toUpperCase();
+      if (/^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|SVG|MATH|TEMPLATE|BUTTON|FORM|INPUT)$/.test(t)) return;
+      if (!TAGS.test(t)) { walk(n, to); return; }
+      const el = document.createElement(t.toLowerCase());
+      const cls = n.getAttribute('class'); if (cls && /^[\w\s-]{1,80}$/.test(cls)) el.setAttribute('class', cls);
+      if (t === 'A') { const h = n.getAttribute('href') || ''; if (/^(https?:|mailto:)/i.test(h)) { el.setAttribute('href', h); el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); } }
+      if (t === 'IMG') { const s = n.getAttribute('src') || ''; if (!/^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/tv-todos\.firebasestorage\.app\/o\//.test(s)) return; el.setAttribute('src', s); el.setAttribute('alt', (n.getAttribute('alt') || '').slice(0, 200)); }
+      if (t === 'OL' && /^\d{1,9}$/.test(n.getAttribute('start') || '')) el.setAttribute('start', n.getAttribute('start'));
+      to.appendChild(el);
+      if (t !== 'BR' && t !== 'HR' && t !== 'IMG') walk(n, el);
+    });
+    walk(src, out);
+    return out.innerHTML;
+  }
   const clock = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
   function place(){
     const r = el.getBoundingClientRect(), w = r.width || 330, h = r.height || 200;
@@ -11348,6 +11385,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       $('wrtWhat').textContent = name; $('wrtPName').textContent = name;
       $('wrtSub').textContent = (run.label || '') + (run.until ? (run.label ? ' · ' : '') + 'counting down' : '');
       $('wrtAdd').hidden = !run.until;
+      const det = run.detHtml ? clean(run.detHtml) : '';
+      $('wrtDTog').hidden = !det;
+      $('wrtDTog').textContent = ui.det ? 'Hide details ▴' : 'Details ▾';
+      $('wrtDet').hidden = !det || !ui.det;
+      if (det && ui.det && $('wrtDet').dataset.src !== run.detHtml) { $('wrtDet').innerHTML = det; $('wrtDet').dataset.src = run.detHtml; }
       place();
     }
   }
@@ -11363,16 +11405,18 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (action === 'stop') { let n = 0; const again = setInterval(() => { read(); if (!run || ++n > 12) { clearInterval(again); return; } post(); }, 700); }
   }
   el.addEventListener('click', e => {
+    if (e.target.closest && e.target.closest('.wrt-det')) return;   // links open themselves
     const b = e.target.closest ? e.target.closest('[data-wrt]') : null;
     if (!b || moved) return;
     const a = b.getAttribute('data-wrt');
     if (a === 'min' || a === 'max') { ui.min = a === 'min'; saveUi(); paint(true); return; }
+    if (a === 'det') { ui.det = !ui.det; saveUi(); paint(true); return; }
     send(a);
   });
   // Drag by anything that isn't a button.
   let drag = null, moved = false;
   el.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) { moved = false; return; }
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det'))) { moved = false; return; }
     const r = el.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
     moved = false;
