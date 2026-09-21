@@ -4008,6 +4008,12 @@
     .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
   }
 
+  /* Timer popover */
+  .nt-tmr-name { padding: 0 8px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+  .nt-tmr-run { padding: 0 8px 8px; font: 800 20px var(--font-family); font-variant-numeric: tabular-nums; color: var(--accent); }
+  .nt-tmr-lbl { padding: 8px 8px 4px; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); }
+  .nt-tmr-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 6px; }
+  .nt-tmr-note { padding: 4px 8px 2px; font-size: 11.5px; color: var(--ink-dim); max-width: 280px; }
   /* Share sheet */
   #ntPop[data-kind="share"] { width: 380px; max-width: calc(100vw - 24px); }
   .nt-share-row { padding: 8px 4px 10px; border-bottom: 1px solid var(--border); }
@@ -11689,6 +11695,17 @@ const VOICE = {
     } catch {}
   }
   function tmrTick(){
+    // A countdown ran out: the alarm once, then the clock stops and banks it.
+    if (tmrRun && tmrRun.until && Date.now() >= tmrRun.until) {
+      const name = tmrRun.taskName || '';
+      tmrRun.until = 0;
+      try { playAlarm(); } catch {}
+      try { speak('Time’s up'); } catch {}
+      ptToast('Time’s up' + (name ? ' — ' + name : ''));
+      tmrStop();
+      try { if (_ntMounted) ntRenderLib(); } catch {}
+      return;
+    }
     tmrPaintCapsule();
     tmrCheckAlerts();
     // Only the numbers need to move — a full render every second would fight
@@ -11771,7 +11788,7 @@ const VOICE = {
     const txt = document.getElementById('tmrCapText');
     if (txt) txt.textContent = tmrRun.taskName ? `${label} · ${tmrRun.taskName}` : label;
     const tm = document.getElementById('tmrCapTime');
-    if (tm) tm.textContent = tmrFmtClock(tmrLiveSecs());
+    if (tm) tm.textContent = tmrRun.until ? tmrFmtClock(Math.max(0, (tmrRun.until - Date.now()) / 1000)) + ' left' : tmrFmtClock(tmrLiveSecs());
   }
   // Resume across a reload. A clock left running overnight is almost never
   // real work, so we drop it rather than write a bogus 14-hour session —
@@ -16535,6 +16552,51 @@ const VOICE = {
       + '<input class="nt-prio-q" id="ntPrioQ" type="search" placeholder="Find an open task" aria-label="Find an open task" autocomplete="off">'
       + `<div class="nt-prio-pick" id="ntPrioList">${ntPrioAddListHTML()}</div>`, { focus: '#ntPrioQ' });
   }
+  // ---- timers from Notes: the project timer, on a task or on a note ----
+  const NT_TMR_MINS = [15, 25, 45, 60];
+  function ntTmrProjFor(kind, id){
+    if (kind === 'task') { const t = ntDetAny(id); return (t && tmrProjOfTask(t)) || ''; }
+    const m = ntNotes.get(id);
+    if (!m) return '';
+    const cat = ntKey(m);
+    return ntCatJob(cat) || sectionJob(ntCatSection(cat)) || '';
+  }
+  function ntTmrName(kind, id){
+    if (kind === 'task') { const t = ntDetAny(id); return String((t && t.text) || 'Task').replace(/\s+/g, ' ').trim().slice(0, 120); }
+    return 'Note: ' + ntTitleOf(ntNotes.get(id) || {});
+  }
+  function ntTmrIsOn(kind, id){ return !!(tmrRun && id && (kind === 'task' ? tmrRun.taskId === id : tmrRun.noteId === id)); }
+  // One clock: starting here stops whatever was running (and banks it).
+  function ntTmrStart(kind, id, mins){
+    const proj = ntTmrProjFor(kind, id) || ((tmrProjects()[0] || {}).id || '');
+    if (!proj) { ptToast('Add a project in the Timer tab first'); return; }
+    tmrStart(proj, kind === 'task' ? id : '', ntTmrName(kind, id));
+    if (!tmrRun) return;
+    if (kind === 'note') tmrRun.noteId = id;
+    if (mins > 0) tmrRun.until = Date.now() + mins * 60000;
+    tmrSaveRun();
+    tmrPaintCapsule();
+    ptToast(mins > 0 ? 'Timer on — ' + (mins === 60 ? '1 hour' : mins + ' min') : 'Timer on');
+    try { if (_ntMounted) ntRenderLib(); } catch {}
+  }
+  function ntPopTimer(anchor, kind, id){
+    if (!id) return;
+    const on = ntTmrIsOn(kind, id), k = ntEsc(kind), i = ntEsc(id);
+    let h = `<div class="nt-pop-h">Timer</div><div class="nt-tmr-name">${escHtml(ntTmrName(kind, id))}</div>`;
+    if (on) {
+      const left = tmrRun.until ? Math.max(0, (tmrRun.until - Date.now()) / 1000) : null;
+      h += `<div class="nt-tmr-run">${left != null ? escHtml(tmrFmtClock(left)) + ' left' : escHtml(tmrFmtClock(tmrLiveSecs())) + ' so far'}</div>`
+        + `<button class="nt-pop-i" type="button" data-np-tmr="stop|${k}|${i}">■ Stop and log it</button>`
+        + (tmrRun.until ? `<button class="nt-pop-i" type="button" data-np-tmr="add5|${k}|${i}">+5 minutes</button>` : '');
+    } else {
+      h += `<button class="nt-pop-i" type="button" data-np-tmr="0|${k}|${i}">▶ Start — count up</button>`
+        + '<div class="nt-tmr-lbl">Or count down</div><div class="nt-tmr-chips">'
+        + NT_TMR_MINS.map(m => `<button class="nt-tk-chip" type="button" data-np-tmr="${m}|${k}|${i}">${m === 60 ? '1 hour' : m + ' min'}</button>`).join('')
+        + '</div>'
+        + (tmrRun ? `<div class="nt-tmr-note">Stops the timer on “${escHtml(tmrRun.taskName || tmrRunLabel())}” and logs it.</div>` : '');
+    }
+    ntPopOpen('tfilt', anchor, h, { alignRight: true, focus: '.nt-pop-i' });
+  }
   // ---- Past due / due today: a bar on top of Notes, from the open list ----
   // Past due is All tasks' Overdue group; due today is a deadline of today.
   // Built from the live list (0 reads) on every list render.
@@ -16756,6 +16818,7 @@ const VOICE = {
       + _ovPushDates().map(o => `<button class="nt-ta" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}">${escHtml(o.label)}</button>`).join('')
       + ntDueCtlHTML(t, 'nt-ta', false)
       + (t.fromTemplate ? '' : `<button class="nt-ta${ntPrioOf(t) ? ' on' : ''}" type="button" data-nt-prio-pick="${id}">${ntPrioOf(t) ? '★ ' + escHtml(ntPrioLabel(ntPrioOf(t))) : '☆ Priority'}</button>`)
+      + `<button class="nt-ta${ntTmrIsOn('task', t.id) ? ' on' : ''}" type="button" data-nt-tmr="${id}">${ntTmrIsOn('task', t.id) ? '● Timing' : '⏱ Timer'}</button>`
       + move + go + del + '</div>';
   }
   // The wide view's actions: the same buttons and hooks, in fixed slots, so
@@ -20006,6 +20069,7 @@ const VOICE = {
             <span class="nt-dchip ev" id="ntEvChip" hidden></span>
             <span class="nt-dbr">
             <span class="nt-state" id="ntState">Saved</span>
+            <button class="nt-icon" type="button" data-nt-act="timer" title="Timer for this note — count up or down" aria-label="Timer for this note">${NT_SVG.clock}</button>
             <button class="nt-icon nt-ol-btn" type="button" data-nt-act="outline" title="Outline" aria-label="Outline">${NT_SVG.outline}</button>
             <button class="nt-icon" type="button" id="ntPinBtn" data-nt-act="pin" title="Pin to top" aria-label="Pin">${NT_SVG.pin}</button>
             <button class="nt-icon nt-pw-btn" type="button" data-nt-act="page-width" title="Page width" aria-label="Page width">${NT_SVG.widen}</button>
@@ -21727,6 +21791,16 @@ const VOICE = {
     if (nav) { const was = ntFilter; ntPopClose(); ntFilter = nav.getAttribute('data-np-nav'); _ntDelArm = null; _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFilterPicked(was); return; }
     // All tasks' filter: one value per chip. The open row closes (it may
     // not be listed any more).
+    const tmb = t.closest('[data-np-tmr]');
+    if (tmb) {
+      const v = tmb.getAttribute('data-np-tmr').split('|'), a = v[0], kind = v[1], id = v.slice(2).join('|');
+      ntPopClose();
+      if (a === 'stop') { if (ntTmrIsOn(kind, id)) tmrStop(); }
+      else if (a === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); ptToast('+5 minutes'); } }
+      else ntTmrStart(kind, id, +a || 0);
+      try { ntRenderLib(); } catch {}
+      return;
+    }
     const shb = t.closest('[data-np-share]');
     if (shb) { const v = shb.getAttribute('data-np-share').split('|'); if (v[0] === 'copy') ntShareCopy(v[1]); else ntShareSet(v[1], v[0] === 'on'); return; }
     const ppr = t.closest('[data-np-prio]');
@@ -22253,6 +22327,14 @@ const VOICE = {
     // The line's highlight; the last one used is where a new task starts.
     const hlc = [['none', 'None', '']].concat(NT_HL).map(([v, l, c]) => `<button class="nt-tk-chip nt-hl-chip${(k.hl || 'none') === v ? ' on' : ''}" type="button" data-nt-tk="hl" data-v="${v}" title="${l}" aria-label="Highlight: ${l}" aria-pressed="${(k.hl || 'none') === v}" style="--c:${c || 'transparent'}">${v === 'none' ? 'None' : '<span class="d"></span>'}</button>`).join('');
     h += `<div class="nt-tk-row"><span class="nt-tk-lbl">Highlight</span><div class="nt-tk-chips">${hlc}</div></div>`;
+    if (k.edit && k.tid) {
+      const run = ntTmrIsOn('task', k.tid);
+      h += '<div class="nt-tk-row"><span class="nt-tk-lbl">Timer</span><div class="nt-tk-chips">'
+        + (run ? '<button class="nt-tk-chip on" type="button" data-nt-tk="tmr" data-v="stop">■ Stop and log it</button>'
+          : '<button class="nt-tk-chip" type="button" data-nt-tk="tmr" data-v="0">▶ Start</button>'
+            + NT_TMR_MINS.map(m => `<button class="nt-tk-chip" type="button" data-nt-tk="tmr" data-v="${m}">${m === 60 ? '1 hour' : m + ' min'}</button>`).join(''))
+        + '</div></div>';
+    }
     if (k.ecm) {
       h += '<div class="nt-tk-row"><span class="nt-tk-lbl">Category</span><div class="nt-tk-note">ECM tasks stay with ECM.</div></div>';
     } else {
@@ -22742,6 +22824,13 @@ const VOICE = {
     else if (a === 'due') ntTaskSetDue(v);
     else if (a === 'cat') { if (v === '' || ntCat(v)) k.cat = v; }
     else if (a === 'hl') { if (v === 'none' || ntHlOk(v)) k.hl = v; }
+    else if (a === 'tmr') {
+      const tid = k.tid;
+      ntPopClose();
+      if (v === 'stop') { if (ntTmrIsOn('task', tid)) tmrStop(); }
+      else if (tid) ntTmrStart('task', tid, +v || 0);
+      return;
+    }
     else if (a === 'newcat') {
       const inp = document.getElementById('ntTText');
       if (inp) k.text = inp.value;
@@ -23378,6 +23467,8 @@ const VOICE = {
       if (pad) { e.stopPropagation(); e.preventDefault(); ntPopPrioAdd(pad, pad.getAttribute('data-nt-prio-add')); return; }
       const pmv = t.closest('[data-nt-prio-mv]');
       if (pmv) { e.stopPropagation(); e.preventDefault(); const v = pmv.getAttribute('data-nt-prio-mv'), i = v.lastIndexOf('|'); ntPrioNudge(v.slice(0, i), v.slice(i + 1)); return; }
+      const tmk = t.closest('[data-nt-tmr]');
+      if (tmk) { e.stopPropagation(); e.preventDefault(); ntPopTimer(tmk, 'task', tmk.getAttribute('data-nt-tmr')); return; }
       const ppk = t.closest('[data-nt-prio-pick]');
       if (ppk) { e.stopPropagation(); e.preventDefault(); ntPopPrio(ppk, ppk.getAttribute('data-nt-prio-pick')); return; }
       if (t.matches && t.matches('input[data-nt-tdue]')) { e.stopPropagation(); try { t.showPicker(); } catch {} return; }
@@ -23602,6 +23693,7 @@ const VOICE = {
         if (ntOpenId) { const m = ntNotes.get(ntOpenId); ntPatchMeta(ntOpenId, { pinned: !(m && m.pinned) }); ntRenderAll(); }
         break;
       case 'more': ntPopDoc(el); break;
+      case 'timer': if (ntOpenId) ntPopTimer(el, 'note', ntOpenId); break;
       case 'outline': ntPopOutline(); break;
       case 'cats': ntOpenCats(); break;
       case 'calsync': ntCalFetch(true); ntRenderToday(); break;
