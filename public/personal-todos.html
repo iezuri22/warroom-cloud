@@ -4051,6 +4051,8 @@
   .nt-prio-opt { display: flex; align-items: center; gap: 8px; }
   .nt-prio-opt .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
   .nt-prio-none { padding: 10px; font-size: 12px; color: var(--ink-dim); }
+  .nt-prio-reset { display: flex; align-items: center; gap: 8px; padding: 2px 6px; font-size: 12px; color: var(--ink-mid); cursor: pointer; }
+  .nt-prio-reset input { accent-color: var(--accent); }
   @media (pointer: coarse) { .nt-prio-ctl { opacity: 1; } .nt-prio-ctl button { width: 30px; height: 30px; } }
   /* Task line highlights */
   .nt-editor li[data-task-id][data-hl] { background: var(--hlc); box-shadow: -6px 0 0 var(--hlc), 6px 0 0 var(--hlc); border-radius: 6px; }
@@ -12324,7 +12326,23 @@ const VOICE = {
   // a quick load, 10+ on a slow one). force — a caller that just wrote —
   // always reads afresh; a read it overtakes hands its callers the newer
   // result instead of filling the cache with an older one.
+  // Notes keeps every open task live (the done == false listener), and Planned
+  // only ever shows open ones — so Planned is a slice of that list and costs no
+  // reads. The query pair below is the fallback while the listener isn't live.
+  // (try: at boot the Notes state may not be declared yet.)
+  function _plannedFromLive(){
+    try {
+      if (!(_ntOpenLoaded && _ntOpenFresh && !_ntOpenErr)) return null;
+      return [..._ntOpenIdx.values()].filter(p => !p.done && _isPlannedDoc(p) && !p.fromTemplate).map(p => ({ ...p }));
+    } catch { return null; }
+  }
   async function loadPlannedTodos(force){
+    let live = _plannedFromLive();
+    // The listener is on its way: wait for it (up to 4 s) rather than read.
+    let starting = false;
+    try { starting = !live && _ntOpenOn && !_ntOpenLoaded && !_ntOpenErr; } catch {}
+    for (let i = 0; starting && !live && i < 40; i++) { await new Promise(r => setTimeout(r, 100)); live = _plannedFromLive(); }
+    if (live) { _plannedCache = live; _plannedLoadedAt = Date.now(); return _plannedCache; }
     if (!force) {
       if (_plannedLoading) return _plannedLoading;
       if (Date.now() - _plannedLoadedAt < 30000) return _plannedCache;
@@ -16304,6 +16322,9 @@ const VOICE = {
       _ntOpenIdx.clear();
       snap.forEach(d => _ntOpenIdx.set(d.id, { id: d.id, ...d.data() }));
       _ntOpenLoaded = true; _ntOpenErr = false; _ntOpenFresh = true;
+      // Planned is a slice of this list: keep it in step (0 reads).
+      try { const pl = _plannedFromLive(); if (pl) { _plannedCache = pl; _plannedLoadedAt = Date.now(); if (_tabPlanned) render(); } } catch (e) { console.warn('[planned] live', e); }
+      try { ntPrioDailyReset(); } catch (e) { console.warn('[notes] prio reset', e); }
       // A re-opened ECM row stays listed until its sheet status stops saying
       // closed AND a minute and a half has passed: the tick's own Completed
       // write (a whole-sheet GET, then a PUT) can land after the un-tick.
@@ -16462,6 +16483,30 @@ const VOICE = {
     const ca = t => String(t.createdAt || '');
     return ntAllOpen().filter(t => ntPrioOf(t) === k).sort((a, b) => (+a.prioPos || 0) - (+b.prioPos || 0) || ca(a).localeCompare(ca(b)));
   }
+  // Each new day, what's still in Today moves to This week — once a day,
+  // whichever device gets there first (the others find nothing to move).
+  // Priorities has the switch; a line put in Today before this existed is
+  // stamped today, so it moves tomorrow.
+  function ntPrioResetOn(){ try { return localStorage.getItem('pt-nt-prio-reset') !== 'off'; } catch { return true; } }
+  function ntPrioDailyReset(){
+    if (!(_ntOpenLoaded && _ntOpenFresh && !_ntOpenErr)) return;
+    const tk = todayKey();
+    let last = '';
+    try { last = localStorage.getItem('pt-nt-prio-day') || ''; } catch {}
+    if (last === tk) return;
+    try { localStorage.setItem('pt-nt-prio-day', tk); } catch {}
+    const unstamped = [], stale = [];
+    ntAllOpen().forEach(t => { if (ntPrioOf(t) !== 'day') return; if (!ntIsDay(t.prioDay)) unstamped.push(t); else if (t.prioDay < tk) stale.push(t); });
+    const move = ntPrioResetOn() ? stale : [];
+    if (!unstamped.length && !move.length) return;
+    const b = writeBatch(db);
+    let pos = ntPrioList('week').reduce((m, t) => Math.max(m, +t.prioPos || 0), 0);
+    unstamped.forEach(t => b.update(doc(db, 'tv_todos', t.id), { prioDay: tk }));
+    move.forEach(t => { pos += 1000; b.update(doc(db, 'tv_todos', t.id), { prio: 'week', prioPos: pos, prioDay: tk }); });
+    b.commit().then(() => {
+      if (move.length) ptToast(move.length === 1 ? '1 unfinished task moved from Today to This week' : move.length + ' unfinished tasks moved from Today to This week');
+    }).catch(e => { console.warn('[notes] prio reset', e); try { localStorage.removeItem('pt-nt-prio-day'); } catch {} });
+  }
   function ntPrioCount(){ return _ntOpenLoaded ? ntAllOpen().filter(t => ntPrioOf(t)).length : 0; }
   function ntPrioHTML(){
     if (!_ntOpenLoaded) return _ntOpenErr ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection.</div>' : '<div class="nt-empty-lib">Loading tasks…</div>';
@@ -16477,6 +16522,7 @@ const VOICE = {
         + '</section>';
     });
     _ntAllShown = n;
+    h += `<label class="nt-prio-reset"><input type="checkbox" data-nt-prio-reset${ntPrioResetOn() ? ' checked' : ''}> Each morning, move what's left in Today to This week</label>`;
     return h + '</div>';
   }
   function ntPrioRowHTML(t, i, n, c){
@@ -16491,9 +16537,9 @@ const VOICE = {
   async function ntSetPrio(id, k, pos){
     const on = NT_PRIO.some(p => p[0] === k);
     const p = on ? (pos != null ? pos : ntPrioList(k).reduce((m, t) => Math.max(m, +t.prioPos || 0), 0) + 1000) : null;
-    [_ntOpenIdx.get(id), _ntTaskIdx.get(id)].forEach(x => { if (!x) return; if (on) { x.prio = k; x.prioPos = p; } else { delete x.prio; delete x.prioPos; } });
+    [_ntOpenIdx.get(id), _ntTaskIdx.get(id)].forEach(x => { if (!x) return; if (on) { x.prio = k; x.prioPos = p; x.prioDay = todayKey(); } else { delete x.prio; delete x.prioPos; delete x.prioDay; } });
     ntRenderLib();
-    const ok = await ntPatchTask(id, on ? { prio: k, prioPos: p } : { prio: NT_DEL, prioPos: NT_DEL });
+    const ok = await ntPatchTask(id, on ? { prio: k, prioPos: p, prioDay: todayKey() } : { prio: NT_DEL, prioPos: NT_DEL, prioDay: NT_DEL });
     if (!ok) ptToast('Couldn’t save that — try again');
   }
   function ntPrioNudge(id, dir){
@@ -23455,6 +23501,11 @@ const VOICE = {
       pane.querySelectorAll('.nt-prio-row.dragging').forEach(x => x.classList.remove('dragging'));
     });
     pane.addEventListener('change', e => {
+      if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-nt-prio-reset')) {
+        try { localStorage.setItem('pt-nt-prio-reset', e.target.checked ? 'on' : 'off'); } catch {}
+        ptToast(e.target.checked ? 'Today resets each morning' : 'Today keeps its tasks until you move them');
+        return;
+      }
       const d = e.target && e.target.getAttribute && e.target.getAttribute('data-nt-tdue');
       if (d) ntAllSetDue(d, e.target.value);
     });
