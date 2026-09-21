@@ -521,6 +521,24 @@ function rtMd(rt) {
     return s;
   }).join('');
 }
+function hEsc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function hUrl(u) { const x = String(u || '').trim(); return /^https?:\/\/[^\s"'<>`]{1,2000}$/i.test(x) ? x : ''; }
+function hLink(u, inner) { const x = hUrl(u); return x ? `<a href="${hEsc(x)}" target="_blank" rel="noopener noreferrer">${inner}</a>` : inner; }
+// Rich text → HTML: every string escaped; links only http(s).
+function rtHtml(rt) {
+  return (Array.isArray(rt) ? rt : []).map(t => {
+    let s = hEsc((t && t.plain_text) || '');
+    if (!s) return '';
+    const a = t.annotations || {};
+    if (a.code) s = '<code>' + s + '</code>';
+    if (a.bold) s = '<strong>' + s + '</strong>';
+    if (a.italic) s = '<em>' + s + '</em>';
+    if (a.strikethrough) s = '<s>' + s + '</s>';
+    if (a.underline) s = '<u>' + s + '</u>';
+    const href = t.href || (t.text && t.text.link && t.text.link.url) || '';
+    return href ? hLink(href, s) : s;
+  }).join('').replace(/\n/g, '<br>');
+}
 function pageTitle(p) {
   const props = (p && p.properties) || {};
   for (const k of Object.keys(props)) { const v = props[k]; if (v && v.type === 'title') return rtPlain(v.title).trim(); }
@@ -529,15 +547,17 @@ function pageTitle(p) {
 function pageIcon(p) { return (p && p.icon && p.icon.type === 'emoji') ? p.icon.emoji : ''; }
 function linkText(s) { return String(s || '').replace(/[\[\]\n]/g, ' ').trim() || 'link'; }
 
-async function notionTableMd(token, id, budget) {
-  if (budget.calls-- <= 0) return '';
+async function notionTable(token, id, budget) {
+  if (budget.calls-- <= 0) return { md: '', html: '' };
   const j = await notionCall(token, '/blocks/' + id + '/children?page_size=100', { method: 'GET' });
-  const rows = (j.results || []).filter(r => r.type === 'table_row')
-    .map(r => ((r.table_row && r.table_row.cells) || []).map(c => rtMd(c).replace(/\|/g, '\\|').replace(/\n/g, ' ')));
-  if (!rows.length) return '';
-  const n = Math.max(...rows.map(r => r.length));
-  const fmt = r => '| ' + Array.from({ length: n }, (_, i) => r[i] || ' ').join(' | ') + ' |';
-  return [fmt(rows[0]), '| ' + Array(n).fill('---').join(' | ') + ' |', ...rows.slice(1).map(fmt)].join('\n');
+  const cells = (j.results || []).filter(r => r.type === 'table_row').map(r => (r.table_row && r.table_row.cells) || []);
+  if (!cells.length) return { md: '', html: '' };
+  const n = Math.max(...cells.map(r => r.length));
+  const fmt = r => '| ' + Array.from({ length: n }, (_, i) => (r[i] ? rtMd(r[i]).replace(/\|/g, '\\|').replace(/\n/g, ' ') : ' ')).join(' | ') + ' |';
+  const md = [fmt(cells[0]), '| ' + Array(n).fill('---').join(' | ') + ' |', ...cells.slice(1).map(fmt)].join('\n');
+  const tr = (r, tag) => '<tr>' + Array.from({ length: n }, (_, i) => `<${tag}>${r[i] ? rtHtml(r[i]) : ''}</${tag}>`).join('') + '</tr>';
+  const html = '<table><thead>' + tr(cells[0], 'th') + '</thead><tbody>' + cells.slice(1).map(r => tr(r, 'td')).join('') + '</tbody></table>';
+  return { md, html };
 }
 // A page's blocks → Markdown entries ({md, list}). Lists and a list's children
 // sit on consecutive lines; everything else is its own paragraph. Nested
@@ -545,46 +565,60 @@ async function notionTableMd(token, id, budget) {
 async function notionBlocks(token, id, depth, budget, out) {
   let cursor = null, num = 0;
   do {
-    if (budget.calls-- <= 0) { out.push({ md: '*… more on the Notion page*', list: false }); budget.cut = true; return; }
+    if (budget.calls-- <= 0) { out.push({ md: '*… more on the Notion page*', html: '<p><em>… more on the Notion page</em></p>', list: false }); budget.cut = true; return; }
     const q = '?page_size=100' + (cursor ? '&start_cursor=' + encodeURIComponent(cursor) : '');
     const j = await notionCall(token, '/blocks/' + id + '/children' + q, { method: 'GET' });
     for (const b of (j.results || [])) {
       if (budget.cut) return;
-      const t = b.type, v = b[t] || {}, ind = '  '.repeat(depth), text = rtMd(v.rich_text);
-      let md = null, list = false, kids = !!b.has_children && depth < 3, kidDepth = depth + 1;
+      const t = b.type, v = b[t] || {}, ind = '  '.repeat(depth), text = rtMd(v.rich_text), th = rtHtml(v.rich_text);
+      const li = (mark, cls) => `<div class="nl${cls ? ' ' + cls : ''}" style="--d:${depth}"><span class="nb">${mark}</span><div class="nt">${th || '&nbsp;'}</div></div>`;
+      let md = null, html = null, list = false, kids = !!b.has_children && depth < 3, kidDepth = depth + 1;
       if (t !== 'numbered_list_item') num = 0;
       switch (t) {
-        case 'paragraph': md = text ? ind + text : ''; list = depth > 0; break;
-        case 'heading_1': md = '# ' + text; break;
-        case 'heading_2': md = '## ' + text; break;
-        case 'heading_3': md = '### ' + text; break;
-        case 'bulleted_list_item': md = ind + '- ' + text; list = true; break;
-        case 'numbered_list_item': num++; md = ind + num + '. ' + text; list = true; break;
-        case 'to_do': md = ind + '- [' + (v.checked ? 'x' : ' ') + '] ' + text; list = true; break;
-        case 'toggle': md = ind + '- ' + text; list = true; break;
-        case 'quote': md = '> ' + text; break;
-        case 'callout': md = '> ' + ((v.icon && v.icon.emoji) ? v.icon.emoji + ' ' : '') + text; break;
-        case 'code': md = '```' + String(v.language || '').replace(/[^\w+-]/g, '') + '\n' + rtPlain(v.rich_text) + '\n```'; kids = false; break;
-        case 'divider': md = '---'; break;
-        case 'equation': md = '`' + String(v.expression || '').replace(/`/g, "'") + '`'; break;
-        case 'child_page': md = ind + '- 📄 [' + linkText(v.title || 'Untitled') + '](' + notionUrl(b.id) + ')'; list = true; kids = false; break;
-        case 'child_database': md = ind + '- 🗂 [' + linkText(v.title || 'Database') + '](' + notionUrl(b.id) + ')'; list = true; kids = false; break;
+        case 'paragraph': md = text ? ind + text : ''; html = th ? `<p style="--d:${depth}">${th}</p>` : ''; list = depth > 0; break;
+        case 'heading_1': md = '# ' + text; html = '<h2>' + th + '</h2>'; break;
+        case 'heading_2': md = '## ' + text; html = '<h3>' + th + '</h3>'; break;
+        case 'heading_3': md = '### ' + text; html = '<h4>' + th + '</h4>'; break;
+        case 'bulleted_list_item': md = ind + '- ' + text; html = li('•'); list = true; break;
+        case 'numbered_list_item': num++; md = ind + num + '. ' + text; html = li(num + '.'); list = true; break;
+        case 'to_do': md = ind + '- [' + (v.checked ? 'x' : ' ') + '] ' + text; html = li(v.checked ? '☑' : '☐', v.checked ? 'done' : ''); list = true; break;
+        case 'toggle': md = ind + '- ' + text; html = li('▸'); list = true; break;
+        case 'quote': md = '> ' + text; html = '<blockquote>' + th + '</blockquote>'; break;
+        case 'callout': {
+          const em = (v.icon && v.icon.emoji) ? v.icon.emoji + ' ' : '';
+          md = '> ' + em + text; html = '<blockquote class="callout">' + hEsc(em) + th + '</blockquote>'; break;
+        }
+        case 'code': {
+          const code = rtPlain(v.rich_text);
+          md = '```' + String(v.language || '').replace(/[^\w+-]/g, '') + '\n' + code + '\n```'; html = '<pre><code>' + hEsc(code) + '</code></pre>'; kids = false; break;
+        }
+        case 'divider': md = '---'; html = '<hr>'; break;
+        case 'equation': md = '`' + String(v.expression || '').replace(/`/g, "'") + '`'; html = '<p><code>' + hEsc(v.expression || '') + '</code></p>'; break;
+        case 'child_page': case 'child_database': {
+          const mark = t === 'child_page' ? '📄' : '🗂', ttl = v.title || (t === 'child_page' ? 'Untitled' : 'Database');
+          md = ind + '- ' + mark + ' [' + linkText(ttl) + '](' + notionUrl(b.id) + ')';
+          html = `<div class="nl" style="--d:${depth}"><span class="nb">${mark}</span><div class="nt">${hLink(notionUrl(b.id), hEsc(ttl))}</div></div>`;
+          list = true; kids = false; break;
+        }
         case 'image': case 'file': case 'pdf': case 'video': case 'audio': {
           const u = (v.external && v.external.url) || (v.file && v.file.url) || '';
           const cap = rtPlain(v.caption) || v.name || (t === 'image' ? 'Image' : t.toUpperCase());
-          md = u ? ind + '[' + (t === 'image' ? '🖼 ' : '📎 ') + linkText(cap) + '](' + u + ')' : null;
+          const mark = t === 'image' ? '🖼 ' : '📎 ';
+          md = u ? ind + '[' + mark + linkText(cap) + '](' + u + ')' : null;
+          html = u ? '<p>' + hLink(u, hEsc(mark + cap)) + '</p>' : null;
           list = depth > 0; break;
         }
         case 'bookmark': case 'embed': case 'link_preview': {
-          const u = v.url || '';
-          md = /^https?:\/\//i.test(u) ? ind + '[' + linkText(rtPlain(v.caption) || u) + '](' + u + ')' : null;
+          const u = v.url || '', cap = rtPlain(v.caption) || u;
+          md = /^https?:\/\//i.test(u) ? ind + '[' + linkText(cap) + '](' + u + ')' : null;
+          html = hUrl(u) ? '<p>' + hLink(u, hEsc(cap)) + '</p>' : null;
           list = depth > 0; break;
         }
-        case 'table': md = await notionTableMd(token, b.id, budget); kids = false; break;
+        case 'table': { const tb = await notionTable(token, b.id, budget); md = tb.md; html = tb.html; kids = false; break; }
         case 'column_list': case 'column': case 'synced_block': kidDepth = depth; break;   // their children carry it
         default: md = null;
       }
-      if (md != null && md !== '') out.push({ md, list });
+      if (md != null && md !== '') out.push({ md, html: html || '', list });
       if (kids) await notionBlocks(token, b.id, kidDepth, budget, out);
     }
     cursor = j.has_more ? j.next_cursor : null;
@@ -613,13 +647,64 @@ async function handleNotion(req, res, body) {
       res.status(200).json({ pages, next: j.has_more ? j.next_cursor : null });
       return;
     }
+    if (op === 'list') {
+      // Databases this connection sees that carry a Program-like select and a
+      // date (the ECM Meeting Notes): all their rows, newest date first.
+      const budget = { calls: 14 };
+      budget.calls--;
+      const dj = await notionCall(token, '/search', { method: 'POST', body: JSON.stringify({ filter: { property: 'object', value: 'database' }, page_size: 50 }) });
+      const notes = [], dbIds = new Set();
+      for (const d of (dj.results || [])) {
+        if (!d || d.archived || d.in_trash) continue;
+        const props = d.properties || {}, keys = Object.keys(props);
+        const progKey = keys.find(k => props[k].type === 'select' && /^(program|department|team|client)$/i.test(k.trim()));
+        const dateKey = keys.find(k => props[k].type === 'date');
+        if (!progKey || !dateKey) continue;
+        const typeKey = keys.find(k => k !== progKey && props[k].type === 'select' && /^(type|kind|category)$/i.test(k.trim()));
+        const sumKey = keys.find(k => props[k].type === 'rich_text' && /^(summary|tl;?dr|recap)$/i.test(k.trim()));
+        const colors = {};
+        (((props[progKey] || {}).select || {}).options || []).forEach(o => { colors[o.name] = o.color || 'default'; });
+        const dbId = String(d.id).replace(/-/g, ''), dbTitle = rtPlain(d.title).trim();
+        dbIds.add(dbId);
+        let cursor = null;
+        do {
+          if (budget.calls-- <= 0) break;
+          const body = { page_size: 100, sorts: [{ property: dateKey, direction: 'descending' }] };
+          if (cursor) body.start_cursor = cursor;
+          const q = await notionCall(token, '/databases/' + dbId + '/query', { method: 'POST', body: JSON.stringify(body) });
+          for (const p of (q.results || [])) {
+            if (!p || p.archived || p.in_trash) continue;
+            const pr = p.properties || {};
+            const sel = k => (k && pr[k] && pr[k].select) ? String(pr[k].select.name || '') : '';
+            const prog = sel(progKey);
+            notes.push({
+              id: String(p.id).replace(/-/g, ''), title: pageTitle(p) || 'Untitled', icon: pageIcon(p),
+              url: p.url || notionUrl(p.id), edited: p.last_edited_time || '', created: p.created_time || '',
+              date: (pr[dateKey] && pr[dateKey].date && pr[dateKey].date.start) || '',
+              program: prog, color: prog ? (colors[prog] || 'default') : '', type: sel(typeKey),
+              summary: sumKey && pr[sumKey] ? rtPlain(pr[sumKey].rich_text).slice(0, 400) : '', db: dbTitle,
+            });
+          }
+          cursor = q.has_more ? q.next_cursor : null;
+        } while (cursor);
+      }
+      // Everything else the connection sees: program pages, docs — newest edits.
+      const seen = new Set(notes.map(n => n.id));
+      const sj = await notionCall(token, '/search', { method: 'POST', body: JSON.stringify({ filter: { property: 'object', value: 'page' }, sort: { direction: 'descending', timestamp: 'last_edited_time' }, page_size: 100 }) });
+      const others = (sj.results || []).filter(p => p && p.object === 'page' && !p.archived && !p.in_trash
+          && !seen.has(String(p.id).replace(/-/g, ''))
+          && !(p.parent && p.parent.type === 'database_id' && dbIds.has(String(p.parent.database_id).replace(/-/g, ''))))
+        .map(p => ({ id: String(p.id).replace(/-/g, ''), title: pageTitle(p) || 'Untitled', icon: pageIcon(p), url: p.url || notionUrl(p.id), edited: p.last_edited_time || '' }));
+      res.status(200).json({ notes, others });
+      return;
+    }
     if (op === 'page') {
       const id = notionId(body.id);
       if (!id) { res.status(400).json({ error: 'bad_id' }); return; }
       const p = await notionCall(token, '/pages/' + id, { method: 'GET' });
       const out = [];
       await notionBlocks(token, id, 0, { calls: 30, cut: false }, out);
-      res.status(200).json({ id, title: pageTitle(p) || 'Untitled', icon: pageIcon(p), url: p.url || notionUrl(id), edited: p.last_edited_time || '', md: notionJoin(out).slice(0, 200000) });
+      res.status(200).json({ id, title: pageTitle(p) || 'Untitled', icon: pageIcon(p), url: p.url || notionUrl(id), edited: p.last_edited_time || '', md: notionJoin(out).slice(0, 200000), html: out.map(e => e.html).join('').slice(0, 400000) });
       return;
     }
     res.status(400).json({ error: 'bad_op' });
@@ -634,7 +719,13 @@ async function handleNotion(req, res, body) {
 
 export default async function handler(req, res) {
   const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-  if (!requireAuth(req, SESSION_SECRET)) {
+  const qMode = (req.query && req.query.mode || '').toString();
+  // The ECM page's team link (no War Room login) may READ Notion — nothing
+  // else here. Same header and env var as the Smartsheets team proxy.
+  const TEAM_TOKEN = process.env.TEAM_ACCESS_TOKEN || '';
+  const teamHeader = (req.headers['x-team-token'] || '').toString();
+  const isTeam = qMode === 'notion' && !!TEAM_TOKEN && teamHeader.length === TEAM_TOKEN.length && teamHeader === TEAM_TOKEN;
+  if (!isTeam && !requireAuth(req, SESSION_SECRET)) {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
