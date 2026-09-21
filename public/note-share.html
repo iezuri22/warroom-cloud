@@ -47,7 +47,8 @@
   .body code { font: 500 .9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--fill); border-radius: 5px; padding: 1px 5px; }
   .body pre code { background: none; padding: 0; }
   .body hr { border: 0; border-top: 1px solid var(--border-strong); margin: 14px 0; }
-  .body a { color: var(--blue); }
+  .body a { color: var(--blue); cursor: pointer; }
+  .body img { cursor: zoom-in; }
   .body img { display: block; max-width: 100%; max-height: 560px; height: auto; margin: 6px 0; border-radius: 10px; border: 1px solid var(--border); }
   .msg { padding: 70px 20px; text-align: center; color: var(--ink-mid); }
   .foot { margin-top: 14px; font-size: 12px; color: var(--ink-dim); text-align: center; }
@@ -220,6 +221,18 @@ async function start(){
     if (!dirty && !saving) { banner('This note was just updated in War Room.', [['Show the latest', () => { banner(''); render(pendingRemote.html); baseRev = pendingRemote.rev; pendingRemote = null; }]]); }
   }, () => fail('Couldn’t load the note — check your connection and reload.'));
 
+  // A link or an attachment opens in a new tab, and an image opens full size —
+  // in edit mode too, where the browser would only put the caret in it.
+  bodyEl.addEventListener('click', e => {
+    if (e.defaultPrevented) return;
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    const im = !a && e.target && e.target.nodeName === 'IMG' ? e.target : null;
+    const url = a ? a.getAttribute('href') : im ? im.getAttribute('src') : '';
+    if (!url || !/^(https?:|mailto:)/i.test(url)) return;
+    if (mode !== 'edit' && a) return;                 // a read-only page follows links itself
+    e.preventDefault();
+    window.open(url, '_blank', 'noopener');
+  }, true);
   if (mode !== 'edit') return;
   bodyEl.addEventListener('input', () => { if (dead) return; dirty = true; setSt('Editing…'); queueSave(); });
   bodyEl.addEventListener('blur', () => { if (dirty) { clearTimeout(saveT); saveT = 0; save(); } });

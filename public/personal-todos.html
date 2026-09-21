@@ -4008,6 +4008,34 @@
     .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
   }
 
+  /* Today */
+  .nt-today { display: flex; flex-direction: column; gap: 14px; }
+  .nt-tday-tmr { padding: 14px 14px 12px; border-radius: 14px; background: var(--fill); }
+  .nt-tday-tmr.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .nt-tday-lbl { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-dim); }
+  .nt-tday-tmr.on .nt-tday-lbl { color: var(--accent); }
+  .nt-tday-lbl .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: ntTdayPulse 1.6s ease-in-out infinite; }
+  @keyframes ntTdayPulse { 50% { opacity: .35; } }
+  .nt-tday-what { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+  .nt-tday-clock { margin-top: 2px; font: 800 40px/1.1 var(--font-family); font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--ink); }
+  .nt-tday-clock.idle { color: var(--ink-dim); }
+  .nt-tday-sub { font-size: 12px; color: var(--ink-mid); }
+  .nt-tday-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .nt-tday-h { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mid); }
+  .nt-tday-h .k { margin-left: auto; color: var(--ink-dim); letter-spacing: 0; text-transform: none; font-weight: 700; }
+  .nt-tday-row { display: flex; align-items: flex-start; gap: 8px; padding: 7px 6px; border-radius: 9px; }
+  .nt-tday-row + .nt-tday-row { box-shadow: 0 -1px 0 var(--border); }
+  .nt-tday-row[role="button"] { cursor: pointer; }
+  .nt-tday-row[role="button"]:hover { background: var(--fill); }
+  .nt-tday-row .d { flex-shrink: 0; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--c); }
+  .nt-tday-row .ck { flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px; border-radius: 5px; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; }
+  .nt-tday-row .t { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .nt-tday-row.done .t { color: var(--ink-mid); }
+  .nt-tday-row .m { flex-shrink: 0; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
+  .nt-tday-empty { padding: 10px 6px; font-size: 12.5px; color: var(--ink-dim); }
+  /* A task line's pill opens its sheet */
+  .nt-editor li[data-task-id]::after { cursor: pointer; }
+  .nt-editor li[data-task-id]:hover::after { filter: brightness(.94); }
   /* Timer popover */
   .nt-tmr-name { padding: 0 8px 6px; font-size: 12.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
   .nt-tmr-run { padding: 0 8px 8px; font: 800 20px var(--font-family); font-variant-numeric: tabular-nums; color: var(--accent); }
@@ -11243,6 +11271,7 @@ const VOICE = {
   }
   function tmrRerender(){
     try { if (_tabTimer || _tabOverview) render(); } catch {}
+    try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}   // Today lists the day's sessions
     tmrPaintCapsule();
   }
   // First run only: the shape the user described — aim for 2h of ECM, cap
@@ -11422,6 +11451,7 @@ const VOICE = {
   }
   function tmrStart(projId, taskId, taskName){
     if (!projId) return;
+    setTimeout(() => { try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {} }, 0);   // Today's timer card
     tmrEnsureSubs();
     // The per-task stopwatch writes the same ledger, so it can't run alongside.
     if (activeTimerId) { try { stopTimer(false); } catch {} }
@@ -11717,6 +11747,8 @@ const VOICE = {
       if (el) el.textContent = tmrFmtClock(tmrLiveSecs());
       const ov = document.getElementById('ovTimerTime');
       if (ov) ov.textContent = tmrFmtClock(tmrLiveSecs());
+      const tday = document.getElementById('ntTodayClock');
+      if (tday && tmrRun) tday.textContent = tmrRun.until ? tmrFmtClock(Math.max(0, (tmrRun.until - Date.now()) / 1000)) : tmrFmtClock(tmrLiveSecs());
       const pill = document.getElementById('f5TimerPillTime');
       if (pill) pill.textContent = tmrFmtClock(tmrLiveSecs());
       // The per-project running total moves too — leaving it at whatever it
@@ -16587,7 +16619,7 @@ const VOICE = {
     const a = _ntPrioAdd;
     if (!a) return '';
     const q = a.q.trim().toLowerCase();
-    const list = ntAllOpen().filter(t => ntPrioOf(t) !== a.k && (!q || String(t.text || '').toLowerCase().includes(q)))
+    const list = ntAllOpen().filter(t => (a.k === '__timer' ? !t.fromTemplate : ntPrioOf(t) !== a.k) && (!q || String(t.text || '').toLowerCase().includes(q)))
       .sort((x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || ''))).slice(0, 80);
     if (!list.length) return '<div class="nt-prio-none">No open tasks match.</div>';
     return list.map(t => { const p = ntPrioOf(t); return `<button class="nt-pop-i nt-prio-opt" type="button" data-np-prioadd="${ntEsc(t.id)}"><span class="tx">${escHtml(t.text || '(untitled)')}</span>${p ? `<span class="k">${escHtml(ntPrioLabel(p))}</span>` : ''}</button>`; }).join('');
@@ -16642,6 +16674,99 @@ const VOICE = {
         + (tmrRun ? `<div class="nt-tmr-note">Stops the timer on “${escHtml(tmrRun.taskName || tmrRunLabel())}” and logs it.</div>` : '');
     }
     ntPopOpen('tfilt', anchor, h, { alignRight: true, focus: '.nt-pop-i' });
+  }
+
+  // ---- Today: the timer, what you timed, what you finished ----
+  // Finished today is one small live query (completedAt since midnight: only
+  // today's completions are read, then one per new one); timed today comes from
+  // the timer's own day docs (tmrDays), already live once the timer's started.
+  let _ntDoneToday = null, _ntDoneTodayDay = '', _ntDoneTodayUnsub = null;
+  function ntEnsureDoneToday(){
+    const tk = todayKey();
+    if (_ntDoneTodayDay === tk) return;
+    if (_ntDoneTodayUnsub) { try { _ntDoneTodayUnsub(); } catch {} }
+    _ntDoneTodayDay = tk; _ntDoneToday = null;
+    const start = new Date(tk + 'T00:00:00').toISOString();
+    _ntDoneTodayUnsub = onSnapshot(query(collection(db, 'tv_todos'), where('completedAt', '>=', start)), snap => {
+      const out = [];
+      snap.forEach(d => { const v = d.data() || {}; if (v.done) out.push({ id: d.id, ...v }); });
+      out.sort((a, b) => String(b.completedAt || '').localeCompare(String(a.completedAt || '')));
+      _ntDoneToday = out;
+      if (_tabNotes && _ntMounted && ntFilter === 'today') ntRenderLib();
+    }, e => { console.warn('[notes] done today', e); _ntDoneToday = _ntDoneToday || []; });
+  }
+  function ntClockOf(iso){
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  function ntTodayCount(){ return Array.isArray(_ntDoneToday) ? _ntDoneToday.length : 0; }
+  function ntTodayHTML(){
+    try { tmrEnsureSubs(); } catch {}
+    ntEnsureDoneToday();
+    const tk = todayKey();
+    let h = '<div class="nt-today">';
+    // The timer, big.
+    if (tmrRun) {
+      const left = tmrRun.until ? Math.max(0, (tmrRun.until - Date.now()) / 1000) : null;
+      h += '<section class="nt-tday-tmr on"><div class="nt-tday-lbl"><span class="dot"></span>Timing now</div>'
+        + `<div class="nt-tday-what">${escHtml(tmrRun.taskName || tmrRunLabel())}</div>`
+        + `<div class="nt-tday-clock" id="ntTodayClock">${escHtml(left != null ? tmrFmtClock(left) : tmrFmtClock(tmrLiveSecs()))}</div>`
+        + `<div class="nt-tday-sub">${escHtml(tmrRunLabel())}${left != null ? ' · counting down' : ''}</div>`
+        + '<div class="nt-tday-acts"><button class="nt-btn primary" type="button" data-nt-tday="stop">■ Stop and log it</button>'
+        + (tmrRun.until ? '<button class="nt-btn" type="button" data-nt-tday="add5">+5 min</button>' : '') + '</div></section>';
+    } else {
+      h += '<section class="nt-tday-tmr"><div class="nt-tday-lbl">Timer</div><div class="nt-tday-clock idle">0:00</div>'
+        + '<div class="nt-tday-acts"><button class="nt-btn primary" type="button" data-nt-tday="pick">▶ Time a task</button>'
+        + (ntOpenId ? '<button class="nt-btn" type="button" data-nt-tday="note">⏱ Time this note</button>' : '') + '</div></section>';
+    }
+    // What you timed today.
+    const day = tmrDays.get(tk) || { totals: {}, sessions: [] };
+    const sessions = (day.sessions || []).slice().sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+    const byTask = new Map();
+    sessions.forEach(x => { if (x.taskId) byTask.set(x.taskId, (byTask.get(x.taskId) || 0) + (+x.secs || 0)); });
+    const total = Object.values(day.totals || {}).reduce((a, b) => a + (+b || 0), 0);
+    h += `<section class="nt-tday-sec"><div class="nt-tday-h"><b>Timed today</b><span class="k">${total ? escHtml(tmrFmtSecsShort(total)) : ''}</span></div>`;
+    if (!sessions.length) h += '<div class="nt-tday-empty">Nothing timed yet today.</div>';
+    else h += sessions.slice(0, 40).map(x => {
+      const m = tmrProjMeta(x.proj) || {};
+      return `<div class="nt-tday-row"><span class="d" style="--c:${ntEsc(m.color || '#8a8a8a')}"></span>`
+        + `<span class="t">${escHtml(x.taskName || m.label || 'Time')}</span>`
+        + `<span class="m">${escHtml(ntClockOf(x.startedAt))} · ${escHtml(tmrFmtSecsShort(+x.secs || 0))}</span></div>`;
+    }).join('');
+    h += '</section>';
+    // What you finished today.
+    const done = _ntDoneToday;
+    h += `<section class="nt-tday-sec"><div class="nt-tday-h"><b>Done today</b><span class="k">${done && done.length ? done.length : ''}</span></div>`;
+    if (!done) h += '<div class="nt-tday-empty">Loading…</div>';
+    else if (!done.length) h += '<div class="nt-tday-empty">Nothing ticked off yet today.</div>';
+    else h += done.map(t => {
+      const n = t.noteId ? ntNotes.get(t.noteId) : null, live = !!(n && !n.trashed);
+      const secs = byTask.get(t.id) || 0;
+      const attrs = live ? ` role="button" tabindex="0" data-nt-taskopen="${ntEsc(t.noteId)}" data-nt-tid="${ntEsc(t.id)}" title="Open it in “${ntEsc(ntTitleOf(n))}”"` : '';
+      return `<div class="nt-tday-row done"${attrs}><span class="ck">${HB_CHECK_SVG.replace('<svg ', '<svg width="10" height="10" ')}</span>`
+        + `<span class="t">${escHtml(t.text || '(untitled)')}</span>`
+        + `<span class="m">${escHtml(ntClockOf(t.completedAt))}${secs ? ' · ⏱ ' + escHtml(tmrFmtSecsShort(secs)) : ''}</span></div>`;
+    }).join('');
+    h += '</section>';
+    return h + '</div>';
+  }
+  function ntPopTdayPick(anchor){
+    _ntPrioAdd = { k: '__timer', q: '' };
+    ntPopOpen('prioadd', anchor, '<div class="nt-pop-h">Time a task</div>'
+      + '<input class="nt-prio-q" id="ntPrioQ" type="search" placeholder="Find an open task" aria-label="Find an open task" autocomplete="off">'
+      + `<div class="nt-prio-pick" id="ntPrioList">${ntPrioAddListHTML()}</div>`, { focus: '#ntPrioQ' });
+  }
+  // A click on a task line's "Task · due Fri" pill (the line's ::after, drawn
+  // right after its words) opens the task's sheet — no caret-then-button.
+  function ntOnTaskPill(li, x, y){
+    const kids = Array.from(li.childNodes).filter(n => !(n.nodeType === 1 && /^(UL|OL)$/.test(n.nodeName)));
+    if (!kids.length) return false;
+    const r = document.createRange();
+    r.setStartBefore(kids[0]); r.setEndAfter(kids[kids.length - 1]);
+    const rects = r.getClientRects();
+    if (!rects.length) return false;
+    const last = rects[rects.length - 1];
+    return x > last.right + 1 && y >= last.top - 3 && y <= last.bottom + 3;
   }
   // ---- Past due / due today: a bar on top of Notes, from the open list ----
   // Past due is All tasks' Overdue group; due today is a deadline of today.
@@ -20049,7 +20174,7 @@ const VOICE = {
     try { v = localStorage.getItem('pt-nt-filter'); } catch {}
     if (typeof v !== 'string' || v.length > 200) return;
     _ntFilterSaved = v;
-    if (['all', 'tasks', 'prio', 'agenda', 'pinned', ''].includes(v) || ntCat(v)) ntFilter = v;
+    if (['all', 'today', 'tasks', 'prio', 'agenda', 'pinned', ''].includes(v) || ntCat(v)) ntFilter = v;
     else _ntFilterWant = v;
   }
   // …and saved whenever it changes (ntRenderLib). Trash isn't a place to
@@ -20239,8 +20364,8 @@ const VOICE = {
   function ntRenderLib(){
     if (!_ntEls) return;
     const E = _ntEls;
-    if (!['all', 'tasks', 'prio', 'agenda', 'pinned', 'trash', ''].includes(ntFilter) && !ntCat(ntFilter)) ntFilter = 'all';
-    if ((ntFilter === 'tasks' || ntFilter === 'prio') && _ntSelMode) { ntSelectMode(false); return; }   // selecting is for notes (it re-renders)
+    if (!['all', 'today', 'tasks', 'prio', 'agenda', 'pinned', 'trash', ''].includes(ntFilter) && !ntCat(ntFilter)) ntFilter = 'all';
+    if ((ntFilter === 'tasks' || ntFilter === 'prio' || ntFilter === 'today') && _ntSelMode) { ntSelectMode(false); return; }   // selecting is for notes (it re-renders)
     ntSaveFilter();
     E.shell.dataset.screen = ntScreen;
     document.body.classList.toggle('nt-doc-screen', ntScreen === 'doc');   // Coach steps aside only on a doc (561–760)
@@ -20253,7 +20378,7 @@ const VOICE = {
     if (E.ltitle) E.ltitle.textContent = label;
     if (E.lswitchLbl) E.lswitchLbl.textContent = label;
     if (E.lswitch) { E.lswitch.classList.toggle('dot', !!color); if (color) E.lswitch.style.setProperty('--c', color); }
-    if (E.selBtn) { E.selBtn.classList.toggle('on', _ntSelMode); E.selBtn.hidden = ntFilter === 'tasks' || ntFilter === 'prio'; }
+    if (E.selBtn) { E.selBtn.classList.toggle('on', _ntSelMode); E.selBtn.hidden = ntFilter === 'tasks' || ntFilter === 'prio' || ntFilter === 'today'; }
     if (E.search) E.search.placeholder = (ntFilter === 'tasks' || ntFilter === 'prio') ? 'Search tasks' : 'Search notes';
     ntRenderFilters();
     ntRenderDueBar();
@@ -20313,6 +20438,10 @@ const VOICE = {
       }
     }
     // "All tasks" lists every open task (Personal's and the notes'), instead of notes.
+    if (ntFilter === 'today') {
+      h = ntTodayHTML();
+      if (E.lcount) E.lcount.textContent = '';
+    }
     if (ntFilter === 'prio') {
       h = ntPrioHTML();
       if (E.lcount) E.lcount.textContent = _ntAllShown ? String(_ntAllShown) : '';
@@ -20374,10 +20503,10 @@ const VOICE = {
   }
   // ---- notebooks: sidebar nav (≥1100) and the same list as a switcher popover ----
   function ntFilterLabel(f){
-    return f === 'all' ? 'All notes' : f === 'tasks' ? 'All tasks' : f === 'prio' ? 'Priorities' : f === 'agenda' ? 'Agenda' : f === 'pinned' ? 'Pinned' : f === 'trash' ? 'Trash' : ntCatPath(f);
+    return f === 'all' ? 'All notes' : f === 'tasks' ? 'All tasks' : f === 'prio' ? 'Priorities' : f === 'today' ? 'Today' : f === 'agenda' ? 'Agenda' : f === 'pinned' ? 'Pinned' : f === 'trash' ? 'Trash' : ntCatPath(f);
   }
   function ntFilterColor(f){
-    return (f === 'all' || f === 'tasks' || f === 'prio' || f === 'agenda' || f === 'pinned' || f === 'trash') ? '' : ntCatColor(f);
+    return (f === 'all' || f === 'today' || f === 'tasks' || f === 'prio' || f === 'agenda' || f === 'pinned' || f === 'trash') ? '' : ntCatColor(f);
   }
   function ntNavItemHTML(key, label, n, o){
     const opt = o || {};
@@ -20401,6 +20530,7 @@ const VOICE = {
     let h = `<div class="nt-navtop"><button class="nt-icon" type="button" data-nt-act="nav-shut" title="Collapse the sidebar (⌘⇧\\)" aria-label="Collapse the sidebar">${NT_SVG.chevL2}</button></div>`
       + '<div class="nt-navg">'
       + ntNavItemHTML('all', 'All notes', c.all, { icon: NT_SVG.doc })
+      + ntNavItemHTML('today', tmrRun ? 'Today · timing' : 'Today', ntTodayCount(), { icon: NT_SVG.clock })
       + ntNavItemHTML('tasks', 'All tasks', ntOpenTaskCount(), { icon: NT_SVG.task })
       + ntNavItemHTML('prio', 'Priorities', ntPrioCount(), { icon: NT_SVG.star })
       + ntNavItemHTML('agenda', 'Agenda', c.agenda, { icon: NT_SVG.cal })
@@ -20445,7 +20575,7 @@ const VOICE = {
   function ntPopNav(anchor){
     const c = ntCounts();
     const it = (key, label, n, color, icon, sub) => `<button class="nt-pop-i${sub ? ' sub' : ''}${ntFilter === key ? ' on' : ''}" type="button" data-np-nav="${ntEsc(key)}"${color ? ` style="--c:${ntEsc(color)}"` : ''}>${color ? '<span class="d"></span>' : (icon || '')}${escHtml(label)}${n ? `<span class="k">${n}</span>` : ''}</button>`;
-    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('tasks', 'All tasks', ntOpenTaskCount(), '', NT_SVG.task) + it('prio', 'Priorities', ntPrioCount(), '', NT_SVG.star) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
+    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('today', 'Today', ntTodayCount(), '', NT_SVG.clock) + it('tasks', 'All tasks', ntOpenTaskCount(), '', NT_SVG.task) + it('prio', 'Priorities', ntPrioCount(), '', NT_SVG.star) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
     if (c.pinned) h += it('pinned', 'Pinned', c.pinned, '', NT_SVG.pin);
     h += '<div class="nt-pop-h">Categories</div>';
     ntCats.filter(x => !x.parent).forEach(x => {
@@ -21488,6 +21618,14 @@ const VOICE = {
     }, { passive: false });
     ed.addEventListener('touchcancel', () => { tap = null; });
     ed.addEventListener('dblclick', e => { if (e.target && e.target.nodeName === 'IMG' && ntNoteImgOk(e.target.src)) window.open(e.target.src, '_blank', 'noopener'); });
+    ed.addEventListener('click', e => {
+      if (e.detail > 1 || e.metaKey || e.shiftKey) return;
+      const li = e.target && e.target.closest ? e.target.closest('li[data-task-id]') : null;
+      if (!li || !ed.contains(li) || !ntOnTaskPill(li, e.clientX, e.clientY)) return;
+      e.preventDefault();
+      try { ntCaretIn(li, true); ntSaveRange(); } catch {}
+      ntPopTask(li);
+    });
     ed.addEventListener('paste', e => {
       const cd = e.clipboardData;
       if (!cd) return;
@@ -21852,7 +21990,13 @@ const VOICE = {
     const ppr = t.closest('[data-np-prio]');
     if (ppr) { const v = ppr.getAttribute('data-np-prio'), i = v.lastIndexOf('|'); ntPopClose(); ntSetPrio(v.slice(0, i), v.slice(i + 1)); return; }
     const pad2 = t.closest('[data-np-prioadd]');
-    if (pad2) { const k = _ntPrioAdd && _ntPrioAdd.k; ntPopClose(); if (k) ntSetPrio(pad2.getAttribute('data-np-prioadd'), k); return; }
+    if (pad2) {
+      const k = _ntPrioAdd && _ntPrioAdd.k, tid = pad2.getAttribute('data-np-prioadd'), a = _ntPopAnchor;
+      ntPopClose();
+      if (k === '__timer') { ntPopTimer(a, 'task', tid); return; }
+      if (k) ntSetPrio(tid, k);
+      return;
+    }
     const tso = t.closest('[data-np-tsort]');
     if (tso) {
       try { localStorage.setItem('pt-nt-tsort', tso.getAttribute('data-np-tsort')); } catch {}
@@ -23236,6 +23380,7 @@ const VOICE = {
         + b('data-nt-rail="__search"', 'Search notes', NT_SVG.search)
         + '<span class="nt-rail-sep"></span>'
         + b('data-nt-rail="all"', 'All notes', NT_SVG.doc, ntFilter === 'all')
+        + b('data-nt-rail="today"', 'Today', NT_SVG.clock, ntFilter === 'today')
         + b('data-nt-rail="tasks"', 'All tasks', NT_SVG.task, ntFilter === 'tasks')
         + b('data-nt-rail="prio"', 'Priorities', NT_SVG.star, ntFilter === 'prio')
         + b('data-nt-rail="agenda"', 'Agenda', NT_SVG.cal, ntFilter === 'agenda')
@@ -23514,6 +23659,17 @@ const VOICE = {
       const t = e.target;
       if (ntInEditor(t)) return;
       if (ntMdClick(e)) return;                       // a code block's Copy, in a row or a note card
+      const tdy = t.closest('[data-nt-tday]');
+      if (tdy) {
+        e.stopPropagation(); e.preventDefault();
+        const a = tdy.getAttribute('data-nt-tday');
+        if (a === 'stop') { if (tmrRun) tmrStop(); }
+        else if (a === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); } }
+        else if (a === 'pick') { ntPopTdayPick(tdy); return; }
+        else if (a === 'note') { if (ntOpenId) ntPopTimer(tdy, 'note', ntOpenId); return; }
+        ntRenderLib();
+        return;
+      }
       const pad = t.closest('[data-nt-prio-add]');
       if (pad) { e.stopPropagation(); e.preventDefault(); ntPopPrioAdd(pad, pad.getAttribute('data-nt-prio-add')); return; }
       const pmv = t.closest('[data-nt-prio-mv]');
