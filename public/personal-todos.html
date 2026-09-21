@@ -11445,10 +11445,20 @@ const VOICE = {
   // ---- run / stop ----
   function tmrSaveRun(){
     try {
-      if (tmrRun) localStorage.setItem(TMR_RUN_KEY, JSON.stringify(tmrRun));
+      // label: what the War Room's floating timer shows (it can't work it out).
+      if (tmrRun) localStorage.setItem(TMR_RUN_KEY, JSON.stringify({ ...tmrRun, label: tmrRunLabel() }));
       else localStorage.removeItem(TMR_RUN_KEY);
     } catch {}
   }
+  // The War Room shell's floating timer: its Stop and +5 land here, where the
+  // clock is kept and the time gets logged.
+  window.addEventListener('message', ev => {
+    const d = ev && ev.data;
+    if (!d || d.type !== 'warroom:timer' || ev.source !== window.parent) return;
+    if (d.action === 'stop') { if (tmrRun) tmrStop(); }
+    else if (d.action === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); } }
+    try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}
+  });
   function tmrStart(projId, taskId, taskName){
     if (!projId) return;
     setTimeout(() => { try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {} }, 0);   // Today's timer card
@@ -11808,8 +11818,9 @@ const VOICE = {
   function tmrPaintCapsule(){
     const cap = document.getElementById('tmrCapsule');
     if (!cap) return;
-    // The Timer tab already shows a clock the size of a house.
-    if (!tmrRun || _tabTimer){ cap.hidden = true; return; }
+    // The Timer tab already shows a clock the size of a house — and inside the
+    // War Room shell, the shell's own floating timer shows it on every tab.
+    if (!tmrRun || _tabTimer || window.parent !== window){ cap.hidden = true; return; }
     cap.hidden = false;
     const over = tmrRunOver();
     cap.classList.toggle('over', over);

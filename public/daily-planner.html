@@ -11255,5 +11255,142 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
 })();
 </script>
 
+
+<!-- The running timer, on every tab. Personal keeps the clock and logs the
+     time; this reads the run it saves (personal-timer-run-v1, same origin) and
+     sends Stop / +5 to the Personal frame. Drag it anywhere; − folds it to a
+     pill, ⤢ opens it back up. Where it sits and its size are per device
+     (wr-timer-ui, in sync-client's SKIP_SYNC). -->
+<div id="wrTimer" class="wrt" hidden role="region" aria-label="Running timer">
+  <div class="wrt-big">
+    <div class="wrt-top"><span class="wrt-dot"></span><span class="wrt-lbl" id="wrtLbl">Timing now</span>
+      <button type="button" class="wrt-ic" data-wrt="min" title="Minimize" aria-label="Minimize the timer">–</button></div>
+    <div class="wrt-what" id="wrtWhat"></div>
+    <div class="wrt-clock" id="wrtClock">0:00</div>
+    <div class="wrt-sub" id="wrtSub"></div>
+    <div class="wrt-acts"><button type="button" class="wrt-btn primary" data-wrt="stop">■ Stop and log it</button>
+      <button type="button" class="wrt-btn" data-wrt="add5" id="wrtAdd">+5 min</button></div>
+  </div>
+  <div class="wrt-pill">
+    <span class="wrt-dot"></span><span class="wrt-pname" id="wrtPName"></span><span class="wrt-ptime" id="wrtPTime">0:00</span>
+    <button type="button" class="wrt-ic" data-wrt="max" title="Maximize" aria-label="Maximize the timer">⤢</button>
+    <button type="button" class="wrt-ic stop" data-wrt="stop" title="Stop and log it" aria-label="Stop the timer">■</button>
+  </div>
+</div>
+<style>
+  .wrt { position: fixed; z-index: 9990; left: 0; top: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+         font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif); }
+  .wrt[hidden] { display: none !important; }
+  .wrt-big { width: 330px; max-width: calc(100vw - 24px); box-sizing: border-box; padding: 14px 16px 14px; border-radius: 18px; cursor: grab;
+             background: #FBEFE5; border: 1px solid rgba(240, 126, 40, .35); box-shadow: 0 12px 34px rgba(33, 30, 25, .16), 0 2px 6px rgba(33, 30, 25, .08); }
+  .wrt.min .wrt-big { display: none; }
+  .wrt:not(.min) .wrt-pill { display: none; }
+  .wrt.dragging .wrt-big, .wrt.dragging .wrt-pill { cursor: grabbing; }
+  .wrt-top { display: flex; align-items: center; gap: 7px; }
+  .wrt-dot { width: 8px; height: 8px; border-radius: 50%; background: #F07E28; flex-shrink: 0; animation: wrtPulse 1.6s ease-in-out infinite; }
+  @keyframes wrtPulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .wrt-dot { animation: none; } }
+  .wrt-lbl { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #E0701F; }
+  .wrt-ic { margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: #7a6f63; font: 800 16px/1 inherit; font-family: inherit; cursor: pointer; }
+  .wrt-ic:hover { background: rgba(33, 30, 25, .07); color: #211E19; }
+  .wrt-what { margin-top: 8px; font-size: 15px; font-weight: 700; line-height: 1.3; color: #211E19; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .wrt-clock { margin-top: 4px; font-size: 52px; font-weight: 800; line-height: 1.05; letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: #211E19; }
+  .wrt-sub { font-size: 13px; color: #7a6f63; }
+  .wrt-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .wrt-btn { height: 38px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(33, 30, 25, .12); background: #fff; color: #211E19; font: 700 14px inherit; font-family: inherit; cursor: pointer; }
+  .wrt-btn.primary { background: #F07E28; border-color: #F07E28; color: #fff; }
+  .wrt-btn:hover { filter: brightness(.96); }
+  .wrt-pill { display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 6px 0 14px; border-radius: 999px; cursor: grab;
+              background: #FBEFE5; border: 1px solid rgba(240, 126, 40, .35); box-shadow: 0 8px 24px rgba(33, 30, 25, .16); max-width: min(360px, calc(100vw - 24px)); box-sizing: border-box; }
+  .wrt-pname { min-width: 0; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: #211E19; }
+  .wrt-ptime { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; color: #211E19; }
+  .wrt-pill .wrt-ic { margin-left: 0; }
+  .wrt-pill .wrt-ic:first-of-type { margin-left: auto; }
+  .wrt-ic.stop { color: #E0701F; font-size: 13px; }
+  .wrt.over .wrt-big, .wrt.over .wrt-pill { border-color: rgba(214, 75, 62, .5); }
+</style>
+<script>
+(function () {
+  const KEY = 'personal-timer-run-v1', UI = 'wr-timer-ui';
+  const el = document.getElementById('wrTimer');
+  if (!el) return;
+  const $ = id => document.getElementById(id);
+  let ui = { x: null, y: null, min: window.innerWidth < 600 };
+  try { const u = JSON.parse(localStorage.getItem(UI) || 'null'); if (u && typeof u === 'object') ui = Object.assign(ui, u); } catch (e) {}
+  const saveUi = () => { try { localStorage.setItem(UI, JSON.stringify(ui)); } catch (e) {} };
+  let run = null, lastRaw = null;
+  const read = () => {
+    let raw = null;
+    try { raw = localStorage.getItem(KEY); } catch (e) {}
+    if (raw === lastRaw) return;
+    lastRaw = raw;
+    try { run = raw ? JSON.parse(raw) : null; } catch (e) { run = null; }
+    if (run && !(run.startedAt > 0)) run = null;
+    paint(true);
+  };
+  const clock = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+  function place(){
+    const r = el.getBoundingClientRect(), w = r.width || 330, h = r.height || 200;
+    let x = ui.x == null ? window.innerWidth - w - 20 : ui.x, y = ui.y == null ? window.innerHeight - h - 20 : ui.y;
+    x = Math.max(8, Math.min(x, window.innerWidth - w - 8)); y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+  }
+  function paint(full){
+    if (!run) { el.hidden = true; return; }
+    const wasHidden = el.hidden;
+    el.hidden = false;
+    el.classList.toggle('min', !!ui.min);
+    const left = run.until ? Math.max(0, (run.until - Date.now()) / 1000) : null;
+    const t = left != null ? clock(left) : clock((Date.now() - run.startedAt) / 1000);
+    $('wrtClock').textContent = t; $('wrtPTime').textContent = t + (left != null ? ' left' : '');
+    if (full || wasHidden) {
+      const name = run.taskName || run.label || 'Timer';
+      $('wrtWhat').textContent = name; $('wrtPName').textContent = name;
+      $('wrtSub').textContent = (run.label || '') + (run.until ? (run.label ? ' · ' : '') + 'counting down' : '');
+      $('wrtAdd').hidden = !run.until;
+      place();
+    }
+  }
+  function send(action){
+    const f = document.getElementById('todosFrame');
+    const post = () => { try { f && f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:timer', action }, '*'); } catch (e) {} };
+    // Splitting a multi-project session happens on a sheet in Personal: go there.
+    const needsPersonal = action === 'stop' && run && Array.isArray(run.projs) && run.projs.length > 1;
+    const unloaded = !f || !f.src || f.src === 'about:blank' || !f.src.includes('personal-todos.html');
+    if ((needsPersonal || unloaded) && typeof switchTab === 'function') { try { switchTab('todos'); } catch (e) {} }
+    post();
+    // Personal still loading: ask again until the clock has stopped (or give up).
+    if (action === 'stop') { let n = 0; const again = setInterval(() => { read(); if (!run || ++n > 12) { clearInterval(again); return; } post(); }, 700); }
+  }
+  el.addEventListener('click', e => {
+    const b = e.target.closest ? e.target.closest('[data-wrt]') : null;
+    if (!b || moved) return;
+    const a = b.getAttribute('data-wrt');
+    if (a === 'min' || a === 'max') { ui.min = a === 'min'; saveUi(); paint(true); return; }
+    send(a);
+  });
+  // Drag by anything that isn't a button.
+  let drag = null, moved = false;
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) { moved = false; return; }
+    const r = el.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
+    moved = false;
+    try { el.setPointerCapture(e.pointerId); } catch (x) {}
+  });
+  el.addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (!moved && Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) < 4) return;
+    moved = true; el.classList.add('dragging');
+    ui.x = e.clientX - drag.dx; ui.y = e.clientY - drag.dy; place();
+  });
+  const end = () => { if (!drag) return; drag = null; el.classList.remove('dragging'); if (moved) { const r = el.getBoundingClientRect(); ui.x = r.left; ui.y = r.top; saveUi(); setTimeout(() => { moved = false; }, 0); } };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  window.addEventListener('resize', () => { if (!el.hidden) place(); });
+  window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) read(); });
+  setInterval(() => { read(); if (run) paint(false); }, 1000);
+  read();
+})();
+</script>
 </body>
 </html>
