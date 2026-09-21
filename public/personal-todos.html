@@ -17593,6 +17593,7 @@ const VOICE = {
     };
     if (o.agendaDate) meta.agendaDate = o.agendaDate;
     if (o.daily) meta.daily = true;
+    if (o.journal) meta.journal = true;
     if (o.event) meta.event = o.event;
     const b = writeBatch(db);
     b.set(ref, meta);
@@ -17725,6 +17726,9 @@ const VOICE = {
       if (sc === _ntEls.doc) sc.scrollTop = 0; else window.scrollTo(0, 0);
     }
     ntRenderAll();
+    if (!o.focus && !o.line && m && m.journal && !m.trashed) {
+      if (_ntBodyLoaded) setTimeout(() => ntJournalToday(), 0); else _ntPendingFocus = 'journal';
+    }
     if (o.focus === 'title') setTimeout(() => { try { _ntEls.title.focus(); } catch {} }, 0);
     else if (o.focus === 'empty') { if (_ntBodyLoaded) setTimeout(() => ntFocusFirstEmpty(), 0); else _ntPendingFocus = 'empty'; }
     if (o.line) { if (_ntBodyLoaded) setTimeout(() => ntRevealTaskLine(o.line), 0); else _ntPendingLine = o.line; }
@@ -17768,6 +17772,7 @@ const VOICE = {
             // commits that were waiting on the body can run.
             try { ntPdelLineBack('apply'); ntPdelApplyPutsOpen(); ntPdelKick(); } catch (e) { console.warn('[notes] pdel load', e); }
             if (_ntPendingFocus === 'empty') { _ntPendingFocus = null; setTimeout(() => ntFocusFirstEmpty(), 0); }
+            if (_ntPendingFocus === 'journal') { _ntPendingFocus = null; setTimeout(() => ntJournalToday(), 0); }
             if (_ntPendingLine) { const l = _ntPendingLine; _ntPendingLine = null; setTimeout(() => ntRevealTaskLine(l), 60); }
             // A title typed while loading. Not under the banner: ntMarkDirty
             // would re-draft a behind draft with the newer rev.
@@ -18069,6 +18074,57 @@ const VOICE = {
       // would overwrite another device's agenda. A random id at worst duplicates.
       return { id: null, existing: false };
     }
+  }
+  // ---- the Journal: one note, a section per day ----
+  const NT_JDAY = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Z][a-z]+ \d{1,2}, \d{4}$/;
+  function ntJournalLabel(ds){ return ntDay(ds, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }); }
+  function ntJournalNote(){
+    const j = [...ntNotes.values()].filter(n => n && n.journal && !n.trashed)
+      .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    return j[0] || null;
+  }
+  function ntJournalOpen(){ const m = ntOpenId ? ntNotes.get(ntOpenId) : null; return !!(m && m.journal); }
+  async function ntOpenJournal(){
+    const hit = ntJournalNote();
+    if (hit) { ntOpenDoc(hit.id); return; }
+    if (_ntOpening) return;
+    _ntOpening = 'journal';
+    try {
+      const c = await ntClaimId('journal');
+      if (c.existing) { const m = ntNotes.get(c.id); if (m) m.journal = true; ntOpenDoc(c.id); return; }
+      const cat = (ntCats.find(x => !x.builtin && String(x.label || '').trim().toLowerCase() === 'journal') || {}).id || '';
+      const nid = ntCreate({ id: c.id || undefined, title: 'Journal', category: cat, journal: true,
+        html: '<h2>' + escHtml(ntJournalLabel(todayKey())) + '</h2><p><br></p>' });
+      ntOpenDoc(nid);
+    } finally { _ntOpening = null; }
+  }
+  // Today's heading: found, or put in on top of the other days. The first
+  // time each day, the days before fold away. The cursor lands at the end of
+  // today's section.
+  function ntJournalToday(){
+    if (!_ntEls || !_ntBodyLoaded || !ntJournalOpen()) return;
+    const ed = _ntEls.editor, label = ntJournalLabel(todayKey());
+    const days = [...ed.children].filter(el => el.nodeName === 'H2' && NT_JDAY.test(el.textContent.replace(/\s+/g, ' ').trim()));
+    let h = days.find(x => x.textContent.replace(/\s+/g, ' ').trim() === label);
+    if (!h) {
+      h = document.createElement('h2');
+      h.textContent = label;
+      const p = document.createElement('p');
+      p.innerHTML = '<br>';
+      if (days[0]) days[0].before(h); else ed.prepend(h);
+      h.after(p);
+      days.forEach(x => x.setAttribute('data-collapsed', '1'));
+      ntApplyFolds();
+      ntAfterMutation();
+      try { ntRenderOutline(); } catch {}
+    } else if (h.hasAttribute('data-collapsed')) { ntToggleFold(h, false); }
+    // The end of today's section: the last block before the next heading.
+    let last = h, n = h.nextElementSibling;
+    while (n && !/^H[12]$/.test(n.nodeName)) { last = n; n = n.nextElementSibling; }
+    if (last === h) { const p = document.createElement('p'); p.innerHTML = '<br>'; h.after(p); last = p; ntAfterMutation(); }
+    const tgt = /^(UL|OL)$/.test(last.nodeName) ? (last.lastElementChild || last) : last;
+    try { ed.focus({ preventScroll: true }); ntCaretIn(tgt, true); ntSaveRange(); } catch {}
+    try { h.scrollIntoView({ block: 'start' }); } catch {}
   }
   async function ntOpenDaily(ds){
     const hit = ntFindDaily(ds);
@@ -20614,6 +20670,7 @@ const VOICE = {
       + '<div class="nt-navg">'
       + ntNavItemHTML('all', 'All notes', c.all, { icon: NT_SVG.doc })
       + ntNavItemHTML('today', tmrRun ? 'Today · timing' : 'Today', ntTodayCount(), { icon: NT_SVG.clock })
+      + `<button class="nt-navi${ntJournalOpen() ? ' on' : ''}" type="button" data-nt-act="journal" title="Your journal — one note, a section for each day">${NT_SVG.book}<span class="tx">Journal</span></button>`
       + ntNavItemHTML('tasks', 'All tasks', ntOpenTaskCount(), { icon: NT_SVG.task })
       + ntNavItemHTML('prio', 'Priorities', ntPrioCount(), { icon: NT_SVG.star })
       + ntNavItemHTML('agenda', 'Agenda', c.agenda, { icon: NT_SVG.cal })
@@ -20658,7 +20715,8 @@ const VOICE = {
   function ntPopNav(anchor){
     const c = ntCounts();
     const it = (key, label, n, color, icon, sub) => `<button class="nt-pop-i${sub ? ' sub' : ''}${ntFilter === key ? ' on' : ''}" type="button" data-np-nav="${ntEsc(key)}"${color ? ` style="--c:${ntEsc(color)}"` : ''}>${color ? '<span class="d"></span>' : (icon || '')}${escHtml(label)}${n ? `<span class="k">${n}</span>` : ''}</button>`;
-    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('today', 'Today', ntTodayCount(), '', NT_SVG.clock) + it('tasks', 'All tasks', ntOpenTaskCount(), '', NT_SVG.task) + it('prio', 'Priorities', ntPrioCount(), '', NT_SVG.star) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
+    let h = it('all', 'All notes', c.all, '', NT_SVG.doc) + it('today', 'Today', ntTodayCount(), '', NT_SVG.clock)
+      + `<button class="nt-pop-i" type="button" data-np-journal="1">${NT_SVG.book}Journal</button>` + it('tasks', 'All tasks', ntOpenTaskCount(), '', NT_SVG.task) + it('prio', 'Priorities', ntPrioCount(), '', NT_SVG.star) + it('agenda', 'Agenda', c.agenda, '', NT_SVG.cal);
     if (c.pinned) h += it('pinned', 'Pinned', c.pinned, '', NT_SVG.pin);
     h += '<div class="nt-pop-h">Categories</div>';
     ntCats.filter(x => !x.parent).forEach(x => {
@@ -22093,6 +22151,7 @@ const VOICE = {
     if (pw) { ntLayout().page = pw.getAttribute('data-np-page'); ntSaveLayout(); ntPopClose(); ntApplyLayout(); return; }
     const sla = t.closest('[data-np-slash]');
     if (sla) { ntSlashApply(sla.getAttribute('data-np-slash')); return; }
+    if (t.closest('[data-np-journal]')) { ntPopClose(); ntOpenJournal(); return; }
     const nav = t.closest('[data-np-nav]');
     if (nav) { const was = ntFilter; ntPopClose(); ntFilter = nav.getAttribute('data-np-nav'); _ntDelArm = null; _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFilterPicked(was); return; }
     // All tasks' filter: one value per chip. The open row closes (it may
@@ -24096,6 +24155,7 @@ const VOICE = {
   NT_SVG.expand = NT_I('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>', 2.2);
   NT_SVG.collapse = NT_I('<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>', 2.2);
   NT_SVG.trash = NT_I('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', 2);
+  NT_SVG.book = NT_I('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>', 2.2);
   NT_SVG.clock = NT_I('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>', 2.2);
 
   // ---- writing mode: the page takes the whole screen ----
@@ -24598,6 +24658,7 @@ const VOICE = {
     switch (act) {
       case 'new': ntNew(); break;
       case 'daily': ntOpenDaily(todayKey()); break;
+      case 'journal': ntOpenJournal(); break;
       case 'back': ntFlush(); ntPopClose(); ntScreen = 'lib'; ntRenderAll(); window.scrollTo(0, 0); break;
       case 'cat': ntPopCat(el); break;
       case 'undate':
