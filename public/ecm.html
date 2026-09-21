@@ -7658,7 +7658,7 @@ function _wireDrawer(row, r, onCollapse){
     // Drawer-level Acknowledge / Un-ack buttons
     row.querySelectorAll('[data-ack]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      handleAck(r.id);
+      _ackAndNext(r.id);
     }));
     // "Ack as <selected>" — reads the adjacent dropdown's value so the user
     // can ack on someone else's behalf without switching identity.
@@ -7666,7 +7666,7 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       const sel = row.querySelector('.ack-as-select');
       const pickedName = sel ? sel.value.trim() : '';
-      handleAck(r.id, pickedName || '');
+      _ackAndNext(r.id, pickedName || '');
     }));
     row.querySelectorAll('[data-unack]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -8597,6 +8597,30 @@ async function handleAck(rowId, nameOverride){
   render();
   try { await window._ecmAcks.ackRow(rowId, name, '', owner); }
   catch (e) { console.error('ack failed', e); toast('Couldn\'t save the acknowledgement — try again.', 'err'); }
+}
+// Review → Needs ack: acknowledging the task open in the side panel moves the
+// panel to the next one in the list (the one below; above when it was the
+// last). Nothing left → the panel closes. Elsewhere it's a plain ack.
+function _ackAndNext(rowId, nameOverride){
+  const id = String(rowId);
+  const advance = currentView === 'notif' && _ackTab === 'needs' && isExpandedRow(rowId);
+  let next = null;
+  if (advance) {
+    const ids = [...document.querySelectorAll('#list tr[data-ack-row]')].map(tr => tr.getAttribute('data-ack-row'));
+    const i = ids.indexOf(id);
+    if (i >= 0) next = ids[i + 1] || ids[i - 1] || null;
+  }
+  handleAck(rowId, nameOverride);
+  if (!advance) return;
+  if (next && rows.some(r => String(r.id) === next && needsAck(r))) {
+    expandedId = next;
+    render();
+    try { const tr = document.querySelector('#list tr[data-ack-row="' + (window.CSS && CSS.escape ? CSS.escape(next) : next) + '"]'); if (tr) tr.scrollIntoView({ block: 'nearest' }); } catch {}
+  } else {
+    expandedId = null;
+    render();
+    toast('All caught up — nothing left to acknowledge.', 'ok');
+  }
 }
 async function handleUnack(rowId){
   const rr = rows.find(x => String(x.id) === String(rowId));
@@ -10181,6 +10205,7 @@ function renderAcknowledge(){
     e.stopPropagation();
     // Same verification popup as ack-on-touch — check the program/data
     // (and fix it inline) before claiming, instead of a blind one-click ack.
+    _ackPromptAdvance = true;   // from the list's button: may move the panel on
     openAckPrompt(b.getAttribute('data-ack-now'));
   }));
   list.querySelectorAll('[data-ack-undo]').forEach(b => b.addEventListener('click', (e) => {
@@ -12835,6 +12860,7 @@ document.addEventListener('focusout', () => {
   }, 30);
 }, true);
 
+let _ackPromptAdvance = false;
 function openAckPrompt(rowId){
   const r = rows.find(x => String(x.id) === String(rowId));
   if (!r) return;
@@ -12950,6 +12976,7 @@ function _wireAckPromptFields(r){
   });
 }
 function _closeAckPrompt(snooze){
+  _ackPromptAdvance = false;   // only the list button's own Yes moves on (read before closing)
   const bd = document.getElementById('ackPromptBackdrop');
   if (bd) { bd.classList.remove('show'); bd.setAttribute('aria-hidden', 'true'); }
   if (snooze && _ackPromptRowId) _ackPromptSnoozed.add(_ackPromptRowId);
@@ -12962,8 +12989,10 @@ function _closeAckPrompt(snooze){
   const close = document.getElementById('ackPromptClose');
   if (yes) yes.addEventListener('click', () => {
     const id = _ackPromptRowId;
+    const adv = _ackPromptAdvance;
+    _ackPromptAdvance = false;
     _closeAckPrompt(false);
-    if (id) handleAck(id);
+    if (id) { if (adv) _ackAndNext(id); else handleAck(id); }   // ack-on-touch: you're mid-edit, stay put
   });
   if (no) no.addEventListener('click', () => _closeAckPrompt(true));
   const del = document.getElementById('ackPromptDelete');
