@@ -4102,6 +4102,12 @@
   /* Images in a note */
   .nt-editor img { display: block; max-width: 100%; max-height: 520px; height: auto; margin: 6px 0; border-radius: 10px; border: 1px solid var(--border); background: var(--fill); }
   .nt-editor img:hover { box-shadow: 0 0 0 3px var(--accent-soft); }
+  .nt-editor img { cursor: pointer; }
+  .nt-editor img.nt-img-on { box-shadow: 0 0 0 3px var(--accent); }
+  .nt-imgbar { position: fixed; z-index: 80; display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface, #fff); border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(0, 0, 0, .16); }
+  .nt-imgbar[hidden] { display: none; }
+  .nt-imgbar button { height: 28px; min-width: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: none; font: 700 12.5px var(--font-family); color: var(--ink); cursor: pointer; white-space: nowrap; }
+  .nt-imgbar button:hover { background: var(--fill); }
   /* Past due / due today, on top of Notes */
   .nt-duebar { flex: 0 0 auto; margin: 0 0 10px; min-width: 0; }
   /* The pane stacks the bar over the shell (it was a row: the bar would sit beside it). */
@@ -21781,7 +21787,8 @@ const VOICE = {
       const html = cd.getData('text/html'), text = cd.getData('text/plain');
       // A screenshot, or a copied image/file: upload it. Text that came with
       // it (Word, Docs) wins — that's a paste of words, with a picture of them.
-      const fl = (cd.files && cd.files.length) ? [...cd.files] : [];
+      let fl = (cd.files && cd.files.length) ? [...cd.files] : [];
+      if (!fl.length) { try { fl = [...(cd.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean); } catch {} }
       if (fl.length && !String(text || '').trim()) { ntNoteAttach(fl); return; }
       if (!html && !text) return;
       const rl = ntInsertClean(html ? ntSanitize(html) : '', text);
@@ -21794,22 +21801,47 @@ const VOICE = {
     ed.addEventListener('copy', e => { ntUnfoldForDelete(null); ntNoteClip(e, false); });
     ed.addEventListener('dragstart', () => { _ntDragInside = true; ntUnfoldForDelete(null); ntNoteClip(null, true); });
     ed.addEventListener('dragend', () => { _ntDragInside = false; });
-    ed.addEventListener('drop', e => {
-      if (_ntDragInside) { _ntDragInside = false; setTimeout(ntAfterMutation, 0); return; }
-      e.preventDefault();
+    // Files dragged in from outside (a screenshot, Finder): say yes, or the
+    // browser may refuse the drop or open the file instead.
+    const ntDropFiles = dt => {
+      if (!dt) return [];
+      if (dt.files && dt.files.length) return [...dt.files];
+      try { return [...(dt.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean); } catch { return []; }
+    };
+    ed.addEventListener('dragover', e => {
       const dt = e.dataTransfer;
+      if (!dt || [...(dt.types || [])].indexOf('Files') < 0) return;
+      e.preventDefault();
+      try { dt.dropEffect = 'copy'; } catch {}
+    });
+    ed.addEventListener('drop', e => {
+      const dt = e.dataTransfer, files = ntDropFiles(dt);
+      if (_ntDragInside && !files.length) { _ntDragInside = false; setTimeout(ntAfterMutation, 0); return; }
+      _ntDragInside = false;
+      e.preventDefault();
       if (!dt) return;
       const html = dt.getData('text/html'), text = dt.getData('text/plain');
       const pos = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
       if (pos && ntInEditor(pos.startContainer)) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(pos); }
       else ntRestoreRange();
       // Files dropped from the desktop go in where they land.
-      if (dt.files && dt.files.length) { ntSaveRange(); ntNoteAttach([...dt.files]); return; }
+      if (files.length) { ntSaveRange(); ntNoteAttach(files, ntSpotNow()); return; }
       if (!html && !text) return;
       const rl = ntInsertClean(html ? ntSanitize(html) : '', text);
       ntAfterMutation();
       ntPdelAfterPaste(rl || []);
     });
+    // An image: click it for the bar (move / remove).
+    ed.addEventListener('click', e => {
+      const t = e.target;
+      if (t && t.nodeName === 'IMG' && ntInEditor(t)) ntImgBarShow(t); else ntImgBarHide();
+    });
+    ed.addEventListener('keydown', e => {
+      if (!_ntImgSel) return;
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); e.stopImmediatePropagation(); ntImgMove(e.key === 'ArrowUp' ? -1 : 1); return; }
+      if (e.key === 'Escape') { e.stopImmediatePropagation(); ntImgBarHide(); return; }
+      ntImgBarHide();
+    }, true);
     const editing = on => {
       if (on) { document.body.classList.add('nt-editing'); return; }
       setTimeout(() => {
@@ -22717,20 +22749,161 @@ const VOICE = {
   // remote bodies wait in the banner instead of replacing the editor.
 
   // ---- images and files in a note ----
+  // The image bar: fixed, outside the editor (so never saved), placed over
+  // the image's top-right corner and kept there while things scroll.
+  let _ntImgSel = null, _ntImgBar = null;
+  function ntImgBarEl(){
+    if (_ntImgBar && _ntImgBar.isConnected) return _ntImgBar;
+    const b = document.createElement('div');
+    b.className = 'nt-imgbar'; b.hidden = true; b.setAttribute('role', 'toolbar'); b.setAttribute('aria-label', 'Image');
+    b.innerHTML = '<button type="button" data-nt-img="up" title="Move up (⌥↑)" aria-label="Move the image up">↑ Up</button>'
+      + '<button type="button" data-nt-img="down" title="Move down (⌥↓)" aria-label="Move the image down">↓ Down</button>'
+      + '<button type="button" data-nt-img="del" title="Remove the image" aria-label="Remove the image">🗑</button>';
+    b.addEventListener('mousedown', e => e.preventDefault());   // the editor keeps its caret
+    b.addEventListener('click', e => {
+      const x = e.target.closest && e.target.closest('[data-nt-img]');
+      if (!x) return;
+      const a = x.getAttribute('data-nt-img');
+      if (a === 'del') ntImgDelete(); else ntImgMove(a === 'up' ? -1 : 1);
+    });
+    document.body.appendChild(b);
+    window.addEventListener('scroll', () => { if (_ntImgSel) ntImgBarPlace(); }, true);
+    window.addEventListener('resize', () => { if (_ntImgSel) ntImgBarPlace(); });
+    document.addEventListener('mousedown', e => {
+      if (!_ntImgSel) return;
+      const t = e.target;
+      if (t === _ntImgSel || (t && t.closest && t.closest('.nt-imgbar'))) return;
+      ntImgBarHide();
+    }, true);
+    return (_ntImgBar = b);
+  }
+  function ntImgBarShow(img){
+    if (_ntImgSel && _ntImgSel !== img) _ntImgSel.classList.remove('nt-img-on');
+    _ntImgSel = img;
+    img.classList.add('nt-img-on');
+    ntImgBarEl().hidden = false;
+    ntImgBarPlace();
+  }
+  function ntImgBarHide(){
+    if (_ntImgSel) _ntImgSel.classList.remove('nt-img-on');
+    _ntImgSel = null;
+    if (_ntImgBar) _ntImgBar.hidden = true;
+  }
+  function ntImgBarPlace(){
+    const img = _ntImgSel, b = _ntImgBar;
+    if (!b) return;
+    if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
+    const r = img.getBoundingClientRect(), bw = b.offsetWidth || 150, bh = b.offsetHeight || 34;
+    // Below the note's formatting bar (it sticks to the top as you scroll).
+    let floor = 8;
+    try { const tb = _ntEls.toolbar && _ntEls.toolbar.getBoundingClientRect(); if (tb && tb.height && tb.bottom > 0) floor = tb.bottom + 6; } catch {}
+    const top = Math.max(floor, Math.min(r.top + 8, window.innerHeight - bh - 8));
+    if (r.bottom < floor + bh || r.top > window.innerHeight - 20) { b.style.visibility = 'hidden'; return; }
+    b.style.visibility = '';
+    const left = Math.max(8, Math.min(r.right - bw - 8, window.innerWidth - bw - 8));
+    b.style.top = top + 'px'; b.style.left = left + 'px';
+  }
+  // The editor's top-level block holding the image.
+  function ntImgBlock(img){
+    const ed = _ntEls.editor;
+    let b = img;
+    while (b && b.parentNode !== ed) b = b.parentNode;
+    return b;
+  }
+  function ntImgMove(dir){
+    const img = _ntImgSel;
+    if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
+    const ed = _ntEls.editor, blk = ntImgBlock(img);
+    if (!blk) return;
+    // Sharing its line (text, a list item): step out onto a line of its own first.
+    const alone = blk.nodeName === 'P' && !blk.textContent.trim() && blk.querySelectorAll('img').length === 1;
+    if (blk !== img && !alone) {
+      const p = document.createElement('p');
+      p.appendChild(img);
+      ed.insertBefore(p, dir < 0 ? blk : blk.nextSibling);
+    } else {
+      const sib = dir < 0 ? blk.previousElementSibling : blk.nextElementSibling;
+      if (!sib) { ptToast(dir < 0 ? 'Already at the top' : 'Already at the bottom'); return; }
+      ed.insertBefore(blk, dir < 0 ? sib : sib.nextSibling);
+    }
+    ntAfterMutation();
+    try { img.scrollIntoView({ block: 'nearest' }); } catch {}
+    ntImgBarShow(img);
+  }
+  // Put an image's block where the spot is. In a list: the list splits after
+  // the line holding the caret. An empty line: the image takes its place. A
+  // line with text: before it when the caret is at its very start, else after.
+  function ntImgPlace(blk, spot){
+    const ed = _ntEls.editor;
+    const node = spot && ntInEditor(spot.startContainer) ? spot.startContainer : null;
+    let top = node;
+    while (top && top.parentNode !== ed) top = top.parentNode;
+    if (!top || top === ed) { ed.appendChild(blk); return; }
+    if (/^(UL|OL)$/.test(top.nodeName)) {
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      let item = el && el.closest ? el.closest('li') : null;
+      while (item && item.parentElement !== top) item = item.parentElement ? item.parentElement.closest('li') : null;
+      if (!item) { top.after(blk); return; }
+      const kids = [...top.children], rest = kids.slice(kids.indexOf(item) + 1);
+      top.after(blk);
+      if (rest.length) {
+        const nl = top.cloneNode(false);
+        nl.removeAttribute('id');
+        if (top.nodeName === 'OL') nl.setAttribute('start', String((+top.getAttribute('start') || 1) + kids.length - rest.length));
+        rest.forEach(x => nl.appendChild(x));
+        blk.after(nl);
+      }
+      return;
+    }
+    if (!top.textContent.trim() && !top.querySelector('img, hr')) { top.replaceWith(blk); return; }
+    let atStart = false;
+    try { const r = document.createRange(); r.setStart(top, 0); r.setEnd(spot.startContainer, spot.startOffset); atStart = !r.toString().trim(); } catch {}
+    if (atStart) top.before(blk); else top.after(blk);
+  }
+  function ntImgDelete(){
+    const img = _ntImgSel;
+    if (!img || !img.isConnected || !_ntEls || !ntInEditor(img)) { ntImgBarHide(); return; }
+    const blk = ntImgBlock(img);
+    ntImgBarHide();
+    if (blk && blk !== img && blk.nodeName === 'P' && !blk.textContent.trim() && blk.querySelectorAll('img').length === 1) blk.remove();
+    else img.remove();
+    ntAfterMutation();
+    ptToast('Image removed');
+  }
   let _ntNoteFile = null;
   function ntNoteFileInput(){
     if (_ntNoteFile && _ntNoteFile.isConnected) return _ntNoteFile;
     const i = document.createElement('input');
     i.type = 'file'; i.multiple = true; i.hidden = true; i.tabIndex = -1;
-    i.addEventListener('change', () => { const fs = [...(i.files || [])]; i.value = ''; ntNoteAttach(fs); });
+    i.addEventListener('change', () => { const fs = [...(i.files || [])]; i.value = ''; ntNoteAttach(fs, _ntPickAt); _ntPickAt = null; });
     document.body.appendChild(i);
     return (_ntNoteFile = i);
   }
-  function ntNotePick(){ ntSaveRange(); ntNoteFileInput().click(); }
-  async function ntNoteAttach(files){
+  let _ntPickAt = null;   // where the caret was when the file picker opened
+  function ntNotePick(){
+    ntSaveRange();
+    _ntPickAt = (_ntRange && ntInEditor(_ntRange.startContainer)) ? _ntRange.cloneRange() : null;
+    ntNoteFileInput().click();
+  }
+  // The spot is a live range taken now — the caret, the drop point, or where
+  // the picker opened — so an upload's wait can't move it; failing that, the
+  // end of the note, never the top.
+  function ntSpotNow(){
+    const s = ntSel();
+    if (s && ntInEditor(s.anchorNode)) return s.getRangeAt(0).cloneRange();
+    return (_ntRange && ntInEditor(_ntRange.startContainer)) ? _ntRange.cloneRange() : null;
+  }
+  function ntSpotSelect(spot){
+    const ed = _ntEls.editor, s = window.getSelection();
+    try { ed.focus({ preventScroll: true }); } catch {}
+    s.removeAllRanges();
+    if (spot && ntInEditor(spot.startContainer)) { s.addRange(spot); return; }
+    const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); s.addRange(r);
+  }
+  async function ntNoteAttach(files, at){
     if (!_ntEls || !ntOpenId || !files || !files.length) return;
     const nid = ntOpenId, list = [...files].slice(0, 10);
-    ntSaveRange();
+    let spot = (at && ntInEditor(at.startContainer)) ? at : ntSpotNow(), last = null;
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
       if (f.size > NT_UP_MAX) { ptToast('“' + (f.name || 'That file') + '” is over 10 MB — it stays out'); continue; }
@@ -22745,15 +22918,28 @@ const VOICE = {
       // Left the note while it uploaded: never drop it into another one.
       if (ntOpenId !== nid || !_ntEls) { ptToast('Uploaded, but that note was closed — attach it again there'); return; }
       const name = String(r.name || 'file');
-      const html = (r.image && ntNoteImgOk(r.url))
-        ? '<p><img src="' + ntEsc(r.url) + '" alt="' + ntEsc(name.slice(0, 200)) + '"></p><p><br></p>'
-        : '<p><a href="' + ntEsc(r.url) + '">📎 ' + escHtml(name) + '</a></p>';
-      try { _ntEls.editor.focus({ preventScroll: true }); } catch {}
-      ntRestoreRange();
-      const rl = ntInsertClean(ntSanitize(html), r.image ? '' : name);
-      ntSaveRange();
-      ntAfterMutation();
-      ntPdelAfterPaste(rl || []);
+      if (r.image && ntNoteImgOk(r.url)) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = ntSanitize('<p><img src="' + ntEsc(r.url) + '" alt="' + ntEsc(name.slice(0, 200)) + '"></p>');
+        const blk = tmp.firstElementChild;
+        if (!blk) continue;
+        // More than one: each goes right after the one before.
+        if (last && last.isConnected && ntInEditor(last)) last.after(blk); else ntImgPlace(blk, spot);
+        last = blk;
+        if (!blk.nextElementSibling) { const p = document.createElement('p'); p.innerHTML = '<br>'; blk.after(p); }
+        try { _ntEls.editor.focus({ preventScroll: true }); } catch {}
+        const nx = blk.nextElementSibling;
+        ntCaretIn(/^(UL|OL)$/.test(nx.nodeName) ? (nx.querySelector('li') || nx) : nx, false);
+        ntSaveRange();
+        ntAfterMutation();
+        try { blk.scrollIntoView({ block: 'nearest' }); } catch {}
+      } else {
+        ntSpotSelect(spot);
+        ntExec('insertHTML', ntSanitize('<a href="' + ntEsc(r.url) + '">📎 ' + escHtml(name) + '</a>') + '&nbsp;');
+        ntSaveRange();
+        spot = ntSpotNow();   // the next file goes after this one
+        ntAfterMutation();
+      }
     }
   }
   // ---- task details: the box, and the sheet that holds only it ----
