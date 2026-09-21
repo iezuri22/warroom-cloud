@@ -16369,7 +16369,7 @@ const VOICE = {
       // The due badge rides on the title line, so the meta line below keeps
       // the full width for category · note · schedule.
       + `<span class="m"><span class="top">${pin}<span class="t">${escHtml(t.text || '')}</span>${hasDet ? `<span class="dt" title="Has details" aria-label="Has details">${NT_SVG.detS}</span>` : ''}${due ? `<span class="due ${due.cls}">${escHtml(due.lbl)}</span>` : ''}</span>`
-      + `<span class="s">${cat}${src}<span>${escHtml(when)}</span></span></span>`
+      + `<span class="s">${cat}${src}<span>${escHtml(when)}</span>${opt.added && ntIsDay(String(t.createdAt || '').slice(0, 10)) ? `<span>·</span><span>Added ${escHtml(ntDay(String(t.createdAt).slice(0, 10), { month: 'short', day: 'numeric' }))}</span>` : ''}</span></span>`
       + '</div>' + (wide ? acts2 + '</div>' + (open ? ntTaskDetHTML(t, det) : '') : strip);
   }
   // An open row's details: its own block, above the actions, so the actions
@@ -16685,9 +16685,20 @@ const VOICE = {
     // A remembered filter never hides tasks silently: the list says so, first.
     if (tfOn && _ntAllShown) h = `<div class="nt-tf-line">Showing ${_ntAllShown} of ${_ntAllTotal} · <button class="nt-tf-clr" type="button" data-nt-tfclear>Clear</button></div>` + h;
     h = ntPdelNoticeHTML() + h;   // a delete this device owes and couldn't send comes first
-    NT_ALL_GROUPS.forEach(([k, label, color]) => {
-      if (G[k].length) h += ntAllGroupHTML(k, label, color || ntCatColor('ecm'), G[k].length, G[k].map(row).join(''));
-    });
+    const srt = ntTaskSort();
+    if (srt === 'when') {
+      NT_ALL_GROUPS.forEach(([k, label, color]) => {
+        if (G[k].length) h += ntAllGroupHTML(k, label, color || ntCatColor('ecm'), G[k].length, G[k].map(row).join(''));
+      });
+    } else if (open.length) {
+      // One list. Due date: soonest (overdue) first, undated last, newest
+      // among equals; the date is the one the row's badge shows.
+      const dk = t => ntAllBadgeDay(t) || '9999-99-99';
+      const list = open.slice().sort(srt === 'due' ? (a, b) => dk(a).localeCompare(dk(b)) || ca(b).localeCompare(ca(a))
+        : srt === 'new' ? (a, b) => ca(b).localeCompare(ca(a)) : (a, b) => ca(a).localeCompare(ca(b)));
+      const rowS = t => ntTaskRowHTML(t, { cat: true, all: c, place: P.get(t.id), expand: true, added: srt !== 'due' });
+      h += ntAllGroupHTML('sorted', srt === 'due' ? 'By due date' : srt === 'new' ? 'Newest first' : 'Oldest first', 'var(--ink-dim)', list.length, list.map(rowS).join(''));
+    }
     if (parked.length) h += ntAllGroupHTML('parked', 'Parked', 'var(--ink-dim)', parked.length, parked.map(ntParkRowHTML).join(''));
     // Emptied by the filter (the search alone finds some): offer to clear it.
     if (!open.length && !parked.length) h += (tfOn && _ntAllTotal)
@@ -16703,6 +16714,13 @@ const VOICE = {
   // sync-client's SKIP_SYNC); the list then says "Showing 12 of 48 · Clear".
   const NT_TF_WHEN = [['late', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['next', 'Next week'], ['later', 'Later'], ['someday', 'Someday'], ['ecm', 'ECM inbox'], ['parked', 'Parked']];
   const NT_TF_SRC = [['note', 'From a note'], ['free', 'Not in a note']];
+  // The order: by when (the groups), or one list by due date, newest or oldest.
+  const NT_TSORT = [['when', 'When (grouped)'], ['due', 'Due date'], ['new', 'Newest first'], ['old', 'Oldest first']];
+  function ntTaskSort(){ let v = 'when'; try { v = localStorage.getItem('pt-nt-tsort') || 'when'; } catch {} return NT_TSORT.some(x => x[0] === v) ? v : 'when'; }
+  function ntPopTaskSort(anchor){
+    const cur = ntTaskSort();
+    ntPopOpen('tfilt', anchor, '<div class="nt-pop-h">Sort</div>' + NT_TSORT.map(([v, l]) => `<button class="nt-pop-i${cur === v ? ' on' : ''}" type="button" data-np-tsort="${v}">${escHtml(l)}</button>`).join(''), { focus: '.nt-pop-i.on' });
+  }
   // The filter in force, checked on every read. What's stored stays as it
   // was: a category that isn't there reads as All — deleted, or not loaded
   // yet on boot (dropping it then would lose a custom category's filter).
@@ -16809,6 +16827,7 @@ const VOICE = {
     const h = tgl + chip('cat', 'Category', 'Filter by category', f.cat != null ? ntCatPath(f.cat) : null, f.cat != null ? ntCatColor(f.cat) : '')
       + (done ? '' : chip('when', 'When', 'Filter by schedule', name(NT_TF_WHEN, f.when), ''))
       + chip('src', 'Source', 'Filter by where it came from', name(NT_TF_SRC, f.src), '')
+      + (done ? '' : chip('sort', 'Sort', 'Sort by due date or when it was added', ntTaskSort() !== 'when' ? name(NT_TSORT, ntTaskSort()) : null, ''))
       + (ntTfOn(f) ? '<button class="nt-chip clr" type="button" data-nt-tfclear title="Show every task"><span aria-hidden="true">×</span>Clear</button>' : '')
       + (ntIsPhone() ? '' : `<button class="nt-chip tgl nt-widebtn${_ntTasksWide ? ' on' : ''}" type="button" data-nt-tfwide aria-pressed="${_ntTasksWide ? 'true' : 'false'}" title="${_ntTasksWide ? 'Back to the list beside your note' : 'Read every task in full, with its actions beside it'}"><span class="tx">${_ntTasksWide ? 'Narrow' : 'Wide'}</span></button>`);
     if (E.filters.dataset.sig !== h) { E.filters.dataset.sig = h; E.filters.innerHTML = h; }
@@ -16816,6 +16835,7 @@ const VOICE = {
   // A chip's values, each with what it would list; a zero is dimmed but
   // still tappable. data-np-tf="dim|value" ('' is General); "dim" alone is All.
   function ntPopTaskFilter(dim, anchor){
+    if (dim === 'sort') { ntPopTaskSort(anchor); return; }
     if (dim !== 'cat' && dim !== 'when' && dim !== 'src') return;
     const cur = ntTaskFilter()[dim], n = ntTaskFacets(dim);
     const it = (v, label, o) => {
@@ -21529,6 +21549,14 @@ const VOICE = {
     if (nav) { const was = ntFilter; ntPopClose(); ntFilter = nav.getAttribute('data-np-nav'); _ntDelArm = null; _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFilterPicked(was); return; }
     // All tasks' filter: one value per chip. The open row closes (it may
     // not be listed any more).
+    const tso = t.closest('[data-np-tsort]');
+    if (tso) {
+      try { localStorage.setItem('pt-nt-tsort', tso.getAttribute('data-np-tsort')); } catch {}
+      ntPopClose(); _ntAllRow = null; _ntAllDelArm = null; ntRenderLib();
+      const ch = _ntEls && _ntEls.filters.querySelector('[data-nt-tfchip="sort"]');
+      if (ch) { try { ch.focus(); } catch {} }
+      return;
+    }
     const tf = t.closest('[data-np-tf]');
     if (tf) {
       const v = tf.getAttribute('data-np-tf'), i = v.indexOf('|'), dim = i < 0 ? v : v.slice(0, i);
