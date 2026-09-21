@@ -797,7 +797,14 @@
   .prog-mn-tog .k { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; background: var(--w08); font-size: 11.5px; font-weight: 700; color: var(--w70) }
   .prog-mn-tog .last { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--w55) }
   .prog-mn-tog .cv { flex-shrink: 0; color: var(--w50) }
-  .prog-mn-foot { display: flex; flex-wrap: wrap; gap: 14px; padding: 4px 12px 10px }
+  .prog-mn-foot { display: flex; flex-wrap: wrap; gap: 16px; padding: 6px 10px 2px }
+  .prog-mn-foot .quiet { color: var(--w55); margin-left: auto }
+  .prog-mn-panel { margin: 2px 0 18px; padding: 8px 8px 10px; border-radius: 12px; border: 1px solid var(--w08); background: var(--w03) }
+  @media (min-width: 1100px) {
+    .prog-mn-panel .mn-doc { column-count: 2; column-gap: 44px }
+    .prog-mn-panel .mn-doc h2, .prog-mn-panel .mn-doc h3, .prog-mn-panel .mn-doc h4 { break-after: avoid; margin-top: 0 }
+    .prog-mn-panel .mn-doc .nl, .prog-mn-panel .mn-doc p, .prog-mn-panel .mn-doc table, .prog-mn-panel .mn-doc pre, .prog-mn-panel .mn-doc blockquote { break-inside: avoid }
+  }
   .prog-mn-list { display: flex; flex-direction: column; gap: 2px; padding: 0 4px }
   .prog-mn-item { border-radius: 10px }
   .prog-mn-item.open { background: var(--w04); border: 1px solid var(--w08) }
@@ -3855,6 +3862,13 @@
     cursor: pointer; transition: all .12s; white-space: nowrap;
   }
   .prog-reorder-btn:hover { color: var(--ink); border-color: var(--w30); background: var(--w08) }
+  .prog-jump { height: 30px; max-width: 220px; padding: 0 28px 0 12px; border-radius: 99px; border: 1px solid var(--w15); -webkit-appearance: none; appearance: none;
+    background: var(--w03) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 11px center;
+    color: var(--w75); font: 800 12px inherit; font-family: inherit; letter-spacing: .2px; cursor: pointer; text-overflow: ellipsis }
+  .prog-jump:hover { color: var(--ink); border-color: var(--w30) }
+  .prog-jump.on { color: var(--ink); border-color: var(--w35); background-color: var(--w08) }
+  .prog-jump option { color: #111; background: #fff }
+  .prog-jump.in-today { flex-shrink: 0; height: 28px }
   .prog-chips {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding: 8px 2px 14px;
@@ -8222,12 +8236,12 @@ function _selOpenRelease(){
   if (_renderDeferred) setTimeout(() => { try { render(); } catch {} }, 0);
 }
 document.addEventListener('mousedown', (e) => {
-  const s = e.target && e.target.closest ? e.target.closest('.drawer select') : null;
+  const s = e.target && e.target.closest ? e.target.closest('.drawer select, select.prog-jump') : null;
   if (s) _selOpen = s; else _selOpenRelease();
 }, true);
 document.addEventListener('keydown', (e) => {
   const s = e.target;
-  if (s && s.tagName === 'SELECT' && s.closest && s.closest('.drawer') && [' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) _selOpen = s;
+  if (s && s.tagName === 'SELECT' && s.closest && (s.closest('.drawer') || s.classList.contains('prog-jump')) && [' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) _selOpen = s;
 }, true);
 // Capture phase: cleared before the field's own change handler saves and renders.
 document.addEventListener('change', (e) => { if (e.target === _selOpen) _selOpen = null; }, true);
@@ -10839,7 +10853,7 @@ async function deleteTranscriptBacklog(id){
 // ---- Meeting notes: the team's Notion notes, read-only ----
 // /api/notion (api/assistant.js, mode=notion) reads the War Room's Notion
 // connection. The owner is signed in; the team link sends x-team-token.
-const _mn = { data: null, loading: false, err: '', prog: '', q: '', sel: '', pages: new Map(), tok: 0 };
+const _mn = { data: null, loading: false, err: '', prog: (() => { try { return localStorage.getItem('ecm-mn-prog') || ''; } catch { return ''; } })(), q: '', sel: '', pages: new Map(), tok: 0 };
 const MN_COLOR = { default: '#9B9A97', gray: '#9B9A97', brown: '#A27763', orange: '#D9730D', yellow: '#CB912F', green: '#448361', blue: '#337EA9', purple: '#9065B0', pink: '#C14C8A', red: '#D44C47' };
 const mnEsc = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const mnUrl = u => { const x = String(u || '').trim(); return /^https:\/\/[^\s"'<>`]{1,2000}$/i.test(x) ? x : ''; };
@@ -10893,6 +10907,16 @@ function mnDay(ds, long){
 }
 const mnColor = c => MN_COLOR[c] || MN_COLOR.default;
 const mnK = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');   // one program however it's spelled
+// Besides a program: '~nodaily' (no Chicago Daily's) or '~client' (client meetings only).
+const mnProgVal = v => (v === '~nodaily' || v === '~client') ? v : mnK(v);
+const mnDaily = n => mnK(n.program) === 'internaldailys' || /^chicago daily/i.test(String(n.title || '').trim());
+const mnClient = n => mnK(n.type) === 'clientmeeting';
+function mnPick(n){
+  if (!_mn.prog) return true;
+  if (_mn.prog === '~nodaily') return !mnDaily(n);
+  if (_mn.prog === '~client') return mnClient(n);
+  return mnK(n.program) === _mn.prog;
+}
 // Programs, one per spelling: the most used name and color, and the count.
 function mnProgs(){
   const m = new Map();
@@ -10909,7 +10933,7 @@ function mnProgs(){
 function mnVisible(){
   const q = _mn.q.trim().toLowerCase();
   return ((_mn.data && _mn.data.notes) || [])
-    .filter(n => (!_mn.prog || mnK(n.program) === _mn.prog) && (!q || [n.title, n.program, n.type, n.summary].join('\n').toLowerCase().includes(q)))
+    .filter(n => mnPick(n) && (!q || [n.title, n.program, n.type, n.summary].join('\n').toLowerCase().includes(q)))
     .sort((a, b) => mnDate(b).localeCompare(mnDate(a)) || String(b.edited).localeCompare(String(a.edited)));
 }
 function renderMeetingNotes(){
@@ -10941,10 +10965,13 @@ function mnPaintList(wrap){
   // The program dropdown: every program with notes, busiest first. Rebuilt
   // only when its options change, so an open dropdown isn't snapped shut.
   const progs = mnProgs(), pm = new Map(progs.map(p => [p.key, p]));
-  if (_mn.data && _mn.prog && !pm.has(_mn.prog)) _mn.prog = '';
+  if (_mn.data && _mn.prog && _mn.prog[0] !== '~' && !pm.has(_mn.prog)) _mn.prog = '';
   const ps = wrap.querySelector('.mn-psel');
   if (ps) {
     const opts = all.length ? `<option value="">All programs · ${all.length}</option>`
+      + `<option value="~nodaily">No Chicago Daily's · ${all.filter(n => !mnDaily(n)).length}</option>`
+      + `<option value="~client">Client meetings only · ${all.filter(mnClient).length}</option>`
+      + '<option disabled>──────────</option>'
       + progs.map(p => `<option value="${mnEsc(p.key)}">${mnEsc(p.name)} · ${p.n}</option>`).join('') : '';
     if (ps.dataset.sig !== opts) { ps.innerHTML = opts; ps.dataset.sig = opts; }
     ps.hidden = !all.length;
@@ -11021,9 +11048,17 @@ function _progMeetingNotesHTML(program){
   const open = _mnProgShown.has(key), last = all[0];
   let h = line(`<b>Meeting notes</b><span class="k">${all.length}</span>`
     + `<span class="last">latest ${mnEsc(mnDay(mnDate(last)))} — ${mnEsc(mnShort(last.title))}</span><span class="cv">${open ? '▾' : '▸'}</span>`, open);
-  if (!open) return h + '</div>';
+  return h + '</div>';
+}
+// What the line opens, full width under the program's two columns.
+function _progMeetingNotesPanelHTML(program){
+  const key = mnK(program);
+  if (!_mnProgShown.has(key) || !_mn.data) return '';
+  const all = _mn.data.notes.filter(n => n.program && mnK(n.program) === key)
+    .sort((a, b) => mnDate(b).localeCompare(mnDate(a)) || String(b.edited).localeCompare(String(a.edited)));
+  if (!all.length) return '';
   const shown = all.slice(0, _mnProgMore.has(key) ? 30 : 6);
-  h += '<div class="prog-mn-list">' + shown.map(n => {
+  let h = '<div class="prog-mn-panel"><div class="prog-mn-list">' + shown.map(n => {
     const on = n.id === _mnProgOpen, ds = mnDate(n), c = on ? _mn.pages.get(n.id) : null, url = mnUrl(n.url);
     return `<div class="prog-mn-item${on ? ' open' : ''}">`
       + `<button type="button" class="prog-mn-row" data-mn-inline="${mnEsc(n.id)}" aria-expanded="${on}" title="${mnEsc(n.summary || n.title)}">`
@@ -11039,7 +11074,8 @@ function _progMeetingNotesHTML(program){
       + '</div>';
   }).join('') + '</div><div class="prog-mn-foot">'
     + (all.length > shown.length ? `<button type="button" class="mn-lnk" data-mn-more="${mnEsc(key)}">Show ${Math.min(all.length, 30) - shown.length} more</button>` : '')
-    + `<button type="button" class="mn-lnk" data-mn-all="${mnEsc(last.program)}">All ${all.length} in Meeting notes →</button></div>`;
+    + `<button type="button" class="mn-lnk" data-mn-all="${mnEsc(all[0].program)}">All ${all.length} in Meeting notes →</button>`
+    + `<button type="button" class="mn-lnk quiet" data-mn-tog="${mnEsc(key)}">Close</button></div>`;
   return h + '</div>';
 }
 // One page's notes, into the shared cache; repaint whichever view shows it.
@@ -11091,7 +11127,8 @@ async function mnFetchPage(id){
   });
   list.addEventListener('change', e => {
     if (currentView !== 'mnotes' || !e.target.classList.contains('mn-psel')) return;
-    _mn.prog = mnK(e.target.value);
+    _mn.prog = mnProgVal(e.target.value);
+    try { localStorage.setItem('ecm-mn-prog', _mn.prog); } catch {}
     const wrap = list.querySelector('.mn-wrap');
     if (wrap) { mnPaintList(wrap); const l = wrap.querySelector('.mn-list'); if (l) l.scrollTop = 0; }
   });
@@ -11750,7 +11787,26 @@ function openProgOrderModal(opts){
     paint();
   });
 }
+// Jump to any program: the saved program order, open counts, ★ on the day's.
+function _progJumpHTML(progs, openCount, starSet, where){
+  const onProg = progs.includes(_progSel);
+  return `<select class="prog-jump${onProg ? ' on' : ''}${where === 'today' ? ' in-today' : ''}" data-prog-jump-sel aria-label="Go to a program" title="Go to a program">`
+    + `<option value=""${onProg ? '' : ' selected'}>${onProg ? 'Programs' : 'Go to program…'}</option>`
+    + progs.map(p => `<option value="${escHtml(p)}"${p === _progSel ? ' selected' : ''}>${starSet && starSet.has(p) ? '★ ' : ''}${escHtml(p)} · ${openCount(p)} open</option>`).join('')
+    + '</select>';
+}
 function _wireProgramShared(list){
+  list.querySelectorAll('[data-prog-jump-sel]').forEach(sel => sel.addEventListener('change', () => {
+    const v = sel.value;
+    if (!v) return;
+    _progSel = v;
+    try { localStorage.setItem('ecm-prog-page', _progSel); } catch {}
+    _progDayKey = '';
+    expandedId = null;
+    _progNotesEditing = false;
+    render();
+    try { list.scrollTop = 0; } catch {}
+  }));
   list.querySelectorAll('[data-prog-order]').forEach(b => b.addEventListener('click', openProgOrderModal));
   list.querySelectorAll('[data-prog-pick]').forEach(b => b.addEventListener('click', () => {
     _progSel = b.getAttribute('data-prog-pick') || '';
@@ -11949,6 +12005,7 @@ function _todayProgramSheetHTML(program){
           ${_progMeetingNotesHTML(program)}
         </div>
       </div>
+      ${_progMeetingNotesPanelHTML(program)}
       ${stages}
     </div>`;
 }
@@ -11988,14 +12045,7 @@ function renderPrograms(){
     <button type="button" class="prog-chip all-chip ${_progSel === '__all__' ? 'active' : ''}" data-prog-pick="__all__">All programs<span class="ct">${totalOpen}</span></button>
     ${todayChip}
     ${ddlChip}
-    ` + progs.map(p => {
-    const c = programColor(p);
-    const active = p === _progSel;
-    const n = openCount(p);
-    const isToday = todayStarSet.has(p);
-    return `<button type="button" class="prog-chip ${active ? 'active' : ''} ${n === 0 ? 'quiet' : ''} ${isToday ? 'is-today' : ''}" data-prog-pick="${escHtml(p)}"
-      style="${active ? `background:${c.bg};border-color:${c.bd};color:${c.fg}` : ''}"${isToday ? ' title="Today\'s focus program"' : ''}>${isToday ? '<span class="today-star">★</span>' : ''}${escHtml(p)}<span class="ct">${n}</span></button>`;
-  }).join('');
+    ${_progJumpHTML(progs, openCount, todayStarSet, 'bar')}`;
   // Chips + a clearly-labeled Reorder button on the right (the old buried
   // "⇅ Order" chip was easy to miss — this is the discoverable entry point
   // to set the program order for chips, filters, and pages).
@@ -12043,6 +12093,7 @@ function renderPrograms(){
             return `<button type="button" class="tp-prog" data-tp-scroll="${escHtml(p)}" style="color:${c.fg}">${escHtml(p)}<span class="ct">${n}</span></button>`;
           }).join('') || `<span class="tp-empty">Nothing dedicated to ${escHtml(vDayLbl)} yet.</span>`}
         </div>
+        ${_progJumpHTML(progs, p => named.filter(r => r.program === p && !_rowClosed(r)).length, new Set(vProgs), 'today')}
         <button type="button" class="tp-edit" data-df-config title="Edit which programs are dedicated to each day">Edit week</button>
         <button type="button" class="tp-all" data-prog-pick="__all__" title="Leave Today and see every program">See all programs →</button>
       </div>`;
@@ -12195,6 +12246,7 @@ function renderPrograms(){
             ${_progMeetingNotesHTML(_progSel)}
           </div>
         </div>
+        ${_progMeetingNotesPanelHTML(_progSel)}
         ${stagesHTML}
       </div>
     </div>`;

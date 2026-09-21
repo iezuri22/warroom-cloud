@@ -18131,7 +18131,17 @@ const VOICE = {
   // One program at a time (the chips over the list); '' = all. Per device.
   let _ntNoPM = new Map();
   const ntNoKey = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');   // one program however it's spelled
-  let _ntNoProg = (() => { try { return ntNoKey(localStorage.getItem('pt-nt-noprog')); } catch { return ''; } })();
+  // Besides a program: '~nodaily' (no Chicago Daily's) or '~client' (client meetings only).
+  const ntNoProgVal = v => (v === '~nodaily' || v === '~client') ? v : ntNoKey(v);
+  let _ntNoProg = (() => { try { return ntNoProgVal(localStorage.getItem('pt-nt-noprog') || ''); } catch { return ''; } })();
+  const ntNoDaily = n => ntNoKey(n.program) === 'internaldailys' || /^chicago daily/i.test(String(n.title || '').trim());
+  const ntNoClient = n => ntNoKey(n.type) === 'clientmeeting';
+  function ntNoPick(n){
+    if (!_ntNoProg) return true;
+    if (_ntNoProg === '~nodaily') return !ntNoDaily(n);
+    if (_ntNoProg === '~client') return ntNoClient(n);
+    return ntNoKey(n.program) === _ntNoProg;
+  }
   let _ntNoMode = (() => { try { return localStorage.getItem('pt-nt-nomode') === 'date' ? 'date' : 'program'; } catch { return 'program'; } })();
   const NT_NO_COLOR = { default: '#9B9A97', gray: '#9B9A97', brown: '#937264', orange: '#D9730D', yellow: '#CB912F', green: '#448361', blue: '#337EA9', purple: '#9065B0', pink: '#C14C8A', red: '#D44C47' };
   async function ntNotionApi(payload){
@@ -18219,11 +18229,14 @@ const VOICE = {
     const mode = _ntNoMode;
     const progs = ntNotionProgs(), pm = new Map(progs.map(p => [p.key, p]));
     _ntNoPM = pm;   // the rows' program names and colors
-    if (_ntNoData && _ntNoProg && !pm.has(_ntNoProg)) _ntNoProg = '';
+    if (_ntNoData && _ntNoProg && _ntNoProg[0] !== '~' && !pm.has(_ntNoProg)) _ntNoProg = '';
     // One row: group by · program · refresh.
     const sel = progs.length
       ? `<select class="nt-no-psel${_ntNoProg ? ' on' : ''}" data-nt-noprogsel="1" aria-label="Program" title="Show one program">`
         + `<option value="">All programs · ${_ntNoData.notes.length}</option>`
+        + `<option value="~nodaily"${_ntNoProg === '~nodaily' ? ' selected' : ''}>No Chicago Daily's · ${_ntNoData.notes.filter(n => !ntNoDaily(n)).length}</option>`
+        + `<option value="~client"${_ntNoProg === '~client' ? ' selected' : ''}>Client meetings only · ${_ntNoData.notes.filter(ntNoClient).length}</option>`
+        + '<option disabled>──────────</option>'
         + progs.map(p => `<option value="${ntEsc(p.key)}"${_ntNoProg === p.key ? ' selected' : ''}>${escHtml(p.name)} · ${p.n}</option>`).join('')
         + '</select>'
       : '';
@@ -18236,9 +18249,9 @@ const VOICE = {
     if (!_ntNoData) return h + '<div class="nt-empty-lib">Loading your Notion pages…</div>';
     const q = ntQuery.trim().toLowerCase();
     const hit = n => !q || [n.title, n.program, n.type, n.summary, n.db].join('\n').toLowerCase().includes(q);
-    const notes = _ntNoData.notes.filter(n => hit(n) && (!_ntNoProg || ntNoKey(n.program) === _ntNoProg))
+    const notes = _ntNoData.notes.filter(n => hit(n) && ntNoPick(n))
       .sort((a, b) => ntNotionDate(b).localeCompare(ntNotionDate(a)) || String(b.edited).localeCompare(String(a.edited)));
-    const others = _ntNoProg ? [] : _ntNoData.others.filter(hit);
+    const others = (_ntNoProg && _ntNoProg !== '~nodaily') ? [] : _ntNoData.others.filter(hit);
     _ntNoShown = notes.length + others.length;
     const S = ntGroupShut();
     const group = (key, label, color, items, show) => {
@@ -24672,7 +24685,7 @@ const VOICE = {
     });
     pane.addEventListener('change', e => {
       if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-nt-noprogsel')) {
-        _ntNoProg = ntNoKey(e.target.value);
+        _ntNoProg = ntNoProgVal(e.target.value);
         try { localStorage.setItem('pt-nt-noprog', _ntNoProg); } catch {}
         ntRenderLib();
         try { const L = document.getElementById('ntList'); if (L) L.scrollTop = 0; } catch {}
