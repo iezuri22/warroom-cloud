@@ -3980,7 +3980,7 @@
     .nt-wrow > .nt-taskrow { background: none !important; box-shadow: none !important; }
     .nt-shell.nt-tasks-wide .nt-taskrow .top { justify-content: flex-start; }
     .nt-shell.nt-tasks-wide .nt-taskrow .top .t { flex: 0 1 auto; }
-    .nt-wacts { display: grid !important; grid-template-columns: 214px 66px 80px 60px; align-items: center; column-gap: 6px; padding: 0 !important; background: none !important; }
+    .nt-wacts { display: grid !important; grid-template-columns: 214px 70px 66px 80px 60px; align-items: center; column-gap: 6px; padding: 0 !important; background: none !important; }
     .nt-ws { display: flex; align-items: center; min-width: 0; }
     .nt-wseg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
     .nt-wa { height: 26px; padding: 0 8px; border: 0; background: transparent; border-radius: 7px; font: 700 12px var(--font-family); color: var(--ink-mid); cursor: pointer; white-space: nowrap; }
@@ -4007,6 +4007,26 @@
     .nt-shell.nt-tasks-wide { grid-template-columns: minmax(0, 1fr) !important; }
     .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
   }
+
+  /* Past due / due today, on top of Notes */
+  .nt-duebar { flex: 0 0 auto; margin: 0 0 10px; min-width: 0; }
+  /* The pane stacks the bar over the shell (it was a row: the bar would sit beside it). */
+  .notes-pane:has(> .nt-duebar:not([hidden])) { flex-direction: column; }
+  .nt-due-in { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 8px 10px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-card); }
+  .nt-due-in::-webkit-scrollbar { display: none; }
+  .nt-due-lbl { flex-shrink: 0; padding: 0 4px; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .nt-due-lbl.late { color: var(--red); }
+  .nt-due-chip + .nt-due-lbl { margin-left: 10px; }
+  .nt-due-chip { flex-shrink: 0; max-width: 280px; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font: 600 12.5px var(--font-family); color: var(--ink); cursor: pointer; }
+  .nt-due-chip .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-due-chip .sub { flex-shrink: 0; font-size: 10.5px; font-weight: 800; color: var(--red); }
+  .nt-due-chip.late { border-color: rgba(220,75,62,.35); background: rgba(220,75,62,.06); }
+  .nt-due-chip:hover { border-color: var(--accent); }
+  body.nt-focus .nt-duebar { display: none !important; }
+  /* A due date you can change from a task row */
+  .nt-tdue { position: relative; display: inline-flex; align-items: center; }
+  .nt-tdue input[type="date"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; font-size: 16px; }
+  .nt-tdue.on { color: var(--accent); }
 
   /* Linked lines: "Task · due Fri" in the category's colour, red once late. */
   /* --tc must not inherit into nested lines (a General sub-task would wear its parent's colour). */
@@ -16346,6 +16366,49 @@ const VOICE = {
       + (ro ? '<span class="nt-ta-note">Routine copy — details are read-only</span>' : `<button class="nt-ta" type="button" data-nt-tdet="${id}">Edit details</button>`)
       + '</div></div>';
   }
+  // ---- Past due / due today: a bar on top of Notes, from the open list ----
+  // Past due is All tasks' Overdue group; due today is a deadline of today.
+  // Built from the live list (0 reads) on every list render.
+  function ntDueBarHTML(){
+    if (!_ntOpenLoaded) return '';
+    const c = ntAllCtx(), tk = c.today, late = [], today = [];
+    ntAllOpen().forEach(t => {
+      const p = ntAllPlace(t, c);
+      if (p.g === 'late') late.push({ t, day: p.day });
+      else if (_ovDeadline(t) === tk) today.push({ t });
+    });
+    if (!late.length && !today.length) return '';
+    late.sort((a, b) => String(a.day).localeCompare(String(b.day)));
+    const chip = (t, cls, sub) => `<button class="nt-due-chip${cls}" type="button" data-nt-duego="${ntEsc(t.id)}" title="${ntEsc(t.text || '')}">`
+      + `<span class="tx">${escHtml(t.text || '(untitled)')}</span>${sub ? `<span class="sub">${escHtml(sub)}</span>` : ''}</button>`;
+    let h = '<div class="nt-due-in" role="region" aria-label="Past due and due today">';
+    if (late.length) h += `<span class="nt-due-lbl late">${late.length} past due</span>` + late.map(x => { const d = _ovDayDiff(tk, x.day); return chip(x.t, ' late', d != null && d < 0 ? -d + 'd' : ''); }).join('');
+    if (today.length) h += `<span class="nt-due-lbl">${today.length} due today</span>` + today.map(x => chip(x.t, '', '')).join('');
+    return h + '</div>';
+  }
+  function ntRenderDueBar(){
+    const el = _ntEls && _ntEls.dueBar;
+    if (!el) return;
+    let h = '';
+    try { h = ntDueBarHTML(); } catch (e) { console.warn('[notes] due bar', e); }
+    if (el.dataset.sig === h) return;
+    el.dataset.sig = h; el.innerHTML = h; el.hidden = !h;
+  }
+  // A chip: its note, at its line — or All tasks with its row open.
+  function ntDueGo(id){
+    const t = _ntOpenIdx.get(id) || _ntTaskIdx.get(id);
+    const n = t && t.noteId ? ntNotes.get(t.noteId) : null;
+    if (n && !n.trashed) { ntOpenDoc(t.noteId, { line: id }); return; }
+    const was = ntFilter;
+    ntFilter = 'tasks'; _ntDelArm = null; _ntAllRow = id; _ntAllDelArm = null;
+    try { ntClearTaskFilter(); if (_ntTf) _ntTf.status = null; } catch {}
+    if (ntLayout().list) ntSetPane('list', false); else ntRenderLib();
+    ntFilterPicked(was);
+    setTimeout(() => {
+      const r = _ntEls && [..._ntEls.list.querySelectorAll('[data-nt-tact]')].find(x => x.getAttribute('data-nt-tact') === id);
+      if (r) { try { r.scrollIntoView({ block: 'center' }); r.focus({ preventScroll: true }); } catch {} }
+    }, 60);
+  }
   function ntDoneTasksHTML(done, row){
     if (!done.length) return '';
     return `<button class="nt-tasks-more" type="button" data-nt-tasksdone>${_ntShowDoneTasks ? 'Hide done' : `Show ${done.length} done`}</button>` + (_ntShowDoneTasks ? done.map(row).join('') : '');
@@ -16522,7 +16585,7 @@ const VOICE = {
       : t.fromTemplate ? '' : `<button class="nt-ta del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}"${t.noteId ? ' title="Deletes the task and its line in its note"' : ''}>${arm ? (t.noteId ? 'Sure? Its line goes too' : 'Sure?') : 'Delete'}</button>`;
     return `<div class="nt-tacts" id="nt-ta-${id}">${note}<span class="lbl">Push</span>`
       + _ovPushDates().map(o => `<button class="nt-ta" type="button" data-nt-tpush="${id}|${ntEsc(o.ds)}">${escHtml(o.label)}</button>`).join('')
-      + move + go + del + '</div>';
+      + ntDueCtlHTML(t, 'nt-ta', false) + move + go + del + '</div>';
   }
   // The wide view's actions: the same buttons and hooks, in fixed slots, so
   // every row's Push, Move, link and Delete line up in columns.
@@ -16530,7 +16593,7 @@ const VOICE = {
     const id = ntEsc(t.id), nn = nid != null ? nid : t.noteId, n = nn ? ntNotes.get(nn) : null;
     const slot = (k, h) => `<span class="nt-ws ${k}">${h}</span>`;
     const note = (n && !n.trashed) ? `<button class="nt-wa go" type="button" data-nt-taskopen="${ntEsc(nn)}" data-nt-tid="${id}" title="Open “${ntEsc(ntTitleOf(n))}” at this task">Note ↗</button>` : '';
-    if (t.done) return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', '')}${slot('move', '')}${slot('go', note)}${slot('del', '')}</div>`;
+    if (t.done) return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', '')}${slot('due', '')}${slot('move', '')}${slot('go', note)}${slot('del', '')}</div>`;
     c = c || ntAllCtx(); p = p || ntAllPlace(t, c);
     const home = ntAllHome(t, p, c), arm = _ntAllDelArm === t.id;
     const short = l => String(l).replace(/^Tomorrow$/, 'Tmrw').replace(/^\+(\d+) days?$/, '+$1d').replace(/^\+(\d+) wks?$/, '+$1w');
@@ -16540,7 +16603,27 @@ const VOICE = {
     const go = note || (home ? `<button class="nt-wa go" type="button" data-nt-tgo="${id}" title="${home === 'inbox' ? 'Open the ECM inbox' : 'Show in Planned'}">${home === 'inbox' ? 'Inbox ↗' : 'Planned ↗'}</button>` : '');
     const del = t.smartsheetRowId ? '<span class="nt-wnote" title="Managed on ECM">On ECM</span>'
       : t.fromTemplate ? '' : `<button class="nt-wa del${arm ? ' arm' : ''}" type="button" data-nt-tdel="${id}"${t.noteId ? ' title="Deletes the task and its line in its note"' : ''}>${arm ? 'Sure?' : 'Delete'}</button>`;
-    return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', push)}${slot('move', move)}${slot('go', go)}${slot('del', del)}</div>`;
+    return `<div class="nt-tacts nt-wacts" id="nt-ta-${id}">${slot('push', push)}${slot('due', ntDueCtlHTML(t, 'nt-wa', true))}${slot('move', move)}${slot('go', go)}${slot('del', del)}</div>`;
+  }
+  // Its due date, as a button that opens the date picker (the input fills it,
+  // invisible, so a tap anywhere on it opens the picker; ntWire2 calls showPicker).
+  function ntDueCtlHTML(t, cls, short){
+    if (t.fromTemplate) return '';
+    const dl = _ovDeadline(t), id = ntEsc(t.id);
+    const lbl = dl ? (short ? '' : 'Due ') + ntDay(dl, { month: 'short', day: 'numeric' }) : (short ? 'Due…' : 'Set due');
+    return `<label class="${cls} nt-tdue${dl ? ' on' : ''}" title="${dl ? 'Due ' + ntEsc(ntDay(dl)) + ' — change it' : 'Give it a due date'}">${escHtml(lbl)}`
+      + `<input type="date" data-nt-tdue="${id}" value="${ntEsc(dl)}" aria-label="Due date"></label>`;
+  }
+  async function ntAllSetDue(id, v){
+    const due = /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '';
+    const cur = _ntOpenIdx.get(id) || _ntTaskIdx.get(id);
+    if (cur && _ovDeadline(cur) === due) return;
+    if (!(await ntPatchTask(id, { deadline: due || NT_DEL }))) { ptToast('Couldn’t change the due date — try again'); return; }
+    // The listeners will say the same; the rows move now.
+    [_ntOpenIdx.get(id), _ntTaskIdx.get(id), _ntAllDone.get(id)].forEach(x => { if (x) { if (due) x.deadline = due; else delete x.deadline; } });
+    ptToast(due ? 'Due ' + ntDay(due) : 'No due date');
+    ntRenderLib();
+    try { ntMirrorOpenChecks(); } catch {}
   }
   // A parked item isn't a task yet: no box to tick — schedule it or drop it.
   function ntParkRowHTML(m){
@@ -17570,6 +17653,11 @@ const VOICE = {
       const tid = li.getAttribute('data-task-id');
       if (!tid || _ntTkBusy.has(tid)) return;
       const ix = idxOk ? _ntTaskIdx.get(tid) : null;
+      // Its deadline, changed from All tasks, the Overview or another device.
+      if (ix) {
+        const dl = _ovDeadline(ix);
+        if ((li.getAttribute('data-due') || '') !== dl) { if (dl) li.setAttribute('data-due', dl); else li.removeAttribute('data-due'); changed = true; }
+      }
       let want;
       if (ix) want = !!ix.done;
       // Open again: its next departure is news, so it may be asked at once.
@@ -19601,7 +19689,7 @@ const VOICE = {
         catChip: q('ntCatChip'), kindChip: q('ntKindChip'), dateChip: q('ntDateChip'), dateLbl: q('ntDateLbl'),
         date: q('ntDate'), dateClear: q('ntDateClear'), evChip: q('ntEvChip'), state: q('ntState'), pin: q('ntPinBtn'),
         title: q('ntTitle'), banner: q('ntBanner'), toolbar: q('ntToolbar'), styleLbl: q('ntStyleLbl'),
-        editor: q('ntEditor'), outline: q('ntOutline'), rail: q('ntRail'), detLayer: q('ntDetLayer'),
+        editor: q('ntEditor'), outline: q('ntOutline'), rail: q('ntRail'), detLayer: q('ntDetLayer'), dueBar: q('ntDueBar'),
       };
       try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
       ntWire();
@@ -19678,6 +19766,7 @@ const VOICE = {
   }
   function ntShellHTML(){
     return `
+    <div class="nt-duebar" id="ntDueBar" hidden></div>
     <div class="nt-shell" id="ntShell" data-screen="lib">
       <nav class="nt-rail" id="ntRail" aria-label="Notebooks (collapsed)"></nav>
       <nav class="nt-nav" id="ntNav" aria-label="Notebooks"></nav>
@@ -19857,6 +19946,7 @@ const VOICE = {
     if (E.selBtn) { E.selBtn.classList.toggle('on', _ntSelMode); E.selBtn.hidden = ntFilter === 'tasks'; }
     if (E.search) E.search.placeholder = ntFilter === 'tasks' ? 'Search tasks' : 'Search notes';
     ntRenderFilters();
+    ntRenderDueBar();
     ntRenderToday();
     const arr = ntVisible();
     if (E.lcount) E.lcount.textContent = arr.length ? String(arr.length) : '';
@@ -21306,7 +21396,7 @@ const VOICE = {
     const k = {
       li, block, noteId: id, anchor: anchor || _ntEls.toolbar, edit: !!linked, tid: linked || null,
       text: line.textContent.replace(/\s+/g, ' ').trim().slice(0, 500),
-      when: 'today', whenDate: '',
+      when: 'due', whenDate: '',
       due: /^\d{4}-\d{2}-\d{2}$/.test(dueAttr) ? dueAttr : '',
       cat: (lineCat != null && (lineCat === '' || ntCat(lineCat))) ? lineCat : ntKey(m),
       sched: '', ecm: false, stale: false, job0: '',
@@ -21785,23 +21875,27 @@ const VOICE = {
     const dateChip = (w, cur, on, min) => `<label class="nt-tk-chip${on ? ' on' : ''}">${on && cur ? escHtml(ntDay(cur, { month: 'short', day: 'numeric' })) : 'Date…'}<input type="date" data-nt-tk-date="${w}" min="${min}" value="${on ? ntEsc(cur) : ''}" aria-label="${w === 'due' ? 'Deadline' : 'Plan for a date'}"></label>`;
     const sec = SECTION_META[ntCatSection(k.cat)].label;
     let h = `<div class="nt-tk-head"><b>${k.edit ? 'Task' : 'New task'}</b><span>→ Personal · ${escHtml(sec)}</span></div>`;
+    let whenRow = '';
     if (k.edit) {
       h += `<div class="nt-tk-show">${escHtml(k.text)}</div>` + (k.sched ? `<div class="nt-tk-note">Scheduled: ${escHtml(k.sched)}</div>` : '');
       if (k.stale) h += '<div class="nt-tk-note">Offline — showing what this device last saw.</div>';
     } else {
       h += `<input class="nt-tk-text" id="ntTText" type="text" maxlength="500" value="${ntEsc(k.text)}" aria-label="Task" enterkeyhint="done">`;
       const ad = ntIsAgenda(m) && m.agendaDate > tm ? m.agendaDate : '';
-      const onDue = !!k.due && k.due > tm;
       const pre = ['today', tm, 'someday', 'due', ad].filter(Boolean);
       const custom = /^\d{4}-\d{2}-\d{2}$/.test(k.when) && !pre.includes(k.when);
-      h += '<div class="nt-tk-row"><span class="nt-tk-lbl">When</span><div class="nt-tk-chips">'
+      // By deadline comes first and is the default: the task turns up on the
+      // day it's due, not on today's list the moment you write it down.
+      whenRow = '<div class="nt-tk-row"><span class="nt-tk-lbl">When</span><div class="nt-tk-chips">'
+        + chip('when', 'due', 'By deadline', k.when === 'due')
         + chip('when', 'today', 'Today', k.when === 'today')
         + chip('when', tm, 'Tomorrow', k.when === tm)
         + (ad ? chip('when', ad, 'Agenda day', k.when === ad) : '')
-        + (onDue ? chip('when', 'due', 'On the deadline', k.when === 'due') : '')
         + chip('when', 'someday', 'Someday', k.when === 'someday')
         + dateChip('when', k.when, custom, tm)
-        + '</div></div>';
+        + '</div>'
+        + (k.when === 'due' ? `<div class="nt-tk-note">${k.due ? (k.due <= t ? 'Goes on today’s list' : 'Shows up ' + escHtml(ntDay(k.due))) : 'No deadline yet — it waits in Someday until you give it one'}</div>` : '')
+        + '</div>';
     }
     const fri = ntNextFri(), wk = ntAddDays(t, 7);
     const seen = new Set();
@@ -21812,6 +21906,7 @@ const VOICE = {
       dc += chip('due', v, escHtml(l), k.due === v);
     });
     h += `<div class="nt-tk-row"><span class="nt-tk-lbl">Deadline</span><div class="nt-tk-chips">${dc}${dateChip('due', k.due, !!k.due && !seen.has(k.due), t)}</div></div>`;
+    h += whenRow;                                   // after the deadline it follows
     if (k.ecm) {
       h += '<div class="nt-tk-row"><span class="nt-tk-lbl">Category</span><div class="nt-tk-note">ECM tasks stay with ECM.</div></div>';
     } else {
@@ -22216,7 +22311,6 @@ const VOICE = {
   function ntTaskSetDue(v){
     const k = _ntTask;
     k.due = v;
-    if (k.when === 'due' && !(v && v > ntAddDays(todayKey(), 1))) k.when = 'today';
   }
   function ntPopInput(e){
     if (_ntTask && e.target && e.target.id === 'ntTText') _ntTask.text = e.target.value;
@@ -22276,7 +22370,7 @@ const VOICE = {
       ntSaveRange();
     } else if (!ntIsPhone()) { try { ntRestoreRange(); } catch {} }
     let when = k.when;
-    if (when === 'due') when = k.due || 'today';
+    if (when === 'due') when = k.due || 'someday';   // no deadline: it waits, it isn't today's
     if (/^\d{4}-\d{2}-\d{2}$/.test(when) && when <= todayKey()) when = 'today';
     // Until the task is written, remote edits wait in the banner — they would
     // replace the line this is about to link (phones don't hold the caret).
@@ -22774,11 +22868,18 @@ const VOICE = {
   // ---- list wiring added in v2 (called at the end of ntWire) ----
   function ntWire2(){
     const pane = document.getElementById('notesPane');
+    pane.addEventListener('change', e => {
+      const d = e.target && e.target.getAttribute && e.target.getAttribute('data-nt-tdue');
+      if (d) ntAllSetDue(d, e.target.value);
+    });
     // Capture phase: these sit INSIDE rows that also carry data-nt-open.
     pane.addEventListener('click', e => {
       const t = e.target;
       if (ntInEditor(t)) return;
       if (ntMdClick(e)) return;                       // a code block's Copy, in a row or a note card
+      if (t.matches && t.matches('input[data-nt-tdue]')) { e.stopPropagation(); try { t.showPicker(); } catch {} return; }
+      const dgo = t.closest('[data-nt-duego]');
+      if (dgo) { e.stopPropagation(); e.preventDefault(); ntDueGo(dgo.getAttribute('data-nt-duego')); return; }
       const tde = t.closest('[data-nt-tdet]');
       if (tde) { e.stopPropagation(); e.preventDefault(); ntPopDet(tde.getAttribute('data-nt-tdet'), tde, 'list'); return; }
       const tdf = t.closest('[data-nt-tdetmore]');
