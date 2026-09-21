@@ -11278,6 +11278,7 @@ const VOICE = {
   function tmrRerender(){
     try { if (_tabTimer || _tabOverview) render(); } catch {}
     try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}   // Today lists the day's sessions
+    try { ntDayPub(); } catch {}   // and the War Room's timer card, the time
     tmrPaintCapsule();
   }
   // First run only: the shape the user described — aim for 2h of ECM, cap
@@ -11459,6 +11460,7 @@ const VOICE = {
       if (tmrRun) localStorage.setItem(TMR_RUN_KEY, JSON.stringify({ ...tmrRun, label: tmrRunLabel(), detHtml }));
       else localStorage.removeItem(TMR_RUN_KEY);
     } catch {}
+    try { ntDayPub(); } catch {}   // (at boot: before the Notes state exists — caught)
   }
   // The War Room shell's floating timer: its Stop and +5 land here, where the
   // clock is kept and the time gets logged.
@@ -11467,6 +11469,8 @@ const VOICE = {
     if (!d || d.type !== 'warroom:timer' || ev.source !== window.parent) return;
     if (d.action === 'stop') { if (tmrRun) tmrStop(); }
     else if (d.action === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); } }
+    else if (d.action === 'day') { ntDayPub(); return; }
+    else if (d.action === 'today' || d.action === 'pick' || d.action === 'task') { ntWrOpenToday(d.action, typeof d.id === 'string' ? d.id.slice(0, 200) : ''); return; }
     try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}
   });
   function tmrStart(projId, taskId, taskName){
@@ -16378,6 +16382,7 @@ const VOICE = {
       // Planned is a slice of this list: keep it in step (0 reads).
       try { const pl = _plannedFromLive(); if (pl) { _plannedCache = pl; _plannedLoadedAt = Date.now(); if (_tabPlanned) render(); } } catch (e) { console.warn('[planned] live', e); }
       try { ntPrioDailyReset(); } catch (e) { console.warn('[notes] prio reset', e); }
+      try { ntDayPub(); } catch {}   // the War Room's timer card
       // A re-opened ECM row stays listed until its sheet status stops saying
       // closed AND a minute and a half has passed: the tick's own Completed
       // write (a whole-sheet GET, then a PUT) can land after the un-tick.
@@ -16713,6 +16718,7 @@ const VOICE = {
       snap.forEach(d => { const v = d.data() || {}; if (v.done) out.push({ id: d.id, ...v }); });
       out.sort((a, b) => String(b.completedAt || '').localeCompare(String(a.completedAt || '')));
       _ntDoneToday = out;
+      try { ntDayPub(); } catch {}
       if (_tabNotes && _ntMounted && ntFilter === 'today') ntRenderLib();
     }, e => { console.warn('[notes] done today', e); _ntDoneToday = _ntDoneToday || []; });
   }
@@ -16735,12 +16741,78 @@ const VOICE = {
     if (!t) { ptToast('That task isn’t loaded — find it in All tasks'); return; }
     const id = ntEsc(tid), n = t.noteId ? ntNotes.get(t.noteId) : null;
     const h = '<div class="nt-pop-h">Task</div>' + `<div class="nt-tmr-name">${escHtml(t.text || '')}</div>`
-      + `<button class="nt-pop-i" type="button" data-np-tact="timer|${id}">⏱ ${ntTmrIsOn('task', tid) ? 'Timer — running' : 'Start the timer again'}</button>`
+      + `<button class="nt-pop-i" type="button" data-np-tact="timer|${id}">⏱ ${ntTmrIsOn('task', tid) ? 'Timer — running' : 'Start the timer'}</button>`
       + `<button class="nt-pop-i" type="button" data-np-tact="done|${id}">${t.done ? '↺ Mark not done' : '✓ Mark done'}</button>`
       + `<button class="nt-pop-i" type="button" data-np-tact="det|${id}">📝 ${ntDetStr(t).trim() ? 'Details' : 'Add details'}</button>`
       + (t.done || t.fromTemplate ? '' : `<button class="nt-pop-i" type="button" data-np-tact="prio|${id}">${ntPrioOf(t) ? '★ ' + escHtml(ntPrioLabel(ntPrioOf(t))) : '☆ Priority'}…</button>`)
       + (n && !n.trashed ? `<button class="nt-pop-i" type="button" data-np-tact="note|${id}">↗ Open in “${escHtml(ntTitleOf(n))}”</button>` : '');
     ntPopOpen('tfilt', anchor, h, { alignRight: true, focus: '.nt-pop-i' });
+  }
+  // ---- The War Room's timer card: today's plan vs done, and the priorities ----
+  // Only inside the War Room, and only while its card is pinned or a timer
+  // runs. The open list and the timer ledger are live already; done today is
+  // a small query, started here. A pinned card on a background load also
+  // starts the open list (it would start the moment Personal is shown).
+  const WR_DAY_KEY = 'personal-day-v1';
+  let _ntDayT = 0, _ntDayLast = '';
+  function ntDayWanted(){
+    if (window.parent === window) return false;
+    try { const u = JSON.parse(localStorage.getItem('wr-timer-ui') || 'null'); if (u && u.pin) return true; } catch {}
+    return !!tmrRun;
+  }
+  function ntDayPub(){
+    if (_ntDayT) return;
+    _ntDayT = setTimeout(() => { _ntDayT = 0; try { ntDayPubNow(); } catch (e) { console.warn('[wr day]', e); } }, 400);
+  }
+  function ntDayPubNow(){
+    if (!ntDayWanted()) return;
+    try { tmrEnsureSubs(); } catch {}
+    ntEnsureDoneToday();
+    if (!_ntOpenOn) ntEnsureOpenIdx();
+    if (!_ntOpenLoaded || _ntOpenErr) return;
+    const c = ntAllCtx(), tk = c.today;
+    const cut = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const planned = [];
+    ntAllOpen().forEach(t => {
+      const p = ntAllPlace(t, c);
+      if (p.g === 'late' || p.g === 'today' || ntPrioOf(t) === 'day') planned.push({ t, late: p.g === 'late', day: p.day || '' });
+    });
+    planned.sort((a, b) => (b.late - a.late) || String(a.day).localeCompare(String(b.day)));
+    const rest = planned.filter(x => ntPrioOf(x.t) !== 'day');
+    const done = Array.isArray(_ntDoneToday) ? _ntDoneToday : null;
+    const day = tmrDays.get(tk) || { totals: {} };
+    const timed = Object.values(day.totals || {}).reduce((a, b) => a + (+b || 0), 0);
+    const known = new Set(tmrProjects().map(p => p.id)), tg = tmrCfg.targets || {};
+    const goal = Object.keys(tg).filter(id => known.has(id)).reduce((a, id) => a + (+(tg[id] || {}).dayGoal || 0), 0) * 60;
+    const prio = {};
+    NT_PRIO.forEach(([k]) => { const l = ntPrioList(k); prio[k] = { n: l.length, items: l.slice(0, 6).map(t => ({ id: t.id, text: cut(t.text) })) }; });
+    const s = JSON.stringify({
+      day: tk, timed, goal, plannedN: planned.length,
+      restN: rest.length, rest: rest.slice(0, 10).map(x => ({ id: x.t.id, text: cut(x.t.text), late: x.late })),
+      doneN: done ? done.length : null, done: done ? done.slice(0, 8).map(t => ({ id: t.id, text: cut(t.text) })) : [],
+      prio
+    });
+    if (s === _ntDayLast) return;
+    _ntDayLast = s;
+    try { localStorage.setItem(WR_DAY_KEY, s); } catch {}
+  }
+  window.addEventListener('storage', e => { if (e.key === 'wr-timer-ui') ntDayPub(); });
+  setInterval(() => { try { ntDayPub(); } catch {} }, 60000);   // past midnight, and a done list that re-arms
+  // The card's buttons: Today, its task picker, or one task's menu.
+  function ntWrOpenToday(a, id){
+    try {
+      ntGo();
+      if (ntFilter !== 'today') { const was = ntFilter; ntFilter = 'today'; _ntAllRow = null; if (ntLayout().list) ntSetPane('list', false); else ntRenderLib(); ntFilterPicked(was); }
+      else ntRenderLib();
+    } catch (e) { console.warn('[wr today]', e); return; }
+    if (a === 'today') return;
+    setTimeout(() => {
+      if (a === 'pick') { const b = document.querySelector('[data-nt-tday="pick"]'); if (b) ntPopTdayPick(b); return; }
+      if (!id) return;
+      let r = null;
+      try { r = document.querySelector('[data-nt-tdayrow="' + CSS.escape(id) + '"]'); } catch {}
+      ntPopTaskActs(r || document.querySelector('.nt-tday-tmr') || document.getElementById('notesPane'), id);
+    }, 80);
   }
   function ntTodayHTML(){
     try { tmrEnsureSubs(); } catch {}
