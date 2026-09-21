@@ -22013,7 +22013,7 @@ const VOICE = {
       try { r = await ntDetUpload(f, 'note-media'); }
       catch (e) {
         console.warn('[notes] attach', e);
-        ptToast(navigator.onLine === false ? 'Offline — that file didn’t go up' : 'Couldn’t upload “' + (f.name || 'that file') + '”');
+        ptToast(navigator.onLine === false ? 'Offline — that file didn’t go up' : 'Couldn’t upload “' + (f.name || 'that file') + '”' + (e && e.code ? ' (' + e.code + ')' : ''));
         return;
       }
       // Left the note while it uploaded: never drop it into another one.
@@ -22042,8 +22042,25 @@ const VOICE = {
       .catch(e => { _ntUpLib = null; throw e; });
     return _ntUpLib;
   }
+  // The bucket's rules (Firebase console, not this repo) take writes only from a
+  // signed-in visitor, and only under step-media/ — the Meals page's folder and
+  // sign-in. So: an anonymous sign-in, made the first time anything is
+  // attached (the same browser's Meals sign-in is reused when it exists).
+  let _ntUpAuth = null;
+  function ntUpAuth(){
+    if (!_ntUpAuth) _ntUpAuth = (async () => {
+      const A = await import('https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js');
+      const auth = A.getAuth(app);
+      // A user from an earlier visit is restored asynchronously: wait for it.
+      await new Promise(res => { const off = A.onAuthStateChanged(auth, () => { off(); res(); }); });
+      if (!auth.currentUser) await A.signInAnonymously(auth);
+      return true;
+    })().catch(e => { _ntUpAuth = null; throw e; });
+    return _ntUpAuth;
+  }
   async function ntDetUpload(file, folder){
     const lib = await ntUpLib();
+    await ntUpAuth();
     const st = lib.getStorage(app);
     const raw = String(file.name || 'file');
     const dot = raw.lastIndexOf('.');
@@ -22057,14 +22074,8 @@ const VOICE = {
       await Promise.race([lib.uploadBytes(ref, file, opt), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 60000))]);
       return { url: await lib.getDownloadURL(ref), name: raw, image: /^image\//.test(file.type || '') };
     };
-    try { return await put((folder || 'task-media') + '/' + name); }
-    catch (e) {
-      // The bucket's rules may only open the folder the Meals page writes to.
-      // Rather than fail in your face, put it there instead.
-      if (!/unauthorized|permission|denied|403/i.test(String((e && e.code) || '') + ' ' + String((e && e.message) || ''))) throw e;
-      console.warn('[notes] task-media refused, using step-media', e);
-      return await put('step-media/task-' + name);
-    }
+    // step-media/ is the one folder the rules open; the prefix says where it came from.
+    return await put('step-media/' + (folder === 'note-media' ? 'note-' : 'task-') + name);
   }
   // Written into the box at the caret, so ⌘Z takes it back out.
   function ntDetInsert(md){
@@ -22095,7 +22106,7 @@ const VOICE = {
       try { r = await ntDetUpload(f); }
       catch (e) {
         console.warn('[notes] attach', e);
-        ptToast(navigator.onLine === false ? 'Offline — that file didn’t go up' : 'Couldn’t upload “' + (f.name || 'that file') + '”');
+        ptToast(navigator.onLine === false ? 'Offline — that file didn’t go up' : 'Couldn’t upload “' + (f.name || 'that file') + '”' + (e && e.code ? ' (' + e.code + ')' : ''));
         break;
       }
       // Moved on while it uploaded: the file is safe in Storage, but this
