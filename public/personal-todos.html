@@ -4008,6 +4008,17 @@
     .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
   }
 
+  /* Task line highlights */
+  .nt-editor li[data-task-id][data-hl] { background: var(--hlc); box-shadow: -6px 0 0 var(--hlc), 6px 0 0 var(--hlc); border-radius: 6px; }
+  .nt-editor li[data-hl="yellow"] { --hlc: rgba(245, 196, 0, .26); }
+  .nt-editor li[data-hl="green"] { --hlc: rgba(52, 199, 89, .2); }
+  .nt-editor li[data-hl="blue"] { --hlc: rgba(74, 168, 255, .2); }
+  .nt-editor li[data-hl="pink"] { --hlc: rgba(255, 111, 174, .2); }
+  .nt-editor li[data-hl="orange"] { --hlc: rgba(255, 159, 10, .22); }
+  .nt-editor li[data-hl="purple"] { --hlc: rgba(180, 108, 240, .2); }
+  .nt-editor li[data-task-id][data-hl][data-checked="true"] { background: none; box-shadow: none; }   /* done: the highlight steps aside */
+  .nt-hl-chip { min-width: 30px; justify-content: center; }
+  .nt-hl-chip .d { width: 14px; height: 14px; }
   /* Images in a note */
   .nt-editor img { display: block; max-width: 100%; max-height: 520px; height: auto; margin: 6px 0; border-radius: 10px; border: 1px solid var(--border); background: var(--fill); }
   .nt-editor img:hover { box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -15470,7 +15481,7 @@ const VOICE = {
       case 'BLOCKQUOTE': return mk('blockquote');
       case 'UL': case 'OL': {
         const kids = Array.from(node.children);
-        const isCheck = tag === 'UL' && (node.classList.contains('nt-checklist')
+        const isCheck = kids.some(li => li.hasAttribute && li.hasAttribute('data-task-id')) || tag === 'UL' && (node.classList.contains('nt-checklist')
           || kids.some(li => li.hasAttribute('data-checked') || li.hasAttribute('aria-checked') || li.getAttribute('role') === 'checkbox'));
         const l = mk(isCheck ? 'ul' : tag.toLowerCase());
         if (isCheck) l.className = 'nt-checklist';
@@ -15492,6 +15503,8 @@ const VOICE = {
           if (due && /^\d{4}-\d{2}-\d{2}$/.test(due)) li.setAttribute('data-due', due);
           const tc = node.getAttribute('data-task-cat');
           if (tc != null && /^[A-Za-z0-9_-]{0,64}$/.test(tc)) li.setAttribute('data-task-cat', tc);
+          const hl = node.getAttribute('data-hl');
+          if (ntHlOk(hl)) li.setAttribute('data-hl', hl);
         }
         return li;
       }
@@ -16714,6 +16727,13 @@ const VOICE = {
   // sync-client's SKIP_SYNC); the list then says "Showing 12 of 48 · Clear".
   const NT_TF_WHEN = [['late', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['next', 'Next week'], ['later', 'Later'], ['someday', 'Someday'], ['ecm', 'ECM inbox'], ['parked', 'Parked']];
   const NT_TF_SRC = [['note', 'From a note'], ['free', 'Not in a note']];
+  // Task line highlights: a color per task, kept on its line (data-hl). New
+  // tasks start with the last color used (pt-nt-hl, per device).
+  const NT_HL = [['yellow', 'Yellow', '#f5c400'], ['green', 'Green', '#34c759'], ['blue', 'Blue', '#4aa8ff'], ['pink', 'Pink', '#ff6fae'], ['orange', 'Orange', '#ff9f0a'], ['purple', 'Purple', '#b46cf0']];
+  function ntHlOk(v){ return /^(yellow|green|blue|pink|orange|purple)$/.test(String(v || '')); }
+  function ntHlLast(){ let v = null; try { v = localStorage.getItem('pt-nt-hl'); } catch {} return (v === 'none' || ntHlOk(v)) ? v : 'yellow'; }
+  function ntHlRemember(v){ try { localStorage.setItem('pt-nt-hl', ntHlOk(v) ? v : 'none'); } catch {} }
+  function ntHlApply(li, v){ if (!li) return; if (ntHlOk(v)) li.setAttribute('data-hl', v); else li.removeAttribute('data-hl'); }
   // The order: by when (the groups), or one list by due date, newest or oldest.
   const NT_TSORT = [['when', 'When (grouped)'], ['due', 'Due date'], ['new', 'Newest first'], ['old', 'Oldest first']];
   function ntTaskSort(){ let v = 'when'; try { v = localStorage.getItem('pt-nt-tsort') || 'when'; } catch {} return NT_TSORT.some(x => x[0] === v) ? v : 'when'; }
@@ -17751,7 +17771,7 @@ const VOICE = {
     const utid = li.getAttribute('data-task-id');
     if (utid) _ntPdelSkip.set(utid, Date.now());   // we took this link out on purpose: never a delete
     li.removeAttribute('data-task-id');
-    ['data-due', 'data-task-cat'].forEach(a => li.removeAttribute(a));
+    ['data-due', 'data-task-cat', 'data-hl'].forEach(a => li.removeAttribute(a));
     ntStripDeco(li);
   }
   async function ntToggleLine(li){
@@ -19011,7 +19031,7 @@ const VOICE = {
       if (pl) {
         pl.setAttribute('data-task-id', e.tid);
         if (!pl.getAttribute('data-line')) pl.setAttribute('data-line', li.getAttribute('data-line'));
-        ['data-due', 'data-task-cat'].forEach(a => { const v = li.getAttribute(a); if (v) pl.setAttribute(a, v); });
+        ['data-due', 'data-task-cat', 'data-hl'].forEach(a => { const v = li.getAttribute(a); if (v) pl.setAttribute(a, v); });
         const list = pl.parentElement;
         // A checkbox needs a checklist: a plain bullet or a numbered line gets
         // its own list back, the way the toolbar's checklist button does.
@@ -19432,6 +19452,7 @@ const VOICE = {
       li.setAttribute('data-line', line);
       if (due) li.setAttribute('data-due', due); else li.removeAttribute('data-due');
       li.setAttribute('data-task-cat', cat);
+      if ('hl' in opt) ntHlApply(li, opt.hl);
       li.classList.add('nt-flash');
       setTimeout(() => li.classList.remove('nt-flash'), 1300);
       ntDecorateTasks();
@@ -19886,7 +19907,7 @@ const VOICE = {
       + b('clear', NT_SVG.clear, 'Clear formatting', 'wide')
       + b('attach', NT_SVG.clip, 'Attach an image or file (you can also paste or drop one)')
       + b('more', NT_SVG.more, 'More formatting', 'nt-tb-more')
-      + b('task', NT_SVG.task + '<span>Task</span>', 'Make this line a Personal task — deadline and category too (⌘⇧↵)', 'task');
+      + b('task', NT_SVG.task + '<span>Task</span>', 'Make this line a Personal task — deadline and category too (⌘⇧↵) · a new task: ⌃N', 'task');
   }
 
   // ---- library ----
@@ -20622,6 +20643,15 @@ const VOICE = {
   function ntNormalizeLive(){
     const ed = _ntEls.editor;
     ntUnnest(ed);
+    // A task line is always a checkbox: its list becomes a checklist.
+    ed.querySelectorAll('ul:not(.nt-checklist) > li[data-task-id]').forEach(li => li.parentElement.classList.add('nt-checklist'));
+    ed.querySelectorAll('ol > li[data-task-id]').forEach(li => {
+      const ol = li.parentElement;
+      if (!ol || ol.nodeName !== 'OL' || !ol.isConnected) return;
+      const ul = document.createElement('ul'); ul.className = 'nt-checklist';
+      while (ol.firstChild) ul.appendChild(ol.firstChild);
+      ol.replaceWith(ul);
+    });
     ed.querySelectorAll('ul.nt-checklist > li:not([data-checked])').forEach(li => li.setAttribute('data-checked', 'false'));
     ed.querySelectorAll('li[data-checked]').forEach(li => {
       const p = li.parentElement;
@@ -20635,7 +20665,7 @@ const VOICE = {
       const keepPrev = !!prev.textContent.trim() || !li.textContent.trim();
       const loser = keepPrev ? li : prev;
       loser.removeAttribute('data-line'); loser.removeAttribute('data-task-id');
-      ['data-due', 'data-task-cat'].forEach(a => loser.removeAttribute(a));
+      ['data-due', 'data-task-cat', 'data-hl'].forEach(a => loser.removeAttribute(a));
       ntStripDeco(loser);   // Enter clones class and style onto the new line
       if (loser.parentElement && loser.parentElement.classList.contains('nt-checklist')) loser.setAttribute('data-checked', 'false');
       if (!keepPrev) seen.set(key, li);
@@ -20771,7 +20801,7 @@ const VOICE = {
     // The links have to ride along — an unlinked line reads as one the user
     // removed, and its task would be deleted (ntPdelDetect). Not just the
     // caret's line: a selection over several lines loses all of them.
-    const NT_LI_KEEP = ['data-task-id', 'data-line', 'data-due', 'data-task-cat'];
+    const NT_LI_KEEP = ['data-task-id', 'data-line', 'data-due', 'data-task-cat', 'data-hl'];
     // A line's own words, with anything nested inside it left out — including
     // a stray li, which Chrome's own outdent can produce (li inside li).
     const liTx = el => Array.from(el.childNodes).filter(c => !(c.nodeType === 1 && /^(UL|OL|LI)$/.test(c.nodeName))).map(c => c.textContent).join('').replace(/\s+/g, ' ').trim();
@@ -21483,7 +21513,8 @@ const VOICE = {
       if (saved != null) k.cat = saved;
       else if (!lineOk) k.cat = ntCat(sec) ? sec : '';
     }
-    k.due0 = k.due; k.cat0 = k.cat;
+    k.hl = linked ? (ntHlOk(li && li.getAttribute('data-hl')) ? li.getAttribute('data-hl') : 'none') : ntHlLast();
+    k.due0 = k.due; k.cat0 = k.cat; k.hl0 = k.hl;
     ntDetRestore(k);
     ntDetHandOver();                   // a sheet still open on another line
     _ntTask = k;
@@ -21934,7 +21965,7 @@ const VOICE = {
       h += `<div class="nt-tk-show">${escHtml(k.text)}</div>` + (k.sched ? `<div class="nt-tk-note">Scheduled: ${escHtml(k.sched)}</div>` : '');
       if (k.stale) h += '<div class="nt-tk-note">Offline — showing what this device last saw.</div>';
     } else {
-      h += `<input class="nt-tk-text" id="ntTText" type="text" maxlength="500" value="${ntEsc(k.text)}" aria-label="Task" enterkeyhint="done">`;
+      h += `<input class="nt-tk-text" id="ntTText" type="text" maxlength="500" value="${ntEsc(k.text)}" aria-label="Task" placeholder="What needs doing?" enterkeyhint="done">`;
       const ad = ntIsAgenda(m) && m.agendaDate > tm ? m.agendaDate : '';
       const pre = ['today', tm, 'someday', 'due', ad].filter(Boolean);
       const custom = /^\d{4}-\d{2}-\d{2}$/.test(k.when) && !pre.includes(k.when);
@@ -21961,6 +21992,9 @@ const VOICE = {
     });
     h += `<div class="nt-tk-row"><span class="nt-tk-lbl">Deadline</span><div class="nt-tk-chips">${dc}${dateChip('due', k.due, !!k.due && !seen.has(k.due), t)}</div></div>`;
     h += whenRow;                                   // after the deadline it follows
+    // The line's highlight; the last one used is where a new task starts.
+    const hlc = [['none', 'None', '']].concat(NT_HL).map(([v, l, c]) => `<button class="nt-tk-chip nt-hl-chip${(k.hl || 'none') === v ? ' on' : ''}" type="button" data-nt-tk="hl" data-v="${v}" title="${l}" aria-label="Highlight: ${l}" aria-pressed="${(k.hl || 'none') === v}" style="--c:${c || 'transparent'}">${v === 'none' ? 'None' : '<span class="d"></span>'}</button>`).join('');
+    h += `<div class="nt-tk-row"><span class="nt-tk-lbl">Highlight</span><div class="nt-tk-chips">${hlc}</div></div>`;
     if (k.ecm) {
       h += '<div class="nt-tk-row"><span class="nt-tk-lbl">Category</span><div class="nt-tk-note">ECM tasks stay with ECM.</div></div>';
     } else {
@@ -22360,6 +22394,54 @@ const VOICE = {
     if (!k.ecm || !k.t) return;
     try { ssPushFields({ ...k.t, id: k.tid }, { 'Details': det }); } catch (e) { console.warn('[notes] details push', e); }
   }
+  // ⌃N: a new task for the open note. You write it in the sheet first; saving
+  // puts it in the note as a checkbox line where the caret was (or at the end).
+  function ntPopTaskFresh(){
+    if (!_ntEls || !ntOpenId) { ptToast('Open a note first — the task goes into it'); return; }
+    if (_ntPopKind === 'task' && _ntTask && _ntTask.fresh) { const i = document.getElementById('ntTText'); if (i) { try { i.focus(); } catch {} } return; }
+    const sel = ntSel();
+    const inEd = !!(sel && sel.rangeCount && ntInEditor(sel.anchorNode));
+    if (inEd) ntSaveRange();
+    const at = inEd ? (ntCurLi() || ntTopChild(sel.anchorNode)) : null;
+    const id = ntOpenId, m = ntNotes.get(id) || {};
+    ntDetHandOver();
+    const k = {
+      li: null, block: null, fresh: true, at, noteId: id, anchor: _ntEls.toolbar.querySelector('[data-nt-cmd="task"]'), edit: false, tid: null,
+      text: '', when: 'due', whenDate: '', due: '', cat: ntKey(m), sched: '', ecm: false, stale: false, job0: '',
+      det: '', det0: '', cap: 20000, face: 'write', t: null, closing: false, hl: ntHlLast(),
+    };
+    k.due0 = k.due; k.cat0 = k.cat; k.hl0 = k.hl;
+    ++_ntTaskTok;
+    _ntTask = k;
+    const ph = ntIsPhone();
+    if (ph) { try { _ntEls.editor.blur(); } catch {} }
+    ntPopOpen('task', k.anchor, ntTaskPopHTML(), { alignRight: true, refresh: true, focus: ph ? null : '#ntTText' });
+    ntDetMount(k);
+  }
+  // The ⌃N task's line: after the caret's line in a checklist (or in place of
+  // an empty one), otherwise a new checklist after the caret's block — or at
+  // the end of the note when the caret wasn't in it.
+  function ntFreshLine(k, text){
+    const ed = _ntEls.editor;
+    const li = document.createElement('li');
+    li.setAttribute('data-checked', 'false');
+    li.setAttribute('data-line', ntLineId());
+    li.textContent = text;
+    const at = (k.at && k.at.isConnected && ed.contains(k.at)) ? k.at : null;
+    const empty = x => !x.textContent.trim() && !x.querySelector('ul, ol, img, hr') && !(x.getAttribute && x.getAttribute('data-task-id'));
+    if (at && at.nodeName === 'LI' && at.parentElement && at.parentElement.classList.contains('nt-checklist')) {
+      if (empty(at)) at.replaceWith(li); else at.after(li);
+    } else {
+      const ul = document.createElement('ul'); ul.className = 'nt-checklist'; ul.appendChild(li);
+      const top = at ? (at.nodeName === 'LI' ? at.closest('ul, ol') : at) : null;
+      if (top && top.parentElement === ed && top.nodeName === 'P' && empty(top)) top.replaceWith(ul);
+      else if (top && top.parentElement === ed) top.after(ul);
+      else ed.appendChild(ul);
+    }
+    ntAfterMutation();
+    try { ntCaretIn(li, true); ntSaveRange(); } catch {}
+    return li.isConnected ? li : null;
+  }
   function ntTaskFlowOpen(){
     return _ntPopKind === 'task' || (_ntPopKind === 'newcat' && !!(_ntNewCat && _ntNewCat.target && _ntNewCat.target.task)) || _ntTaskBusy > 0;
   }
@@ -22401,6 +22483,7 @@ const VOICE = {
     if (a === 'when') k.when = v;
     else if (a === 'due') ntTaskSetDue(v);
     else if (a === 'cat') { if (v === '' || ntCat(v)) k.cat = v; }
+    else if (a === 'hl') { if (v === 'none' || ntHlOk(v)) k.hl = v; }
     else if (a === 'newcat') {
       const inp = document.getElementById('ntTText');
       if (inp) k.text = inp.value;
@@ -22459,7 +22542,12 @@ const VOICE = {
     k.closing = true;                                // the text is being saved, not lost
     ntPopClose();
     let li = k.li;
-    if (!k.edit && !li) {
+    if (k.fresh) {
+      // ⌃N: the line is made now, where the caret was.
+      if (ntOpenId !== k.noteId || !_ntEls) { ptToast('That note was closed — the task wasn’t added'); return; }
+      li = ntFreshLine(k, text);
+      if (!li) { ptToast('Couldn’t add the line — try again'); return; }
+    } else if (!k.edit && !li) {
       // Only now does the paragraph become a checklist line.
       if (!k.block || !k.block.isConnected || ntOpenId !== k.noteId) { ptToast('That line changed while the sheet was open — try again'); return; }
       ntRestoreRange();
@@ -22481,7 +22569,8 @@ const VOICE = {
     // replace the line this is about to link (phones don't hold the caret).
     _ntTaskBusy++;
     const settle = () => { _ntTaskBusy = Math.max(0, _ntTaskBusy - 1); };
-    Promise.resolve(k.edit ? ntTaskUpdate(k) : ntLineToTask(li, when, { text, due: k.due, cat: k.cat, details: det })).then(settle, settle);
+    if (!k.edit) ntHlRemember(k.hl);
+    Promise.resolve(k.edit ? ntTaskUpdate(k) : ntLineToTask(li, when, { text, due: k.due, cat: k.cat, details: det, hl: k.hl })).then(settle, settle);
   }
   // A linked line: change its deadline and category. Where it's scheduled
   // stays with Personal (push it from there).
@@ -22524,6 +22613,7 @@ const VOICE = {
       let moved = false;
       if ((!k.stale || 'deadline' in patch) && (li.getAttribute('data-due') || '') !== due) { if (due) li.setAttribute('data-due', due); else li.removeAttribute('data-due'); moved = true; }
       if (!k.ecm && (!k.stale || catChanged) && li.getAttribute('data-task-cat') !== k.cat) { li.setAttribute('data-task-cat', k.cat); moved = true; }
+      if (k.hl !== k.hl0) { ntHlApply(li, k.hl); ntHlRemember(k.hl); moved = true; }
       ntDecorateTasks();
       if (moved) ntMarkDirty();
     }
@@ -22816,6 +22906,13 @@ const VOICE = {
   document.addEventListener('keydown', e => {
     if (!_tabNotes || !_ntMounted) return;
     const mod = e.metaKey || e.ctrlKey;
+    // ⌃N: a new task for the open note. (⌘N belongs to the browser — a page can't have it.)
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === 'KeyN' || e.key === 'n' || e.key === 'N') && !e.isComposing) {
+      if (e.target && e.target.closest && e.target.closest('#ntCatsBd')) return;
+      e.preventDefault(); e.stopPropagation();
+      ntPopTaskFresh();
+      return;
+    }
     // ⌘\ folds the notes list away (or back) — more room for the page.
     if (mod && !e.altKey && (e.code === 'Backslash' || e.key === '\\' || e.key === '|') && !_ntFocus && !ntIsPhone() && !(e.target && e.target.closest && e.target.closest('#ntPop, #ntCatsBd'))) {
       e.preventDefault(); e.stopPropagation();
