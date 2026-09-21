@@ -786,7 +786,11 @@
   .mn-empty.center { padding-top: 22vh; text-align: center }
   .mn-empty.err { color: var(--red) }
   .mn-lnk { border: 0; background: none; padding: 0; color: var(--orange); font: 700 13px inherit; font-family: inherit; cursor: pointer }
-  .mn-back { display: none; margin-bottom: 10px }
+  .mn-back { display: none }
+  .mn-stick { position: sticky; top: -20px; z-index: 3; display: flex; align-items: center; gap: 12px; margin: -20px -26px 14px; padding: 10px 26px; border-radius: 14px 14px 0 0; background: var(--bg-elev); border-bottom: 1px solid var(--w08) }
+  .mn-stick-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: var(--w70) }
+  .mn-collapse { flex-shrink: 0 }
+  .mn-end { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--w08) }
   .prog-mn { margin-top: 10px; border-radius: 10px; border: 1px solid var(--w08) }
   .prog-mn.open { background: var(--w03) }
   .prog-mn-tog { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 8px 10px; border: 0; border-radius: 10px; background: none; color: var(--ink); font-family: inherit; text-align: left; cursor: pointer }
@@ -840,8 +844,9 @@
     .mn-wrap { grid-template-columns: 1fr }
     .mn-wrap.has-sel .mn-side { display: none }
     .mn-wrap:not(.has-sel) .mn-read { display: none }
-    .mn-read { position: static; max-height: none; padding: 14px 16px 30px }
-    .mn-back { display: inline-flex }
+    .mn-read { position: static; max-height: none; overflow: visible; padding: 14px 16px 30px }
+    .mn-back { display: inline-flex; flex-shrink: 0 }
+    .mn-stick { top: 0; margin: -14px -16px 12px; padding: 10px 16px }
   }
   .tb-bar {
     display:flex; align-items:center; gap:10px; flex-wrap:wrap;
@@ -11008,7 +11013,11 @@ function mnPaintRead(wrap){
   const np = mnProgs().find(p => p.key === mnK(n.program));
   const c = _mn.pages.get(_mn.sel), d = (c && c.d) || {};
   const url = mnUrl(d.url || n.url), ds = mnDate(n);
-  let h = '<div class="mn-hd"><button type="button" class="mn-back mn-lnk" data-mn="back">‹ All notes</button><div class="mn-tags">'
+  // Pinned while you read: the title and the way out.
+  let h = '<div class="mn-stick"><button type="button" class="mn-back mn-lnk" data-mn="back">‹ All notes</button>'
+    + `<span class="mn-stick-t">${mnEsc(mnShort(d.title || n.title))}</span>`
+    + '<button type="button" class="mn-lnk mn-collapse" data-mn="back" title="Close this meeting (Esc)">Collapse ▴</button></div>'
+    + '<div class="mn-hd"><div class="mn-tags">'
     + (np ? `<span class="mn-pc big" style="--c:${mnEsc(mnColor(np.color))}">${mnEsc(np.name)}</span>` : '')
     + (n.type ? `<span class="mn-tag">${mnEsc(n.type)}</span>` : '')
     + (ds ? `<span class="mn-tag">${mnEsc(mnDay(ds, true))}</span>` : '') + '</div>'
@@ -11018,6 +11027,8 @@ function mnPaintRead(wrap){
   if (c && c.err) h += `<div class="mn-empty err">${mnEsc(c.err)} <button type="button" class="mn-lnk" data-mn="reload">Try again</button></div>`;
   else if (!c || !c.d) h += '<div class="mn-empty">Loading the notes…</div>';
   else h += `<div class="mn-doc">${d.html || '<p><em>This page is empty.</em></p>'}</div>`;   // escaped on the server
+  if (c && c.d) h += '<div class="mn-end">' + (url ? `<a class="mn-open" href="${mnEsc(url)}" target="_blank" rel="noopener noreferrer">Open in Notion ↗</a>` : '')
+    + '<button type="button" class="mn-lnk" data-mn="back">▴ Collapse</button></div>';
   box.innerHTML = h;
 }
 async function mnOpen(id, force){
@@ -11113,6 +11124,26 @@ async function mnFetchPage(id){
   if (currentView === 'programs') { try { render(); } catch {} }
   else if (currentView === 'mnotes') renderMeetingNotes();
 }
+// Close the open note; on a phone the list comes back with that meeting in view.
+function mnCloseRead(){
+  const id = _mn.sel;
+  _mn.sel = '';
+  renderMeetingNotes();
+  if (!id) return;
+  setTimeout(() => {
+    const row = document.querySelector('#list .mn-row[data-mn-page="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    if (!row) return;
+    const r = row.getBoundingClientRect();
+    if (r.top < 120 || r.bottom > window.innerHeight) row.scrollIntoView({ block: 'center' });
+  }, 0);
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || currentView !== 'mnotes' || !_mn.sel) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (expandedId != null || document.querySelector('.modal-backdrop:not([hidden])')) return;
+  mnCloseRead();
+});
 (function wireMeetingNotes(){
   const list = document.getElementById('list');
   if (!list) return;
@@ -11148,7 +11179,7 @@ async function mnFetchPage(id){
     if (!a) return;
     const act = a.getAttribute('data-mn');
     if (act === 'refresh') mnLoad(true);
-    else if (act === 'back') { _mn.sel = ''; renderMeetingNotes(); }
+    else if (act === 'back') mnCloseRead();
     else if (act === 'reload' && _mn.sel) mnOpen(_mn.sel, true);
   });
   list.addEventListener('change', e => {
