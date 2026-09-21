@@ -4108,6 +4108,16 @@
   .nt-editor p:has(> img + img) > img { flex: 1 1 0; min-width: 0; margin: 6px 0; object-fit: contain; }
   .nt-editor p:has(> img + img) > br { display: none; }
   .nt-imgbar button[hidden] { display: none; }
+  .nt-editor img { -webkit-user-drag: none; user-select: none; }
+  .nt-editor img[width] { max-height: none; height: auto; }
+  .nt-editor p:has(> img + img) > img[width] { flex: 0 1 auto; }
+  .nt-editor img.nt-img-dragging { opacity: .35; }
+  body.nt-img-drag-on, body.nt-img-drag-on * { cursor: grabbing !important; }
+  .nt-imgghost { position: fixed; z-index: 90; width: 120px; max-height: 120px; object-fit: cover; border-radius: 8px; opacity: .85; pointer-events: none; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+  .nt-imgdrop { position: fixed; z-index: 89; border-radius: 3px; background: var(--accent); pointer-events: none; }
+  .nt-imgdrop[hidden] { display: none; }
+  .nt-imgsize { position: fixed; z-index: 81; width: 16px; height: 16px; border-radius: 5px; background: var(--accent); border: 2px solid var(--surface, #fff); box-shadow: 0 2px 6px rgba(0, 0, 0, .25); cursor: nwse-resize; touch-action: none; }
+  .nt-imgsize[hidden] { display: none; }
   .nt-imgbar { position: fixed; z-index: 80; display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface, #fff); border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(0, 0, 0, .16); }
   .nt-imgbar[hidden] { display: none; }
   .nt-imgbar button { height: 28px; min-width: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: none; font: 700 12.5px var(--font-family); color: var(--ink); cursor: pointer; white-space: nowrap; }
@@ -15611,6 +15621,8 @@ const VOICE = {
           const im = document.createElement('img');
           im.setAttribute('src', src);
           im.setAttribute('alt', String(node.getAttribute('alt') || '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 200));
+          const w = parseInt(node.getAttribute('width') || '', 10);   // a size set by dragging its corner
+          if (w >= 40 && w <= 2400) im.setAttribute('width', String(w));
           dst.appendChild(im);
         }
         continue;
@@ -21734,8 +21746,17 @@ const VOICE = {
     });
     // An image: click it for the bar (move / remove).
     ed.addEventListener('click', e => {
+      if (Date.now() - _ntImgDragAt < 400) return;   // the click that ends a drag
       const t = e.target;
-      if (t && t.nodeName === 'IMG' && ntInEditor(t)) ntImgBarShow(t); else ntImgBarHide();
+      if (t && t.nodeName === 'IMG' && ntInEditor(t)) { ntImgBarShow(t); try { if (document.activeElement !== ed) ed.focus({ preventScroll: true }); } catch {} }
+      else ntImgBarHide();
+    });
+    // Mouse / pen: press and drag an image to move it. (A touch still scrolls.)
+    ed.addEventListener('pointerdown', e => {
+      const t = e.target;
+      if (!t || t.nodeName !== 'IMG' || e.button !== 0 || e.pointerType === 'touch' || !ntInEditor(t)) return;
+      e.preventDefault();   // no native image drag, no text selection
+      ntImgDragStart(t, e);
     });
     ed.addEventListener('keydown', e => {
       if (!_ntImgSel) return;
@@ -22682,7 +22703,7 @@ const VOICE = {
     document.addEventListener('mousedown', e => {
       if (!_ntImgSel) return;
       const t = e.target;
-      if (t === _ntImgSel || (t && t.closest && t.closest('.nt-imgbar'))) return;
+      if (t === _ntImgSel || (t && t.closest && t.closest('.nt-imgbar, .nt-imgsize'))) return;
       ntImgBarHide();
     }, true);
     return (_ntImgBar = b);
@@ -22692,6 +22713,7 @@ const VOICE = {
     _ntImgSel = img;
     img.classList.add('nt-img-on');
     ntImgBarEl().hidden = false;
+    ntImgSizeEl().hidden = false;
     ntImgBarSync();
     ntImgBarPlace();
   }
@@ -22699,6 +22721,7 @@ const VOICE = {
     if (_ntImgSel) _ntImgSel.classList.remove('nt-img-on');
     _ntImgSel = null;
     if (_ntImgBar) _ntImgBar.hidden = true;
+    if (_ntImgSize) _ntImgSize.hidden = true;
   }
   function ntImgBarPlace(){
     const img = _ntImgSel, b = _ntImgBar;
@@ -22709,10 +22732,188 @@ const VOICE = {
     let floor = 8;
     try { const tb = _ntEls.toolbar && _ntEls.toolbar.getBoundingClientRect(); if (tb && tb.height && tb.bottom > 0) floor = tb.bottom + 6; } catch {}
     const top = Math.max(floor, Math.min(r.top + 8, window.innerHeight - bh - 8));
-    if (r.bottom < floor + bh || r.top > window.innerHeight - 20) { b.style.visibility = 'hidden'; return; }
+    if (r.bottom < floor + bh || r.top > window.innerHeight - 20) { b.style.visibility = 'hidden'; if (_ntImgSize) _ntImgSize.hidden = true; return; }
     b.style.visibility = '';
     const left = Math.max(8, Math.min(r.right - bw - 8, window.innerWidth - bw - 8));
     b.style.top = top + 'px'; b.style.left = left + 'px';
+    const h = _ntImgSize;
+    if (h && _ntImgSel) {
+      const hidden = r.bottom < floor + 10 || r.bottom > window.innerHeight - 4;
+      h.hidden = hidden;
+      if (!hidden) { h.style.left = (r.right - 9) + 'px'; h.style.top = (r.bottom - 9) + 'px'; }
+    }
+  }
+  // ---- drag an image to move it ----
+  let _ntImgDragAt = 0, _ntImgSize = null;
+  function ntImgDragStart(img, e){
+    const d = { img, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false, tgt: null, raf: 0 };
+    const move = ev => {
+      if (ev.pointerId !== d.id) return;
+      d.x = ev.clientX; d.y = ev.clientY;
+      if (!d.on && Math.abs(d.x - d.x0) + Math.abs(d.y - d.y0) > 6) ntImgDragBegin(d);
+      if (d.on) ntImgDragUpdate(d);
+    };
+    const up = ev => {
+      if (ev.pointerId !== d.id) return;
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      window.removeEventListener('keydown', esc, true);
+      if (d.on) ntImgDragEnd(d, ev.type === 'pointerup');
+    };
+    const esc = ev => { if (ev.key === 'Escape' && d.on) { ev.preventDefault(); ev.stopImmediatePropagation(); d.tgt = null; ntImgDragEnd(d, false); d.on = false; } };
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    window.addEventListener('keydown', esc, true);
+  }
+  function ntImgDragBegin(d){
+    d.on = true;
+    ntImgBarHide();
+    const g = document.createElement('img');
+    g.src = d.img.src; g.alt = ''; g.className = 'nt-imgghost';
+    const ind = document.createElement('div');
+    ind.className = 'nt-imgdrop'; ind.hidden = true;
+    document.body.append(g, ind);
+    d.ghost = g; d.ind = ind;
+    d.img.classList.add('nt-img-dragging');
+    document.body.classList.add('nt-img-drag-on');
+    // Near the top or bottom edge, the note scrolls.
+    const tick = () => {
+      if (!d.on) return;
+      const sc = ntScroller(), el = sc === document.scrollingElement || sc === document.documentElement ? null : sc;
+      const top = el ? el.getBoundingClientRect().top : 0, bot = el ? el.getBoundingClientRect().bottom : window.innerHeight;
+      const v = d.y < top + 50 ? -Math.ceil((top + 50 - d.y) / 4) : d.y > bot - 50 ? Math.ceil((d.y - bot + 50) / 4) : 0;
+      if (v) { if (el) el.scrollTop += v; else window.scrollBy(0, v); ntImgDragUpdate(d); }
+      d.raf = requestAnimationFrame(tick);
+    };
+    d.raf = requestAnimationFrame(tick);
+    ntImgDragUpdate(d);
+  }
+  function ntImgDragUpdate(d){
+    d.ghost.style.left = (d.x + 14) + 'px'; d.ghost.style.top = (d.y + 14) + 'px';
+    const t = d.tgt = ntImgDropTarget(d.x, d.y, d.img), ind = d.ind;
+    if (!t) { ind.hidden = true; return; }
+    const er = _ntEls.editor.getBoundingClientRect(), r = t.rect;
+    ind.hidden = false;
+    if (t.kind === 'beside') {
+      ind.className = 'nt-imgdrop v';
+      ind.style.left = ((t.after ? r.right + 3 : r.left - 5)) + 'px'; ind.style.top = r.top + 'px';
+      ind.style.width = '3px'; ind.style.height = r.height + 'px';
+    } else {
+      ind.className = 'nt-imgdrop';
+      ind.style.left = er.left + 'px'; ind.style.width = er.width + 'px'; ind.style.height = '3px';
+      ind.style.top = ((t.after ? r.bottom : r.top) - 1.5) + 'px';
+    }
+  }
+  function ntImgDragEnd(d, commit){
+    cancelAnimationFrame(d.raf);
+    if (d.ghost) d.ghost.remove();
+    if (d.ind) d.ind.remove();
+    d.img.classList.remove('nt-img-dragging');
+    document.body.classList.remove('nt-img-drag-on');
+    _ntImgDragAt = Date.now();
+    if (commit && d.tgt && d.img.isConnected) ntImgDropAt(d.img, d.tgt);
+    else if (d.img.isConnected) ntImgBarShow(d.img);
+    d.on = false;
+  }
+  // Where a drop at (x, y) goes: beside an image in a row (its left or right
+  // half), or between two lines — a list's items count as lines.
+  function ntImgDropTarget(x, y, dragImg){
+    const ed = _ntEls.editor, er = ed.getBoundingClientRect();
+    if (y < er.top - 30 || y > er.bottom + 60) return null;
+    let el = document.elementFromPoint(Math.min(Math.max(x, er.left + 24), er.right - 24), y);
+    if (el && el.nodeName === 'IMG' && el !== dragImg && ed.contains(el) && ntImgIsRow(el.parentNode)) {
+      const r = el.getBoundingClientRect();
+      // Over an image: its outer edges put it beside; its middle, above or below.
+      if (x < r.left + r.width * 0.3 || x > r.right - r.width * 0.3) return { kind: 'beside', img: el, after: x > r.left + r.width / 2, rect: r };
+    }
+    if (!el || !ed.contains(el) || el === ed) {
+      // Between blocks, or past the end: the nearest block by height.
+      const kids = [...ed.children];
+      if (!kids.length) return null;
+      for (const k of kids) { const r = k.getBoundingClientRect(); if (y < r.top + r.height / 2) return { kind: 'line', top: k, line: k, after: false, rect: r }; }
+      const k = kids[kids.length - 1];
+      return { kind: 'line', top: k, line: k, after: true, rect: k.getBoundingClientRect() };
+    }
+    let top = el;
+    while (top && top.parentNode !== ed) top = top.parentNode;
+    if (!top) return null;
+    let line = top;
+    if (ntImgIsList(top)) {
+      let li = el.closest('li');
+      while (li && li.parentElement !== top) li = li.parentElement ? li.parentElement.closest('li') : null;
+      if (li) line = li;
+    }
+    const r = line.getBoundingClientRect();
+    return { kind: 'line', top, line, after: y > r.top + r.height / 2, rect: r };
+  }
+  function ntImgDropAt(img, t){
+    const from = img.parentNode;
+    if (t.kind === 'beside') {
+      if (t.img === img) { ntImgBarShow(img); return; }
+      if (t.after) t.img.after(img); else t.img.before(img);
+      t.img.parentNode.querySelectorAll('br').forEach(b => b.remove());
+    } else {
+      // Dropped on its own line, where it already is: nothing to do.
+      if (t.line === from && ntImgIsRow(from) && from.querySelectorAll('img').length === 1) { ntImgBarShow(img); return; }
+      const row = document.createElement('p');
+      if (t.line.nodeName === 'LI') ntImgAtItem(row, t.top, t.line, t.after);
+      else if (t.after) t.line.after(row); else t.line.before(row);
+      row.appendChild(img);
+    }
+    // Where it came from: an emptied row goes, and the lists either side of
+    // it (split to make room) join back up.
+    if (from && from !== img.parentNode && from.isConnected && from.nodeName === 'P' && !from.textContent.trim() && !from.querySelector('img')) {
+      const a = from.previousElementSibling, b = from.nextElementSibling;
+      from.remove();
+      if (ntImgSameList(a, b)) { while (b.firstChild) a.appendChild(b.firstChild); b.remove(); }
+    }
+    ntImgDone(img);
+  }
+  // ---- drag the corner to size it ----
+  function ntImgSizeEl(){
+    if (_ntImgSize && _ntImgSize.isConnected) return _ntImgSize;
+    const h = document.createElement('div');
+    h.className = 'nt-imgsize'; h.hidden = true;
+    h.title = 'Drag to resize · double-click for the original size';
+    h.setAttribute('aria-hidden', 'true');
+    h.addEventListener('pointerdown', e => {
+      const img = _ntImgSel;
+      if (!img || e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const ed = _ntEls.editor, max = ed.clientWidth || 800;
+      const x0 = e.clientX, w0 = img.getBoundingClientRect().width;
+      try { h.setPointerCapture(e.pointerId); } catch {}
+      _ntImgBar.hidden = true;
+      const move = ev => {
+        const w = Math.round(Math.max(60, Math.min(max, w0 + ev.clientX - x0)));
+        img.setAttribute('width', String(w));
+        ntImgBarPlace();
+      };
+      const up = () => {
+        h.removeEventListener('pointermove', move);
+        h.removeEventListener('pointerup', up);
+        h.removeEventListener('pointercancel', up);
+        _ntImgDragAt = Date.now();
+        ntAfterMutation();
+        ntImgBarShow(img);
+      };
+      h.addEventListener('pointermove', move);
+      h.addEventListener('pointerup', up);
+      h.addEventListener('pointercancel', up);
+    });
+    h.addEventListener('dblclick', e => {
+      const img = _ntImgSel;
+      if (!img) return;
+      e.preventDefault();
+      img.removeAttribute('width');
+      ntAfterMutation();
+      ntImgBarShow(img);
+      ptToast('Original size');
+    });
+    document.body.appendChild(h);
+    return (_ntImgSize = h);
   }
   // The editor's top-level block holding the image.
   function ntImgBlock(img){
