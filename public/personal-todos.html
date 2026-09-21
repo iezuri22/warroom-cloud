@@ -3361,6 +3361,13 @@
   .nt-no-top .nt-seg button[aria-pressed="true"] { background: var(--surface, #fff); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
   .nt-no-rf { margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 8px; background: none; color: var(--ink-dim); font-size: 15px; cursor: pointer; }
   .nt-no-rf:hover { background: var(--fill); color: var(--ink); }
+  .nt-no-progs { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 4px 10px; }
+  .nt-no-pchip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--ink-mid); font: 700 11.5px var(--font-family); cursor: pointer; white-space: nowrap; }
+  .nt-no-pchip:hover { background: var(--fill); color: var(--ink); }
+  .nt-no-pchip .d { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .nt-no-pchip .k { font-weight: 600; color: var(--ink-dim); }
+  .nt-no-pchip.on { background: var(--ink); border-color: var(--ink); color: var(--surface, #fff); }
+  .nt-no-pchip.on .k { color: inherit; opacity: .7; }
   .nt-no-g { margin-bottom: 6px; }
   .nt-no-gh { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 6px 5px; border: 0; background: none; cursor: pointer; font: 800 11px var(--font-family); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mid); text-align: left; }
   .nt-no-gh .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
@@ -18123,6 +18130,8 @@ const VOICE = {
   // connection can see. A page opens in the doc pane, rendered by ntMd.
   let _ntNoData = null, _ntNoLoading = false, _ntNoErr = '', _ntNoShown = 0, _ntNoSel = '', _ntNoDocTok = 0;
   const _ntNoPages = new Map();   // id → { d, at } — a page's Markdown, 5 minutes
+  // One program at a time (the chips over the list); '' = all. Per device.
+  let _ntNoProg = (() => { try { return localStorage.getItem('pt-nt-noprog') || ''; } catch { return ''; } })();
   let _ntNoMode = (() => { try { return localStorage.getItem('pt-nt-nomode') === 'date' ? 'date' : 'program'; } catch { return 'program'; } })();
   const NT_NO_COLOR = { default: '#9B9A97', gray: '#9B9A97', brown: '#937264', orange: '#D9730D', yellow: '#CB912F', green: '#448361', blue: '#337EA9', purple: '#9065B0', pink: '#C14C8A', red: '#D44C47' };
   async function ntNotionApi(payload){
@@ -18199,12 +18208,21 @@ const VOICE = {
     if (!_ntNoData) return h + '<div class="nt-empty-lib">Loading your Notion pages…</div>';
     const q = ntQuery.trim().toLowerCase();
     const hit = n => !q || [n.title, n.program, n.type, n.summary, n.db].join('\n').toLowerCase().includes(q);
-    const notes = _ntNoData.notes.filter(hit).sort((a, b) => ntNotionDate(b).localeCompare(ntNotionDate(a)) || String(b.edited).localeCompare(String(a.edited)));
-    const others = _ntNoData.others.filter(hit);
+    // Program chips: every program with notes, busiest first — one tap narrows the list.
+    const pc = new Map(), pcol = new Map();
+    _ntNoData.notes.forEach(n => { if (!n.program) return; pc.set(n.program, (pc.get(n.program) || 0) + 1); pcol.set(n.program, n.color); });
+    if (_ntNoProg && !pc.has(_ntNoProg)) _ntNoProg = '';
+    const progs = [...pc.keys()].sort((a, b) => pc.get(b) - pc.get(a) || a.localeCompare(b));
+    if (progs.length) h += '<div class="nt-no-progs" role="group" aria-label="Program">'
+      + `<button type="button" class="nt-no-pchip${!_ntNoProg ? ' on' : ''}" data-nt-noprog="">All<span class="k">${_ntNoData.notes.length}</span></button>`
+      + progs.map(k => `<button type="button" class="nt-no-pchip${_ntNoProg === k ? ' on' : ''}" data-nt-noprog="${ntEsc(k)}" style="--c:${ntEsc(ntNotionColor(pcol.get(k)))}"><span class="d"></span>${escHtml(k)}<span class="k">${pc.get(k)}</span></button>`).join('')
+      + '</div>';
+    const notes = _ntNoData.notes.filter(n => hit(n) && (!_ntNoProg || n.program === _ntNoProg)).sort((a, b) => ntNotionDate(b).localeCompare(ntNotionDate(a)) || String(b.edited).localeCompare(String(a.edited)));
+    const others = _ntNoProg ? [] : _ntNoData.others.filter(hit);
     _ntNoShown = notes.length + others.length;
     const S = ntGroupShut();
     const group = (key, label, color, items, show) => {
-      const shut = !q && S.has('no:' + key);
+      const shut = !q && !_ntNoProg && S.has('no:' + key);
       return `<div class="nt-no-g"><button type="button" class="nt-no-gh${shut ? ' shut' : ''}" data-nt-nogrp="${ntEsc(key)}" aria-expanded="${!shut}">`
         + (color ? `<span class="dot" style="--c:${ntEsc(color)}"></span>` : '')
         + `<b>${escHtml(label)}</b><span class="k">${items.length}</span>${NT_SVG.chevS}</button>`
@@ -24648,6 +24666,8 @@ const VOICE = {
       if (nop) { e.stopPropagation(); e.preventDefault(); ntNotionShowDoc(nop.getAttribute('data-nt-nopage')); return; }
       const nog = t.closest('[data-nt-nogrp]');
       if (nog) { e.stopPropagation(); e.preventDefault(); const g = 'no:' + nog.getAttribute('data-nt-nogrp'), S = ntGroupShut(); if (S.has(g)) S.delete(g); else S.add(g); try { localStorage.setItem('pt-nt-shut', JSON.stringify([...S])); } catch {} ntRenderLib(); return; }
+      const nop2 = t.closest('[data-nt-noprog]');
+      if (nop2) { e.stopPropagation(); e.preventDefault(); const v = nop2.getAttribute('data-nt-noprog'); _ntNoProg = _ntNoProg === v ? '' : v; try { localStorage.setItem('pt-nt-noprog', _ntNoProg); } catch {} ntRenderLib(); try { const L = document.getElementById('ntList'); if (L) L.scrollTop = 0; } catch {} return; }
       const nom = t.closest('[data-nt-nomode]');
       if (nom) { e.stopPropagation(); e.preventDefault(); _ntNoMode = nom.getAttribute('data-nt-nomode'); try { localStorage.setItem('pt-nt-nomode', _ntNoMode); } catch {} ntRenderLib(); return; }
       if (t.closest('[data-nt-noretry]')) { e.stopPropagation(); e.preventDefault(); ntNotionLoad(true); return; }

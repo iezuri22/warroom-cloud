@@ -787,6 +787,20 @@
   .mn-empty.err { color: var(--red) }
   .mn-lnk { border: 0; background: none; padding: 0; color: var(--orange); font: 700 13px inherit; font-family: inherit; cursor: pointer }
   .mn-back { display: none; margin-bottom: 10px }
+  .prog-mn-sec { margin: 14px 0 6px }
+  .prog-mn-list { display: flex; flex-direction: column; gap: 2px }
+  .prog-mn-item { border-radius: 10px }
+  .prog-mn-item.open { background: var(--w04); border: 1px solid var(--w08) }
+  .prog-mn-row { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 10px 4px; border: 0; border-radius: 10px; background: none; color: var(--ink); text-align: left; font-family: inherit; cursor: pointer }
+  .prog-mn-row:hover { background: var(--w05) }
+  .prog-mn-row .dt { flex-shrink: 0; width: 64px; font-size: 12px; font-weight: 700; color: var(--w55); font-variant-numeric: tabular-nums }
+  .prog-mn-row .t { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .prog-mn-row .ty { flex-shrink: 0; font-size: 12px; color: var(--w55) }
+  .prog-mn-row .cv { flex-shrink: 0; width: 12px; color: var(--w50) }
+  .prog-mn-sum { padding: 0 10px 8px 84px; font-size: 12.5px; line-height: 1.45; color: var(--w60); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+  .prog-mn-body { padding: 6px 14px 14px }
+  .prog-mn-body .mn-doc { margin-bottom: 12px }
+  @media (max-width: 700px) { .prog-mn-sum { padding-left: 10px } .prog-mn-row .dt { width: auto } }
   .mn-doc { font-size: 14.5px; line-height: 1.65; color: var(--w90); overflow-wrap: anywhere }
   .mn-doc h2, .mn-doc h3, .mn-doc h4 { margin: 18px 0 6px; line-height: 1.3; color: var(--ink) }
   .mn-doc h2 { font-size: 19px } .mn-doc h3 { font-size: 17px } .mn-doc h4 { font-size: 15px }
@@ -10845,7 +10859,11 @@ async function mnLoad(force){
     const j = await mnApi({ op: 'list' });
     _mn.data = { notes: Array.isArray(j.notes) ? j.notes : [], at: Date.now() };
   } catch (e) { _mn.err = mnErr(e); }
-  finally { _mn.loading = false; if (currentView === 'mnotes') renderMeetingNotes(); }
+  finally {
+    _mn.loading = false;
+    if (currentView === 'mnotes') renderMeetingNotes();
+    else if (currentView === 'programs') { try { render(); } catch {} }
+  }
 }
 // "Senior Services @ September 3, 2026" → "Senior Services" (the date shows on its own).
 function mnShort(t){
@@ -10887,6 +10905,7 @@ function renderMeetingNotes(){
     wrap = list.querySelector('.mn-wrap');
     wrap.querySelector('.mn-q').value = _mn.q;
   }
+  else { const q = wrap.querySelector('.mn-q'); if (q && document.activeElement !== q && q.value !== _mn.q) q.value = _mn.q; }
   wrap.classList.toggle('has-sel', !!_mn.sel);
   wrap.classList.toggle('loading', _mn.loading);
   mnPaintList(wrap);
@@ -10955,12 +10974,75 @@ async function mnOpen(id, force){
   catch (e) { _mn.pages.set(id, { d: null, at: 0, err: mnErr(e) }); }
   if (tok === _mn.tok && _mn.sel === id && currentView === 'mnotes') renderMeetingNotes();
 }
+// ---- a program page's meeting notes ----
+const mnKey = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+let _mnProgFor = '', _mnProgOpen = '', _mnProgMore = false;
+function _progMeetingNotesHTML(program){
+  if (program !== _mnProgFor) { _mnProgFor = program; _mnProgOpen = ''; _mnProgMore = false; }
+  if (!_mn.data && !_mn.loading && !_mn.err) setTimeout(() => mnLoad(), 0);
+  const head = extra => `<div class="prog-sec prog-mn-sec"><div class="prog-sec-head"><h4>Meeting notes</h4>${extra || ''}</div>`;
+  if (_mn.err) return head() + `<div class="prog-quiet">${mnEsc(_mn.err)}</div></div>`;
+  if (!_mn.data) return head() + '<div class="prog-quiet">Loading meeting notes…</div></div>';
+  const key = mnKey(program);
+  const all = _mn.data.notes.filter(n => n.program && mnKey(n.program) === key)
+    .sort((a, b) => mnDate(b).localeCompare(mnDate(a)) || String(b.edited).localeCompare(String(a.edited)));
+  if (!all.length) return head() + `<div class="prog-quiet">No meeting notes tagged ${mnEsc(program)} in Notion yet.</div></div>`;
+  const shown = all.slice(0, _mnProgMore ? 30 : 6);
+  let h = head(`<button type="button" class="prog-notes-edit" data-mn-all="${mnEsc(all[0].program)}" title="Open the Meeting notes tab, filtered to ${mnEsc(program)}">All ${all.length} →</button>`);
+  h += '<div class="prog-mn-list">' + shown.map(n => {
+    const open = n.id === _mnProgOpen, ds = mnDate(n), c = open ? _mn.pages.get(n.id) : null, url = mnUrl(n.url);
+    return `<div class="prog-mn-item${open ? ' open' : ''}">`
+      + `<button type="button" class="prog-mn-row" data-mn-inline="${mnEsc(n.id)}" aria-expanded="${open}" title="${mnEsc(n.title)}">`
+      + `<span class="dt">${mnEsc(mnDay(ds))}</span><span class="t">${mnEsc(mnShort(n.title))}</span>`
+      + (n.type ? `<span class="ty">${mnEsc(n.type)}</span>` : '') + `<span class="cv">${open ? '▾' : '▸'}</span></button>`
+      + (n.summary && !open ? `<div class="prog-mn-sum">${mnEsc(n.summary)}</div>` : '')
+      + (open ? '<div class="prog-mn-body">'
+          + (n.summary ? `<div class="mn-sum">${mnEsc(n.summary)}</div>` : '')
+          + (c && c.err ? `<div class="mn-empty err">${mnEsc(c.err)}</div>`
+            : (!c || !c.d) ? '<div class="mn-empty">Loading the notes…</div>'
+            : `<div class="mn-doc">${c.d.html || '<p><em>This page is empty.</em></p>'}</div>`)   // escaped on the server
+          + (url ? `<a class="mn-open" href="${mnEsc(url)}" target="_blank" rel="noopener noreferrer">Open in Notion ↗</a>` : '')
+          + '</div>' : '')
+      + '</div>';
+  }).join('') + '</div>';
+  if (all.length > shown.length) h += `<button type="button" class="prog-notes-more" data-mn-more="1">Show ${Math.min(all.length, 30) - shown.length} more</button>`;
+  return h + '</div>';
+}
+// One page's notes, into the shared cache; repaint whichever view shows it.
+async function mnFetchPage(id){
+  const c = _mn.pages.get(id);
+  if (c && c.d && Date.now() - c.at < 5 * 60000) return;
+  _mn.pages.set(id, { d: null, at: 0 });
+  try { const d = await mnApi({ op: 'page', id }); _mn.pages.set(id, { d, at: Date.now() }); }
+  catch (e) { _mn.pages.set(id, { d: null, at: 0, err: mnErr(e) }); }
+  if (currentView === 'programs') { try { render(); } catch {} }
+  else if (currentView === 'mnotes') renderMeetingNotes();
+}
 (function wireMeetingNotes(){
   const list = document.getElementById('list');
   if (!list) return;
   list.addEventListener('click', e => {
-    if (currentView !== 'mnotes') return;
     const t = e.target;
+    if (currentView === 'programs') {
+      const inl = t.closest('[data-mn-inline]');
+      if (inl) {
+        const id = inl.getAttribute('data-mn-inline');
+        _mnProgOpen = _mnProgOpen === id ? '' : id;
+        try { render(); } catch {}
+        if (_mnProgOpen) mnFetchPage(id);
+        return;
+      }
+      const all = t.closest('[data-mn-all]');
+      if (all) {
+        _mn.prog = all.getAttribute('data-mn-all'); _mn.sel = ''; _mn.q = '';
+        const tab = document.querySelector('.view-tab[data-view="mnotes"]');
+        if (tab) tab.click();
+        return;
+      }
+      if (t.closest('[data-mn-more]')) { _mnProgMore = true; try { render(); } catch {} return; }
+      return;
+    }
+    if (currentView !== 'mnotes') return;
     const pg = t.closest('[data-mn-page]');
     if (pg) { mnOpen(pg.getAttribute('data-mn-page')); return; }
     const pr = t.closest('[data-mn-prog]');
@@ -12070,6 +12152,7 @@ function renderPrograms(){
             </div>
           </div>
         </div>
+        ${_progMeetingNotesHTML(_progSel)}
         ${stagesHTML}
       </div>
     </div>`;
