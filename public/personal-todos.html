@@ -9171,17 +9171,30 @@ const VOICE = {
         if (!r.permalink && sheetPermalink) {
           r.permalink = `${sheetPermalink}?rowId=${r.id}`;
         }
-        byRowIdAllStatuses.set(String(r.id), { row: r, status: s, owner: o });
+        const marked = colDel ? /^(true|1)$/i.test(String(ssCellValue(r, colDel.id) ?? '')) : false;
+        byRowIdAllStatuses.set(String(r.id), { row: r, status: s, owner: o, marked });
         // Incomplete pool: user is one of the owners (handles multi-contact)
         const isOwner = o.split(/[,;]+/).map(s => s.trim()).includes(ownerName);
         // Open the way the ECM page counts it: anything not closed (a blank
         // status too) — but not a row marked for deletion.
-        const marked = colDel ? /^(true|1)$/i.test(String(ssCellValue(r, colDel.id) ?? '')) : false;
         if (isOwner && s !== 'Completed' && s !== 'Not feasible - close ticket' && !marked) incomplete.push(r);
       });
+      // Every local copy this page can see: today's list, Planned, and Notes'
+      // live open list — a copy parked on another day isn't in `todos`.
+      // (try: at boot the Notes state may not be declared yet.)
+      const localCopies = (() => {
+        const m = new Map();
+        const add = t => { if (t && t.id && t.smartsheetRowId && !m.has(t.id)) m.set(t.id, t); };
+        todos.forEach(add);
+        try { (_plannedCache || []).forEach(add); } catch {}
+        try { if (_ntOpenLoaded && !_ntOpenErr) _ntOpenIdx.forEach(add); } catch {}
+        return [...m.values()];
+      })();
       // Reassignment + deletion sweep — drop the local copy if:
       //   1) Sheet row exists but is owned by someone else (and not me)
       //   2) Sheet row was deleted entirely from Smartsheets
+      //   3) Sheet row is marked for deletion (an open copy; unmarking it
+      //      brings it back on the next sync)
       // Multi-contact owner columns split on comma/semicolon and check if
       // the user is anywhere in the list.
       const ownerInCell = (cellOwner) => {
@@ -9192,9 +9205,10 @@ const VOICE = {
       let reassignedOut = 0;
       let deletedFromSheet = 0;
       const toRemove = [];
-      for (const t of todos) {
+      for (const t of localCopies) {
         if (!t.smartsheetRowId) continue;
         const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
+        if (found && found.marked && !t.done) { toRemove.push({ todo: t, reason: 'marked' }); continue; }
         if (!found) {
           // Row no longer on the sheet — was deleted or moved off this sheet.
           // Drop the local ghost. Full-sheet GET isn't paginated by default,
@@ -9210,6 +9224,13 @@ const VOICE = {
         if (found.owner) {
           toRemove.push({ todo: t, reason: 'reassigned', newOwner: found.owner });
         }
+      }
+      // Rows missing from the sheet: trust that only in small numbers — a
+      // short read must never empty the list.
+      const gone = toRemove.filter(x => x.reason === 'deleted').length;
+      if (gone > 10 && gone > localCopies.filter(t => !t.done).length / 2) {
+        console.warn('[ECM sync] ' + gone + ' rows look deleted from the sheet — too many to trust; keeping them');
+        for (let i = toRemove.length - 1; i >= 0; i--) if (toRemove[i].reason === 'deleted') toRemove.splice(i, 1);
       }
       if (toRemove.length) {
         console.log('[ECM sync] removing:', toRemove.map(x => ({ task: x.todo.text, reason: x.reason, newOwner: x.newOwner || null })));
@@ -9247,7 +9268,7 @@ const VOICE = {
           try { await updateDoc(doc(db, 'tv_todos', t.id), patch); } catch {}
         }
       }
-      for (const t of todos) {
+      for (const t of localCopies) {
         if (!t.smartsheetRowId || t.done) continue;
         const found = byRowIdAllStatuses.get(String(t.smartsheetRowId));
         if (!found) continue;
@@ -9265,7 +9286,7 @@ const VOICE = {
       // but somehow left done = false (race, partial update), reconcile here.
       // This catches the "marked Completed on ECM but still shows on Personal"
       // case even when the row id mapping is fine.
-      for (const t of todos) {
+      for (const t of localCopies) {
         if (t.done) continue;
         if (!t.smartsheetRowId) continue;
         if (!SS_CLOSED.has(t.smartsheetStatus || '')) continue;
