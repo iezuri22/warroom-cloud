@@ -4008,6 +4008,14 @@
     .nt-shell.nt-tasks-wide .nt-rail { display: none !important; }
   }
 
+  /* Share sheet */
+  #ntPop[data-kind="share"] { width: 380px; max-width: calc(100vw - 24px); }
+  .nt-share-row { padding: 8px 4px 10px; border-bottom: 1px solid var(--border); }
+  .nt-share-l { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+  .nt-share-l b { font-size: 13px; } .nt-share-l span { font-size: 11.5px; color: var(--ink-dim); }
+  .nt-share-url { width: 100%; box-sizing: border-box; height: 30px; padding: 0 8px; margin-bottom: 6px; border: 1px solid var(--border-strong); border-radius: 8px; font: 500 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-mid); background: var(--fill); }
+  .nt-share-acts { display: flex; gap: 6px; }
+  .nt-share-note { padding: 8px 4px 2px; font-size: 11.5px; color: var(--ink-dim); }
   /* Priorities */
   .nt-prio { display: flex; flex-direction: column; gap: 14px; }
   .nt-prio-h { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mid); }
@@ -21541,7 +21549,7 @@ const VOICE = {
     _ntSlash = null;
     // The task flow ends with its sheet: nothing holds a line afterwards, and
     // a sheet still loading must not pop up once you've moved on.
-    _ntTask = null; _ntNewCat = null; _ntTaskTok++; _ntPrioAdd = null;
+    _ntTask = null; _ntNewCat = null; _ntTaskTok++; _ntPrioAdd = null; _ntShare = null;
     _ntMove = null;
   }
   function ntPopStyle(anchor){
@@ -21677,7 +21685,8 @@ const VOICE = {
     const m = ntNotes.get(ntOpenId);
     if (!m) return;
     const it = (act, label, cls) => `<button class="nt-pop-i ${cls || ''}" type="button" data-np-act="${act}">${label}</button>`;
-    ntPopOpen('doc', anchor, it('pin', m.pinned ? 'Unpin' : 'Pin to top') + it('dup', 'Duplicate') + it('copy', 'Copy as text')
+    ntPopOpen('doc', anchor, it('pin', m.pinned ? 'Unpin' : 'Pin to top') + it('dup', 'Duplicate') + it('share', 'Share…') + it('copy', 'Copy as text')
+      + it('md', 'Download as Markdown') + it('print', 'Print / Save as PDF')
       + (_ntSecs.length > 1 ? it('fold-all', 'Fold all sections') + it('unfold-all', 'Unfold all sections') : '')
       + '<div class="nt-pop-sep"></div>' + (m.trashed ? it('restore', 'Restore from trash') : it('trash', 'Move to trash', 'danger')), { alignRight: true });
   }
@@ -21718,6 +21727,8 @@ const VOICE = {
     if (nav) { const was = ntFilter; ntPopClose(); ntFilter = nav.getAttribute('data-np-nav'); _ntDelArm = null; _ntAllRow = null; _ntAllDelArm = null; ntRenderLib(); ntFilterPicked(was); return; }
     // All tasks' filter: one value per chip. The open row closes (it may
     // not be listed any more).
+    const shb = t.closest('[data-np-share]');
+    if (shb) { const v = shb.getAttribute('data-np-share').split('|'); if (v[0] === 'copy') ntShareCopy(v[1]); else ntShareSet(v[1], v[0] === 'on'); return; }
     const ppr = t.closest('[data-np-prio]');
     if (ppr) { const v = ppr.getAttribute('data-np-prio'), i = v.lastIndexOf('|'); ntPopClose(); ntSetPrio(v.slice(0, i), v.slice(i + 1)); return; }
     const pad2 = t.closest('[data-np-prioadd]');
@@ -21786,11 +21797,14 @@ const VOICE = {
     const ac = t.closest('[data-np-act]');
     if (!ac) return;
     const act = ac.getAttribute('data-np-act');
+    if (act === 'share') { const a = _ntPopAnchor; ntPopClose(); ntPopShare(a); return; }
     ntPopClose();
     if (act === 'manage') ntOpenCats();
     else if (act === 'pin' && ntOpenId) { const m = ntNotes.get(ntOpenId); ntPatchMeta(ntOpenId, { pinned: !(m && m.pinned) }); ntRenderAll(); }
     else if (act === 'dup' && ntOpenId) ntDuplicate(ntOpenId);
     else if (act === 'copy') ntCopyText();
+    else if (act === 'md') ntDownloadMd();
+    else if (act === 'print') ntPrintNote();
     else if (act === 'trash' && ntOpenId) ntTrash(ntOpenId);
     else if (act === 'restore' && ntOpenId) ntRestore(ntOpenId);
     else if (act === 'fold-all') ntFoldAll(true);
@@ -21812,12 +21826,28 @@ const VOICE = {
     else if (f.dataset.npForm === 'movenew') ntMoveNewSubmit(f);
   }
   // Markdown, so it pastes cleanly into Slack, email or another doc.
-  function ntCopyText(){
-    if (!_ntEls) return;
+  // Markdown, so it pastes cleanly into Slack, email or another doc — and it
+  // is what Download as Markdown saves. Links, images and bold/italic survive.
+  function ntNoteMarkdown(){
+    if (!_ntEls) return '';
     const lines = [];
     const title = _ntEls.title.value.trim() || _ntEls.title.placeholder;
     if (title && title !== 'Untitled') lines.push('# ' + title, '');
-    const own = li => Array.from(li.childNodes).filter(x => !(x.nodeType === 1 && /^(UL|OL)$/.test(x.nodeName))).map(x => x.textContent).join('').trim();
+    const inl = node => Array.from(node.childNodes).map(x => {
+      if (x.nodeType === 3) return x.nodeValue;
+      if (x.nodeType !== 1 || /^(UL|OL)$/.test(x.nodeName)) return '';
+      const n = x.nodeName, t = inl(x);
+      if (n === 'BR') return '\n';
+      if (n === 'IMG') return x.getAttribute('src') ? '![' + (x.getAttribute('alt') || 'image') + '](' + x.getAttribute('src') + ')' : '';
+      if (n === 'A') { const h = x.getAttribute('href') || ''; return h && t.trim() && t.trim() !== h ? '[' + t.trim() + '](' + h + ')' : (h || t); }
+      if (!t.trim()) return t;
+      if (n === 'STRONG' || n === 'B') return '**' + t + '**';
+      if (n === 'EM' || n === 'I') return '*' + t + '*';
+      if (n === 'S') return '~~' + t + '~~';
+      if (n === 'CODE') return '`' + t + '`';
+      return t;
+    }).join('');
+    const own = li => inl(li).trim();
     const list = (l, depth) => {
       const check = l.classList.contains('nt-checklist');
       let i = 1;
@@ -21830,16 +21860,102 @@ const VOICE = {
     };
     Array.from(_ntEls.editor.children).forEach(c => {
       const n = c.nodeName;
-      if (/^H[123]$/.test(n)) lines.push('', '#'.repeat(Math.min(6, +n[1] + 1)) + ' ' + c.textContent.trim());
+      if (/^H[123]$/.test(n)) lines.push('', '#'.repeat(Math.min(6, +n[1] + 1)) + ' ' + inl(c).trim());
       else if (n === 'UL' || n === 'OL') list(c, 0);
-      else if (n === 'BLOCKQUOTE') lines.push('> ' + c.textContent.trim());
+      else if (n === 'BLOCKQUOTE') lines.push('> ' + inl(c).trim());
       else if (n === 'HR') lines.push('---');
       else if (n === 'PRE') lines.push('```', c.textContent, '```');
-      else if (c.textContent.trim()) lines.push(c.textContent.trim());
+      else { const t = inl(c).trim(); if (t) lines.push(t); }
     });
-    const out = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function ntCopyText(){
+    if (!_ntEls) return;
+    const out = ntNoteMarkdown();
     (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(out) : Promise.reject())
       .then(() => ptToast('Copied as text'), () => ptToast('Couldn’t reach the clipboard'));
+  }
+
+  function ntNoteFileName(){
+    return ((_ntEls && _ntEls.title.value.trim()) || 'Note').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').slice(0, 80).trim() || 'Note';
+  }
+  function ntDownloadMd(){
+    if (!_ntEls || !ntOpenId) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([ntNoteMarkdown() + '\n'], { type: 'text/markdown;charset=utf-8' }));
+    a.download = ntNoteFileName() + '.md';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    ptToast('Downloaded “' + a.download + '”');
+  }
+  // A clean page of just the note, in its own window: the browser's Print
+  // there has Save as PDF.
+  function ntPrintNote(){
+    if (!_ntEls || !ntOpenId) return;
+    const w = window.open('', '_blank');
+    if (!w) { ptToast('Allow pop-ups for War Room to print'); return; }
+    const t = _ntEls.title.value.trim() || 'Untitled';
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + escHtml(t) + '</title><style>'
+      + 'body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:#1f1c18;max-width:760px;margin:32px auto;padding:0 20px}'
+      + 'h1.t{font-size:26px;margin:0 0 14px}ul.nt-checklist{list-style:none;padding-left:2px}ul.nt-checklist>li{position:relative;padding-left:26px}'
+      + 'ul.nt-checklist>li::before{content:"";position:absolute;left:2px;top:.3em;width:14px;height:14px;border:1.5px solid #999;border-radius:4px}'
+      + 'ul.nt-checklist>li[data-checked="true"]::before{background:#999}ul.nt-checklist>li[data-checked="true"]{color:#888;text-decoration:line-through}'
+      + 'img{max-width:100%;border-radius:8px}pre{background:#f4f1ec;padding:10px;border-radius:8px;white-space:pre-wrap}blockquote{border-left:3px solid #ccc;margin:6px 0;padding-left:12px;color:#555}'
+      + '</style></head><body><h1 class="t">' + escHtml(t) + '</h1>' + ntSanitize(_ntEls.editor.innerHTML) + '</body></html>');
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch {} }, 450);
+  }
+  // Share links: a read-only one and an edit one, each a random key kept in
+  // personal_notes_share/<noteId> and checked by note-share.html. Turning one
+  // off deletes its key, and the link stops working.
+  const NT_SHARE_COL = 'personal_notes_share';
+  let _ntShare = null;              // { id, read, edit } while the Share sheet is open
+  function ntShareToken(){ const a = new Uint8Array(20); crypto.getRandomValues(a); return Array.from(a, b => b.toString(36).padStart(2, '0')).join('').slice(0, 32); }
+  function ntShareLink(tok){ return location.origin + '/note-share.html?n=' + encodeURIComponent(_ntShare.id) + '&k=' + tok; }
+  async function ntPopShare(anchor){
+    const id = ntOpenId;
+    if (!id || !_ntEls) return;
+    _ntShare = null;
+    ntPopOpen('share', anchor, '<div class="nt-pop-h">Share this note</div><div class="nt-share-note">Loading…</div>', { alignRight: true, refresh: true });
+    let d = {};
+    try { const snap = await getDoc(doc(db, NT_SHARE_COL, id)); d = snap.exists() ? (snap.data() || {}) : {}; }
+    catch (e) { if (_ntPopKind === 'share') { const p = document.getElementById('ntPop'); if (p) p.innerHTML = '<div class="nt-pop-h">Share this note</div><div class="nt-share-note">Couldn’t load the links — check your connection.</div>'; } return; }
+    if (_ntPopKind !== 'share' || ntOpenId !== id) return;
+    _ntShare = { id, read: typeof d.read === 'string' ? d.read : '', edit: typeof d.edit === 'string' ? d.edit : '' };
+    ntShareRender();
+  }
+  function ntShareRender(){
+    const p = document.getElementById('ntPop');
+    if (!p || _ntPopKind !== 'share' || !_ntShare) return;
+    const row = (k, label, sub) => {
+      const tok = _ntShare[k];
+      return `<div class="nt-share-row"><div class="nt-share-l"><b>${label}</b><span>${sub}</span></div>`
+        + (tok ? `<input class="nt-share-url" type="text" readonly value="${ntEsc(ntShareLink(tok))}" aria-label="${label}">`
+          + `<div class="nt-share-acts"><button class="nt-btn primary" type="button" data-np-share="copy|${k}">Copy link</button><button class="nt-btn" type="button" data-np-share="off|${k}">Turn off</button></div>`
+          : `<div class="nt-share-acts"><button class="nt-btn" type="button" data-np-share="on|${k}">Create link</button></div>`)
+        + '</div>';
+    };
+    p.innerHTML = '<div class="nt-pop-h">Share this note</div>'
+      + row('read', 'Read-only link', 'Anyone with it can read this note. It stays up to date.')
+      + row('edit', 'Edit link', 'Anyone with it can read and change this note.')
+      + '<div class="nt-share-note">No sign-in needed, so share it only with people you trust. Turn a link off and it stops working.</div>';
+  }
+  function ntShareCopy(k){
+    if (!_ntShare || !_ntShare[k]) return;
+    const url = ntShareLink(_ntShare[k]);
+    (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(url) : Promise.reject())
+      .then(() => ptToast(k === 'edit' ? 'Edit link copied' : 'Read-only link copied'), () => ptToast('Couldn’t reach the clipboard — copy it from the box'));
+  }
+  async function ntShareSet(k, on){
+    const sh = _ntShare;
+    if (!sh || (k !== 'read' && k !== 'edit')) return;
+    const tok = on ? ntShareToken() : '';
+    try { await setDoc(doc(db, NT_SHARE_COL, sh.id), { [k]: on ? tok : deleteField(), updatedAt: new Date().toISOString() }, { merge: true }); }
+    catch (e) { console.warn('[notes] share', e); ptToast('Couldn’t change that link — try again'); return; }
+    sh[k] = tok;
+    ntShareRender();
+    if (on) ntShareCopy(k); else ptToast(k === 'edit' ? 'Edit link turned off' : 'Read-only link turned off');
   }
 
   // ---- categories sheet ----

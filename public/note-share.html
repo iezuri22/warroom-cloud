@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Shared note</title>
+<style>
+  /* A note shared from War Room by link. No sign-in: the link's key is the
+     permission (read, or read and edit), checked against
+     personal_notes_share/<noteId>. No sync-client.js here — it would send a
+     visitor to War Room's login. */
+  :root { --ink: #1f1c18; --ink-mid: #5d574f; --ink-dim: #9b948a; --border: #e7e1d8; --border-strong: #cfc7bb;
+          --fill: #f4f1ec; --surface: #fff; --bg: #f6f4ef; --accent: #e8792b; --red: #d64b3e; --blue: #1f6feb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15.5px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 22px 16px 80px; }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12.5px; color: var(--ink-dim); }
+  .mode { padding: 3px 10px; border-radius: 999px; background: var(--fill); font-weight: 700; color: var(--ink-mid); }
+  .mode.edit { background: #fdeee2; color: #b4561a; }
+  .st { margin-left: auto; }
+  .bar button { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 4px 10px; font: 600 12.5px inherit; font-family: inherit; color: var(--ink-mid); cursor: pointer; }
+  .banner { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: #fff3e2; color: #7a4a00; font-size: 13.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .banner[hidden] { display: none; }
+  .banner button { border: 0; border-radius: 7px; padding: 4px 10px; font: 700 12.5px inherit; font-family: inherit; cursor: pointer; background: #fff; color: #7a4a00; }
+  .page { background: var(--surface); border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04); padding: 28px 34px 40px; }
+  h1.title { margin: 0 0 16px; font-size: 28px; line-height: 1.2; letter-spacing: -.02em; overflow-wrap: anywhere; }
+  .body { outline: none; min-height: 30vh; overflow-wrap: anywhere; }
+  .body[contenteditable="true"] { cursor: text; }
+  .body h1 { font-size: 22px; margin: 18px 0 8px; } .body h2 { font-size: 18.5px; margin: 16px 0 6px; } .body h3 { font-size: 16px; margin: 14px 0 6px; }
+  .body p { margin: 0 0 8px; }
+  .body ul, .body ol { margin: 0 0 8px; padding-left: 24px; }
+  .body li { margin: 2px 0; }
+  .body ul.nt-checklist { list-style: none; padding-left: 2px; }
+  .body ul.nt-checklist > li { position: relative; padding-left: 28px; }
+  .body ul.nt-checklist > li::before { content: ''; position: absolute; left: 2px; top: .28em; width: 17px; height: 17px; border: 1.5px solid var(--border-strong); border-radius: 5px; background: #fff; }
+  .body ul.nt-checklist > li[data-checked="true"]::before { background: var(--accent); border-color: var(--accent); }
+  .body ul.nt-checklist > li[data-checked="true"] { color: var(--ink-dim); text-decoration: line-through; }
+  .body li[data-task-id][data-hl] { background: var(--hlc); box-shadow: -6px 0 0 var(--hlc), 6px 0 0 var(--hlc); border-radius: 6px; }
+  .body li[data-hl="yellow"] { --hlc: rgba(245, 196, 0, .26); } .body li[data-hl="green"] { --hlc: rgba(52, 199, 89, .2); }
+  .body li[data-hl="blue"] { --hlc: rgba(74, 168, 255, .2); } .body li[data-hl="pink"] { --hlc: rgba(255, 111, 174, .2); }
+  .body li[data-hl="orange"] { --hlc: rgba(255, 159, 10, .22); } .body li[data-hl="purple"] { --hlc: rgba(180, 108, 240, .2); }
+  .body li[data-task-id][data-checked="true"] { background: none; box-shadow: none; }
+  .body blockquote { margin: 6px 0 10px; padding: 1px 0 1px 12px; border-left: 3px solid var(--border-strong); color: var(--ink-mid); }
+  .body pre { margin: 6px 0 10px; padding: 10px 12px; border-radius: 9px; background: var(--fill); overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .body code { font: 500 .9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--fill); border-radius: 5px; padding: 1px 5px; }
+  .body pre code { background: none; padding: 0; }
+  .body hr { border: 0; border-top: 1px solid var(--border-strong); margin: 14px 0; }
+  .body a { color: var(--blue); }
+  .body img { display: block; max-width: 100%; max-height: 560px; height: auto; margin: 6px 0; border-radius: 10px; border: 1px solid var(--border); }
+  .msg { padding: 70px 20px; text-align: center; color: var(--ink-mid); }
+  .foot { margin-top: 14px; font-size: 12px; color: var(--ink-dim); text-align: center; }
+  @media (max-width: 640px) { .page { padding: 20px 18px 32px; border-radius: 12px; } h1.title { font-size: 23px; } }
+  @media print { body { background: #fff; } .bar, .banner, .foot { display: none !important; } .page { box-shadow: none; padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"><span class="mode" id="mode">Shared note</span><span class="st" id="st" aria-live="polite"></span><button type="button" id="print">Print / PDF</button></div>
+  <div class="banner" id="banner" hidden></div>
+  <div class="page" id="page"><div class="msg">Loading…</div></div>
+  <div class="foot">Shared from War Room</div>
+</div>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, doc, getDoc, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+const app = initializeApp({
+  apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
+  authDomain: "tv-todos.firebaseapp.com",
+  projectId: "tv-todos",
+  storageBucket: "tv-todos.firebasestorage.app",
+  messagingSenderId: "566644863130",
+  appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
+});
+const db = getFirestore(app);
+const $ = id => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const id = q.get('n') || '', key = q.get('k') || '';
+const page = $('page');
+$('print').addEventListener('click', () => window.print());
+
+function fail(text){
+  page.innerHTML = '<div class="msg"></div>';
+  page.firstChild.textContent = text;
+  document.title = 'Shared note';
+  lock();
+}
+let mode = '', bodyEl = null, titleEl = null, baseRev = 0, dirty = false, saving = false, saveT = 0, dead = false, pendingRemote = null;
+function lock(){ dead = true; if (bodyEl) bodyEl.contentEditable = 'false'; }
+function setSt(t){ $('st').textContent = t || ''; }
+
+// The same rules War Room applies before a note is saved: a fixed set of tags,
+// links only to http(s)/mailto, images only from War Room's own storage, and a
+// task line keeps its link attributes (War Room re-checks them on load).
+const TAGS = new Set(['P', 'H1', 'H2', 'H3', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'A', 'BR', 'HR', 'IMG']);
+const DROP = /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|SVG|MATH|TEMPLATE|NOSCRIPT|LINK|META|FORM|INPUT|BUTTON|TEXTAREA|SELECT|VIDEO|AUDIO|CANVAS)$/;
+const IMG_OK = /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/tv-todos\.firebasestorage\.app\/o\/[^\s"'<>]{1,1500}$/;
+function clean(html){
+  const src = new DOMParser().parseFromString('<body>' + String(html || '') + '</body>', 'text/html').body;
+  const out = document.createElement('div');
+  const walk = (from, to) => {
+    for (const n of Array.from(from.childNodes)) {
+      if (n.nodeType === 3) { to.appendChild(document.createTextNode(n.nodeValue)); continue; }
+      if (n.nodeType !== 1) continue;
+      const t = n.tagName.toUpperCase();
+      if (DROP.test(t)) continue;
+      if (!TAGS.has(t)) { walk(n, to); continue; }
+      if (t === 'IMG') {
+        const s = n.getAttribute('src') || '';
+        if (IMG_OK.test(s)) { const im = document.createElement('img'); im.setAttribute('src', s); im.setAttribute('alt', (n.getAttribute('alt') || '').slice(0, 200)); to.appendChild(im); }
+        continue;
+      }
+      const el = document.createElement(t === 'B' ? 'strong' : t === 'I' ? 'em' : t.toLowerCase());
+      if (t === 'A') {
+        const h = (n.getAttribute('href') || '').trim();
+        if (/^(https?:|mailto:)/i.test(h)) { el.setAttribute('href', h); el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+      }
+      if (t === 'UL' && n.classList.contains('nt-checklist')) el.className = 'nt-checklist';
+      if (t === 'LI') ['data-checked', 'data-task-id', 'data-line', 'data-due', 'data-task-cat', 'data-hl'].forEach(a => {
+        const v = n.getAttribute(a);
+        if (v != null && /^[A-Za-z0-9_-]{0,64}$/.test(v)) el.setAttribute(a, v);
+      });
+      if (/^H[123]$/.test(t) && n.hasAttribute('data-collapsed')) el.setAttribute('data-collapsed', '1');
+      to.appendChild(el);
+      if (t !== 'BR' && t !== 'HR') walk(n, el);
+    }
+  };
+  walk(src, out);
+  return out.innerHTML;
+}
+
+function banner(html, acts){
+  const b = $('banner');
+  if (!html) { b.hidden = true; b.innerHTML = ''; return; }
+  b.innerHTML = '<span></span>';
+  b.firstChild.textContent = html;
+  (acts || []).forEach(([label, fn]) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = label; x.addEventListener('click', fn); b.appendChild(x); });
+  b.hidden = false;
+}
+
+function render(html){ bodyEl.innerHTML = clean(html) || (mode === 'edit' ? '<p><br></p>' : '<p style="color:#9b948a">This note is empty.</p>'); }
+
+async function save(){
+  if (!dirty || saving || dead) return;
+  saving = true; dirty = false; setSt('Saving…');
+  const html = clean(bodyEl.innerHTML);
+  const bodyRef = doc(db, 'personal_notes_body', id), metaRef = doc(db, 'personal_notes', id);
+  try {
+    const rev = await runTransaction(db, async tx => {
+      const s = await tx.get(bodyRef);
+      const cur = s.exists() ? ((s.data() || {}).rev | 0) : 0;
+      // Changed in War Room since this page last loaded it: never overwrite
+      // that silently — the banner asks.
+      if (cur !== baseRev) { const e = new Error('conflict'); e.conflict = cur; throw e; }
+      const r = cur + 1, now = new Date().toISOString();
+      tx.set(bodyRef, { html, rev: r, updatedAt: now, deviceId: 'share-link' });
+      tx.set(metaRef, { rev: r, updatedAt: now }, { merge: true });
+      return r;
+    });
+    baseRev = rev;
+    setSt('Saved');
+  } catch (e) {
+    if (e && e.conflict != null) {
+      dirty = true;
+      setSt('Not saved');
+      banner('This note was changed in War Room while you were editing.', [
+        ['Load their version', () => { banner(''); dirty = false; if (pendingRemote) { render(pendingRemote.html); baseRev = pendingRemote.rev; } else location.reload(); setSt(''); }],
+        ['Keep mine', () => { banner(''); baseRev = e.conflict; dirty = true; save(); }],
+      ]);
+    } else {
+      dirty = true;
+      setSt('Couldn’t save — retrying…');
+      clearTimeout(saveT); saveT = setTimeout(() => { saveT = 0; save(); }, 5000);
+    }
+  } finally {
+    saving = false;
+    // Typed more while it saved: save again — unless a conflict is waiting on
+    // you, or a retry is already queued.
+    if (dirty && $('banner').hidden && !saveT) queueSave();
+  }
+}
+function queueSave(){ clearTimeout(saveT); saveT = setTimeout(() => { saveT = 0; save(); }, 1200); }
+
+async function start(){
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id) || !/^[a-z0-9]{16,64}$/.test(key)) return fail('This link isn’t complete — ask for it again.');
+  let share;
+  try { share = await getDoc(doc(db, 'personal_notes_share', id)); }
+  catch (e) { return fail('Couldn’t reach the note — check your connection and reload.'); }
+  const d = share.exists() ? (share.data() || {}) : {};
+  mode = (d.edit && d.edit === key) ? 'edit' : (d.read && d.read === key) ? 'read' : '';
+  if (!mode) return fail('This link was turned off, or it isn’t valid.');
+  $('mode').textContent = mode === 'edit' ? 'You can edit this note' : 'Read-only';
+  $('mode').classList.toggle('edit', mode === 'edit');
+  page.innerHTML = '<h1 class="title" id="title"></h1><div class="body" id="body"></div>';
+  titleEl = $('title'); bodyEl = $('body');
+  // The link turned off while this page is open: stop right there.
+  onSnapshot(doc(db, 'personal_notes_share', id), s => {
+    const x = s.exists() ? (s.data() || {}) : {};
+    const still = mode === 'edit' ? x.edit === key : x.read === key;
+    if (!still) { banner('This link was turned off.'); lock(); setSt(''); }
+  }, () => {});
+  onSnapshot(doc(db, 'personal_notes', id), s => {
+    const m = s.exists() ? (s.data() || {}) : null;
+    if (!m || m.trashed) { banner('This note was deleted in War Room.'); lock(); return; }
+    const t = String(m.title || '').trim() || 'Untitled';
+    titleEl.textContent = t; document.title = t;
+  }, () => {});
+  let first = true;
+  onSnapshot(doc(db, 'personal_notes_body', id), s => {
+    if (s.metadata && s.metadata.hasPendingWrites) return;          // our own save, not news
+    const b = s.exists() ? (s.data() || {}) : {};
+    const rev = b.rev | 0, html = String(b.html || '');
+    if (first) { first = false; render(html); baseRev = rev; if (mode === 'edit' && !dead) bodyEl.contentEditable = 'true'; return; }
+    if (rev === baseRev) return;
+    pendingRemote = { rev, html };
+    // Someone changed it: take it straight in unless you're mid-edit here.
+    if (mode === 'read' || (!dirty && !saving && document.activeElement !== bodyEl)) { render(html); baseRev = rev; pendingRemote = null; banner(''); return; }
+    if (!dirty && !saving) { banner('This note was just updated in War Room.', [['Show the latest', () => { banner(''); render(pendingRemote.html); baseRev = pendingRemote.rev; pendingRemote = null; }]]); }
+  }, () => fail('Couldn’t load the note — check your connection and reload.'));
+
+  if (mode !== 'edit') return;
+  bodyEl.addEventListener('input', () => { if (dead) return; dirty = true; setSt('Editing…'); queueSave(); });
+  bodyEl.addEventListener('blur', () => { if (dirty) { clearTimeout(saveT); saveT = 0; save(); } });
+  // A checkbox: tap its box. A task's box belongs to War Room (ticking it
+  // there ticks the task everywhere), so it isn't changed from here.
+  bodyEl.addEventListener('click', e => {
+    const li = e.target && e.target.closest ? e.target.closest('ul.nt-checklist > li') : null;
+    if (!li || dead) return;
+    const r = li.getBoundingClientRect();
+    if (e.clientX > r.left + 26) return;
+    e.preventDefault();
+    if (li.getAttribute('data-task-id')) { setSt('Tick tasks in War Room'); return; }
+    li.setAttribute('data-checked', li.getAttribute('data-checked') === 'true' ? 'false' : 'true');
+    dirty = true; queueSave();
+  });
+  window.addEventListener('beforeunload', e => { if (dirty) { save(); e.preventDefault(); e.returnValue = ''; } });
+}
+start();
+</script>
+</body>
+</html>
