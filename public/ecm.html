@@ -7546,7 +7546,12 @@ function _wireDrawer(row, r, onCollapse){
           if (_renderDeferred) { try { render(); } catch {} }
           return;
         }
-        await pushField(r, fieldName, v, row);
+        // Review: closing the open task (Completed / Not feasible) moves the
+        // panel to the next one. pushField mirrors the status before its PUT.
+        const next = (fieldName === 'Status' && (v === 'Completed' || v === 'Not feasible - close ticket')) ? _reviewNextOf(r.id) : undefined;
+        const saving = pushField(r, fieldName, v, row);
+        if (next !== undefined && _rowClosed(r)) _reviewGoNext(r.id, next);
+        await saving;
         // Catch up on any render snapshots that arrived while user typed.
         if (_renderDeferred) { try { render(); } catch {} }
       });
@@ -7627,8 +7632,10 @@ function _wireDrawer(row, r, onCollapse){
       e.stopPropagation();
       const turnOn = !r.deletion;
       if (turnOn && !confirm(`Mark "${r.task || 'this row'}" for deletion?\n\nThis checks the deletion box in Smartsheets so the team can clear it during the next purge.`)) return;
+      const next = turnOn ? _reviewNextOf(r.id) : undefined;
       b.disabled = true;
       setRowDeletion(r.id, turnOn).finally(() => { b.disabled = false; });
+      _reviewGoNext(r.id, next);
     }));
     // Planned push — needs a date picked first.
     row.querySelectorAll('[data-plan-date]').forEach(inp => inp.addEventListener('click', e => e.stopPropagation()));
@@ -8602,24 +8609,30 @@ async function handleAck(rowId, nameOverride){
 // panel to the next one in the list (the one below; above when it was the
 // last). Nothing left → the panel closes. Elsewhere it's a plain ack.
 function _ackAndNext(rowId, nameOverride){
-  const id = String(rowId);
-  const advance = currentView === 'notif' && _ackTab === 'needs' && isExpandedRow(rowId);
-  let next = null;
-  if (advance) {
-    const ids = [...document.querySelectorAll('#list tr[data-ack-row]')].map(tr => tr.getAttribute('data-ack-row'));
-    const i = ids.indexOf(id);
-    if (i >= 0) next = ids[i + 1] || ids[i - 1] || null;
-  }
+  const next = _ackTab === 'needs' ? _reviewNextOf(rowId) : undefined;
   handleAck(rowId, nameOverride);
-  if (!advance) return;
-  if (next && rows.some(r => String(r.id) === next && needsAck(r))) {
+  _reviewGoNext(rowId, next, 'All caught up — nothing left to acknowledge.');
+}
+// The same hand-off for the other ways a task leaves Review: completed /
+// closed, or marked for deletion. Read the next one BEFORE the change (the
+// list re-renders without it); undefined = not open in Review, stay put.
+function _reviewNextOf(rowId){
+  if (currentView !== 'notif' || _ackTab === 'del' || !isExpandedRow(rowId)) return undefined;
+  const ids = [...document.querySelectorAll('#list tr[data-ack-row]')].map(tr => tr.getAttribute('data-ack-row'));
+  const i = ids.indexOf(String(rowId));
+  return i < 0 ? undefined : (ids[i + 1] || ids[i - 1] || null);
+}
+function _reviewGoNext(rowId, next, doneMsg){
+  if (next === undefined || currentView !== 'notif' || !isExpandedRow(rowId)) return;
+  const listed = id => { try { return !!document.querySelector('#list tr[data-ack-row="' + CSS.escape(String(id)) + '"]'); } catch { return false; } };
+  if (next && listed(next)) {
     expandedId = next;
     render();
-    try { const tr = document.querySelector('#list tr[data-ack-row="' + (window.CSS && CSS.escape ? CSS.escape(next) : next) + '"]'); if (tr) tr.scrollIntoView({ block: 'nearest' }); } catch {}
+    try { const tr = document.querySelector('#list tr[data-ack-row="' + CSS.escape(next) + '"]'); if (tr) tr.scrollIntoView({ block: 'nearest' }); } catch {}
   } else {
     expandedId = null;
     render();
-    toast('All caught up — nothing left to acknowledge.', 'ok');
+    if (doneMsg) toast(doneMsg, 'ok');
   }
 }
 async function handleUnack(rowId){
@@ -10214,7 +10227,9 @@ function renderAcknowledge(){
   }));
   list.querySelectorAll('[data-del-mark]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
-    setRowDeletion(b.getAttribute('data-del-mark'), true);
+    const id = b.getAttribute('data-del-mark'), next = _reviewNextOf(id);
+    setRowDeletion(id, true);
+    _reviewGoNext(id, next);
   }));
   list.querySelectorAll('[data-del-restore]').forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -12999,7 +13014,7 @@ function _closeAckPrompt(snooze){
   if (del) del.addEventListener('click', () => {
     const id = _ackPromptRowId;
     _closeAckPrompt(false);
-    if (id) setRowDeletion(id, true);
+    if (id) { const next = _reviewNextOf(id); setRowDeletion(id, true); _reviewGoNext(id, next); }
   });
   if (close) close.addEventListener('click', () => _closeAckPrompt(true));
   if (bd) bd.addEventListener('click', (e) => { if (e.target === bd) _closeAckPrompt(true); });
@@ -13075,11 +13090,13 @@ async function applyCompleteRow(){
   // in the background. If it fails, roll back and say why, so the UI never
   // quietly disagrees with the sheet.
   const prev = { status: r.status, completionDate: r.completionDate };
+  const next = _reviewNextOf(r.id);
   r.status = 'Completed';
   r.completionDate = date;
   closeCompleteRowModal();
   try { render(); } catch {}
   toast('Marked complete.', 'ok');
+  _reviewGoNext(r.id, next);
   ssPushFields(r, { 'Status': 'Completed', 'Completion Date': date }).then(ok => {
     if (ok) return;
     r.status = prev.status;
