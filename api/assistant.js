@@ -735,7 +735,15 @@ Then lay it out well (Markdown):
 
 If the entry is dated on the page, return that date as YYYY-MM-DD. A date written without a year takes the year that makes it the most recent such date that isn't in the future (today's date is given). No date on the page: null.
 
-Reply with ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "markdown": "…"}`;
+Also list the page's tasks:
+Tasks — the concrete things the writer means to do:
+- Explicit to-dos (unticked boxes, "need to", "have to", "remember to", "call…", "email…", "book…") and clear commitments.
+- Not feelings, reflections, plans already done, ticked boxes, or vague wishes ("be healthier").
+- Each one short and actionable, starting with a verb, in the writer's words (under 90 characters).
+- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given; otherwise null.
+- At most 12, in the order they appear.
+
+Reply with ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "markdown": "…", "tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]}`;
 async function handleTranscribe(req, res, body) {
   const img = typeof body.image === 'string' ? body.image.replace(/^data:[^,]*,/, '').trim() : '';
   const mt = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(body.mediaType) ? body.mediaType : 'image/jpeg';
@@ -769,18 +777,82 @@ async function handleTranscribe(req, res, body) {
   }
   if (!raw) { res.status(502).json({ error: 'empty_answer' }); return; }
   // The JSON object; if the model wrapped it in prose or fences, find it.
-  let date = null, markdown = '';
+  let date = null, markdown = '', tasks = [];
   try {
     const m = raw.match(/\{[\s\S]*\}/);
     const j = JSON.parse(m ? m[0] : raw);
     markdown = typeof j.markdown === 'string' ? j.markdown : '';
+    tasks = cleanTasks(j.tasks, today);
     date = typeof j.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(j.date) && j.date <= today ? j.date : null;
   } catch {
     markdown = raw.replace(/^```[\w]*\n?|\n?```$/g, '');
   }
   markdown = markdown.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 40000);
   if (!markdown) { res.status(200).json({ error: 'nothing_read' }); return; }
-  res.status(200).json({ date, markdown });
+  res.status(200).json({ date, markdown, tasks });
+}
+// The model's task list, kept to what the page can use.
+function cleanTasks(list, today) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list.map(t => ({
+    text: String((t && t.text) || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    due: (t && typeof t.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due) && t.due >= '2000-01-01') ? t.due : null,
+  })).filter(t => {
+    const k = t.text.toLowerCase();
+    if (!t.text || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 12);
+}
+
+/* ============================== tasks mode ==============================
+   Notes' ✦ Suggest tasks: a note's text (or one journal day) → the to-dos in
+   it, for the user to pick from. Nothing is created here. */
+const TASKS_SYSTEM = `You read a personal note or journal entry and pick out the tasks in it.
+
+Tasks — the concrete things the writer means to do:
+- Explicit to-dos (unticked boxes, "need to", "have to", "remember to", "call…", "email…", "book…") and clear commitments.
+- Not feelings, reflections, plans already done, ticked boxes, or vague wishes ("be healthier").
+- Each one short and actionable, starting with a verb, in the writer's words (under 90 characters).
+- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given; otherwise null.
+- At most 12, in the order they appear.
+- Skip anything listed under "Already tasks".
+
+Reply with ONLY a JSON object: {"tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]} — an empty list when there are none.`;
+async function handleTasks(req, res, body) {
+  const text = String(body.text || '').slice(0, 24000).trim();
+  if (!text) { res.status(400).json({ error: 'no_text' }); return; }
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(body.today || '')) ? body.today : new Date().toISOString().slice(0, 10);
+  const dated = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : '';
+  const title = String(body.title || '').slice(0, 200);
+  const existing = (Array.isArray(body.existing) ? body.existing : []).map(x => String(x || '').slice(0, 200)).filter(Boolean).slice(0, 80);
+  let raw = '';
+  try {
+    const client = new Anthropic();
+    const response = await client.beta.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 2000,
+      output_config: { effort: 'low' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: TASKS_SYSTEM,
+      messages: [{ role: 'user', content:
+        `Today is ${today}.${dated ? ` This entry is from ${dated}.` : ''}${title ? ` Note: "${title}".` : ''}\n`
+        + (existing.length ? `Already tasks:\n${existing.map(x => '- ' + x).join('\n')}\n` : '')
+        + `\n<note>\n${text}\n</note>` }],
+    });
+    if (response.stop_reason === 'refusal') { res.status(200).json({ error: 'refused' }); return; }
+    raw = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  } catch (e) {
+    console.error('tasks upstream error:', e);
+    const status = e && Number.isInteger(e.status) ? e.status : 502;
+    res.status(status >= 400 && status < 600 ? status : 502).json({ error: 'upstream_failed', message: e.message });
+    return;
+  }
+  let tasks = [];
+  try { const m = raw.match(/\{[\s\S]*\}/); tasks = cleanTasks(JSON.parse(m ? m[0] : raw).tasks, today); } catch {}
+  res.status(200).json({ tasks });
 }
 
 /* ============================== shared gates ============================== */
@@ -812,5 +884,6 @@ export default async function handler(req, res) {
   }
   if (mode === 'plan') return handlePlan(req, res, body);
   if (mode === 'transcribe') return handleTranscribe(req, res, body);
+  if (mode === 'tasks') return handleTasks(req, res, body);
   return handleHealth(req, res, body);
 }
