@@ -740,8 +740,9 @@ Tasks — the concrete things the writer means to do:
 - Explicit to-dos (unticked boxes, "need to", "have to", "remember to", "call…", "email…", "book…") and clear commitments.
 - Not feelings, reflections, plans already done, ticked boxes, or vague wishes ("be healthier").
 - Each one short and actionable, starting with a verb, in the writer's words (under 90 characters).
-- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given; otherwise null.
-- At most 12, in the order they appear.
+- On a to-do list, every item is a task — bare ones too ("Dry cleaning" → "Take the dry cleaning"). One line holding two separate jobs is two tasks.
+- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given. A date that covers a whole list ("So today, I need to…", "this week:") applies to every item on that list. Otherwise null.
+- Every task, in the order they appear — never stop partway through the page (up to 40).
 
 Reply with ONLY a JSON object: {"date": "YYYY-MM-DD" or null, "markdown": "…", "tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]}`;
 async function handleTranscribe(req, res, body) {
@@ -757,7 +758,7 @@ async function handleTranscribe(req, res, body) {
     const client = new Anthropic();
     const response = await client.beta.messages.create({
       model: 'claude-opus-5',
-      max_tokens: 6000,
+      max_tokens: 10000,
       output_config: { effort: 'medium' },
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
@@ -803,7 +804,7 @@ function cleanTasks(list, today) {
     if (!t.text || seen.has(k)) return false;
     seen.add(k);
     return true;
-  }).slice(0, 12);
+  }).slice(0, 40);
 }
 
 /* ============================== tasks mode ==============================
@@ -815,8 +816,9 @@ Tasks — the concrete things the writer means to do:
 - Explicit to-dos (unticked boxes, "need to", "have to", "remember to", "call…", "email…", "book…") and clear commitments.
 - Not feelings, reflections, plans already done, ticked boxes, or vague wishes ("be healthier").
 - Each one short and actionable, starting with a verb, in the writer's words (under 90 characters).
-- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given; otherwise null.
-- At most 12, in the order they appear.
+- On a to-do list, every item is a task — bare ones too ("Dry cleaning" → "Take the dry cleaning"). One line holding two separate jobs is two tasks.
+- A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against the date given. A date that covers a whole list ("So today, I need to…", "this week:") applies to every item on that list. Otherwise null.
+- Every task, in the order they appear — never stop partway through the page (up to 40).
 - Skip anything listed under "Already tasks".
 
 Reply with ONLY a JSON object: {"tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]} — an empty list when there are none.`;
@@ -832,7 +834,7 @@ async function handleTasks(req, res, body) {
     const client = new Anthropic();
     const response = await client.beta.messages.create({
       model: 'claude-opus-5',
-      max_tokens: 2000,
+      max_tokens: 5000,
       output_config: { effort: 'low' },
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',

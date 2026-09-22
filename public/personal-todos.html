@@ -3157,6 +3157,10 @@
   .nt-no-type.big { padding: 3px 10px; border-radius: 999px; background: var(--fill); font-size: 12.5px; font-weight: 600; color: var(--ink-mid); }
   @media (max-width: 760px) { .nt-nod-bar { padding: 10px 14px; } .nt-nod-page { padding: 16px 16px 50px; } .nt-nod-title { font-size: 24px; } }
   #ntPop[data-kind="sug"], .nt-pop.sug { width: min(460px, calc(100vw - 24px)); }
+  /* A long page: only the list scrolls — the heading, All due and the buttons stay put. */
+  #ntPop[data-kind="sug"] { display: flex; flex-direction: column; overflow: hidden; }
+  #ntPop[data-kind="sug"] > * { flex-shrink: 0; }
+  #ntPop[data-kind="sug"] > .nt-sug-list { flex: 0 1 auto; min-height: 96px; }
   .nt-sug-sub { padding: 0 8px 8px; font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nt-sug-wait { padding: 14px 8px 16px; font-size: 13px; color: var(--ink-mid); }
   .nt-sug-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow: auto; padding: 0 4px; }
@@ -3167,6 +3171,15 @@
   .nt-sug-t:focus { border-color: var(--border); background: var(--surface, #fff); outline: none; }
   .nt-sug-d { flex-shrink: 0; width: 128px; height: 30px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface, #fff); font: 600 12px var(--font-family); color: var(--ink-mid); }
   .nt-sug-foot { display: flex; align-items: center; gap: 8px; padding: 10px 6px 4px; }
+  .nt-sug-all { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 0 8px 8px; }
+  .nt-sug-all .lbl { font-size: 11.5px; font-weight: 700; color: var(--ink-dim); margin-right: 2px; }
+  .nt-sug-q { height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, #fff); font: 700 12px var(--font-family); color: var(--ink-mid); cursor: pointer; }
+  .nt-sug-q:hover { background: var(--fill); }
+  .nt-sug-q.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .nt-sug-all .nt-sug-d { margin-left: auto; height: 26px; }
+  .nt-due-pick { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 13.5px; color: var(--ink); }
+  .nt-due-pick span { flex: 1; }
+  .nt-due-pick input { height: 30px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface, #fff); font: 600 12px var(--font-family); color: var(--ink-mid); }
   .nt-sug-note { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ink-dim); }
   .nt-tmrbtn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px 0 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--ink-mid); font: 700 12px var(--font-family); font-variant-numeric: tabular-nums; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
   .nt-tmrbtn:hover { background: var(--fill); color: var(--ink); }
@@ -3217,6 +3230,7 @@
   .nt-tb.task:hover { background: var(--accent); color: var(--on-accent); }
   .nt-tb-sep { width: 1px; height: 18px; background: var(--border-strong); margin: 0 4px; flex-shrink: 0; }
   .nt-tb-more { display: none; }
+  @media (max-width: 420px) { .nt-tb.task > span { display: none; } .nt-tb.task { padding: 0 8px; } }
 
   /* Editor content — the doc's own typography. Headings open sections: every
      H2 after the first draws a hairline, so a long agenda reads as parts. */
@@ -3414,8 +3428,10 @@
     .nt-docbar { padding: 12px 12px 0; }
     .nt-title { font-size: 23px; padding: 10px 16px 2px 26px; }
     .nt-banner { margin: 6px 14px 0; }
-    .nt-toolbar { padding: 6px 8px; gap: 1px; flex-wrap: nowrap; }
-    .nt-tb { min-width: 34px; height: 34px; }
+    .nt-toolbar { padding: 6px 8px; gap: 1px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .nt-toolbar::-webkit-scrollbar { display: none; }
+    .nt-tb { min-width: 32px; height: 34px; padding: 0 6px; }
+    .nt-toolbar > .nt-tb-sep { display: none; }
     .nt-tb.wide, .nt-tb-sep.wide { display: none; }
     .nt-tb-more { display: inline-flex; }
     .nt-editor { font-size: 16px; padding: 12px 16px 20px 26px; }
@@ -11322,6 +11338,16 @@ const VOICE = {
       if (!ntTmrIsOn('task', d.id)) ntTmrStart('task', d.id.slice(0, 200), m);
       return;
     }
+    else if (d.action === 'order' && Array.isArray(d.ids)) { ntDayOrderSave(d.ids); return; }
+    // ✓ Complete on the card: the running clock stops (and logs), its task is done.
+    else if (d.action === 'complete') {
+      if (!tmrRun || !tmrRun.taskId) return;
+      const id = tmrRun.taskId;
+      Promise.resolve(tmrStop()).catch(() => {})
+        .then(() => ntTaskSetDone(id, true, 'list'))
+        .finally(() => { try { ntRenderLib(); } catch {} ntDayPub(); });
+      return;
+    }
     else if (d.action === 'setdone' && typeof d.id === 'string') {
       const id = d.id.slice(0, 200);
       Promise.resolve(ntTaskSetDone(id, !!d.on, 'list')).finally(() => { try { ntRenderLib(); } catch {} ntDayPub(); });
@@ -16525,6 +16551,32 @@ const VOICE = {
     if (_ntDayT) return;
     _ntDayT = setTimeout(() => { _ntDayT = 0; try { ntDayPubNow(); } catch (e) { console.warn('[wr day]', e); } }, 400);
   }
+  // Today's order, as dragged on the card: one doc per day, read while the
+  // card is wanted (one listener), written on a drop.
+  const NT_DAY_ORDER_COL = 'personal_day_order';
+  let _ntDayOrd = { day: '', ids: [], unsub: null };
+  function ntDayOrderSub(tk){
+    if (_ntDayOrd.day === tk && _ntDayOrd.unsub) return;
+    try { if (_ntDayOrd.unsub) _ntDayOrd.unsub(); } catch {}
+    _ntDayOrd = { day: tk, ids: [], unsub: null };
+    try {
+      _ntDayOrd.unsub = onSnapshot(doc(db, NT_DAY_ORDER_COL, tk), snap => {
+        if (_ntDayOrd.day !== tk) return;
+        const v = snap.exists() ? (snap.data() || {}) : {};
+        _ntDayOrd.ids = Array.isArray(v.ids) ? v.ids.filter(x => typeof x === 'string') : [];
+        ntDayPub();
+      }, e => console.warn('[day order]', e));
+    } catch (e) { console.warn('[day order]', e); }
+  }
+  function ntDayOrderSave(ids){
+    const tk = todayKey();
+    const clean = [...new Set((ids || []).filter(x => typeof x === 'string' && x).map(x => x.slice(0, 200)))].slice(0, 200);
+    ntDayOrderSub(tk);
+    _ntDayOrd.ids = clean;
+    ntDayPub();
+    setDoc(doc(db, NT_DAY_ORDER_COL, tk), { ids: clean, updatedAt: new Date().toISOString() })
+      .catch(e => { console.warn('[day order] save', e); ptToast('Couldn’t save the order — try again'); });
+  }
   function ntDayPubNow(){
     if (!ntDayWanted()) return;
     try { tmrEnsureSubs(); } catch {}
@@ -16532,6 +16584,7 @@ const VOICE = {
     if (!_ntOpenOn) ntEnsureOpenIdx();
     if (!_ntOpenLoaded || _ntOpenErr) return;
     const c = ntAllCtx(), tk = c.today;
+    ntDayOrderSub(tk);
     const cut = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 140);
     const planned = [];
     ntAllOpen().forEach(t => {
@@ -16547,10 +16600,23 @@ const VOICE = {
     const goal = Object.keys(tg).filter(id => known.has(id)).reduce((a, id) => a + (+(tg[id] || {}).dayGoal || 0), 0) * 60;
     const prio = {};
     NT_PRIO.forEach(([k]) => { const l = ntPrioList(k); prio[k] = { n: l.length, items: l.slice(0, 6).map(t => ({ id: t.id, text: cut(t.text) })) }; });
+    // Time on each task today (the ledger's sessions; a running clock is
+    // added by the card, which knows when it started).
+    const secsBy = new Map();
+    ((day.sessions) || []).forEach(x => { if (x && x.taskId) secsBy.set(x.taskId, (secsBy.get(x.taskId) || 0) + (+x.secs || 0)); });
+    const sec = id => Math.round(secsBy.get(id) || 0);
+    // The whole day's list in the dragged order; the rest after it: ★ first,
+    // then late, then by day.
+    const oi = new Map();
+    (_ntDayOrd.day === tk ? _ntDayOrd.ids : []).forEach((id, i) => { if (!oi.has(id)) oi.set(id, i); });
+    const all = planned.map((x, i) => ({ x, i, star: ntPrioOf(x.t) === 'day' ? 1 : 0 }));
+    all.sort((a, b) => ((oi.has(a.x.t.id) ? oi.get(a.x.t.id) : 1e6) - (oi.has(b.x.t.id) ? oi.get(b.x.t.id) : 1e6))
+      || (b.star - a.star) || (b.x.late - a.x.late) || (a.i - b.i));
     const s = JSON.stringify({
       day: tk, timed, goal, plannedN: planned.length,
+      list: all.slice(0, 80).map(({ x, star }) => ({ id: x.t.id, text: cut(x.t.text), late: x.late, star: !!star, secs: sec(x.t.id) })),
       restN: rest.length, rest: rest.slice(0, 10).map(x => ({ id: x.t.id, text: cut(x.t.text), late: x.late })),
-      doneN: done ? done.length : null, done: done ? done.slice(0, 8).map(t => ({ id: t.id, text: cut(t.text) })) : [],
+      doneN: done ? done.length : null, done: done ? done.slice(0, 60).map(t => ({ id: t.id, text: cut(t.text), secs: sec(t.id) })) : [],
       prio
     });
     if (s === _ntDayLast) return;
@@ -20449,9 +20515,10 @@ const VOICE = {
       + b('indent', NT_SVG.indent, 'Indent (Tab)', 'wide')
       + b('clear', NT_SVG.clear, 'Clear formatting', 'wide')
       + b('attach', NT_SVG.clip, 'Attach an image or file (you can also paste or drop one)')
-      + b('suggest', NT_SVG.spark, 'Suggest tasks from this note — in the Journal, from the day you’re in')
+      + b('suggest', NT_SVG.spark, 'Suggest tasks from this note — in the Journal, from the day you’re in', 'wide')
+      + b('due', NT_SVG.cal, 'Due date for tasks — the selected ones, the Journal day you’re in, or the whole note', 'wide')
       + b('scan', NT_SVG.camera, 'Scan a handwritten page — a photo becomes clean text (in the Journal, under the page’s date)')
-      + b('dictate', NT_SVG.mic, 'Dictate — speak and it types at the cursor · say “new line”, “period”, “comma”')
+      + b('dictate', NT_SVG.mic, 'Dictate — speak and it types at the cursor · say “new line”, “period”, “comma”', 'wide')
       + b('more', NT_SVG.more, 'More formatting', 'nt-tb-more')
       + b('task', NT_SVG.task + '<span>Task</span>', 'Make this line a Personal task — deadline and category too (⌘⇧↵) · a new task: ⌃N', 'task');
   }
@@ -21507,6 +21574,7 @@ const VOICE = {
       case 'dictate': ntDictToggle(); return;
       case 'scan': ntScanPick(); return;
       case 'suggest': ntSuggestTasks(); return;
+      case 'due': ntPopDueMany(anchor); return;
       case 'more': ntPopMore(anchor); return;
       default: return;
     }
@@ -22031,7 +22099,9 @@ const VOICE = {
     ntSaveRange();
     const it = (cmd, label) => `<button class="nt-pop-i" type="button" data-np-cmd="${cmd}">${label}</button>`;
     ntPopOpen('more', anchor, it('underline', '<u>Underline</u>') + it('strike', '<s>Strikethrough</s>') + it('ol', 'Numbered list')
-      + it('quote', 'Quote') + it('hr', 'Divider') + it('link', 'Link…') + it('indent', 'Indent') + it('outdent', 'Outdent') + it('clear', 'Clear formatting'), { alignRight: true });
+      + it('quote', 'Quote') + it('hr', 'Divider') + it('link', 'Link…') + it('indent', 'Indent') + it('outdent', 'Outdent') + it('clear', 'Clear formatting')
+      + '<div class="nt-pop-sep"></div>' + it('suggest', '✦ Suggest tasks') + it('due', '📅 Due date for tasks…')
+      + it('dictate', ntDictOn() ? '🎙 Stop dictating' : '🎙 Dictate'), { alignRight: true });
   }
   function ntPopLink(anchor){
     ntSaveRange();
@@ -22198,6 +22268,10 @@ const VOICE = {
     // not be listed any more).
     const sgb = t.closest('[data-sug]');
     if (sgb) { const a = sgb.getAttribute('data-sug'); if (a === 'add') ntSugAdd(); else { _ntSug = null; ntPopClose(); } return; }
+    const sga = t.closest('[data-sug-all]');
+    if (sga) { ntSugAllDue(sga.getAttribute('data-sug-all')); return; }
+    const dmb = t.closest('[data-np-due]');
+    if (dmb) { ntDueManyApply(dmb.getAttribute('data-np-due')); return; }
     const tac2 = t.closest('[data-np-tact]');
     if (tac2) {
       const v = tac2.getAttribute('data-np-tact'), i = v.indexOf('|'), a = v.slice(0, i), tid = v.slice(i + 1), anc = _ntPopAnchor;
@@ -22951,7 +23025,7 @@ const VOICE = {
   }
   // ---- ✦ Suggested tasks ----
   let _ntSug = null;   // { nid, items: [{ text, due, ds }] }
-  const ntSugNorm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const ntSugNorm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');   // "VitalTouch" = "Vital Touch"
   // What to read: in the Journal, the day the cursor is in (or today's);
   // elsewhere, the whole note. Also the lines that are already tasks.
   function ntSugScope(){
@@ -22999,7 +23073,7 @@ const VOICE = {
     if (!_ntEls || !ntOpenId) return false;
     if (items) {
       const have = new Set([..._ntEls.editor.querySelectorAll('li[data-task-id]')].map(li => ntSugNorm(ntOwnText(li))));
-      items = items.filter(t => !have.has(ntSugNorm(t.text)));
+      items = items.filter(t => { const k = ntSugNorm(t.text); if (!k || have.has(k)) return false; have.add(k); return true; });
       if (!items.length) { if (_ntPopKind === 'sug') ntPopClose(); return false; }
     }
     const anchor = (() => { const b = _ntEls.toolbar.querySelector('[data-nt-cmd="suggest"]'); return (b && b.getClientRects().length) ? b : (_ntEls.toolbar.querySelector('[data-nt-cmd="more"]') || _ntEls.toolbar); })();
@@ -23008,6 +23082,9 @@ const VOICE = {
     if (!items) h += '<div class="nt-sug-wait">Reading… a few seconds</div>';
     else {
       _ntSug = { nid: ntOpenId, items: items.map(t => ({ text: t.text, due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || '') ? t.due : nextWeek, ds: t.ds || '' })) };
+      const tk = todayKey(), dq = (v, l) => `<button type="button" class="nt-sug-q" data-sug-all="${v}">${l}</button>`;
+      h += '<div class="nt-sug-all"><span class="lbl">All due</span>' + dq(tk, 'Today') + dq(ntAddDays(tk, 1), 'Tomorrow') + dq(nextWeek, 'Next week')
+        + '<input type="date" class="nt-sug-d" data-sug-alld title="One due date for all of them" aria-label="Due date for all"></div>';
       h += '<div class="nt-sug-list">' + _ntSug.items.map((t, i) => `<div class="nt-sug-row">`
           + `<input type="checkbox" data-sug-ck="${i}" checked aria-label="Add this task">`
           + `<input type="text" class="nt-sug-t" data-sug-t="${i}" value="${ntEsc(t.text)}" maxlength="300" aria-label="Task">`
@@ -23068,6 +23145,73 @@ const VOICE = {
     }
     ptToast(made ? (made === 1 ? '1 task added' : made + ' tasks added') + ' — they’re in All tasks too' : 'Couldn’t add those tasks — check your connection');
     try { jobs[0].li.scrollIntoView({ block: 'center' }); } catch {}
+  }
+  // One due date for every sheet row.
+  function ntSugAllDue(v){
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || '')) return;
+    document.querySelectorAll('#ntPop .nt-sug-row .nt-sug-d').forEach(i => { i.value = v; });
+    document.querySelectorAll('#ntPop [data-sug-all]').forEach(b => b.classList.toggle('on', b.getAttribute('data-sug-all') === v));
+    const a = document.querySelector('#ntPop [data-sug-alld]');
+    if (a && a.value !== v) a.value = '';
+  }
+  // ---- 📅 One due date for many tasks ----
+  // Which: the open task lines in the selection (when it spans 2+ of them),
+  // else the Journal day you're in (or today's), else the whole note.
+  let _ntDueMany = null;   // { nid, lis }
+  function ntDueManyScope(){
+    const open = li => li.getAttribute('data-checked') !== 'true';
+    const r = _ntRange;
+    if (r && !r.collapsed && ntInEditor(r.startContainer)) {
+      const sel = [..._ntEls.editor.querySelectorAll('ul.nt-checklist > li[data-task-id]')].filter(li => open(li) && r.intersectsNode(li));
+      if (sel.length > 1) return { lis: sel, label: 'your selection' };
+    }
+    const sc = ntSugScope();
+    const lis = sc.els.flatMap(el => [...(el.matches && el.matches('li[data-task-id]') ? [el] : []), ...el.querySelectorAll('li[data-task-id]')])
+      .filter(li => li.parentElement && li.parentElement.matches('ul.nt-checklist') && open(li));
+    return { lis, label: sc.label || 'this note' };
+  }
+  function ntPopDueMany(anchor){
+    if (!_ntEls || !ntOpenId) { ptToast('Open a note first'); return; }
+    ntSaveRange();                    // the selection right now (the toolbar button doesn't take it)
+    const sc = ntDueManyScope();
+    if (!sc.lis.length) { ptToast('No open tasks in ' + sc.label + ' — make lines tasks first'); return; }
+    _ntDueMany = { nid: ntOpenId, lis: sc.lis };
+    const tk = todayKey(), it = (v, l) => `<button class="nt-pop-i" type="button" data-np-due="${v}">${l}</button>`;
+    const n = sc.lis.length;
+    const vis = c => { const x = _ntEls.toolbar.querySelector(`[data-nt-cmd="${c}"]`); return x && x.getClientRects().length ? x : null; };
+    ntPopOpen('due', (anchor && anchor.getClientRects && anchor.getClientRects().length ? anchor : null) || vis('due') || vis('more') || _ntEls.toolbar,
+      '<div class="nt-pop-h">Due date</div>'
+      + `<div class="nt-sug-sub">${n === 1 ? '1 open task' : n + ' open tasks'} · ${escHtml(sc.label)}</div>`
+      + it(tk, 'Today') + it(ntAddDays(tk, 1), 'Tomorrow') + it(ntAddDays(tk, 7), 'Next week')
+      + '<div class="nt-due-pick"><span>Pick a date</span><input type="date" data-np-duepick aria-label="Due date for these tasks"></div>'
+      + '<div class="nt-pop-sep"></div>' + it('none', 'No due date'),
+      { alignRight: true, focus: '.nt-pop-i' });
+  }
+  async function ntDueManyApply(v){
+    const st = _ntDueMany;
+    _ntDueMany = null;
+    ntPopClose();
+    if (!st || ntOpenId !== st.nid || !_ntEls) return;
+    const due = /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '';
+    const todo = st.lis.filter(li => li.isConnected && li.getAttribute('data-task-id') && (li.getAttribute('data-due') || '') !== due);
+    if (!todo.length) { ptToast(due ? 'They’re all due ' + ntDay(due) + ' already' : 'None of them has a due date'); return; }
+    // One write each (a deleted task fails alone); one repaint at the end.
+    const res = await Promise.all(todo.map(async li => {
+      const id = li.getAttribute('data-task-id');
+      try { await updateDoc(doc(db, 'tv_todos', id), { deadline: due || deleteField() }); }
+      catch (e) { console.warn('[notes] due many', id, e); return false; }
+      [todos.find(x => x.id === id), (_plannedCache || []).find(x => x.id === id), _ntOpenIdx.get(id), _ntTaskIdx.get(id)]
+        .forEach(x => { if (x) { if (due) x.deadline = due; else delete x.deadline; } });
+      if (li.isConnected) { if (due) li.setAttribute('data-due', due); else li.removeAttribute('data-due'); }
+      return true;
+    }));
+    const ok = res.filter(Boolean).length, bad = res.length - ok;
+    ntDecorateTasks();
+    ntMarkDirty();
+    try { render(); } catch {}
+    try { ntRenderLib(); } catch {}
+    ptToast((ok ? (ok === 1 ? '1 task' : ok + ' tasks') + (due ? ' due ' + ntDay(due) : ' — no due date') : 'Nothing changed')
+      + (bad ? ` · ${bad} couldn’t be updated` : ''));
   }
   // ---- dictation: speech to text at the cursor ----
   let _ntDict = null;
@@ -24126,6 +24270,8 @@ const VOICE = {
     }
   }
   function ntPopChange(e){
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-sug-alld')) { ntSugAllDue(e.target.value); return; }
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-np-duepick')) { if (e.target.value) ntDueManyApply(e.target.value); return; }
     if (e.target && e.target.id === 'ntTFile') {
       const fs = [...(e.target.files || [])];
       e.target.value = '';                           // the same file again still counts as a change
@@ -24565,6 +24711,7 @@ const VOICE = {
     { k: 'task',  label: 'Make it a task', svg: 'task', words: 'task todo personal action deadline due' },
     { k: 'details', label: 'Details',     svg: 'detS', words: 'details description notes paste claude markdown' },
     { k: 'attach', label: 'Image or file', svg: 'clip', words: 'image picture photo screenshot file attach upload pdf document' },
+    { k: 'due', label: 'Due date for tasks', svg: 'cal', words: 'due date deadline all tasks many bulk mass today tomorrow schedule' },
     { k: 'suggest', label: 'Suggest tasks', svg: 'spark', words: 'suggest tasks todos todo action items pull extract find' },
     { k: 'scan', label: 'Scan handwriting', svg: 'camera', words: 'scan photo camera picture handwriting handwritten journal page ocr transcribe notebook' },
     { k: 'dictate', label: 'Dictate', svg: 'mic', words: 'dictate speech voice talk speak mic microphone transcribe' },
@@ -24682,6 +24829,7 @@ const VOICE = {
       case 'dictate': ntDictToggle(); break;
       case 'scan': ntScanPick(); break;
       case 'suggest': ntSuggestTasks(); break;
+      case 'due': ntPopDueMany(tb('due')); break;
       case 'timer': if (ntOpenId) ntPopTimer(document.getElementById('ntNoteTmr') || tb('more'), 'note', ntOpenId); break;
       case 'details': {
         const li = ntCurLi(), tid = li && li.getAttribute('data-task-id');
