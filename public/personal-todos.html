@@ -11339,6 +11339,12 @@ const VOICE = {
       return;
     }
     else if (d.action === 'order' && Array.isArray(d.ids)) { ntDayOrderSave(d.ids); return; }
+    else if (d.action === 'top' && typeof d.id === 'string') { ntTopSet(d.id.slice(0, 200), !!d.on); return; }
+    else if (d.action === 'toporder' && Array.isArray(d.ids)) {
+      const want = d.ids.filter(x => typeof x === 'string');
+      ntTopSave([...want.filter(x => _ntTop.ids.includes(x)), ..._ntTop.ids.filter(x => !want.includes(x))]);
+      return;
+    }
     // ✓ Complete on the card: the running clock stops (and logs), its task is done.
     else if (d.action === 'complete') {
       if (!tmrRun || !tmrRun.taskId) return;
@@ -16577,8 +16583,40 @@ const VOICE = {
     setDoc(doc(db, NT_DAY_ORDER_COL, tk), { ids: clean, updatedAt: new Date().toISOString() })
       .catch(e => { console.warn('[day order] save', e); ptToast('Couldn’t save the order — try again'); });
   }
+  // Top 7: the seven tasks that come first, set from the card. One doc, not
+  // per day — what isn't finished stays. Done or deleted → it leaves.
+  const NT_TOP_MAX = 7;
+  let _ntTop = { ids: [], loaded: false, unsub: null };
+  function ntTopSub(){
+    if (_ntTop.unsub) return;
+    try {
+      _ntTop.unsub = onSnapshot(doc(db, 'personal_top7', 'current'), snap => {
+        const v = snap.exists() ? (snap.data() || {}) : {};
+        _ntTop.ids = Array.isArray(v.ids) ? v.ids.filter(x => typeof x === 'string').slice(0, 20) : [];
+        _ntTop.loaded = true;
+        ntDayPub();
+      }, e => console.warn('[top7]', e));
+    } catch (e) { console.warn('[top7]', e); }
+  }
+  function ntTopSave(ids){
+    const clean = [...new Set((ids || []).filter(x => typeof x === 'string' && x).map(x => x.slice(0, 200)))].slice(0, NT_TOP_MAX);
+    _ntTop.ids = clean;
+    ntDayPub();
+    setDoc(doc(db, 'personal_top7', 'current'), { ids: clean, updatedAt: new Date().toISOString() })
+      .catch(e => { console.warn('[top7] save', e); ptToast('Couldn’t save the Top 7 — try again'); });
+  }
+  function ntTopSet(id, on){
+    if (!_ntTop.loaded) { ptToast('Top 7 is still loading — try again'); return; }
+    const ids = _ntTop.ids.filter(x => x !== id && (!_ntOpenLoaded || _ntOpenIdx.has(x)));
+    if (on) {
+      if (ids.length >= NT_TOP_MAX) { ptToast('Top 7 is full — finish or remove one first'); ntDayPub(); return; }
+      ids.push(id);
+    }
+    ntTopSave(ids);
+  }
   function ntDayPubNow(){
     if (!ntDayWanted()) return;
+    try { ntTopSub(); } catch {}
     try { tmrEnsureSubs(); } catch {}
     ntEnsureDoneToday();
     if (!_ntOpenOn) ntEnsureOpenIdx();
@@ -16612,9 +16650,19 @@ const VOICE = {
     const all = planned.map((x, i) => ({ x, i, star: ntPrioOf(x.t) === 'day' ? 1 : 0 }));
     all.sort((a, b) => ((oi.has(a.x.t.id) ? oi.get(a.x.t.id) : 1e6) - (oi.has(b.x.t.id) ? oi.get(b.x.t.id) : 1e6))
       || (b.star - a.star) || (b.x.late - a.x.late) || (a.i - b.i));
+    // Top 7: open tasks only — a finished (or deleted) one is dropped from
+    // the doc too, which is what opens its spot.
+    const topIds = _ntTop.ids.filter(id => _ntOpenIdx.has(id)).slice(0, NT_TOP_MAX);
+    if (_ntTop.loaded && topIds.length !== _ntTop.ids.length) ntTopSave(topIds);
+    const topSet = new Set(topIds);
+    const top = topIds.map(id => {
+      const t = _ntOpenIdx.get(id), p = ntAllPlace(t, c);
+      return { id, text: cut(t.text), late: p.g === 'late', star: ntPrioOf(t) === 'day', secs: sec(id) };
+    });
     const s = JSON.stringify({
       day: tk, timed, goal, plannedN: planned.length,
-      list: all.slice(0, 80).map(({ x, star }) => ({ id: x.t.id, text: cut(x.t.text), late: x.late, star: !!star, secs: sec(x.t.id) })),
+      top: _ntTop.loaded ? top : null, topMax: NT_TOP_MAX,
+      list: all.filter(({ x }) => !topSet.has(x.t.id)).slice(0, 80).map(({ x, star }) => ({ id: x.t.id, text: cut(x.t.text), late: x.late, star: !!star, secs: sec(x.t.id) })),
       restN: rest.length, rest: rest.slice(0, 10).map(x => ({ id: x.t.id, text: cut(x.t.text), late: x.late })),
       doneN: done ? done.length : null, done: done ? done.slice(0, 60).map(t => ({ id: t.id, text: cut(t.text), secs: sec(t.id) })) : [],
       prio

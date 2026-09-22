@@ -11346,6 +11346,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-btn.ok { background: #3FA66B; border-color: #3FA66B; color: #fff; }
   .wrt-ic.ok { color: #2E8A55; font-size: 15px; }
   .wrt-dhint { font-weight: 600; letter-spacing: 0; text-transform: none; color: #b9aea2; }
+  .wrt-toph { color: #E0701F; }
+  .wrt-row.top .mk { width: 18px; height: 18px; border-radius: 50%; background: #F07E28; color: #fff; font: 800 10.5px/18px inherit; font-family: inherit; text-align: center; align-self: center; }
+  .wrt-slot { margin: 3px 0 2px 20px; padding: 6px 9px; border: 1.5px dashed rgba(240, 126, 40, .45); border-radius: 8px; font-size: 12px; color: #9a6b45; }
+  .wrt-chip.topc { border-color: rgba(240, 126, 40, .55); color: #C85F14; }
+  .wrt-chip:disabled { opacity: .45; cursor: default; }
   .wrt-more, .wrt-dnote { padding: 2px 6px; font-size: 12px; color: #7a6f63; }
   .wrt-row.open { background: rgba(255, 255, 255, .75); }
   .wrt-row.open .tx { display: block; -webkit-line-clamp: unset; overflow: visible; }
@@ -11441,10 +11446,18 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       const moyr = (mo || yr) ? '<div class="wrt-more">' + [mo ? 'This month ' + mo : '', yr ? 'This year ' + yr : ''].filter(Boolean).join(' · ') + '</div>' : '';
       let L = '';
       if (Array.isArray(d.list)) {
-        // The whole day, in your order — drag ⋮⋮ to put what comes first on top.
+        // Top 7 first: numbered, in your order; a finished one leaves and its
+        // spot opens.
+        if (Array.isArray(d.top)) {
+          const tp = pendApply(list(d.top), pendTop), max = num(d.topMax) || 7, open = Math.max(0, max - tp.length);
+          L += '<div class="wrt-h wrt-toph">Top ' + max + '<span>' + tp.length + ' / ' + max + '</span></div>'
+            + (tp.length ? '<div class="wrt-today wrt-top7" data-sort="top">' + tp.map((t, i) => row(t, 'top', String(i + 1), true)).join('') + '</div>' : '')
+            + (open ? '<div class="wrt-slot">' + (open === 1 ? '1 open spot' : open + ' open spots') + ' — open a task below, then “⬆ Top ' + max + '”</div>' : '');
+        }
+        // The rest of the day, in your order — drag ⋮⋮ to put what comes first on top.
         const tl = pendApply(list(d.list));
-        if (tl.length) L += '<div class="wrt-h">Today · ' + tl.length + '<span class="wrt-dhint">drag ⋮⋮ to order</span></div>'
-          + '<div class="wrt-today">' + tl.map(t => row(t, '', t.star ? '★' : '○', true)).join('') + '</div>';
+        if (tl.length) L += '<div class="wrt-h">' + (Array.isArray(d.top) ? 'Also today · ' : 'Today · ') + tl.length + '<span class="wrt-dhint">drag ⋮⋮ to order</span></div>'
+          + '<div class="wrt-today" data-sort="day">' + tl.map(t => row(t, '', t.star ? '★' : '○', true)).join('') + '</div>';
         L += sec('Priorities · This week', num((p.week || {}).n), list((p.week || {}).items), '', '☆') + moyr;
       } else {   // an older Personal: the old sections
         L = sec('Priorities · Today', num((p.day || {}).n), list((p.day || {}).items), '', '★')
@@ -11462,10 +11475,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   }
   // A drop shows at once; Personal saves it and sends the list back in that
   // order (until then — a few seconds — the card keeps its own).
-  let pendOrd = null, rdrag = null;
-  function pendApply(a){
-    if (!pendOrd || Date.now() - pendOrd.at > 8000) return a;
-    const ix = new Map(pendOrd.ids.map((id, i) => [id, i]));
+  let pendOrd = null, pendTop = null, rdrag = null;
+  function pendApply(a, pend){
+    const po = pend === undefined ? pendOrd : pend;
+    if (!po || Date.now() - po.at > 8000) return a;
+    const ix = new Map(po.ids.map((id, i) => [id, i]));
     return a.map((t, i) => ({ t, k: ix.has(t.id) ? ix.get(t.id) : 1e6 + i })).sort((x, y) => x.k - y.k).map(x => x.t);
   }
   // One task, open in the card: details, a timer, done.
@@ -11482,7 +11496,14 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
       else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
         + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
-      h += '<button type="button" class="wrt-chip" data-wrt="tdone" data-id="' + i + '">' + (x.done ? '↺ Not done' : '✓ Done') + '</button></div>'
+      h += '<button type="button" class="wrt-chip" data-wrt="tdone" data-id="' + i + '">' + (x.done ? '↺ Not done' : '✓ Done') + '</button>';
+      const d = today();
+      if (d && Array.isArray(d.top) && !x.done) {
+        const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
+        h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
+          + (full ? ' disabled title="Top ' + max + ' is full — finish or remove one first"' : '') + '>' + (inTop ? '✕ Remove from Top ' + max : '⬆ Top ' + max) + '</button>';
+      }
+      h += '</div>'
         + '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
     }
     return h + '</div>';
@@ -11609,6 +11630,17 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (a === 'task') { openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
     if (a === 'tinfo') { info.delete(tid); ask({ action: 'info', id: tid }); paintDay(); return; }
     if (a === 'tstart') { ask({ action: 'start', id: tid, mins: +b.getAttribute('data-m') || 0 }); openTask = ''; return; }
+    if (a === 'ttop') {
+      const on = b.getAttribute('data-on') === '1', d = today();
+      if (d && Array.isArray(d.top) && Array.isArray(d.list)) {
+        if (on) { const k = d.list.findIndex(t => t && t.id === tid); if (k >= 0) d.top.push(d.list.splice(k, 1)[0]); }
+        else { const k = d.top.findIndex(t => t && t.id === tid); if (k >= 0) d.list.unshift(d.top.splice(k, 1)[0]); }
+      }
+      ask({ action: 'top', id: tid, on });
+      paintDay(); place();
+      setTimeout(() => { lastDayRaw = null; }, 2500);   // then re-read what Personal kept (a refusal included)
+      return;
+    }
     if (a === 'tdone') { const x = info.get(tid); if (!x) return; x.done = !x.done; ask({ action: 'setdone', id: tid, on: x.done }); paintDay(); return; }
     if (a === 'tedit') { go('task', tid); return; }
     send(a);
@@ -11667,7 +11699,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     rdrag = null;
     it.classList.remove('lift'); box.classList.remove('sorting');
     const ids = [...box.children].map(x => x.dataset.id);
-    if (ids.join('|') !== before.join('|')) { pendOrd = { ids, at: Date.now() }; ask({ action: 'order', ids }); }
+    if (ids.join('|') !== before.join('|')) {
+      if (box.getAttribute('data-sort') === 'top') { pendTop = { ids, at: Date.now() }; ask({ action: 'toporder', ids }); [...box.children].forEach((x, i) => { const m = x.querySelector('.mk'); if (m) m.textContent = String(i + 1); }); }
+      else { pendOrd = { ids, at: Date.now() }; ask({ action: 'order', ids }); }
+    }
     if (repaint) paintDay();
   };
   el.addEventListener('pointerup', rdrop, true); el.addEventListener('pointercancel', rdrop, true);
