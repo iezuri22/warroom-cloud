@@ -11264,6 +11264,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     <div class="wrt-what" id="wrtWhat"></div>
     <div class="wrt-clock" id="wrtClock">0:00</div>
     <div class="wrt-sub" id="wrtSub"></div>
+    <div class="wrt-call" id="wrtCall" hidden role="status"></div>
     <button type="button" class="wrt-dtog" data-wrt="det" id="wrtDTog" hidden>Details ▾</button>
     <div class="wrt-det" id="wrtDet" hidden></div>
     <div class="wrt-acts"><button type="button" class="wrt-btn primary" data-wrt="stop">■ Stop and log it</button>
@@ -11299,6 +11300,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-what { margin-top: 8px; font-size: 15px; font-weight: 700; line-height: 1.3; color: #211E19; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .wrt-clock { margin-top: 4px; font-size: 52px; font-weight: 800; line-height: 1.05; letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: #211E19; }
   .wrt-sub { font-size: 13px; color: #7a6f63; }
+  .wrt-call { margin-top: 8px; padding: 7px 10px; border-radius: 10px; background: #F07E28; color: #fff; font-size: 13px; font-weight: 800; animation: wrtCallIn .25s ease-out; }
+  @keyframes wrtCallIn { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .wrt.call .wrt-pill { border-color: #F07E28; box-shadow: 0 0 0 3px rgba(240, 126, 40, .3), 0 8px 24px rgba(33, 30, 25, .16); }
+  .wrt.call .wrt-ptime { color: #C85F14; }
+  @media (prefers-reduced-motion: reduce) { .wrt-call { animation: none; } }
   .wrt-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .wrt-btn { height: 38px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(33, 30, 25, .12); background: #fff; color: #211E19; font: 700 14px inherit; font-family: inherit; cursor: pointer; }
   .wrt-btn.primary { background: #F07E28; border-color: #F07E28; color: #fff; }
@@ -11520,9 +11526,21 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     }
     post();
   }
+  // 15 / 10 / 5 / 2 minutes left — Personal keeps the clock and says so.
+  let callAt = 0, callMins = 0;
+  function paintCall(){
+    const b = $('wrtCall');
+    if (!b) return;
+    const on = !!callMins && !!run && Date.now() - callAt < 25000;
+    b.hidden = !on;
+    el.classList.toggle('call', on);
+    if (on) b.textContent = '⏰ ' + callMins + (callMins === 1 ? ' minute left' : ' minutes left');
+  }
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
-    if (!f || ev.source !== f.contentWindow || !d || d.type !== 'warroom:taskinfo' || typeof d.id !== 'string') return;
+    if (!f || ev.source !== f.contentWindow || !d) return;
+    if (d.type === 'warroom:callout') { callMins = Math.max(0, Math.floor(+d.mins || 0)); callAt = Date.now(); paintCall(); return; }
+    if (d.type !== 'warroom:taskinfo' || typeof d.id !== 'string') return;
     info.set(d.id, { ok: !!d.ok, done: !!d.done, detHtml: typeof d.detHtml === 'string' ? d.detHtml : '', text: typeof d.text === 'string' ? d.text.slice(0, 2000) : '' });
     if (d.id === openTask && !el.hidden) { paintDay(); place(); }
   });
@@ -11725,7 +11743,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
   window.addEventListener('resize', () => { if (!el.hidden) place(); });
   window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) read(); });
-  setInterval(() => { read(); if (run) paint(false); }, 1000);
+  setInterval(() => { read(); if (run) paint(false); paintCall(); }, 1000);
   read();
   paintPin();
   if (ui.pin) setTimeout(wake, 4000);   // after the shell's own first load

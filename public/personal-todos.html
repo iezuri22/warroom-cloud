@@ -11640,8 +11640,29 @@ const VOICE = {
     } catch {}
   }
   let _ptGoalsAt = 0;
+  // A countdown says how long is left at 15, 10, 5 and 2 minutes — out loud
+  // (the recorded clips), as a toast here, and on the War Room card.
+  const TMR_CALLS = [2, 5, 10, 15];
+  let _tmrCall = null;   // { until, done:Set } — re-armed whenever the end moves
+  function tmrCallouts(){
+    if (!tmrRun || !tmrRun.until) { _tmrCall = null; return; }
+    const left = (tmrRun.until - Date.now()) / 1000;
+    // A new countdown (or +5 min): whatever is already behind us stays quiet.
+    if (!_tmrCall || _tmrCall.until !== tmrRun.until) {
+      _tmrCall = { until: tmrRun.until, done: new Set(TMR_CALLS.filter(m => left <= m * 60)) };
+      return;
+    }
+    const hit = TMR_CALLS.find(m => left <= m * 60 && !_tmrCall.done.has(m));
+    if (hit == null) return;
+    TMR_CALLS.forEach(m => { if (m >= hit) _tmrCall.done.add(m); });
+    const name = tmrRun.taskName || tmrRunLabel() || '';
+    try { speak(hit + ' minutes'); } catch {}
+    ptToast(hit + ' minutes left' + (name ? ' — ' + name : ''));
+    try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'warroom:callout', mins: hit, taskName: String(name).slice(0, 140) }, '*'); } catch {}
+  }
   function tmrTick(){
     if (tmrRun && Date.now() - _ptGoalsAt > 30000) { _ptGoalsAt = Date.now(); try { ptRenderGoals(); } catch {} }
+    try { tmrCallouts(); } catch (e) { console.warn('[timer] callout', e); }
     // A countdown ran out: the alarm once, then the clock stops and banks it.
     if (tmrRun && tmrRun.until && Date.now() >= tmrRun.until) {
       const name = tmrRun.taskName || '';
