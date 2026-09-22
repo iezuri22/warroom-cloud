@@ -9404,6 +9404,21 @@ const VOICE = {
     // the sprint timer (so they still get some signal).
     const range = ptWeekRange();
     let dailySecs = 0, weeklySecs = 0;
+    // -- Source 0: the Personal timer's ledger (personal_time_days) — what the
+    // Timer tab and the War Room's timer card count — with the running clock.
+    // (try: at boot the timer's state isn't declared yet.)
+    let hadTimer = false;
+    try {
+      tmrEnsureSubs();
+      tmrDays.forEach((day, dk) => {
+        const secs = Object.values((day && day.totals) || {}).reduce((a, b) => a + (+b || 0), 0);
+        if (secs <= 0) return;
+        hadTimer = true;
+        if (dk === range.today) dailySecs += secs;
+        if (dk >= range.start && dk <= range.end) weeklySecs += secs;
+      });
+      if (tmrRun) { const live = tmrLiveSecs(); if (live > 0) { hadTimer = true; dailySecs += live; weeklySecs += live; } }
+    } catch {}
     // -- Source 1: sprint history (best signal — has session timestamps) --
     try {
       const raw = localStorage.getItem('sprint-history-v1');
@@ -9436,7 +9451,8 @@ const VOICE = {
         hadSprintData = entries.length > 0;
       }
     } catch {}
-    if (!hadSprintData && Array.isArray(todos)) {
+    // (A task's stopwatch time is already in the timer's ledger.)
+    if (!hadSprintData && !hadTimer && Array.isArray(todos)) {
       todos.forEach(t => {
         if (!t.done) return;
         const secs = Number(t.timeSpent) || 0;
@@ -11093,6 +11109,7 @@ const VOICE = {
     }, e => console.warn('[timer] days sub', e));
   }
   function tmrRerender(){
+    try { ptRenderGoals(); } catch {}   // the War Room header's Today / Week hours
     try { if (_tabTimer || _tabOverview) render(); } catch {}
     try { if (_tabNotes && _ntMounted) ntRenderLib(); } catch {}   // Today lists the day's sessions
     try { ntDayPub(); } catch {}   // and the War Room's timer card, the time
@@ -11578,7 +11595,9 @@ const VOICE = {
       }
     } catch {}
   }
+  let _ptGoalsAt = 0;
   function tmrTick(){
+    if (tmrRun && Date.now() - _ptGoalsAt > 30000) { _ptGoalsAt = Date.now(); try { ptRenderGoals(); } catch {} }
     // A countdown ran out: the alarm once, then the clock stops and banks it.
     if (tmrRun && tmrRun.until && Date.now() >= tmrRun.until) {
       const name = tmrRun.taskName || '';
