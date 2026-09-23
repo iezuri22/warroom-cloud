@@ -11339,6 +11339,7 @@ const VOICE = {
       return;
     }
     else if (d.action === 'order' && Array.isArray(d.ids)) { ntDayOrderSave(d.ids); return; }
+    else if (d.action === 'search') { ntWrSearch(typeof d.q === 'string' ? d.q : ''); return; }
     else if (d.action === 'top' && typeof d.id === 'string') { ntTopSet(d.id.slice(0, 200), !!d.on); return; }
     else if (d.action === 'toporder' && Array.isArray(d.ids)) {
       const want = d.ids.filter(x => typeof x === 'string');
@@ -16634,6 +16635,30 @@ const VOICE = {
       ids.push(id);
     }
     ntTopSave(ids);
+  }
+  // The card's "All" search — what the open index already holds.
+  function ntWrSearch(q){
+    const s = String(q || '').trim().toLowerCase().slice(0, 80);
+    const post = o => { try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ type: 'warroom:search', q: s }, o), location.origin); } catch (e) { console.warn('[wr search]', e); } };
+    if (!s) { post({ groups: [] }); return; }
+    if (!_ntOpenOn) ntEnsureOpenIdx();
+    if (!_ntOpenLoaded || _ntOpenErr) { post({ groups: [], loading: true }); return; }
+    const c = ntAllCtx(), tk = c.today, cut = x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const secsBy = new Map();
+    (((tmrDays.get(tk) || {}).sessions) || []).forEach(x => { if (x && x.taskId) secsBy.set(x.taskId, (secsBy.get(x.taskId) || 0) + (+x.secs || 0)); });
+    const catOf = t => { try { return ntCatPath(t.noteCat || ntSecCat(t)) || ''; } catch { return ''; } };
+    const buckets = new Map();
+    let n = 0, more = 0;
+    ntAllOpen().forEach(t => {
+      const cat = catOf(t);
+      if (!(String(t.text || '').toLowerCase().includes(s) || String(cat).toLowerCase().includes(s))) return;
+      if (n >= 80) { more++; return; }
+      n++;
+      const p = ntAllPlace(t, c);
+      if (!buckets.has(p.g)) buckets.set(p.g, []);
+      buckets.get(p.g).push({ id: t.id, text: cut(t.text), late: p.g === 'late', star: ntPrioOf(t) === 'day', secs: Math.round(secsBy.get(t.id) || 0), cat: String(cat).slice(0, 40) });
+    });
+    post({ n, more, groups: NT_ALL_GROUPS.filter(([k]) => buckets.has(k)).map(([k, label]) => ({ k, label, items: buckets.get(k) })) });
   }
   function ntDayPubNow(){
     if (!ntDayWanted()) return;

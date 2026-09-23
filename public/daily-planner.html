@@ -11351,6 +11351,15 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-row .tm.live { color: #E0701F; }
   .wrt-btn.ok { background: #3FA66B; border-color: #3FA66B; color: #fff; }
   .wrt-ic.ok { color: #2E8A55; font-size: 15px; }
+  .wrt-find { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+  .wrt-find input { flex: 1; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid rgba(33, 30, 25, .16); border-radius: 8px; background: #fff; font: 600 13px inherit; font-family: inherit; color: #211E19;
+                    user-select: text; -webkit-user-select: text; cursor: auto; }
+  .wrt-find input:focus { outline: none; border-color: #F07E28; }
+  .wrt-find input::-webkit-search-cancel-button { cursor: pointer; }
+  .wrt-sc { display: flex; flex-shrink: 0; border: 1px solid rgba(33, 30, 25, .16); border-radius: 8px; overflow: hidden; background: #fff; }
+  .wrt-sc button { height: 30px; padding: 0 9px; border: 0; background: none; font: 700 12px inherit; font-family: inherit; color: #7a6f63; cursor: pointer; }
+  .wrt-sc button.on { background: #F07E28; color: #fff; }
+  .wrt-row .cat { flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 700; color: #9a8d80; }
   .wrt-dhint { font-weight: 600; letter-spacing: 0; text-transform: none; color: #b9aea2; }
   .wrt-toph { color: #E0701F; }
   .wrt-row.top .mk { width: 18px; height: 18px; border-radius: 50%; background: #F07E28; color: #fff; font: 800 10.5px/18px inherit; font-family: inherit; text-align: center; align-self: center; }
@@ -11429,6 +11438,12 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     const open = idle ? ui.planIdle !== false : ui.planRun === true;
     h += '<button type="button" class="wrt-dtog" data-wrt="plan" aria-expanded="' + open + '">' + (open ? 'Hide plan & priorities ▴' : 'Plan & priorities ▾') + '</button>';
     if (open) {
+      const qn = find.q.trim().toLowerCase();
+      h += '<div class="wrt-find"><input type="search" id="wrtQ" placeholder="Search tasks…" autocomplete="off" spellcheck="false" value="' + esc(find.q) + '" aria-label="Search tasks">'
+        + '<span class="wrt-sc">'
+        + '<button type="button" class="' + (find.scope === 'day' ? 'on' : '') + '" data-wrt="scope" data-s="day" title="Only what is queued for today">Today</button>'
+        + '<button type="button" class="' + (find.scope === 'all' ? 'on' : '') + '" data-wrt="scope" data-s="all" title="Every open task">All</button>'
+        + '</span></div>';
       let panelShown = false;
       const row = (t, cls, mk, grip) => {
         const on = !!(t && t.id === openTask && !panelShown);
@@ -11440,9 +11455,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
         const base = num(t.secs), secs = base + (liveOn ? Math.max(0, (Date.now() - run.startedAt) / 1000) : 0);
         const tm = liveOn ? '<span class="tm live" data-tm-live data-base="' + base + '">⏱ ' + esc(hm(secs)) + '</span>'
           : secs >= 60 ? '<span class="tm" title="Timed today">' + esc(hm(secs)) + '</span>' : '';
+        const cat = t && t.cat ? '<span class="cat">' + esc(t.cat) + '</span>' : '';
         return '<div class="wrt-it" data-id="' + esc(t && t.id) + '"><div class="wrt-line">'
           + (grip ? '<span class="wrt-grip" data-grip title="Drag to reorder" aria-hidden="true">⋮⋮</span>' : '')
-          + '<button type="button" class="wrt-row ' + (cls || '') + (on ? ' open' : '') + '" data-wrt="task" data-id="' + esc(t && t.id) + '" aria-expanded="' + on + '"' + (on ? '' : ' title="' + esc((t && t.text) || '') + '"') + '><span class="mk">' + mk + '</span><span class="tx">' + esc(full || (t && t.text) || '(untitled)') + '</span>' + tm + (t && t.late ? '<span class="late">late</span>' : '') + '</button></div>'
+          + '<button type="button" class="wrt-row ' + (cls || '') + (on ? ' open' : '') + '" data-wrt="task" data-id="' + esc(t && t.id) + '" aria-expanded="' + on + '"' + (on ? '' : ' title="' + esc((t && t.text) || '') + '"') + '><span class="mk">' + mk + '</span><span class="tx">' + esc(full || (t && t.text) || '(untitled)') + '</span>' + cat + tm + (t && t.late ? '<span class="late">late</span>' : '') + '</button></div>'
           + (on ? tkPanel(t.id) : '') + '</div>';
       };
       const list = a => Array.isArray(a) ? a.filter(t => t && typeof t.id === 'string') : [];
@@ -11471,13 +11487,43 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
           + sec('Also planned today', num(d.restN), list(d.rest), '', '○');
       }
       L += sec('Done today', doneN, list(d.done), 'done', '✓');
+      // Typing takes over the list. (The lists above are thrown away, so the
+      // open task's panel is up for grabs again.)
+      if (qn) {
+        panelShown = false;
+        if (find.scope === 'all') {
+          if (!findRes || findRes.q !== qn) L = '<div class="wrt-more">Searching…</div>';
+          else if (findRes.loading) L = '<div class="wrt-more">Your tasks are still loading — try again in a moment.</div>';
+          else if (!findRes.groups.length) L = '<div class="wrt-more">No open task matches “' + esc(find.q.trim()) + '”.</div>';
+          else L = findRes.groups.map(g => '<div class="wrt-h">' + esc(g.label) + '<span>' + g.items.length + '</span></div>'
+                + list(g.items).map(t => row(t, '', t.star ? '★' : '○')).join('')).join('')
+              + (findRes.more ? '<div class="wrt-more">+' + findRes.more + ' more — type a bit more</div>' : '');
+        } else {
+          const m = a => list(a).filter(t => String(t.text || '').toLowerCase().includes(qn));
+          const mt = m(d.top), ml = m(d.list), md = m(d.done);
+          L = (mt.length ? '<div class="wrt-h">Top ' + (num(d.topMax) || 7) + '<span>' + mt.length + '</span></div>' + mt.map((t, i) => row(t, 'top', String((list(d.top).indexOf(t) + 1) || (i + 1)))).join('') : '')
+            + (ml.length ? '<div class="wrt-h">Also today<span>' + ml.length + '</span></div>' + ml.map(t => row(t, '', t.star ? '★' : '○')).join('') : '')
+            + (md.length ? '<div class="wrt-h">Done today<span>' + md.length + '</span></div>' + md.map(t => row(t, 'done', '✓')).join('') : '');
+          if (!L) L = '<div class="wrt-more">Nothing in today’s queue matches “' + esc(find.q.trim()) + '”. <button type="button" class="wrt-dlink" data-wrt="scope" data-s="all">Search all tasks ›</button></div>';
+        }
+      }
       h += '<div class="wrt-list">' + (L || '<div class="wrt-more">Nothing planned for today.</div>') + '</div>';
     }
     const ls = box.querySelector('.wrt-list'), st = ls ? ls.scrollTop : 0;
     const ds = box.querySelector('.wrt-tk-det'), dst = ds ? ds.scrollTop : 0;
     box.innerHTML = h;
+    if (findOn) { const i = $('wrtQ'); if (i) { try { i.focus({ preventScroll: true }); i.setSelectionRange(findCaret, findCaret); } catch (e) {} } }
     if (st) { const n = box.querySelector('.wrt-list'); if (n) n.scrollTop = st; }
     if (dst) { const n = box.querySelector('.wrt-tk-det'); if (n) n.scrollTop = dst; }
+  }
+  // Search: type in the card. "Today" filters what's on it; "All" asks
+  // Personal for every open task, grouped by when it's due.
+  let find = { q: '', scope: 'day' }, findRes = null, findT = 0, findOn = false, findCaret = 0;
+  function findAsk(){
+    clearTimeout(findT);
+    const q = find.q.trim();
+    if (find.scope !== 'all' || !q) return;
+    findT = setTimeout(() => ask({ action: 'search', q }), 160);
   }
   // A drop shows at once; Personal saves it and sends the list back in that
   // order (until then — a few seconds — the card keeps its own).
@@ -11539,6 +11585,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
     if (!f || ev.source !== f.contentWindow || !d) return;
+    if (d.type === 'warroom:search') {
+      findRes = { q: String(d.q || ''), groups: Array.isArray(d.groups) ? d.groups : [], more: +d.more || 0, loading: !!d.loading };
+      if (find.scope === 'all' && find.q.trim().toLowerCase() === findRes.q) { paintDay(); place(); }
+      return;
+    }
     if (d.type === 'warroom:callout') { callMins = Math.max(0, Math.floor(+d.mins || 0)); callAt = Date.now(); paintCall(); return; }
     if (d.type !== 'warroom:taskinfo' || typeof d.id !== 'string') return;
     info.set(d.id, { ok: !!d.ok, done: !!d.done, detHtml: typeof d.detHtml === 'string' ? d.detHtml : '', text: typeof d.text === 'string' ? d.text.slice(0, 2000) : '' });
@@ -11634,6 +11685,20 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     // Personal still loading: ask again until the clock has stopped (or give up).
     if (action === 'stop' || action === 'complete') { let n = 0; const again = setInterval(() => { read(); if (!run || ++n > 12) { clearInterval(again); return; } post(); }, 700); }
   }
+  el.addEventListener('input', e => {
+    if (!e.target || e.target.id !== 'wrtQ') return;
+    find.q = e.target.value;
+    findCaret = e.target.selectionStart || 0;
+    findOn = true;
+    findAsk();
+    paintDay(); place();
+  });
+  el.addEventListener('focusin', e => { if (e.target && e.target.id === 'wrtQ') findOn = true; });
+  el.addEventListener('focusout', e => { if (e.target && e.target.id === 'wrtQ') findOn = false; });
+  el.addEventListener('keydown', e => {
+    if (!e.target || e.target.id !== 'wrtQ') return;
+    if (e.key === 'Escape') { e.stopPropagation(); find.q = ''; findRes = null; paintDay(); place(); }
+  });
   el.addEventListener('click', e => {
     if (e.target.closest && e.target.closest('.wrt-det')) return;   // links open themselves
     const b = e.target.closest ? e.target.closest('[data-wrt]') : null;
@@ -11644,6 +11709,13 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (a === 'plan') { if (run) ui.planRun = ui.planRun !== true; else ui.planIdle = ui.planIdle === false; saveUi(); paintDay(); place(); return; }
     if (a === 'unpin') { ui.pin = false; saveUi(); paintPin(); paint(true); return; }
     if (a === 'today' || a === 'pick') { go(a, ''); return; }
+    if (a === 'scope') {
+      find.scope = b.getAttribute('data-s') === 'all' ? 'all' : 'day';
+      findRes = null; findOn = true; findAsk();
+      paintDay(); place();
+      const i = $('wrtQ'); if (i) { try { i.focus({ preventScroll: true }); } catch (e) {} }
+      return;
+    }
     const tid = b.getAttribute('data-id') || '';
     if (a === 'task') { openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
     if (a === 'tinfo') { info.delete(tid); ask({ action: 'info', id: tid }); paintDay(); return; }
@@ -11727,7 +11799,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   // Drag by anything that isn't a button.
   let drag = null, moved = false;
   el.addEventListener('pointerdown', e => {
-    if (rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, [data-grip]'))) { moved = false; return; }
+    if (rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, .wrt-find, [data-grip]'))) { moved = false; return; }
     const r = el.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
     moved = false;
