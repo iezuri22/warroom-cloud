@@ -756,6 +756,14 @@
   .mn-bar { display: flex; gap: 8px; margin-bottom: 10px }
   .mn-q { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--w12); background: var(--w04); color: var(--ink); font: 500 14px inherit; font-family: inherit; outline: none }
   .mn-q:focus { border-color: var(--orange) }
+  .pp-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 2px 2px; position: sticky; top: 0; z-index: 5; background: var(--bg); }
+  .pp-q { flex: 1 1 200px; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--w12); background: var(--card); color: var(--ink); font: 600 13.5px inherit; font-family: inherit; }
+  .pp-q:focus { outline: none; border-color: var(--accent, #F07E28); }
+  .pp-h { margin: 16px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+  .pp-when { white-space: nowrap; font-size: 12px; color: var(--ink-dim); }
+  .pp-chg { white-space: nowrap; font-size: 12px; font-weight: 700; }
+  .pp-from { color: var(--ink-dim); }
+  .pp-ack { color: #2E8A55; }
   .mn-psel { flex: 0 1 170px; min-width: 0; height: 36px; padding: 0 26px 0 10px; border-radius: 10px; border: 1px solid var(--w12); -webkit-appearance: none; appearance: none;
     background: var(--w04) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
     color: var(--w80); font: 700 12.5px inherit; font-family: inherit; cursor: pointer; text-overflow: ellipsis }
@@ -4447,6 +4455,9 @@
            stays in the DOM so updateStarredCount() keeps working. -->
       <span id="starredCount" style="display:none"></span>
       <div class="more-menu" id="moreMenu" hidden>
+        <button type="button" class="view-tab more-item" data-view="people">
+          By person
+        </button>
         <button type="button" class="view-tab more-item" data-view="activity">
           Activity
           <span class="view-tab-ct" id="activityCount"></span>
@@ -5358,9 +5369,12 @@ function subscribeDeadlines(){
     try { if (typeof render === 'function' && rows.length) render(); } catch {}
   }, err => console.error('deadlines snapshot error', err));
 }
-// Touched on the sheet within the last 24 hours (Smartsheets' own modifiedAt).
+// Its STATUS moved within the last 24 hours, by the status log — Smartsheets'
+// row modifiedAt bumps on any edit to any field (and on sheet-wide automation),
+// so it called all 908 rows "updated".
 function isJustUpdated(r){
-  const t = Date.parse((r && r.modifiedAt) || '');
+  const log = r && statusLog[String(r.id)];
+  const t = log ? Date.parse(log.since || '') : 0;
   return !!t && (Date.now() - t) < 24 * 3600 * 1000;
 }
 function isHardRow(r){
@@ -7155,7 +7169,7 @@ function renderStatusBar(){
   // "what moved for this person", and it's how a change made in Personal
   // (a completion, say) can be seen landing here.
   if (counts.__updated__ > 0 || filterStatus === '__updated__') {
-    chips.push({ id: '__updated__', label: '⟳ Updated 24h', count: counts.__updated__, kind: 'meta' });
+    chips.push({ id: '__updated__', label: '⟳ Moved 24h', count: counts.__updated__, kind: 'meta' });
   }
   bar.innerHTML = chips.map(c => {
     if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;
@@ -7728,7 +7742,7 @@ function _wireDrawer(row, r, onCollapse){
 // slide-in panel on the right (full-width sheet on phones), so the grid
 // never jumps around. Driven entirely by expandedId: clicking another row
 // swaps the panel, clicking the same row / ✕ / Escape closes it.
-const PANEL_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines', 'support', 'notif', 'starred', 'programs']);
+const PANEL_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines', 'support', 'notif', 'starred', 'programs', 'people']);
 function _syncRowPanel(){
   const existing = document.getElementById('rowSidePanel');
   const r = (PANEL_VIEWS.has(currentView) && expandedId != null)
@@ -8354,6 +8368,10 @@ function render(){
   // Dev / Reports view used to have a custom layout (renderDevReports).
   // It now uses the same row UI as the All / Non-Dev views — the only
   // difference is what applyFilters() includes.
+  if (currentView === 'people') {
+    renderPeople();
+    return;
+  }
   if (currentView === 'activity') {
     renderActivity();
     return;
@@ -10307,6 +10325,116 @@ function _activityLabelFor(e){
     }
     default: return escHtml(e.type || 'change');
   }
+}
+// ===== By person =====
+// One person at a time: what changed on their tasks (from ecm_status_log —
+// status moves and claims, whoever made them and wherever from), what they
+// finished lately, and their newest to-dos. Typing filters all three.
+let _ppOwner = '';     // '' = whoever is at the keyboard
+let _ppQ = '';
+let _ppFocus = false, _ppCaret = 0;
+function _ppOwners(){
+  const n = new Map();
+  rows.forEach(r => { const o = (r.owner || '').trim(); if (!o || !(r.task || '').trim()) return; if (!n.has(o)) n.set(o, 0); if (!_rowClosed(r)) n.set(o, n.get(o) + 1); });
+  return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+function _ppWho(owners){
+  if (_ppOwner && owners.some(([o]) => o === _ppOwner)) return _ppOwner;
+  const me = _currentActor();
+  const hit = owners.find(([o]) => o.toLowerCase() === String(me).toLowerCase());
+  return hit ? hit[0] : (owners[0] ? owners[0][0] : '');
+}
+// Every change we can date, newest first.
+function _ppEvents(mine){
+  const out = [];
+  mine.forEach(r => {
+    const segs = _statusHistorySegments(r);
+    for (let i = 1; i < segs.length; i++) {
+      const ts = segs[i].from || segs[i - 1].to;
+      if (ts) out.push({ ts, r, kind: 'status', from: segs[i - 1].status, to: segs[i].status });
+    }
+    const a = acks[r.id];
+    if (a && a.ackedAt) out.push({ ts: a.ackedAt, r, kind: 'ack', by: a.ackedBy || '' });
+  });
+  return out.sort((x, y) => (Date.parse(y.ts) || 0) - (Date.parse(x.ts) || 0));
+}
+function _ppMatch(r, q){
+  if (!q) return true;
+  return (r.task || '').toLowerCase().includes(q) || String(r.ticket || '').toLowerCase().includes(q)
+    || (r.program || '').toLowerCase().includes(q) || (r.status || '').toLowerCase().includes(q);
+}
+function _ppRowHTML(r, right){
+  const pcol = programColor(r.program);
+  return `<tr class="ddl-row${isExpandedRow(r.id) ? ' expanded' : ''}" data-id="${escHtml(String(r.id))}" data-pp-row="${escHtml(String(r.id))}">
+    <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
+    <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span></td>
+    <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
+    <td class="pp-when">${right}</td>
+  </tr>`;
+}
+function _ppTable(head, bodyHTML, empty){
+  return bodyHTML
+    ? `<div class="ddl-wrap"><div class="ddl-scroll"><table class="ddl-table"><thead><tr>
+         <th class="c-status" style="width:92px">Status</th><th>Task</th>
+         <th class="c-prog" style="width:104px">Program</th><th style="width:132px">${escHtml(head)}</th>
+       </tr></thead><tbody>${bodyHTML}</tbody></table></div></div>`
+    : `<div class="empty">${escHtml(empty)}</div>`;
+}
+function renderPeople(){
+  const list = document.getElementById('list');
+  const metaEl = document.getElementById('metaCount');
+  const owners = _ppOwners(), who = _ppWho(owners), q = _ppQ.trim().toLowerCase();
+  const mine = rows.filter(r => (r.task || '').trim() && r.owner === who);
+  const shown = mine.filter(r => _ppMatch(r, q));
+  const events = _ppEvents(mine).filter(e => _ppMatch(e.r, q)).slice(0, 50);
+  const done = shown.filter(r => _rowClosed(r))
+    .sort((a, b) => (Date.parse(b.completionDate || '') || 0) - (Date.parse(a.completionDate || '') || 0)).slice(0, 12);
+  const todo = shown.filter(r => !_rowClosed(r))
+    .sort((a, b) => (_parseDateOnly(b.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0)).slice(0, 12);
+  if (metaEl) metaEl.textContent = `${mine.filter(r => !_rowClosed(r)).length} open · ${events.length} recent change${events.length === 1 ? '' : 's'}`;
+  const head = `<div class="pp-bar">
+      <select class="mn-psel" id="ppOwner" title="Whose work to show">
+        ${owners.map(([o, n]) => `<option value="${escHtml(o)}"${o === who ? ' selected' : ''}>${escHtml(o)} · ${n} open</option>`).join('')}
+      </select>
+      <input type="search" id="ppQ" class="pp-q" placeholder="Search their tasks…" autocomplete="off" spellcheck="false" value="${escHtml(_ppQ)}" aria-label="Search tasks">
+    </div>`;
+  const evHTML = events.map(e => {
+    const what = e.kind === 'ack'
+      ? `<span class="pp-ack">✓ Claimed${e.by ? ' · ' + escHtml(ownerFirstName(e.by) || e.by) : ''}</span>`
+      : `<span class="pp-from">${escHtml(SS_STATUS_SHORT[e.from] || e.from || '—')}</span> → <span class="pp-to" style="color:${statusDotVar(e.to)}">${escHtml(SS_STATUS_SHORT[e.to] || e.to || '—')}</span>`;
+    const pcol = programColor(e.r.program);
+    return `<tr class="ddl-row${isExpandedRow(e.r.id) ? ' expanded' : ''}" data-id="${escHtml(String(e.r.id))}" data-pp-row="${escHtml(String(e.r.id))}">
+      <td class="pp-chg">${what}</td>
+      <td class="ddl-task"><span class="tt-title" title="${escHtml(e.r.task || '')}">${escHtml(e.r.task || '')}</span></td>
+      <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(e.r.program || '')}</span></td>
+      <td class="pp-when" title="${escHtml(fmtAbsoluteDate(e.ts) || '')}">${escHtml(timeAgo(e.ts) || '')}</td>
+    </tr>`;
+  }).join('');
+  list.innerHTML = head
+    + `<div class="pp-h">Last ${events.length} change${events.length === 1 ? '' : 's'}</div>`
+    + (evHTML
+        ? `<div class="ddl-wrap"><div class="ddl-scroll"><table class="ddl-table"><thead><tr>
+             <th style="width:150px">Change</th><th>Task</th><th class="c-prog" style="width:104px">Program</th><th style="width:100px">When</th>
+           </tr></thead><tbody>${evHTML}</tbody></table></div></div>`
+        : `<div class="empty">No changes recorded for ${escHtml(who || 'this person')} yet${q ? ' matching “' + escHtml(_ppQ.trim()) + '”' : ''}. Status moves and claims show up here as they happen.</div>`)
+    + `<div class="pp-h">Recently completed</div>`
+    + _ppTable('Completed', done.map(r => _ppRowHTML(r, escHtml(fmtAbsoluteDate(r.completionDate) || '—'))).join(''), 'Nothing completed yet.')
+    + `<div class="pp-h">Newest to-dos</div>`
+    + _ppTable('Added', todo.map(r => _ppRowHTML(r, escHtml(fmtAbsoluteDate(r.createdDate) || '—'))).join(''), 'No open tasks.');
+  const sel = document.getElementById('ppOwner');
+  if (sel) sel.addEventListener('change', () => { _ppOwner = sel.value; expandedId = null; render(); });
+  const box = document.getElementById('ppQ');
+  if (box) {
+    box.addEventListener('input', () => { _ppQ = box.value; _ppFocus = true; _ppCaret = box.selectionStart || 0; render(); });
+    box.addEventListener('focus', () => { _ppFocus = true; });
+    box.addEventListener('blur', () => { _ppFocus = false; });
+    box.addEventListener('keydown', e => { const k = e.key || e.code || ''; if (k === 'Escape' || e.keyCode === 27) { _ppQ = ''; render(); } });
+    if (_ppFocus) { try { box.focus({ preventScroll: true }); box.setSelectionRange(_ppCaret, _ppCaret); } catch (e) {} }
+  }
+  list.querySelectorAll('[data-pp-row]').forEach(tr => tr.addEventListener('click', e => {
+    if (e.target.closest('button, a, input, select, textarea')) return;
+    setExpanded(tr.getAttribute('data-pp-row'));
+  }));
 }
 function renderActivity(){
   const list = document.getElementById('list');
