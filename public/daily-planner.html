@@ -11381,6 +11381,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-rq.clr { color: #9a8d80; border-style: dashed; }
   .wrt-row .cat { flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 700; color: #9a8d80; }
   .wrt-tk-warn { color: #C8453A; }
+  .wrt-call.bad { background: #C8453A; }
   .wrt-dhint { font-weight: 600; letter-spacing: 0; text-transform: none; color: #b9aea2; }
   .wrt-toph { color: #E0701F; }
   .wrt-row.top .mk { width: 18px; height: 18px; border-radius: 50%; background: #F07E28; color: #fff; font: 800 10.5px/18px inherit; font-family: inherit; text-align: center; align-self: center; }
@@ -11601,8 +11602,9 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
       + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
     const pend = pending.get(id);
+    const slow = !!(pend && !pend.failed && Date.now() - pend.since > 2500);
     h += '<button type="button" class="wrt-chip' + (done ? '' : ' done') + '" data-wrt="tdone" data-id="' + i + '">' + (done ? '↺ Not done' : '✓ Complete') + '</button>';
-    if (pend && !pend.failed) h += '<span class="wrt-more">saving…</span>';
+    if (slow) h += '<span class="wrt-more">saving…</span>';
     if (d && Array.isArray(d.top) && !done) {
       const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
       h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
@@ -11615,8 +11617,30 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   }
   // ✓ Complete: ask until Personal confirms. Its answer ('warroom:acted')
   // clears this; five tries over ~20s and the panel says it didn't take.
+  // Show it at once: the task hops between today's lists and Done today.
+  // Personal's next publish replaces all of this with the real thing.
+  function moveDone(id, on){
+    const d = today();
+    if (!d || !Array.isArray(d.done)) return;
+    const pull = key => {
+      if (!Array.isArray(d[key])) return null;
+      const i = d[key].findIndex(t => t && t.id === id);
+      return i < 0 ? null : d[key].splice(i, 1)[0];
+    };
+    if (on) {
+      const t = pull('top') || pull('list');
+      if (t) { d.done.unshift(t); d.doneN = num(d.doneN) + 1; d.plannedN = Math.max(0, num(d.plannedN) - 1); }
+    } else {
+      const i = d.done.findIndex(t => t && t.id === id);
+      if (i >= 0) {
+        const t = d.done.splice(i, 1)[0];
+        if (Array.isArray(d.list)) d.list.unshift(t);
+        d.doneN = Math.max(0, num(d.doneN) - 1); d.plannedN = num(d.plannedN) + 1;
+      }
+    }
+  }
   function setDone(id, on){
-    pending.set(id, { on, at: Date.now(), tries: 0, failed: false });
+    pending.set(id, { on, at: Date.now(), since: Date.now(), tries: 0, failed: false });
     ask({ action: 'setdone', id, on });
     tickPending();
   }
@@ -11628,7 +11652,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       pending.forEach((p, id) => {
         if (p.failed) return;
         if (Date.now() - p.at < 3500) return;
-        if (p.tries >= 4) { p.failed = true; if (openTask === id) paintDay(); return; }
+        if (p.tries >= 4) { p.failed = true; moveDone(id, !p.on); flopped(); paintDay(); return; }   // put it back
         p.tries++; p.at = Date.now();
         ask({ action: 'setdone', id, on: p.on });
       });
@@ -11657,13 +11681,18 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   function paintCall(){
     const b = $('wrtCall');
     if (!b) return;
-    const on = !!run && !!callAt && Date.now() - callAt < 25000 && (callKind === 'up' || !!callMins);
+    const fresh = !!callAt && Date.now() - callAt < 25000;
+    // A failed save is worth saying whether or not a timer is running.
+    const on = fresh && (callKind === 'flop' || (!!run && (callKind === 'up' || !!callMins)));
     b.hidden = !on;
-    el.classList.toggle('call', on);
-    if (on) b.textContent = callKind === 'up' ? '⏰ Time’s up — still timing, stop it when you’re done'
+    b.classList.toggle('bad', callKind === 'flop');
+    el.classList.toggle('call', on && callKind !== 'flop');
+    if (on) b.textContent = callKind === 'flop' ? '⚠️ That didn’t save — the task is back on the list'
+      : callKind === 'up' ? '⏰ Time’s up — still timing, stop it when you’re done'
       : callKind === 'over' ? '⏰ ' + callMins + ' min over'
       : '⏰ ' + callMins + (callMins === 1 ? ' minute left' : ' minutes left');
   }
+  function flopped(){ callKind = 'flop'; callMins = 0; callAt = Date.now(); paintCall(); }
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
     if (!f || ev.source !== f.contentWindow || !d) return;
@@ -11673,7 +11702,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
         // true = it took. false = it didn't. null = Personal couldn't tell,
         // so keep asking (the same value each time, so asking twice is safe).
         if (p && d.ok === true) { pending.delete(d.id); if (openTask === d.id) paintDay(); }
-        else if (p && d.ok === false) { p.failed = true; if (openTask === d.id) paintDay(); }
+        else if (p && d.ok === false) { p.failed = true; moveDone(d.id, !p.on); flopped(); paintDay(); }
       }
       return;
     }
@@ -11848,8 +11877,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       const x = info.get(tid) || { ok: true, done: !!(d0 && Array.isArray(d0.done) && d0.done.some(t => t && t.id === tid)), detHtml: '' };
       x.done = !x.done;
       info.set(tid, x);
+      moveDone(tid, x.done);      // the row moves now — Personal catches up
+      openTask = '';
       setDone(tid, x.done);
-      paintDay();
+      paintDay(); place();
       return;
     }
     if (a === 'tedit') { go('task', tid); return; }

@@ -1457,6 +1457,7 @@
      chrome (owner pills, search row, status chips). These views have
      their own controls and don't share the standard filter strip. */
   body.view-notif .status-bar { display: none !important }
+  body.view-people .status-bar, body.view-people .task-scope-strip { display: none !important }
   body.view-starred .status-bar { display: none !important }
   /* Dev/Reports now shares the standard chrome (search + chips) with Non-Dev and All. */
   /* Acknowledge view keeps the owner pills + search (they scope the queue)
@@ -4451,6 +4452,9 @@
     <button type="button" class="view-tab" data-view="mnotes" title="Meeting notes from Notion (read-only)">
       <span class="vt-full">Meeting notes</span><span class="vt-short">Notes</span>
     </button>
+    <button type="button" class="view-tab" data-view="people" title="One person's changes, what they finished, and everything they have open">
+      <span class="vt-full">By person</span><span class="vt-short">Person</span>
+    </button>
     <!-- Overflow menu — the occasional-use views live here so the tab strip
          stays scannable. Menu items keep their original badge element IDs so
          every existing count updater keeps working untouched. -->
@@ -4465,13 +4469,10 @@
            stays in the DOM so updateStarredCount() keeps working. -->
       <span id="starredCount" style="display:none"></span>
       <div class="more-menu" id="moreMenu" hidden>
-        <button type="button" class="view-tab more-item" data-view="people">
-          By person
-        </button>
-        <button type="button" class="view-tab more-item" data-view="activity">
-          Activity
-          <span class="view-tab-ct" id="activityCount"></span>
-        </button>
+        <!-- Activity retired: it was this device's own log, and By person
+             shows the real change history for anyone. Its counter stays as a
+             hidden span so updateActivityCount() is still a no-op-safe call. -->
+        <span id="activityCount" style="display:none"></span>
         <button type="button" class="view-tab more-item" data-view="visits">
           In-Person
           <span class="view-tab-ct" id="visitsCount"></span>
@@ -5383,9 +5384,6 @@ function subscribeDeadlines(){
     try { if (typeof render === 'function' && rows.length) render(); } catch {}
   }, err => console.error('deadlines snapshot error', err));
 }
-// Its STATUS moved within the last 24 hours, by the status log — Smartsheets'
-// row modifiedAt bumps on any edit to any field (and on sheet-wide automation),
-// so it called all 908 rows "updated".
 // Looking at finished work? Order it by when it finished, newest first —
 // and hand the old sort back on the way out.
 let _sortBeforeDone = null;
@@ -5400,11 +5398,6 @@ function _sortForDoneFilter(id){
   } else return;
   try { localStorage.setItem('ecm-sort-by', sortBy); localStorage.setItem('ecm-sort-dir', sortDir); } catch {}
   try { syncSortUI(); } catch {}
-}
-function isJustUpdated(r){
-  const log = r && statusLog[String(r.id)];
-  const t = log ? Date.parse(log.since || '') : 0;
-  return !!t && (Date.now() - t) < 24 * 3600 * 1000;
 }
 function isHardRow(r){
   const f = hardDeadlines[String(r && r.id)];
@@ -6975,8 +6968,6 @@ function applyFilters(){
       pool = pool.filter(r => subsForParent(r.id).length > 0);
     } else if (filterStatus === '__hard__') {
       pool = pool.filter(isHardRow);
-    } else if (filterStatus === '__updated__') {
-      pool = pool.filter(isJustUpdated);
     } else {
       pool = pool.filter(r => r.status === filterStatus);
     }
@@ -7142,8 +7133,7 @@ function renderStatusBar(){
     __no_ticket__: issueScope.filter(isMissingTicket).length,
     __no_completion_date__: issueScope.filter(isMissingCompletionDate).length,
     __has_subs__: scoped.filter(r => subsForParent(r.id).length > 0).length,
-    __hard__: scoped.filter(r => isHardRow(r) && !_rowClosed(r)).length,
-    __updated__: scoped.filter(isJustUpdated).length
+    __hard__: scoped.filter(r => isHardRow(r) && !_rowClosed(r)).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   // Chip layout: All / Open / specific open statuses (Pending IR, Ticket Sent)
@@ -7194,12 +7184,6 @@ function renderStatusBar(){
   // Hard-deadline commitments — the ones the reminder cron watches.
   if (counts.__hard__ > 0 || filterStatus === '__hard__') {
     chips.push({ id: '__hard__', label: '🔒 Hard deadline', count: counts.__hard__, kind: 'meta' });
-  }
-  // Changed on the sheet in the last 24 hours — with the Owner filter, that's
-  // "what moved for this person", and it's how a change made in Personal
-  // (a completion, say) can be seen landing here.
-  if (counts.__updated__ > 0 || filterStatus === '__updated__') {
-    chips.push({ id: '__updated__', label: '⟳ Moved 24h', count: counts.__updated__, kind: 'meta' });
   }
   bar.innerHTML = chips.map(c => {
     if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;
@@ -8339,6 +8323,13 @@ document.addEventListener('focusout', (e) => { if (e.target === _selOpen) _selOp
 // The Task/Review search box: which views show it, and what it says.
 const FIND_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines', 'support', 'notif']);
 function _syncTaskFind(){
+  // By person filters itself — the status chips and the task-scope strip
+  // have nothing to say there. (Body view- classes aren't set on every tab,
+  // so this is done here rather than in CSS.)
+  const hideChips = currentView === 'people';
+  const sb = document.getElementById('statusBar'), ss = document.getElementById('taskScopeStrip');
+  if (sb) sb.style.display = hideChips ? 'none' : '';
+  if (ss) ss.style.display = hideChips ? 'none' : '';
   const box = document.getElementById('ttFind'), inp = document.getElementById('ttQ'), ct = document.getElementById('ttFindCt');
   if (!box || !inp) return;
   box.hidden = !FIND_VIEWS.has(currentView);
