@@ -766,7 +766,10 @@
   .pp-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 2px 2px; position: sticky; top: 0; z-index: 5; background: var(--bg); }
   .pp-q { flex: 1 1 200px; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--w12); background: var(--card); color: var(--ink); font: 600 13.5px inherit; font-family: inherit; }
   .pp-q:focus { outline: none; border-color: var(--accent, #F07E28); }
-  .pp-h { margin: 16px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+  .pp-jump { display: flex; gap: 4px; flex-shrink: 0; }
+  .pp-jump button { height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--w12); background: var(--card); color: var(--ink-dim); font: 700 12px inherit; font-family: inherit; cursor: pointer; }
+  .pp-jump button:hover { color: var(--ink); border-color: var(--w24, var(--w12)); }
+  .pp-h { scroll-margin-top: 56px; margin: 16px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
   .pp-when { white-space: nowrap; font-size: 12px; color: var(--ink-dim); }
   .pp-chg { white-space: nowrap; font-size: 12px; font-weight: 700; }
   .pp-from { color: var(--ink-dim); }
@@ -5383,6 +5386,21 @@ function subscribeDeadlines(){
 // Its STATUS moved within the last 24 hours, by the status log — Smartsheets'
 // row modifiedAt bumps on any edit to any field (and on sheet-wide automation),
 // so it called all 908 rows "updated".
+// Looking at finished work? Order it by when it finished, newest first —
+// and hand the old sort back on the way out.
+let _sortBeforeDone = null;
+function _sortForDoneFilter(id){
+  const done = ECM_DONE_STATUSES.has(id) || id === 'Not feasible - close ticket';
+  if (done) {
+    if (sortBy !== 'completed') _sortBeforeDone = { by: sortBy, dir: sortDir };
+    sortBy = 'completed'; sortDir = 'desc';
+  } else if (sortBy === 'completed') {
+    const p = _sortBeforeDone || { by: 'name', dir: 'asc' };
+    sortBy = p.by; sortDir = p.dir; _sortBeforeDone = null;
+  } else return;
+  try { localStorage.setItem('ecm-sort-by', sortBy); localStorage.setItem('ecm-sort-dir', sortDir); } catch {}
+  try { syncSortUI(); } catch {}
+}
 function isJustUpdated(r){
   const log = r && statusLog[String(r.id)];
   const t = log ? Date.parse(log.since || '') : 0;
@@ -6999,6 +7017,7 @@ function applyFilters(){
     if (sortBy === 'name')      r = cmpStr(a.task, b.task);
     else if (sortBy === 'created')  r = cmpDate(a.createdDate, b.createdDate);
     else if (sortBy === 'modified') r = cmpDate(a.modifiedAt, b.modifiedAt);
+    else if (sortBy === 'completed') r = cmpDate(a.completionDate || a.modifiedAt, b.completionDate || b.modifiedAt);
     else if (sortBy === 'ticket')   r = cmpNum(a.ticket, b.ticket);
     else if (sortBy === 'status')   r = (STATUS_ORDER[a.status] ?? 999) - (STATUS_ORDER[b.status] ?? 999);
     else if (sortBy === 'program')  r = progIdx(a.program) - progIdx(b.program);
@@ -7191,6 +7210,7 @@ function renderStatusBar(){
   bar.querySelectorAll('.status-chip').forEach(b => {
     b.addEventListener('click', () => {
       filterStatus = b.dataset.status;
+      _sortForDoneFilter(filterStatus);
       render();
     });
   });
@@ -8190,13 +8210,20 @@ function _reconcileStatusLog(){
   if (!Array.isArray(rows) || !rows.length) return;
   for (const r of rows){
     const status = (r.status || '').trim();
-    if (!status || _rowClosed(r)) continue;
+    if (!status) continue;
     const rid = String(r.id);
     const log = statusLog[rid];
     if (log && log.status === status) continue; // already accurate
     if (!log){
+      // A row we've never logged that is ALREADY closed stays unlogged —
+      // seeding every completed row would be hundreds of writes for history
+      // we never saw happen.
+      if (_rowClosed(r)) continue;
       _writeStatusLog(rid, status, _statusSeedSince(r), []);
     } else {
+      // Closed rows land here too: a task completed outside this page (from
+      // Personal, or straight in Smartsheets) is exactly the change the feed
+      // was missing.
       // Out-of-band status change: modifiedAt is roughly when it happened.
       // Never let the new segment boundary predate the prior segment's start.
       let changedAt = (r.modifiedAt && Date.parse(r.modifiedAt)) ? r.modifiedAt : new Date().toISOString();
@@ -10428,15 +10455,21 @@ function renderPeople(){
   const shown = mine.filter(r => _ppMatch(r, q));
   const events = _ppEvents(mine).filter(e => _ppMatch(e.r, q)).slice(0, 50);
   const done = shown.filter(r => _rowClosed(r))
-    .sort((a, b) => (Date.parse(b.completionDate || '') || 0) - (Date.parse(a.completionDate || '') || 0)).slice(0, 12);
+    .sort((a, b) => (Date.parse(b.completionDate || '') || 0) - (Date.parse(a.completionDate || '') || 0)).slice(0, 25);
+  // Every open task they hold, newest first — not a sample.
   const todo = shown.filter(r => !_rowClosed(r))
-    .sort((a, b) => (_parseDateOnly(b.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0)).slice(0, 12);
+    .sort((a, b) => (_parseDateOnly(b.createdDate) || 0) - (_parseDateOnly(a.createdDate) || 0));
   if (metaEl) metaEl.textContent = `${mine.filter(r => !_rowClosed(r)).length} open · ${events.length} recent change${events.length === 1 ? '' : 's'}`;
   const head = `<div class="pp-bar">
       <select class="mn-psel" id="ppOwner" title="Whose work to show">
         ${owners.map(([o, n]) => `<option value="${escHtml(o)}"${o === who ? ' selected' : ''}>${escHtml(o)} · ${n} open</option>`).join('')}
       </select>
       <input type="search" id="ppQ" class="pp-q" placeholder="Search their tasks…" autocomplete="off" spellcheck="false" value="${escHtml(_ppQ)}" aria-label="Search tasks">
+      <span class="pp-jump">
+        <button type="button" data-pp-go="ppSecChanges">Changes ${events.length}</button>
+        <button type="button" data-pp-go="ppSecDone">Completed ${done.length}</button>
+        <button type="button" data-pp-go="ppSecTodo">To-dos ${todo.length}</button>
+      </span>
     </div>`;
   const evHTML = events.map(e => {
     const what = e.kind === 'ack'
@@ -10451,15 +10484,15 @@ function renderPeople(){
     </tr>`;
   }).join('');
   list.innerHTML = head
-    + `<div class="pp-h">Last ${events.length} change${events.length === 1 ? '' : 's'}</div>`
+    + `<div class="pp-h" id="ppSecChanges">Last ${events.length} change${events.length === 1 ? '' : 's'}</div>`
     + (evHTML
         ? `<div class="ddl-wrap"><div class="ddl-scroll"><table class="ddl-table"><thead><tr>
              <th style="width:150px">Change</th><th>Task</th><th class="c-prog" style="width:104px">Program</th><th style="width:100px">When</th>
            </tr></thead><tbody>${evHTML}</tbody></table></div></div>`
         : `<div class="empty">No changes recorded for ${escHtml(who || 'this person')} yet${q ? ' matching “' + escHtml(_ppQ.trim()) + '”' : ''}. Status moves and claims show up here as they happen.</div>`)
-    + `<div class="pp-h">Recently completed</div>`
+    + `<div class="pp-h" id="ppSecDone">Recently completed · ${done.length}</div>`
     + _ppTable('Completed', done.map(r => _ppRowHTML(r, escHtml(fmtAbsoluteDate(r.completionDate) || '—'))).join(''), 'Nothing completed yet.')
-    + `<div class="pp-h">Newest to-dos</div>`
+    + `<div class="pp-h" id="ppSecTodo">All to-dos · ${todo.length}</div>`
     + _ppTable('Added', todo.map(r => _ppRowHTML(r, escHtml(fmtAbsoluteDate(r.createdDate) || '—'))).join(''), 'No open tasks.');
   const sel = document.getElementById('ppOwner');
   if (sel) sel.addEventListener('change', () => { _ppOwner = sel.value; expandedId = null; render(); });
@@ -10471,6 +10504,10 @@ function renderPeople(){
     box.addEventListener('keydown', e => { const k = e.key || e.code || ''; if (k === 'Escape' || e.keyCode === 27) { _ppQ = ''; render(); } });
     if (_ppFocus) { try { box.focus({ preventScroll: true }); box.setSelectionRange(_ppCaret, _ppCaret); } catch (e) {} }
   }
+  list.querySelectorAll('[data-pp-go]').forEach(b => b.addEventListener('click', () => {
+    const el = document.getElementById(b.getAttribute('data-pp-go'));
+    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }));
   list.querySelectorAll('[data-pp-row]').forEach(tr => tr.addEventListener('click', e => {
     if (e.target.closest('button, a, input, select, textarea')) return;
     setExpanded(tr.getAttribute('data-pp-row'));
