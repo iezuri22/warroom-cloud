@@ -11583,28 +11583,29 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   const info = new Map();       // id → { ok, done, detHtml } from Personal
   const askedAt = new Map();    // id → when we asked, so a silence can be shown
   function tkPanel(id){
-    const x = info.get(id), i = esc(id);
+    const x = info.get(id), i = esc(id), d = today();
+    const asked = askedAt.get(id) || 0;
+    // Done state: the reply is best, else which list the row is sitting in.
+    const inDone = !!(d && Array.isArray(d.done) && d.done.some(t => t && t.id === id));
+    const done = x && x.ok ? !!x.done : inDone;
     let h = '<div class="wrt-tk">';
-    if (!x) h += (Date.now() - (askedAt.get(id) || 0) > 12000)
-      ? '<div class="wrt-more">Personal didn’t answer — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>'
-      : '<div class="wrt-more">Loading…</div>';
-    else if (!x.ok) h += '<div class="wrt-more">Couldn’t load this task — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>';
-    else {
-      h += x.detHtml ? '<div class="wrt-det wrt-tk-det">' + clean(x.detHtml) + '</div>' : '<div class="wrt-more">No details yet.</div>';
-      h += '<div class="wrt-tk-acts">';
-      if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
-      else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
-        + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
-      h += '<button type="button" class="wrt-chip' + (x.done ? '' : ' done') + '" data-wrt="tdone" data-id="' + i + '">' + (x.done ? '↺ Not done' : '✓ Complete') + '</button>';
-      const d = today();
-      if (d && Array.isArray(d.top) && !x.done) {
-        const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
-        h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
-          + (full ? ' disabled title="Top ' + max + ' is full — finish or remove one first"' : '') + '>' + (inTop ? '✕ Remove from Top ' + max : '⬆ Top ' + max) + '</button>';
-      }
-      h += '</div>'
-        + '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
+    // The details are the only part that has to come from Personal.
+    if (x && x.ok) h += x.detHtml ? '<div class="wrt-det wrt-tk-det">' + clean(x.detHtml) + '</div>' : '<div class="wrt-more">No details yet.</div>';
+    else if (x && !x.ok) h += '<div class="wrt-more">Couldn’t load the details — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>';
+    else if (Date.now() - asked > 12000) h += '<div class="wrt-more">Personal didn’t send the details — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>';
+    else h += '<div class="wrt-more">Loading details…</div>';
+    h += '<div class="wrt-tk-acts">';
+    if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
+    else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
+      + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
+    h += '<button type="button" class="wrt-chip' + (done ? '' : ' done') + '" data-wrt="tdone" data-id="' + i + '">' + (done ? '↺ Not done' : '✓ Complete') + '</button>';
+    if (d && Array.isArray(d.top) && !done) {
+      const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
+      h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
+        + (full ? ' disabled title="Top ' + max + ' is full — finish or remove one first"' : '') + '>' + (inTop ? '✕ Remove from Top ' + max : '⬆ Top ' + max) + '</button>';
     }
+    h += '</div>'
+      + '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
     return h + '</div>';
   }
   // Ask Personal (loading it first if it isn't). On another tab it may not be
@@ -11805,7 +11806,16 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       setTimeout(() => { lastDayRaw = null; }, 2500);   // then re-read what Personal kept (a refusal included)
       return;
     }
-    if (a === 'tdone') { const x = info.get(tid); if (!x) return; x.done = !x.done; ask({ action: 'setdone', id: tid, on: x.done }); paintDay(); return; }
+    if (a === 'tdone') {
+      // No reply yet? The row's own list says whether it is done.
+      const d0 = today();
+      const x = info.get(tid) || { ok: true, done: !!(d0 && Array.isArray(d0.done) && d0.done.some(t => t && t.id === tid)), detHtml: '' };
+      x.done = !x.done;
+      info.set(tid, x);
+      ask({ action: 'setdone', id: tid, on: x.done });
+      paintDay();
+      return;
+    }
     if (a === 'tedit') { go('task', tid); return; }
     send(a);
   });
