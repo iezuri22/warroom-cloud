@@ -135,6 +135,13 @@
   /* The whole secondary filter row is retired — filtering now lives on the
      column headers. Kept in the DOM (hidden) so existing wiring stays intact. */
   .search-row { display: none !important }
+  /* The Task tab's own search — the retired top row's box, back where the
+     work is. Outside #list so a re-render never steals the caret. */
+  .tt-find { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+  .tt-find[hidden] { display: none; }
+  .tt-q { flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--w12); background: var(--card); color: var(--ink); font: 600 13.5px inherit; font-family: inherit; }
+  .tt-q:focus { outline: none; border-color: var(--accent, #F07E28); }
+  .tt-find-ct { flex-shrink: 0; font-size: 12px; font-weight: 700; color: var(--ink-dim); }
   .title {
     font-size: 22px; font-weight: 900; letter-spacing: -.02em;
     background: linear-gradient(135deg, var(--ink), var(--w70));
@@ -4529,6 +4536,10 @@
        Used to live on the Task pill as a <select>; user wanted it inside
        the page body so it doesn't crowd the top nav. -->
   <div class="task-scope-strip" id="taskScopeStrip"></div>
+  <div class="tt-find" id="ttFind" hidden>
+    <input type="search" class="tt-q" id="ttQ" placeholder="Search tasks — name, ticket, program…" autocomplete="off" spellcheck="false" aria-label="Search tasks">
+    <span class="tt-find-ct" id="ttFindCt"></span>
+  </div>
   <div class="status-bar" id="statusBar"></div>
 </div>
 
@@ -8289,6 +8300,34 @@ document.addEventListener('keydown', (e) => {
 // Capture phase: cleared before the field's own change handler saves and renders.
 document.addEventListener('change', (e) => { if (e.target === _selOpen) _selOpen = null; }, true);
 document.addEventListener('focusout', (e) => { if (e.target === _selOpen) _selOpenRelease(); }, true);
+// The Task/Review search box: which views show it, and what it says.
+const FIND_VIEWS = new Set(['all', 'dev', 'allrows', 'deadlines', 'support', 'notif']);
+function _syncTaskFind(){
+  const box = document.getElementById('ttFind'), inp = document.getElementById('ttQ'), ct = document.getElementById('ttFindCt');
+  if (!box || !inp) return;
+  box.hidden = !FIND_VIEWS.has(currentView);
+  if (box.hidden) return;
+  if (document.activeElement !== inp && inp.value !== filterSearch) inp.value = filterSearch;
+  // The count reads the rows, so it waits for this render to put them there.
+  if (ct) setTimeout(() => {
+    const n = document.querySelectorAll('#list tbody tr[data-id]').length;
+    ct.textContent = filterSearch.trim() ? (n === 1 ? '1 match' : n + ' matches') : '';
+  }, 0);
+}
+(function wireTaskFind(){
+  const inp = document.getElementById('ttQ');
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    filterSearch = inp.value || '';
+    const old = document.getElementById('searchInput');
+    if (old && old.value !== filterSearch) old.value = filterSearch;   // the retired box shares the filter
+    render();
+  });
+  inp.addEventListener('keydown', e => {
+    const k = e.key || e.code || '';
+    if (k === 'Escape' || e.keyCode === 27) { inp.value = ''; filterSearch = ''; render(); }
+  });
+})();
 function render(){
   // If the user is mid-typing in any drawer input/textarea, a Firestore
   // snapshot (ack/internal/notif/priorities/etc.) that fires render() in the
@@ -8328,6 +8367,7 @@ function render(){
     }
   } catch {}
   _renderDeferred = false;
+  try { _syncTaskFind(); } catch {}
   renderTaskScopeStrip();
   renderStatusBar();
   renderDayFocus();
