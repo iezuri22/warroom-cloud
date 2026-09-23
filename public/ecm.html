@@ -5358,6 +5358,11 @@ function subscribeDeadlines(){
     try { if (typeof render === 'function' && rows.length) render(); } catch {}
   }, err => console.error('deadlines snapshot error', err));
 }
+// Touched on the sheet within the last 24 hours (Smartsheets' own modifiedAt).
+function isJustUpdated(r){
+  const t = Date.parse((r && r.modifiedAt) || '');
+  return !!t && (Date.now() - t) < 24 * 3600 * 1000;
+}
 function isHardRow(r){
   const f = hardDeadlines[String(r && r.id)];
   return !!(f && f.hard);
@@ -6927,6 +6932,8 @@ function applyFilters(){
       pool = pool.filter(r => subsForParent(r.id).length > 0);
     } else if (filterStatus === '__hard__') {
       pool = pool.filter(isHardRow);
+    } else if (filterStatus === '__updated__') {
+      pool = pool.filter(isJustUpdated);
     } else {
       pool = pool.filter(r => r.status === filterStatus);
     }
@@ -7091,7 +7098,8 @@ function renderStatusBar(){
     __no_ticket__: issueScope.filter(isMissingTicket).length,
     __no_completion_date__: issueScope.filter(isMissingCompletionDate).length,
     __has_subs__: scoped.filter(r => subsForParent(r.id).length > 0).length,
-    __hard__: scoped.filter(r => isHardRow(r) && !_rowClosed(r)).length
+    __hard__: scoped.filter(r => isHardRow(r) && !_rowClosed(r)).length,
+    __updated__: scoped.filter(isJustUpdated).length
   };
   SS_STATUSES.forEach(s => { counts[s] = scoped.filter(r => r.status === s).length; });
   // Chip layout: All / Open / specific open statuses (Pending IR, Ticket Sent)
@@ -7142,6 +7150,12 @@ function renderStatusBar(){
   // Hard-deadline commitments — the ones the reminder cron watches.
   if (counts.__hard__ > 0 || filterStatus === '__hard__') {
     chips.push({ id: '__hard__', label: '🔒 Hard deadline', count: counts.__hard__, kind: 'meta' });
+  }
+  // Changed on the sheet in the last 24 hours — with the Owner filter, that's
+  // "what moved for this person", and it's how a change made in Personal
+  // (a completion, say) can be seen landing here.
+  if (counts.__updated__ > 0 || filterStatus === '__updated__') {
+    chips.push({ id: '__updated__', label: '⟳ Updated 24h', count: counts.__updated__, kind: 'meta' });
   }
   bar.innerHTML = chips.map(c => {
     if (c.kind === 'sep') return `<span class="status-chip-sep" aria-hidden="true"></span>`;

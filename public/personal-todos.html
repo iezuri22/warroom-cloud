@@ -9239,9 +9239,13 @@ const VOICE = {
   // On failure (no network, expired token, etc.) the change is queued in the
   // todo's smartsheetPending field, then drained on the next ssSync.
   async function ssPushFields(todo, fieldsByTitle, opts){
-    if (!todo || !todo.smartsheetRowId || !todo.smartsheetSheetId) return false;
+    if (!todo || !todo.smartsheetRowId) return false;
     if (!fieldsByTitle || !Object.keys(fieldsByTitle).length) return false;
     const c = ssGetConfig();
+    // Rows synced before the sheet id was stored on the task still belong to
+    // the configured sheet — without this they never pushed anything back.
+    const sheetId = todo.smartsheetSheetId || c.sheetId;
+    if (!sheetId) return false;
     if (!c.token) {
       // No token yet — stash the change and drain when configured
       ssQueuePending(todo, fieldsByTitle);
@@ -9257,7 +9261,7 @@ const VOICE = {
       }
       if (!cells.length) return false;
       const body = [{ id: Number(todo.smartsheetRowId), cells }];
-      const res = await ssProxy(`/sheets/${todo.smartsheetSheetId}/rows`, 'PUT', body);
+      const res = await ssProxy(`/sheets/${sheetId}/rows`, 'PUT', body);
       if (!res.ok) {
         const t = await res.text().catch(() => '');
         const msg = `Push ${res.status}: ${t.slice(0, 160)}`;
@@ -9305,21 +9309,35 @@ const VOICE = {
   const SS_STATUSES = ['Requested','To-Do','Pending IR','Ticket Sent','On Hold','Waitlisted','Further discussion','Not feasible - close ticket','Discussed with Dev','In Progress','Verified on PRE','Verified on UAT','Completed'];
   // Push completion back. Called from toggleTodo when a synced todo flips done=true.
   async function ssPushCompletion(todo){
-    await ssPushFields(todo, {
+    const ok = await ssPushFields(todo, {
       'Status': 'Completed',
       'Completion Date': dkey(new Date())
     });
+    ssSaidPush(ok, 'Completed');
     todo.smartsheetStatus = 'Completed';
     try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'Completed' }); } catch {}
+  }
+  // One line about what happened on ECM — a silent failure used to leave the
+  // sheet saying To-Do with nothing to show for it.
+  function ssSaidPush(ok, status){
+    try {
+      if (ok) ptToast('ECM updated — ' + status);
+      else {
+        const c = ssGetConfig();
+        ptToast(!c.token ? 'ECM not connected here — saved, it goes up on the next sync'
+          : 'ECM didn’t take it — saved, it retries on the next sync');
+      }
+    } catch {}
   }
   // Push un-completion back. Reverts Status to To-Do (sensible "open" default,
   // user can pick a different status from the dropdown afterwards) and clears
   // the Completion Date.
   async function ssPushUncompletion(todo){
-    await ssPushFields(todo, {
+    const ok = await ssPushFields(todo, {
       'Status': 'To-Do',
       'Completion Date': null
     });
+    ssSaidPush(ok, 'To-Do');
     todo.smartsheetStatus = 'To-Do';
     try { await updateDoc(doc(db, 'tv_todos', todo.id), { smartsheetStatus: 'To-Do' }); } catch {}
   }
