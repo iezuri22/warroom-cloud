@@ -8223,12 +8223,21 @@ function _reconcileStatusLog(){
     } else {
       // Closed rows land here too: a task completed outside this page (from
       // Personal, or straight in Smartsheets) is exactly the change the feed
-      // was missing.
+      // was missing. But this runs on every snapshot, in every open view, so
+      // a view whose sheet copy is out of date must not "correct" the log —
+      // two of them would flip the row back and forth forever, writing a
+      // segment each time.
+      const logSince = Date.parse(log.since || '') || 0;
+      const rowMod = Date.parse(r.modifiedAt || '') || 0;
+      if (logSince && rowMod && rowMod < logSince) continue;          // our copy is the stale one
+      if (logSince && Date.now() - logSince < 120000) continue;       // one move per row per 2 min
+      const history = Array.isArray(log.history) ? log.history.slice() : [];
+      const last = history[history.length - 1];
+      if (last && last.status === status && logSince && Date.now() - logSince < 600000) continue;  // straight back = churn
       // Out-of-band status change: modifiedAt is roughly when it happened.
       // Never let the new segment boundary predate the prior segment's start.
       let changedAt = (r.modifiedAt && Date.parse(r.modifiedAt)) ? r.modifiedAt : new Date().toISOString();
       if (log.since && Date.parse(log.since) > Date.parse(changedAt)) changedAt = new Date().toISOString();
-      const history = Array.isArray(log.history) ? log.history.slice() : [];
       if (log.status) history.push({ status: log.status, from: log.since || '', to: changedAt });
       _writeStatusLog(rid, status, changedAt, history);
     }
@@ -10423,7 +10432,17 @@ function _ppEvents(mine){
     const a = acks[r.id];
     if (a && a.ackedAt) out.push({ ts: a.ackedAt, r, kind: 'ack', by: a.ackedBy || '' });
   });
-  return out.sort((x, y) => (Date.parse(y.ts) || 0) - (Date.parse(x.ts) || 0));
+  out.sort((x, y) => (Date.parse(y.ts) || 0) - (Date.parse(x.ts) || 0));
+  // One line per real move: a row that flipped back and forth (an older
+  // ping-pong between two views) collapses to its most recent entry.
+  const seen = new Set();
+  return out.filter(e => {
+    if (e.kind !== 'status') return true;
+    const k = e.r.id + '|' + e.from + '|' + e.to;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 function _ppMatch(r, q){
   if (!q) return true;

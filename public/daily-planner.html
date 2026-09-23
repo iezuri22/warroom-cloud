@@ -11380,6 +11380,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-rq:hover { background: #F4F1EC; }
   .wrt-rq.clr { color: #9a8d80; border-style: dashed; }
   .wrt-row .cat { flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 700; color: #9a8d80; }
+  .wrt-tk-warn { color: #C8453A; }
   .wrt-dhint { font-weight: 600; letter-spacing: 0; text-transform: none; color: #b9aea2; }
   .wrt-toph { color: #E0701F; }
   .wrt-row.top .mk { width: 18px; height: 18px; border-radius: 50%; background: #F07E28; color: #fff; font: 800 10.5px/18px inherit; font-family: inherit; text-align: center; align-self: center; }
@@ -11582,6 +11583,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   let openTask = '';
   const info = new Map();       // id → { ok, done, detHtml } from Personal
   const askedAt = new Map();    // id → when we asked, so a silence can be shown
+  const pending = new Map();    // id → { on, at, tries, failed } for ✓ Complete
   function tkPanel(id){
     const x = info.get(id), i = esc(id), d = today();
     const asked = askedAt.get(id) || 0;
@@ -11598,15 +11600,39 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
     else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
       + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
+    const pend = pending.get(id);
     h += '<button type="button" class="wrt-chip' + (done ? '' : ' done') + '" data-wrt="tdone" data-id="' + i + '">' + (done ? '↺ Not done' : '✓ Complete') + '</button>';
+    if (pend && !pend.failed) h += '<span class="wrt-more">saving…</span>';
     if (d && Array.isArray(d.top) && !done) {
       const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
       h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
         + (full ? ' disabled title="Top ' + max + ' is full — finish or remove one first"' : '') + '>' + (inTop ? '✕ Remove from Top ' + max : '⬆ Top ' + max) + '</button>';
     }
-    h += '</div>'
-      + '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
+    h += '</div>';
+    if (pend && pend.failed) h += '<div class="wrt-more wrt-tk-warn">That didn’t reach Personal — <button type="button" class="wrt-dlink" data-wrt="tdone" data-id="' + i + '">try again</button></div>';
+    h += '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
     return h + '</div>';
+  }
+  // ✓ Complete: ask until Personal confirms. Its answer ('warroom:acted')
+  // clears this; five tries over ~20s and the panel says it didn't take.
+  function setDone(id, on){
+    pending.set(id, { on, at: Date.now(), tries: 0, failed: false });
+    ask({ action: 'setdone', id, on });
+    tickPending();
+  }
+  let pendT = 0;
+  function tickPending(){
+    if (pendT) return;
+    pendT = setInterval(() => {
+      if (!pending.size) { clearInterval(pendT); pendT = 0; return; }
+      pending.forEach((p, id) => {
+        if (p.failed) return;
+        if (Date.now() - p.at < 3500) return;
+        if (p.tries >= 4) { p.failed = true; if (openTask === id) paintDay(); return; }
+        p.tries++; p.at = Date.now();
+        ask({ action: 'setdone', id, on: p.on });
+      });
+    }, 1000);
   }
   // Ask Personal (loading it first if it isn't). On another tab it may not be
   // up yet, so the question is repeated while it boots — asking once landed
@@ -11641,6 +11667,16 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
     if (!f || ev.source !== f.contentWindow || !d) return;
+    if (d.type === 'warroom:acted') {
+      if (d.action === 'setdone' && typeof d.id === 'string') {
+        const p = pending.get(d.id);
+        // true = it took. false = it didn't. null = Personal couldn't tell,
+        // so keep asking (the same value each time, so asking twice is safe).
+        if (p && d.ok === true) { pending.delete(d.id); if (openTask === d.id) paintDay(); }
+        else if (p && d.ok === false) { p.failed = true; if (openTask === d.id) paintDay(); }
+      }
+      return;
+    }
     if (d.type === 'warroom:search') {
       findRes = { q: String(d.q || ''), groups: Array.isArray(d.groups) ? d.groups : [], more: +d.more || 0, loading: !!d.loading };
       if (find.scope === 'all' && find.q.trim().toLowerCase() === findRes.q) { paintDay(); place(); }
@@ -11812,7 +11848,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       const x = info.get(tid) || { ok: true, done: !!(d0 && Array.isArray(d0.done) && d0.done.some(t => t && t.id === tid)), detHtml: '' };
       x.done = !x.done;
       info.set(tid, x);
-      ask({ action: 'setdone', id: tid, on: x.done });
+      setDone(tid, x.done);
       paintDay();
       return;
     }

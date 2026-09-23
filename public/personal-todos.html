@@ -11374,8 +11374,19 @@ const VOICE = {
       return;
     }
     else if (d.action === 'setdone' && typeof d.id === 'string') {
-      const id = d.id.slice(0, 200);
-      Promise.resolve(ntTaskSetDone(id, !!d.on, 'list')).finally(() => { try { ntRenderLib(); } catch {} ntDayPub(); });
+      const id = d.id.slice(0, 200), want = !!d.on;
+      Promise.resolve(ntTaskSetDone(id, want, 'list')).finally(() => {
+        try { ntRenderLib(); } catch {}
+        ntDayPub();
+        // Say whether it took — the card waits for this and asks again if it
+        // never comes (its message can land while this page is still booting).
+        let done = null;
+        try {
+          const t = ntDetAny(id) || (_ntDoneToday || []).find(x => x.id === id) || _ntAllDone.get(id);
+          if (t) done = !!t.done || _ntAllDone.has(id);
+        } catch {}
+        try { window.parent.postMessage({ type: 'warroom:acted', action: 'setdone', id, ok: done == null ? null : done === want }, '*'); } catch {}
+      });
       return;
     }
     else if (d.action === 'today' || d.action === 'pick' || d.action === 'task') { ntWrOpenToday(d.action, typeof d.id === 'string' ? d.id.slice(0, 200) : ''); return; }
