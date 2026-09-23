@@ -11574,11 +11574,14 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   }
   // One task, open in the card: details, a timer, done.
   let openTask = '';
-  const info = new Map();   // id → { ok, done, detHtml } from Personal
+  const info = new Map();       // id → { ok, done, detHtml } from Personal
+  const askedAt = new Map();    // id → when we asked, so a silence can be shown
   function tkPanel(id){
     const x = info.get(id), i = esc(id);
     let h = '<div class="wrt-tk">';
-    if (!x) h += '<div class="wrt-more">Loading…</div>';
+    if (!x) h += (Date.now() - (askedAt.get(id) || 0) > 12000)
+      ? '<div class="wrt-more">Personal didn’t answer — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>'
+      : '<div class="wrt-more">Loading…</div>';
     else if (!x.ok) h += '<div class="wrt-more">Couldn’t load this task — <button type="button" class="wrt-dlink" data-wrt="tinfo" data-id="' + i + '">try again</button></div>';
     else {
       h += x.detHtml ? '<div class="wrt-det wrt-tk-det">' + clean(x.detHtml) + '</div>' : '<div class="wrt-more">No details yet.</div>';
@@ -11598,17 +11601,23 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     }
     return h + '</div>';
   }
-  // Ask Personal (loading it first if it isn't).
+  // Ask Personal (loading it first if it isn't). On another tab it may not be
+  // up yet, so the question is repeated while it boots — asking once landed
+  // before its task list existed and the answer never came.
   function ask(msg){
     const f = document.getElementById('todosFrame');
     if (!f) return;
     const post = () => { try { f.contentWindow && f.contentWindow.postMessage(Object.assign({ type: 'warroom:timer' }, msg), '*'); } catch (e) {} };
+    const again = () => [300, 1500, 4000, 8000].forEach(ms => setTimeout(post, ms));
     if (!f.src || f.src === 'about:blank' || !f.src.includes('personal-todos.html')) {
       f.src = '/personal-todos.html?embed=1';
-      f.addEventListener('load', () => setTimeout(post, 2500), { once: true });
+      f.addEventListener('load', again, { once: true });
       return;
     }
     post();
+    // An info question is the one that can arrive too early — repeat it until
+    // it's answered (the reply fills `info`, and asking twice is harmless).
+    if (msg && msg.action === 'info' && msg.id) [1500, 4000, 8000].forEach(ms => setTimeout(() => { if (!info.has(msg.id) && openTask === msg.id) post(); }, ms));
   }
   // 15 / 10 / 5 / 2 minutes left — Personal keeps the clock and says so.
   let callAt = 0, callMins = 0, callKind = 'left';
@@ -11776,8 +11785,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       return;
     }
     const tid = b.getAttribute('data-id') || '';
-    if (a === 'task') { if (find.q.trim()) rememberFind(); openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
-    if (a === 'tinfo') { info.delete(tid); ask({ action: 'info', id: tid }); paintDay(); return; }
+    if (a === 'task') { if (find.q.trim()) rememberFind(); openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); askedAt.set(tid, Date.now()); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
+    if (a === 'tinfo') { info.delete(tid); askedAt.set(tid, Date.now()); ask({ action: 'info', id: tid }); paintDay(); return; }
     if (a === 'tstart') { ask({ action: 'start', id: tid, mins: +b.getAttribute('data-m') || 0 }); openTask = ''; return; }
     if (a === 'ttop') {
       const on = b.getAttribute('data-on') === '1', d = today();
@@ -11874,7 +11883,13 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
   window.addEventListener('resize', () => { if (!el.hidden) place(); });
   window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) read(); });
-  setInterval(() => { read(); if (run) paint(false); paintCall(); }, 1000);
+  let waitPainted = '';
+  setInterval(() => {
+    read();
+    if (run) paint(false);
+    paintCall();
+    if (openTask && !info.has(openTask) && waitPainted !== openTask && Date.now() - (askedAt.get(openTask) || 0) > 12000) { waitPainted = openTask; paintDay(); }
+  }, 1000);
   read();
   paintPin();
   if (ui.pin) setTimeout(wake, 4000);   // after the shell's own first load
