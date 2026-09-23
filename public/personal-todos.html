@@ -11644,8 +11644,24 @@ const VOICE = {
   // A countdown says how long is left at 15, 10, 5 and 2 minutes — out loud
   // (the recorded clips), as a toast here, and on the War Room card.
   const TMR_CALLS = [2, 5, 10, 15];
-  let _tmrCall = null;   // { until, done:Set } — re-armed whenever the end moves
+  let _tmrCall = null;    // { until, done:Set } — re-armed whenever the end moves
+  let _tmrOver = null;    // { at, said } — the overtime marks, every 5 minutes
+  function tmrSay(text, toast, msg){
+    try { speak(text); } catch {}
+    ptToast(toast);
+    try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ type: 'warroom:callout' }, msg), '*'); } catch {}
+  }
   function tmrCallouts(){
+    // Past its end and still going: "over 5 minutes", every 5.
+    if (tmrRun && tmrRun.overAt) {
+      if (!_tmrOver || _tmrOver.at !== tmrRun.overAt) _tmrOver = { at: tmrRun.overAt, said: 0 };
+      const step = Math.floor((Date.now() - tmrRun.overAt) / 60000 / 5) * 5;
+      if (step >= 5 && step > _tmrOver.said) {
+        _tmrOver.said = step;
+        const name = tmrRun.taskName || '';
+        tmrSay('over ' + step + ' minutes', step + ' min over' + (name ? ' — ' + name : ''), { mins: step, kind: 'over' });
+      }
+    } else _tmrOver = null;
     if (!tmrRun || !tmrRun.until) { _tmrCall = null; return; }
     const left = (tmrRun.until - Date.now()) / 1000;
     // A new countdown (or +5 min): whatever is already behind us stays quiet.
@@ -11657,21 +11673,22 @@ const VOICE = {
     if (hit == null) return;
     TMR_CALLS.forEach(m => { if (m >= hit) _tmrCall.done.add(m); });
     const name = tmrRun.taskName || tmrRunLabel() || '';
-    try { speak(hit + ' minutes'); } catch {}
-    ptToast(hit + ' minutes left' + (name ? ' — ' + name : ''));
-    try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'warroom:callout', mins: hit, taskName: String(name).slice(0, 140) }, '*'); } catch {}
+    tmrSay(hit + ' minutes', hit + ' minutes left' + (name ? ' — ' + name : ''), { mins: hit, kind: 'left', taskName: String(name).slice(0, 140) });
   }
   function tmrTick(){
     if (tmrRun && Date.now() - _ptGoalsAt > 30000) { _ptGoalsAt = Date.now(); try { ptRenderGoals(); } catch {} }
     try { tmrCallouts(); } catch (e) { console.warn('[timer] callout', e); }
-    // A countdown ran out: the alarm once, then the clock stops and banks it.
+    // A countdown ran out: the alarm once, and it keeps running — you stop it
+    // yourself (it calls out every 5 minutes from here).
     if (tmrRun && tmrRun.until && Date.now() >= tmrRun.until) {
       const name = tmrRun.taskName || '';
+      tmrRun.overAt = tmrRun.until;
       tmrRun.until = 0;
+      _tmrOver = { at: tmrRun.overAt, said: 0 };
+      tmrSaveRun();
       try { playAlarm(); } catch {}
-      try { speak('Time’s up'); } catch {}
-      ptToast('Time’s up' + (name ? ' — ' + name : ''));
-      tmrStop();
+      tmrSay('Time’s up', 'Time’s up' + (name ? ' — ' + name : '') + ' — still timing', { mins: 0, kind: 'up', taskName: String(name).slice(0, 140) });
+      tmrPaintCapsule();
       try { if (_ntMounted) ntRenderLib(); } catch {}
       return;
     }

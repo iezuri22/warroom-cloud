@@ -11273,6 +11273,15 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       <button type="button" class="wrt-btn primary" data-wrt="pick">▶ Time a task</button>
       <button type="button" class="wrt-btn" data-wrt="today" id="wrtTodayBtn">Open Today</button></div>
     <div class="wrt-day" id="wrtDay"></div>
+    <div class="wrt-find" id="wrtFind" hidden>
+      <input type="search" id="wrtQ" placeholder="Search tasks…" autocomplete="off" spellcheck="false" aria-label="Search tasks">
+      <span class="wrt-sc">
+        <button type="button" data-wrt="scope" data-s="day" id="wrtScDay" class="on" title="Only what is queued for today">Today</button>
+        <button type="button" data-wrt="scope" data-s="all" id="wrtScAll" title="Every open task">All</button>
+      </span>
+    </div>
+    <div class="wrt-recent" id="wrtRecent" hidden></div>
+    <div id="wrtPlan"></div>
   </div>
   <div class="wrt-pill">
     <span class="wrt-dot"></span><span class="wrt-pname" id="wrtPName"></span><span class="wrt-ptime" id="wrtPTime">0:00</span>
@@ -11359,6 +11368,11 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-sc { display: flex; flex-shrink: 0; border: 1px solid rgba(33, 30, 25, .16); border-radius: 8px; overflow: hidden; background: #fff; }
   .wrt-sc button { height: 30px; padding: 0 9px; border: 0; background: none; font: 700 12px inherit; font-family: inherit; color: #7a6f63; cursor: pointer; }
   .wrt-sc button.on { background: #F07E28; color: #fff; }
+  .wrt-recent { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .wrt-recent .lbl { font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: #9a8d80; margin-right: 2px; }
+  .wrt-rq { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 25px; padding: 0 9px; border: 1px solid rgba(33, 30, 25, .14); border-radius: 999px; background: #fff; font: 600 12px inherit; font-family: inherit; color: #211E19; cursor: pointer; }
+  .wrt-rq:hover { background: #F4F1EC; }
+  .wrt-rq.clr { color: #9a8d80; border-style: dashed; }
   .wrt-row .cat { flex-shrink: 0; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 700; color: #9a8d80; }
   .wrt-dhint { font-weight: 600; letter-spacing: 0; text-transform: none; color: #b9aea2; }
   .wrt-toph { color: #E0701F; }
@@ -11424,8 +11438,9 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   function paintDay(){
     if (rdrag) { rdrag.repaint = true; return; }   // mid-drag: after the drop
     dayAt = Date.now();
-    const box = $('wrtDay'), d = today(), idle = !run;
+    const box = $('wrtDay'), plan = $('wrtPlan'), d = today(), idle = !run;
     if (!d) {
+      $('wrtFind').hidden = true; $('wrtRecent').hidden = true; plan.innerHTML = '';
       box.innerHTML = '<div class="wrt-dnote">' + (day ? 'That was yesterday’s plan — ' : 'Today’s plan shows once Personal loads — ') + '<button type="button" class="wrt-dlink" data-wrt="today">open Personal</button></div>';
       return;
     }
@@ -11437,13 +11452,9 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     h += '<div class="wrt-stat"><span>Planned vs done</span><b>' + (d.doneN == null ? '…' : doneN) + ' / ' + all + ' done</b></div>' + bar(doneN, all);
     const open = idle ? ui.planIdle !== false : ui.planRun === true;
     h += '<button type="button" class="wrt-dtog" data-wrt="plan" aria-expanded="' + open + '">' + (open ? 'Hide plan & priorities ▴' : 'Plan & priorities ▾') + '</button>';
+    let P = '';
     if (open) {
       const qn = find.q.trim().toLowerCase();
-      h += '<div class="wrt-find"><input type="search" id="wrtQ" placeholder="Search tasks…" autocomplete="off" spellcheck="false" value="' + esc(find.q) + '" aria-label="Search tasks">'
-        + '<span class="wrt-sc">'
-        + '<button type="button" class="' + (find.scope === 'day' ? 'on' : '') + '" data-wrt="scope" data-s="day" title="Only what is queued for today">Today</button>'
-        + '<button type="button" class="' + (find.scope === 'all' ? 'on' : '') + '" data-wrt="scope" data-s="all" title="Every open task">All</button>'
-        + '</span></div>';
       let panelShown = false;
       const row = (t, cls, mk, grip) => {
         const on = !!(t && t.id === openTask && !panelShown);
@@ -11507,18 +11518,44 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
           if (!L) L = '<div class="wrt-more">Nothing in today’s queue matches “' + esc(find.q.trim()) + '”. <button type="button" class="wrt-dlink" data-wrt="scope" data-s="all">Search all tasks ›</button></div>';
         }
       }
-      h += '<div class="wrt-list">' + (L || '<div class="wrt-more">Nothing planned for today.</div>') + '</div>';
+      P = '<div class="wrt-list">' + (L || '<div class="wrt-more">Nothing planned for today.</div>') + '</div>';
     }
-    const ls = box.querySelector('.wrt-list'), st = ls ? ls.scrollTop : 0;
-    const ds = box.querySelector('.wrt-tk-det'), dst = ds ? ds.scrollTop : 0;
+    const ls = plan.querySelector('.wrt-list'), st = ls ? ls.scrollTop : 0;
+    const ds = plan.querySelector('.wrt-tk-det'), dst = ds ? ds.scrollTop : 0;
     box.innerHTML = h;
-    if (findOn) { const i = $('wrtQ'); if (i) { try { i.focus({ preventScroll: true }); i.setSelectionRange(findCaret, findCaret); } catch (e) {} } }
-    if (st) { const n = box.querySelector('.wrt-list'); if (n) n.scrollTop = st; }
-    if (dst) { const n = box.querySelector('.wrt-tk-det'); if (n) n.scrollTop = dst; }
+    plan.innerHTML = P;
+    $('wrtFind').hidden = !open;
+    $('wrtScDay').classList.toggle('on', find.scope !== 'all');
+    $('wrtScAll').classList.toggle('on', find.scope === 'all');
+    if ($('wrtQ').value !== find.q) $('wrtQ').value = find.q;
+    paintRecent();
+    if (st) { const n = plan.querySelector('.wrt-list'); if (n) n.scrollTop = st; }
+    if (dst) { const n = plan.querySelector('.wrt-tk-det'); if (n) n.scrollTop = dst; }
+  }
+  // Recent searches — under the box while it's empty and in focus.
+  function paintRecent(){
+    const r = $('wrtRecent');
+    if (!r) return;
+    const show = findOn && !find.q.trim() && !$('wrtFind').hidden && recent.length;
+    r.hidden = !show;
+    if (!show) { r.innerHTML = ''; return; }
+    r.innerHTML = '<span class="lbl">Recent</span>'
+      + recent.map(q => '<button type="button" class="wrt-rq" data-wrt="recent" data-q="' + esc(q) + '">' + esc(q) + '</button>').join('')
+      + '<button type="button" class="wrt-rq clr" data-wrt="recentclear" title="Forget these">Clear</button>';
   }
   // Search: type in the card. "Today" filters what's on it; "All" asks
   // Personal for every open task, grouped by when it's due.
-  let find = { q: '', scope: 'day' }, findRes = null, findT = 0, findOn = false, findCaret = 0;
+  let find = { q: '', scope: 'day' }, findRes = null, findT = 0, findOn = false;
+  const RQ = 'wr-find-recent';
+  let recent = [];
+  try { const r = JSON.parse(localStorage.getItem(RQ) || '[]'); if (Array.isArray(r)) recent = r.filter(x => typeof x === 'string').slice(0, 6); } catch (e) {}
+  // A search is "recent" once you act on it (Enter, or opening a result).
+  function rememberFind(){
+    const q = find.q.trim();
+    if (q.length < 2) return;
+    recent = [q, ...recent.filter(x => x.toLowerCase() !== q.toLowerCase())].slice(0, 6);
+    try { localStorage.setItem(RQ, JSON.stringify(recent)); } catch (e) {}
+  }
   function findAsk(){
     clearTimeout(findT);
     const q = find.q.trim();
@@ -11573,14 +11610,16 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     post();
   }
   // 15 / 10 / 5 / 2 minutes left — Personal keeps the clock and says so.
-  let callAt = 0, callMins = 0;
+  let callAt = 0, callMins = 0, callKind = 'left';
   function paintCall(){
     const b = $('wrtCall');
     if (!b) return;
-    const on = !!callMins && !!run && Date.now() - callAt < 25000;
+    const on = !!run && !!callAt && Date.now() - callAt < 25000 && (callKind === 'up' || !!callMins);
     b.hidden = !on;
     el.classList.toggle('call', on);
-    if (on) b.textContent = '⏰ ' + callMins + (callMins === 1 ? ' minute left' : ' minutes left');
+    if (on) b.textContent = callKind === 'up' ? '⏰ Time’s up — still timing, stop it when you’re done'
+      : callKind === 'over' ? '⏰ ' + callMins + ' min over'
+      : '⏰ ' + callMins + (callMins === 1 ? ' minute left' : ' minutes left');
   }
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
@@ -11590,7 +11629,13 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       if (find.scope === 'all' && find.q.trim().toLowerCase() === findRes.q) { paintDay(); place(); }
       return;
     }
-    if (d.type === 'warroom:callout') { callMins = Math.max(0, Math.floor(+d.mins || 0)); callAt = Date.now(); paintCall(); return; }
+    if (d.type === 'warroom:callout') {
+      callMins = Math.max(0, Math.floor(+d.mins || 0));
+      callKind = d.kind === 'up' || d.kind === 'over' ? d.kind : 'left';
+      callAt = Date.now();
+      paintCall();
+      return;
+    }
     if (d.type !== 'warroom:taskinfo' || typeof d.id !== 'string') return;
     info.set(d.id, { ok: !!d.ok, done: !!d.done, detHtml: typeof d.detHtml === 'string' ? d.detHtml : '', text: typeof d.text === 'string' ? d.text.slice(0, 2000) : '' });
     if (d.id === openTask && !el.hidden) { paintDay(); place(); }
@@ -11661,7 +11706,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (full || wasHidden) {
       const name = run.taskName || run.label || 'Timer';
       $('wrtWhat').textContent = name; $('wrtPName').textContent = name;
-      $('wrtLbl').textContent = 'Timing now';
+      $('wrtLbl').textContent = run.overAt ? 'Timing now · over' : 'Timing now';
       paintDay();
       $('wrtSub').textContent = (run.label || '') + (run.until ? (run.label ? ' · ' : '') + 'counting down' : '');
       $('wrtAdd').hidden = !run.until;
@@ -11688,16 +11733,21 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   el.addEventListener('input', e => {
     if (!e.target || e.target.id !== 'wrtQ') return;
     find.q = e.target.value;
-    findCaret = e.target.selectionStart || 0;
     findOn = true;
     findAsk();
     paintDay(); place();
   });
-  el.addEventListener('focusin', e => { if (e.target && e.target.id === 'wrtQ') findOn = true; });
-  el.addEventListener('focusout', e => { if (e.target && e.target.id === 'wrtQ') findOn = false; });
+  el.addEventListener('focusin', e => { if (e.target && e.target.id === 'wrtQ') { findOn = true; paintRecent(); place(); } });
+  el.addEventListener('focusout', e => {
+    if (!e.target || e.target.id !== 'wrtQ') return;
+    // A tap on a recent chip lands after this — let it happen first.
+    setTimeout(() => { if (document.activeElement !== $('wrtQ')) { findOn = false; paintRecent(); place(); } }, 150);
+  });
   el.addEventListener('keydown', e => {
     if (!e.target || e.target.id !== 'wrtQ') return;
-    if (e.key === 'Escape') { e.stopPropagation(); find.q = ''; findRes = null; paintDay(); place(); }
+    const k = e.key || e.code || '';   // some keyboards / remotes send only one of them
+    if (k === 'Escape' || k === 'Esc' || e.keyCode === 27) { e.stopPropagation(); find.q = ''; findRes = null; e.target.value = ''; paintDay(); place(); }
+    if (k === 'Enter' || k === 'NumpadEnter' || e.keyCode === 13) { e.preventDefault(); rememberFind(); paintRecent(); place(); }
   });
   el.addEventListener('click', e => {
     if (e.target.closest && e.target.closest('.wrt-det')) return;   // links open themselves
@@ -11709,6 +11759,14 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (a === 'plan') { if (run) ui.planRun = ui.planRun !== true; else ui.planIdle = ui.planIdle === false; saveUi(); paintDay(); place(); return; }
     if (a === 'unpin') { ui.pin = false; saveUi(); paintPin(); paint(true); return; }
     if (a === 'today' || a === 'pick') { go(a, ''); return; }
+    if (a === 'recent') {
+      find.q = b.getAttribute('data-q') || '';
+      findRes = null; findOn = true;
+      const i = $('wrtQ'); if (i) { i.value = find.q; try { i.focus({ preventScroll: true }); } catch (e) {} }
+      findAsk(); paintDay(); place();
+      return;
+    }
+    if (a === 'recentclear') { recent = []; try { localStorage.removeItem(RQ); } catch (e) {} paintRecent(); place(); return; }
     if (a === 'scope') {
       find.scope = b.getAttribute('data-s') === 'all' ? 'all' : 'day';
       findRes = null; findOn = true; findAsk();
@@ -11717,7 +11775,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       return;
     }
     const tid = b.getAttribute('data-id') || '';
-    if (a === 'task') { openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
+    if (a === 'task') { if (find.q.trim()) rememberFind(); openTask = openTask === tid ? '' : tid; if (openTask) { info.delete(tid); ask({ action: 'info', id: tid }); } paintDay(); place(); return; }
     if (a === 'tinfo') { info.delete(tid); ask({ action: 'info', id: tid }); paintDay(); return; }
     if (a === 'tstart') { ask({ action: 'start', id: tid, mins: +b.getAttribute('data-m') || 0 }); openTask = ''; return; }
     if (a === 'ttop') {
@@ -11799,7 +11857,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   // Drag by anything that isn't a button.
   let drag = null, moved = false;
   el.addEventListener('pointerdown', e => {
-    if (rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, .wrt-find, [data-grip]'))) { moved = false; return; }
+    if (rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, .wrt-find, .wrt-recent, [data-grip]'))) { moved = false; return; }
     const r = el.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
     moved = false;
