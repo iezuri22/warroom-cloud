@@ -769,7 +769,9 @@
   .pp-jump { display: flex; gap: 4px; flex-shrink: 0; }
   .pp-jump button { height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--w12); background: var(--card); color: var(--ink-dim); font: 700 12px inherit; font-family: inherit; cursor: pointer; }
   .pp-jump button:hover { color: var(--ink); border-color: var(--w24, var(--w12)); }
-  .pp-h { scroll-margin-top: 56px; margin: 16px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+  .pp-h { scroll-margin-top: calc(var(--pp-top, 56px) + 12px); margin: 16px 2px 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); }
+  .pp-tik { max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-type { white-space: nowrap; font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; }
   .pp-when { white-space: nowrap; font-size: 12px; color: var(--ink-dim); }
   .pp-chg { white-space: nowrap; font-size: 12px; font-weight: 700; }
   .pp-from { color: var(--ink-dim); }
@@ -10440,11 +10442,15 @@ function _ppMatch(r, q){
   return (r.task || '').toLowerCase().includes(q) || String(r.ticket || '').toLowerCase().includes(q)
     || (r.program || '').toLowerCase().includes(q) || (r.status || '').toLowerCase().includes(q);
 }
+const _ppTicket = r => r && r.ticket ? '#' + escHtml(String(r.ticket).replace(/\.0$/, '')) : '';
+const _ppType = r => escHtml(String((r && r.requestType) || '').trim());
 function _ppRowHTML(r, right){
   const pcol = programColor(r.program);
   return `<tr class="ddl-row${isExpandedRow(r.id) ? ' expanded' : ''}" data-id="${escHtml(String(r.id))}" data-pp-row="${escHtml(String(r.id))}">
     <td class="ddl-status c-status"><span class="st-dot" style="background:${statusDotVar(r.status)}"></span><span class="st-lbl">${escHtml(SS_STATUS_SHORT[r.status] || r.status || '—')}</span></td>
     <td class="ddl-task"><span class="tt-title" title="${escHtml(r.task || '')}">${escHtml(r.task || '')}</span></td>
+    <td class="ddl-ticket c-ticket pp-tik">${_ppTicket(r)}</td>
+    <td class="pp-type">${_ppType(r)}</td>
     <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(r.program || '')}</span></td>
     <td class="pp-when">${right}</td>
   </tr>`;
@@ -10453,7 +10459,8 @@ function _ppTable(head, bodyHTML, empty){
   return bodyHTML
     ? `<div class="ddl-wrap"><div class="ddl-scroll"><table class="ddl-table"><thead><tr>
          <th class="c-status" style="width:92px">Status</th><th>Task</th>
-         <th class="c-prog" style="width:104px">Program</th><th style="width:132px">${escHtml(head)}</th>
+         <th class="c-ticket" style="width:78px">Ticket</th><th style="width:104px">Type</th>
+         <th class="c-prog" style="width:104px">Program</th><th style="width:118px">${escHtml(head)}</th>
        </tr></thead><tbody>${bodyHTML}</tbody></table></div></div>`
     : `<div class="empty">${escHtml(empty)}</div>`;
 }
@@ -10489,6 +10496,8 @@ function renderPeople(){
     return `<tr class="ddl-row${isExpandedRow(e.r.id) ? ' expanded' : ''}" data-id="${escHtml(String(e.r.id))}" data-pp-row="${escHtml(String(e.r.id))}">
       <td class="pp-chg">${what}</td>
       <td class="ddl-task"><span class="tt-title" title="${escHtml(e.r.task || '')}">${escHtml(e.r.task || '')}</span></td>
+      <td class="ddl-ticket c-ticket pp-tik">${_ppTicket(e.r)}</td>
+      <td class="pp-type">${_ppType(e.r)}</td>
       <td class="tt-prog-td c-prog"><span style="color:${pcol.fg};font-weight:800;font-size:12px">${escHtml(e.r.program || '')}</span></td>
       <td class="pp-when" title="${escHtml(fmtAbsoluteDate(e.ts) || '')}">${escHtml(timeAgo(e.ts) || '')}</td>
     </tr>`;
@@ -10497,7 +10506,9 @@ function renderPeople(){
     + `<div class="pp-h" id="ppSecChanges">Last ${events.length} change${events.length === 1 ? '' : 's'}</div>`
     + (evHTML
         ? `<div class="ddl-wrap"><div class="ddl-scroll"><table class="ddl-table"><thead><tr>
-             <th style="width:150px">Change</th><th>Task</th><th class="c-prog" style="width:104px">Program</th><th style="width:100px">When</th>
+             <th style="width:150px">Change</th><th>Task</th>
+             <th class="c-ticket" style="width:78px">Ticket</th><th style="width:104px">Type</th>
+             <th class="c-prog" style="width:104px">Program</th><th style="width:92px">When</th>
            </tr></thead><tbody>${evHTML}</tbody></table></div></div>`
         : `<div class="empty">No changes recorded for ${escHtml(who || 'this person')} yet${q ? ' matching “' + escHtml(_ppQ.trim()) + '”' : ''}. Status moves and claims show up here as they happen.</div>`)
     + `<div class="pp-h" id="ppSecDone">Recently completed · ${done.length}</div>`
@@ -10514,9 +10525,24 @@ function renderPeople(){
     box.addEventListener('keydown', e => { const k = e.key || e.code || ''; if (k === 'Escape' || e.keyCode === 27) { _ppQ = ''; render(); } });
     if (_ppFocus) { try { box.focus({ preventScroll: true }); box.setSelectionRange(_ppCaret, _ppCaret); } catch (e) {} }
   }
+  // The bar is sticky, so a heading must stop below it, not under it.
+  const ppBar = list.querySelector('.pp-bar');
+  const setTop = () => { if (ppBar) list.style.setProperty('--pp-top', Math.round(ppBar.getBoundingClientRect().height) + 'px'); };
+  setTop();
+  // Which box actually scrolls varies with the layout, so find it and do the
+  // maths: scrollIntoView parked the heading under the sticky bar.
+  const ppScroller = () => {
+    for (let e = list; e; e = e.parentElement) if (e.scrollHeight > e.clientHeight + 8) return e;
+    return document.scrollingElement || document.documentElement;
+  };
   list.querySelectorAll('[data-pp-go]').forEach(b => b.addEventListener('click', () => {
+    setTop();
     const el = document.getElementById(b.getAttribute('data-pp-go'));
-    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (!el) return;
+    const sc = ppScroller();
+    const barH = ppBar ? ppBar.getBoundingClientRect().height : 56;
+    const delta = el.getBoundingClientRect().top - sc.getBoundingClientRect().top - barH - 12;
+    sc.scrollTop = Math.max(0, sc.scrollTop + delta);
   }));
   list.querySelectorAll('[data-pp-row]').forEach(tr => tr.addEventListener('click', e => {
     if (e.target.closest('button, a, input, select, textarea')) return;
