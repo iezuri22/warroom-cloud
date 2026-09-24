@@ -6559,6 +6559,100 @@ async function ecmAddDueDateColumn(){
   }
 }
 
+// The sheet → columns / rows / pickers / render. Used for a fresh download
+// and for the copy kept from last time; only fresh data may correct the
+// status log (a stale copy "correcting" it is what caused the ping-pong).
+let _rowsFresh = false;   // rows came from Smartsheets this load, not last time's copy
+function _applySheet(json, fromCache){
+  sheet = json;
+  _rowsFresh = !fromCache;
+  columns = {};
+  (sheet.columns || []).forEach(col => { columns[col.title] = col; });
+  const colTask = columns['Task Name'];
+  const colTicket = columns['Ticket #'];
+  const colStatus = columns['Status'];
+  const colOwner = columns['Owner'];
+  const colProgram = columns['Program'];
+  const colDetails = columns['Details'];
+  const colOutcome = columns['Outcome Details'];
+  const colSubType = columns['Sub-Type'];
+  const colRequestType = columns['Request Type'];
+  const colCreated = ecmCreatedCol();
+  const colCompletion = columns['Completion Date'];
+  const colInternal = columns['Internal Only'];
+  const colDeletion = columns['Marked for Deletion'];
+  // Deadline column — accept a few common titles so a renamed column keeps
+  // working. ecmDueCol() resolves the same way everywhere else.
+  const colDue = ecmDueCol();
+  rows = (sheet.rows || []).map(r => ({
+    id: r.id,
+    task: colTask ? cellValue(r, colTask.id) : '',
+    ticket: colTicket ? cellValue(r, colTicket.id) : '',
+    status: colStatus ? cellValue(r, colStatus.id) : '',
+    owner: colOwner ? cellValue(r, colOwner.id) : '',
+    program: colProgram ? cellValue(r, colProgram.id) : '',
+    details: colDetails ? cellValue(r, colDetails.id) : '',
+    outcome: colOutcome ? cellValue(r, colOutcome.id) : '',
+    subType: colSubType ? cellValue(r, colSubType.id) : '',
+    requestType: colRequestType ? cellValue(r, colRequestType.id) : '',
+    createdDate: colCreated ? cellValue(r, colCreated.id) : '',
+    completionDate: colCompletion ? cellValue(r, colCompletion.id) : '',
+    dueDate: colDue ? cellValue(r, colDue.id) : '',
+    // Smartsheets checkbox cells come back as boolean true/false or empty.
+    // Normalize so any truthy non-empty value reads as flagged.
+    internalSS: colInternal ? !!cellValue(r, colInternal.id) : false,
+    deletion: colDeletion ? !!cellValue(r, colDeletion.id) : false,
+    modifiedAt: r.modifiedAt || '',
+    // Per-row permalink — Smartsheets returns this on each row by default,
+    // but if it's missing we'll fall back to constructing one from the
+    // sheet's permalink + row ID below.
+    permalink: r.permalink || ''
+  }));
+  // Backfill missing per-row permalinks using the sheet's own permalink.
+  // Smartsheets sheet URLs work with #rowId=<id> to jump to a specific row.
+  const sheetPermalink = (sheet && sheet.permalink) || '';
+  if (sheetPermalink) {
+    rows.forEach(r => {
+      if (!r.permalink) r.permalink = `${sheetPermalink}?rowId=${r.id}`;
+    });
+  }
+  // Mirror Smartsheets Internal Only column into the local internalFlags map
+  // so rows flagged in Smartsheets show the badge immediately, even if no
+  // Firestore doc exists yet. Firestore writes still happen on toggle for
+  // fast team sync; this just back-fills from the source-of-truth column.
+  rows.forEach(r => {
+    if (r.internalSS && !internalFlags[r.id]) {
+      internalFlags[r.id] = { internal: true, markedBy: '', markedAt: '', fromSheet: true };
+    }
+  });
+  populateOwnerSelect();
+  populateProgramSelect();
+  // Seed "in status" baselines for any newly-seen open rows so the counter is
+  // stable from first load (and catch statuses changed directly in Smartsheet).
+  if (!fromCache) { try { _reconcileStatusLog(); } catch {} }
+  render();
+}
+// Last download of the sheet, kept in IndexedDB so the page can draw at once
+// next time. Per browser; replaced by every fresh load.
+function _sheetIdb(){
+  return new Promise((ok, no) => {
+    const r = indexedDB.open('ecm-cache', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => no(r.error);
+  });
+}
+async function _sheetCacheGet(sheetId){
+  try {
+    const idb = await _sheetIdb();
+    const v = await new Promise(ok => { const q = idb.transaction('kv').objectStore('kv').get('sheet'); q.onsuccess = () => ok(q.result || null); q.onerror = () => ok(null); });
+    return v && String(v.sheetId) === String(sheetId) && v.json ? v : null;
+  } catch { return null; }
+}
+async function _sheetCacheSet(sheetId, json){
+  try { const idb = await _sheetIdb(); idb.transaction('kv', 'readwrite').objectStore('kv').put({ sheetId: String(sheetId), at: Date.now(), json }, 'sheet'); } catch {}
+}
+let _sheetPainted = false;   // drawn at least once this page load (cache or fresh)
 async function loadSheet(){
   // Defensive: if we have a token anywhere but _teamMode somehow got dropped
   // (e.g. incognito storage quirk), restore team mode so we don't bounce the
@@ -6613,6 +6707,12 @@ async function loadSheet(){
   }
   const btn = document.getElementById('btnSync');
   btn.classList.add('syncing');
+  // First load of this page: show last time's sheet straight away, then let
+  // the download below replace it.
+  if (!_sheetPainted && !rows.length) {
+    const kept = await _sheetCacheGet(c.sheetId);
+    if (kept && !rows.length) { try { _applySheet(kept.json, true); _sheetPainted = true; } catch (e) { console.warn('[ecm] cached sheet', e); } }
+  }
   try {
     const res = await ssProxy(`/sheets/${c.sheetId}`, 'GET');
     if (res.status === 401) {
@@ -6635,72 +6735,10 @@ async function loadSheet(){
       const t = await res.text().catch(() => '');
       throw new Error(`Smartsheets ${res.status}: ${t.slice(0,200)}`);
     }
-    sheet = await res.json();
-    columns = {};
-    (sheet.columns || []).forEach(col => { columns[col.title] = col; });
-    const colTask = columns['Task Name'];
-    const colTicket = columns['Ticket #'];
-    const colStatus = columns['Status'];
-    const colOwner = columns['Owner'];
-    const colProgram = columns['Program'];
-    const colDetails = columns['Details'];
-    const colOutcome = columns['Outcome Details'];
-    const colSubType = columns['Sub-Type'];
-    const colRequestType = columns['Request Type'];
-    const colCreated = ecmCreatedCol();
-    const colCompletion = columns['Completion Date'];
-    const colInternal = columns['Internal Only'];
-    const colDeletion = columns['Marked for Deletion'];
-    // Deadline column — accept a few common titles so a renamed column keeps
-    // working. ecmDueCol() resolves the same way everywhere else.
-    const colDue = ecmDueCol();
-    rows = (sheet.rows || []).map(r => ({
-      id: r.id,
-      task: colTask ? cellValue(r, colTask.id) : '',
-      ticket: colTicket ? cellValue(r, colTicket.id) : '',
-      status: colStatus ? cellValue(r, colStatus.id) : '',
-      owner: colOwner ? cellValue(r, colOwner.id) : '',
-      program: colProgram ? cellValue(r, colProgram.id) : '',
-      details: colDetails ? cellValue(r, colDetails.id) : '',
-      outcome: colOutcome ? cellValue(r, colOutcome.id) : '',
-      subType: colSubType ? cellValue(r, colSubType.id) : '',
-      requestType: colRequestType ? cellValue(r, colRequestType.id) : '',
-      createdDate: colCreated ? cellValue(r, colCreated.id) : '',
-      completionDate: colCompletion ? cellValue(r, colCompletion.id) : '',
-      dueDate: colDue ? cellValue(r, colDue.id) : '',
-      // Smartsheets checkbox cells come back as boolean true/false or empty.
-      // Normalize so any truthy non-empty value reads as flagged.
-      internalSS: colInternal ? !!cellValue(r, colInternal.id) : false,
-      deletion: colDeletion ? !!cellValue(r, colDeletion.id) : false,
-      modifiedAt: r.modifiedAt || '',
-      // Per-row permalink — Smartsheets returns this on each row by default,
-      // but if it's missing we'll fall back to constructing one from the
-      // sheet's permalink + row ID below.
-      permalink: r.permalink || ''
-    }));
-    // Backfill missing per-row permalinks using the sheet's own permalink.
-    // Smartsheets sheet URLs work with #rowId=<id> to jump to a specific row.
-    const sheetPermalink = (sheet && sheet.permalink) || '';
-    if (sheetPermalink) {
-      rows.forEach(r => {
-        if (!r.permalink) r.permalink = `${sheetPermalink}?rowId=${r.id}`;
-      });
-    }
-    // Mirror Smartsheets Internal Only column into the local internalFlags map
-    // so rows flagged in Smartsheets show the badge immediately, even if no
-    // Firestore doc exists yet. Firestore writes still happen on toggle for
-    // fast team sync; this just back-fills from the source-of-truth column.
-    rows.forEach(r => {
-      if (r.internalSS && !internalFlags[r.id]) {
-        internalFlags[r.id] = { internal: true, markedBy: '', markedAt: '', fromSheet: true };
-      }
-    });
-    populateOwnerSelect();
-    populateProgramSelect();
-    // Seed "in status" baselines for any newly-seen open rows so the counter is
-    // stable from first load (and catch statuses changed directly in Smartsheet).
-    try { _reconcileStatusLog(); } catch {}
-    render();
+    const fresh = await res.json();
+    _applySheet(fresh, false);
+    _sheetPainted = true;
+    _sheetCacheSet(c.sheetId, fresh);
   } catch (e) {
     console.error(e);
     document.getElementById('list').innerHTML = `<div class="empty">Error loading sheet: ${escHtml(e.message)}</div>`;
@@ -8194,6 +8232,9 @@ function _statusSeedSince(r){
 // keeps the first-load seed burst down to just the open backlog.
 function _reconcileStatusLog(){
   if (!Array.isArray(rows) || !rows.length) return;
+  // Only against a fresh download — the copy kept from last time is exactly
+  // the stale view that must never "correct" the log.
+  if (!_rowsFresh) return;
   for (const r of rows){
     const status = (r.status || '').trim();
     if (!status) continue;

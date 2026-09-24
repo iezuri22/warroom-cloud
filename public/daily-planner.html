@@ -11121,6 +11121,10 @@ _pdRender();
      Tap → switchTab(). The hamburger drawer is still available for
      secondary actions (Notes, Music, Fullscreen, etc.) via the "More" tab. -->
 <nav class="mobile-tabbar" id="mobileTabbar" aria-label="Main">
+  <button class="mtb-tab" data-mtb="today" onclick="wrTodayTab()" aria-label="Today">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    <span>Today</span>
+  </button>
   <button class="mtb-tab" data-mtb="todos" onclick="switchTab('todos')" aria-label="Personal">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     <span>Personal</span>
@@ -11236,11 +11240,14 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (typeof window.switchTab !== 'function') { setTimeout(_wireTab, 200); return; }
     const orig = window.switchTab;
     window.switchTab = function(t){
+      try { if (typeof window.wrTodayOff === 'function') window.wrTodayOff(); } catch (e) {}
       try { orig.apply(this, arguments); } catch (e) { console.warn(e); }
       _mtbSync(t);
     };
+    window._mtbSync = _mtbSync;
     const active = document.querySelector('.tabs .tab.active[data-tab]');
-    _mtbSync(active ? active.getAttribute('data-tab') : 'todos');
+    // The Today page may already be up (phones open on it).
+    _mtbSync(document.body.classList.contains('wr-today-docked') ? 'today' : (active ? active.getAttribute('data-tab') : 'todos'));
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _wireTab);
@@ -11294,6 +11301,16 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt { position: fixed; z-index: 9990; left: 0; top: 0; touch-action: none; user-select: none; -webkit-user-select: none;
          font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif); }
   .wrt[hidden] { display: none !important; }
+  /* Phones: the Today tab — the card as a full page above the tab bar. */
+  .wrt.docked { left: 0 !important; top: 0 !important; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); touch-action: auto; z-index: 9400; }
+  .wrt.docked .wrt-big { display: block !important; width: 100%; max-width: none; height: 100%; max-height: none; border-radius: 0; border: 0; box-shadow: none;
+                         cursor: auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: calc(14px + env(safe-area-inset-top)) 16px 20px; background: #FBEFE5; }
+  .wrt.docked .wrt-pill { display: none !important; }
+  .wrt.docked [data-wrt="min"], .wrt.docked #wrtUnpin, .wrt.docked [data-wrt="plan"] { display: none !important; }
+  .wrt.docked .wrt-list, .wrt.docked:not(.idle) .wrt-list { max-height: none; overflow: visible; }
+  .wrt.docked .wrt-lbl { font-size: 12px; }
+  body.wr-today-docked .nav-drawer-overlay { z-index: 9590; }
+  body.wr-today-docked .nav-drawer { z-index: 9600; }
   .wrt-big { width: 390px; max-width: calc(100vw - 24px); box-sizing: border-box; padding: 14px 16px 14px; border-radius: 18px; cursor: grab;
              background: #FBEFE5; border: 1px solid rgba(240, 126, 40, .35); box-shadow: 0 12px 34px rgba(33, 30, 25, .16), 0 2px 6px rgba(33, 30, 25, .08); }
   .wrt.min .wrt-big { display: none; }
@@ -11374,6 +11391,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-sc { display: flex; flex-shrink: 0; border: 1px solid rgba(33, 30, 25, .16); border-radius: 8px; overflow: hidden; background: #fff; }
   .wrt-sc button { height: 30px; padding: 0 9px; border: 0; background: none; font: 700 12px inherit; font-family: inherit; color: #7a6f63; cursor: pointer; }
   .wrt-sc button.on { background: #F07E28; color: #fff; }
+  .wrt-find[hidden], .wrt-recent[hidden] { display: none !important; }
   .wrt-recent { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .wrt-recent .lbl { font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: #9a8d80; margin-right: 2px; }
   .wrt-rq { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 25px; padding: 0 9px; border: 1px solid rgba(33, 30, 25, .14); border-radius: 999px; background: #fff; font: 600 12px inherit; font-family: inherit; color: #211E19; cursor: pointer; }
@@ -11447,7 +11465,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   function paintDay(){
     if (rdrag) { rdrag.repaint = true; return; }   // mid-drag: after the drop
     dayAt = Date.now();
-    const box = $('wrtDay'), plan = $('wrtPlan'), d = today(), idle = !run;
+    const box = $('wrtDay'), plan = $('wrtPlan'), d = viewOf(today()), idle = !run;
     if (!d) {
       $('wrtFind').hidden = true; $('wrtRecent').hidden = true; plan.innerHTML = '';
       box.innerHTML = '<div class="wrt-dnote">' + (day ? 'That was yesterday’s plan — ' : 'Today’s plan shows once Personal loads — ') + '<button type="button" class="wrt-dlink" data-wrt="today">open Personal</button></div>';
@@ -11459,7 +11477,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (!idle) h += '<div class="wrt-stat"><span>Timed today</span><b id="wrtDayTimed">' + esc(hm(secs)) + (goal ? ' / ' + esc(hm(goal)) : '') + '</b></div>';
     if (goal) h += bar(secs, goal).replace('<i ', '<i id="wrtDayBar" ');
     h += '<div class="wrt-stat"><span>Planned vs done</span><b>' + (d.doneN == null ? '…' : doneN) + ' / ' + all + ' done</b></div>' + bar(doneN, all);
-    const open = idle ? ui.planIdle !== false : ui.planRun === true;
+    const open = docked || (idle ? ui.planIdle !== false : ui.planRun === true);
     h += '<button type="button" class="wrt-dtog" data-wrt="plan" aria-expanded="' + open + '">' + (open ? 'Hide plan & priorities ▴' : 'Plan & priorities ▾') + '</button>';
     let P = '';
     if (open) {
@@ -11584,9 +11602,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   let openTask = '';
   const info = new Map();       // id → { ok, done, detHtml } from Personal
   const askedAt = new Map();    // id → when we asked, so a silence can be shown
-  const pending = new Map();    // id → { on, at, tries, failed } for ✓ Complete
   function tkPanel(id){
-    const x = info.get(id), i = esc(id), d = today();
+    const x = info.get(id), i = esc(id), d = viewOf(today());
     const asked = askedAt.get(id) || 0;
     // Done state: the reply is best, else which list the row is sitting in.
     const inDone = !!(d && Array.isArray(d.done) && d.done.some(t => t && t.id === id));
@@ -11601,62 +11618,76 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (run && run.taskId === id) h += '<span class="wrt-more">⏱ Timing this now</span>';
     else h += '<button type="button" class="wrt-chip primary" data-wrt="tstart" data-id="' + i + '" data-m="0">▶ Start</button>'
       + [15, 25, 45, 60].map(m => '<button type="button" class="wrt-chip" data-wrt="tstart" data-id="' + i + '" data-m="' + m + '" title="Count down from ' + (m === 60 ? '1 hour' : m + ' minutes') + '">' + (m === 60 ? '1h' : m + 'm') + '</button>').join('');
-    const pend = pending.get(id);
-    const slow = !!(pend && !pend.failed && Date.now() - pend.since > 2500);
     h += '<button type="button" class="wrt-chip' + (done ? '' : ' done') + '" data-wrt="tdone" data-id="' + i + '">' + (done ? '↺ Not done' : '✓ Complete') + '</button>';
-    if (slow) h += '<span class="wrt-more">saving…</span>';
     if (d && Array.isArray(d.top) && !done) {
       const inTop = d.top.some(t => t && t.id === id), max = num(d.topMax) || 7, full = !inTop && d.top.length >= max;
       h += '<button type="button" class="wrt-chip' + (inTop ? '' : ' topc') + '" data-wrt="ttop" data-id="' + i + '" data-on="' + (inTop ? '0' : '1') + '"'
         + (full ? ' disabled title="Top ' + max + ' is full — finish or remove one first"' : '') + '>' + (inTop ? '✕ Remove from Top ' + max : '⬆ Top ' + max) + '</button>';
     }
     h += '</div>';
-    if (pend && pend.failed) h += '<div class="wrt-more wrt-tk-warn">That didn’t reach Personal — <button type="button" class="wrt-dlink" data-wrt="tdone" data-id="' + i + '">try again</button></div>';
     h += '<button type="button" class="wrt-dlink wrt-tk-edit" data-wrt="tedit" data-id="' + i + '">Edit in Personal ›</button>';
     return h + '</div>';
   }
-  // ✓ Complete: ask until Personal confirms. Its answer ('warroom:acted')
-  // clears this; five tries over ~20s and the panel says it didn't take.
-  // Show it at once: the task hops between today's lists and Done today.
-  // Personal's next publish replaces all of this with the real thing.
-  function moveDone(id, on){
-    const d = today();
-    if (!d || !Array.isArray(d.done)) return;
-    const pull = key => {
-      if (!Array.isArray(d[key])) return null;
-      const i = d[key].findIndex(t => t && t.id === id);
-      return i < 0 ? null : d[key].splice(i, 1)[0];
-    };
-    if (on) {
-      const t = pull('top') || pull('list');
-      if (t) { d.done.unshift(t); d.doneN = num(d.doneN) + 1; d.plannedN = Math.max(0, num(d.plannedN) - 1); }
-    } else {
-      const i = d.done.findIndex(t => t && t.id === id);
-      if (i >= 0) {
-        const t = d.done.splice(i, 1)[0];
-        if (Array.isArray(d.list)) d.list.unshift(t);
-        d.doneN = Math.max(0, num(d.doneN) - 1); d.plannedN = num(d.plannedN) + 1;
-      }
-    }
+  // ---- What you just did, shown until Personal's list agrees ----
+  // A change is an overlay laid over every paint — never written into `day`,
+  // which Personal's next publish replaces wholesale (that is what made a
+  // completed task pop back, and a Top 7 pick jump out again).
+  const optDone = new Map();    // id → { on, at }
+  const optTop = new Map();     // id → { on, at }
+  const itemById = new Map();   // id → the last row seen for it, to move between lists
+  function viewOf(d){
+    if (!d) return d;
+    const L = a => Array.isArray(a) ? a.filter(t => t && typeof t.id === 'string') : [];
+    let top = L(d.top), lst = L(d.list), done = L(d.done);
+    top.concat(lst, done).forEach(t => itemById.set(t.id, t));
+    const now = Date.now(), has = (a, id) => a.some(t => t.id === id);
+    // Settled: Personal's list now says the same (or it's been a minute).
+    optDone.forEach((o, id) => { if (o.on === has(done, id) || now - o.at > 60000) optDone.delete(id); });
+    optTop.forEach((o, id) => { if (o.on === has(top, id) || now - o.at > 60000) optTop.delete(id); });
+    optTop.forEach((o, id) => {
+      const t = itemById.get(id); if (!t) return;
+      if (o.on) { lst = lst.filter(x => x.id !== id); if (!has(top, id)) top = top.concat([t]); }
+      else { top = top.filter(x => x.id !== id); if (!has(lst, id) && !has(done, id)) lst = [t].concat(lst); }
+    });
+    optDone.forEach((o, id) => {
+      const t = itemById.get(id); if (!t) return;
+      if (o.on) { if (!has(done, id)) done = [t].concat(done); }
+      else { done = done.filter(x => x.id !== id); if (!has(top, id) && !has(lst, id)) lst = [t].concat(lst); }
+    });
+    // A done task is never also open — a stale open list can't double it up.
+    const doneIds = new Set(done.map(t => t.id));
+    top = top.filter(t => !doneIds.has(t.id)); lst = lst.filter(t => !doneIds.has(t.id));
+    const moved = done.length - L(d.done).length;
+    return Object.assign({}, d, {
+      top: Array.isArray(d.top) ? top : d.top, list: Array.isArray(d.list) ? lst : d.list, done,
+      doneN: Math.max(0, num(d.doneN) + moved), plannedN: Math.max(0, num(d.plannedN) - moved)
+    });
   }
-  function setDone(id, on){
-    pending.set(id, { on, at: Date.now(), since: Date.now(), tries: 0, failed: false });
-    ask({ action: 'setdone', id, on });
-    tickPending();
-  }
-  let pendT = 0;
-  function tickPending(){
-    if (pendT) return;
-    pendT = setInterval(() => {
-      if (!pending.size) { clearInterval(pendT); pendT = 0; return; }
-      pending.forEach((p, id) => {
-        if (p.failed) return;
-        if (Date.now() - p.at < 3500) return;
-        if (p.tries >= 4) { p.failed = true; moveDone(id, !p.on); flopped(); paintDay(); return; }   // put it back
-        p.tries++; p.at = Date.now();
-        ask({ action: 'setdone', id, on: p.on });
+  // Actions Personal must confirm. Asked again every 3.5s until it answers
+  // ('warroom:acted'); four misses and the overlay is dropped and we say so.
+  const acts = new Map();       // 'setdone:<id>' / 'top:<id>' → { msg, at, tries, fail }
+  let actsT = 0;
+  function sendActed(key, msg, fail){
+    acts.set(key, { msg, at: Date.now(), tries: 0, fail });
+    ask(msg);
+    if (actsT) return;
+    actsT = setInterval(() => {
+      if (!acts.size) { clearInterval(actsT); actsT = 0; return; }
+      acts.forEach((a, k) => {
+        if (Date.now() - a.at < 3500) return;
+        if (a.tries >= 4) { acts.delete(k); try { a.fail('lost'); } catch (e) {} return; }
+        a.tries++; a.at = Date.now();
+        ask(a.msg);
       });
     }, 1000);
+  }
+  function setDone(id, on){
+    optDone.set(id, { on, at: Date.now() });
+    sendActed('setdone:' + id, { action: 'setdone', id, on }, () => { optDone.delete(id); flopped(); paintDay(); place(); });
+  }
+  function setTop(id, on){
+    optTop.set(id, { on, at: Date.now() });
+    sendActed('top:' + id, { action: 'top', id, on }, why => { optTop.delete(id); flopped(why === 'full' ? 'full' : ''); paintDay(); place(); });
   }
   // Ask Personal (loading it first if it isn't). On another tab it may not be
   // up yet, so the question is repeated while it boots — asking once landed
@@ -11687,23 +11718,22 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     b.hidden = !on;
     b.classList.toggle('bad', callKind === 'flop');
     el.classList.toggle('call', on && callKind !== 'flop');
-    if (on) b.textContent = callKind === 'flop' ? '⚠️ That didn’t save — the task is back on the list'
+    if (on) b.textContent = callKind === 'flop' ? (flopWhy === 'full' ? '⚠️ Top 7 is full — finish or remove one first' : '⚠️ That didn’t save — it’s back where it was')
       : callKind === 'up' ? '⏰ Time’s up — still timing, stop it when you’re done'
       : callKind === 'over' ? '⏰ ' + callMins + ' min over'
       : '⏰ ' + callMins + (callMins === 1 ? ' minute left' : ' minutes left');
   }
-  function flopped(){ callKind = 'flop'; callMins = 0; callAt = Date.now(); paintCall(); }
+  let flopWhy = '';
+  function flopped(why){ flopWhy = why || ''; callKind = 'flop'; callMins = 0; callAt = Date.now(); paintCall(); }
   window.addEventListener('message', ev => {
     const f = document.getElementById('todosFrame'), d = ev.data;
     if (!f || ev.source !== f.contentWindow || !d) return;
     if (d.type === 'warroom:acted') {
-      if (d.action === 'setdone' && typeof d.id === 'string') {
-        const p = pending.get(d.id);
-        // true = it took. false = it didn't. null = Personal couldn't tell,
-        // so keep asking (the same value each time, so asking twice is safe).
-        if (p && d.ok === true) { pending.delete(d.id); if (openTask === d.id) paintDay(); }
-        else if (p && d.ok === false) { p.failed = true; moveDone(d.id, !p.on); flopped(); paintDay(); }
-      }
+      // true = it took. false = refused. null = Personal couldn't tell yet,
+      // so keep asking (the same value each time, so asking twice is safe).
+      const k = String(d.action || '') + ':' + String(d.id || ''), a = acts.get(k);
+      if (a && d.ok === true) acts.delete(k);
+      else if (a && d.ok === false) { acts.delete(k); try { a.fail(d.why || 'refused'); } catch (e) {} }
       return;
     }
     if (d.type === 'warroom:search') {
@@ -11747,7 +11777,30 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     return out.innerHTML;
   }
   const clock = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+  // Phones: the Today tab docks the card as a full page.
+  let docked = false;
+  const phone = () => window.innerWidth > 0 && window.matchMedia('(max-width: 760px)').matches;
+  window.wrTodayTab = () => {
+    docked = true;
+    el.classList.add('docked');
+    document.body.classList.add('wr-today-docked');
+    if (!ui.dock) { ui.dock = true; saveUi(); }   // tells Personal to keep today's lists coming
+    wake();                                   // its lists come from Personal
+    try { window._mtbSync && window._mtbSync('today'); } catch (e) {}
+    paint(true);
+    try { el.querySelector('.wrt-big').scrollTop = 0; } catch (e) {}
+  };
+  window.wrTodayOff = () => {
+    if (!docked) return;
+    docked = false;
+    el.classList.remove('docked');
+    document.body.classList.remove('wr-today-docked');
+    if (ui.dock) { ui.dock = false; saveUi(); }
+    el.style.left = ''; el.style.top = '';
+    paint(true);
+  };
   function place(){
+    if (docked) return;                       // the page fills the screen; nothing to place
     const r = el.getBoundingClientRect(), w = r.width || 330, h = r.height || 200;
     let x = ui.x == null ? window.innerWidth - w - 20 : ui.x, y = ui.y == null ? window.innerHeight - h - 20 : ui.y;
     x = Math.max(8, Math.min(x, window.innerWidth - w - 8)); y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
@@ -11755,10 +11808,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   }
   function paint(full){
     const idle = !run;
-    if (idle && !ui.pin) { el.hidden = true; return; }
+    if (idle && !ui.pin && !docked) { el.hidden = true; return; }
     const wasHidden = el.hidden;
     el.hidden = false;
-    el.classList.toggle('min', !!ui.min);
+    el.classList.toggle('min', !!ui.min && !docked);
     el.classList.toggle('idle', idle);
     if (idle) {
       if (!full && !wasHidden) return;
@@ -11768,7 +11821,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
       $('wrtSub').textContent = d ? (num(d.goal) ? 'timed of a ' + hm(d.goal) + ' goal' : 'timed today') : '';
       $('wrtPName').textContent = 'Today';
       $('wrtPDone').hidden = true;
-      $('wrtPTime').textContent = d ? num(d.doneN) + '/' + (num(d.doneN) + num(d.plannedN)) + ' · ' + hm(timedNow(d)) : '—';
+      const vd = viewOf(d);
+      $('wrtPTime').textContent = vd ? num(vd.doneN) + '/' + (num(vd.doneN) + num(vd.plannedN)) + ' · ' + hm(timedNow(vd)) : '—';
       paintDay(); place();
       return;
     }
@@ -11861,25 +11915,17 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (a === 'tinfo') { info.delete(tid); askedAt.set(tid, Date.now()); ask({ action: 'info', id: tid }); paintDay(); return; }
     if (a === 'tstart') { ask({ action: 'start', id: tid, mins: +b.getAttribute('data-m') || 0 }); openTask = ''; return; }
     if (a === 'ttop') {
-      const on = b.getAttribute('data-on') === '1', d = today();
-      if (d && Array.isArray(d.top) && Array.isArray(d.list)) {
-        if (on) { const k = d.list.findIndex(t => t && t.id === tid); if (k >= 0) d.top.push(d.list.splice(k, 1)[0]); }
-        else { const k = d.top.findIndex(t => t && t.id === tid); if (k >= 0) d.list.unshift(d.top.splice(k, 1)[0]); }
-      }
-      ask({ action: 'top', id: tid, on });
+      setTop(tid, b.getAttribute('data-on') === '1');
       paintDay(); place();
-      setTimeout(() => { lastDayRaw = null; }, 2500);   // then re-read what Personal kept (a refusal included)
       return;
     }
     if (a === 'tdone') {
-      // No reply yet? The row's own list says whether it is done.
-      const d0 = today();
-      const x = info.get(tid) || { ok: true, done: !!(d0 && Array.isArray(d0.done) && d0.done.some(t => t && t.id === tid)), detHtml: '' };
-      x.done = !x.done;
-      info.set(tid, x);
-      moveDone(tid, x.done);      // the row moves now — Personal catches up
+      // Which way: the reply if there is one, else the list the row sits in.
+      const v = viewOf(today()), x = info.get(tid);
+      const nowDone = x && x.ok ? !!x.done : !!(v && Array.isArray(v.done) && v.done.some(t => t && t.id === tid));
+      info.set(tid, Object.assign({ ok: true, detHtml: '' }, x || {}, { done: !nowDone }));
       openTask = '';
-      setDone(tid, x.done);
+      setDone(tid, !nowDone);      // on screen now; Personal confirms behind it
       paintDay(); place();
       return;
     }
@@ -11932,7 +11978,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     const next = [...box.children].find(x => x !== it && y < x.getBoundingClientRect().top + x.getBoundingClientRect().height / 2);
     if (next) { if (next !== it.nextElementSibling) box.insertBefore(it, next); }
     else if (box.lastElementChild !== it) box.appendChild(it);
-    if (list) { const r = list.getBoundingClientRect(); if (y < r.top + 28) list.scrollTop -= 10; else if (y > r.bottom - 28) list.scrollTop += 10; }
+    const sc = docked ? el.querySelector('.wrt-big') : list;
+    if (sc) { const r = sc.getBoundingClientRect(); if (y < r.top + 28) sc.scrollTop -= 10; else if (y > r.bottom - 28) sc.scrollTop += 10; }
   }, true);
   const rdrop = e => {
     if (!rdrag || (e && e.pointerId !== rdrag.pid)) return;
@@ -11950,7 +11997,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   // Drag by anything that isn't a button.
   let drag = null, moved = false;
   el.addEventListener('pointerdown', e => {
-    if (rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, .wrt-find, .wrt-recent, [data-grip]'))) { moved = false; return; }
+    if (docked || rdrag || e.button !== 0 || (e.target.closest && e.target.closest('button, .wrt-det, .wrt-list, .wrt-find, .wrt-recent, [data-grip]'))) { moved = false; return; }
     const r = el.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY };
     moved = false;
@@ -11976,6 +12023,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   read();
   paintPin();
   if (ui.pin) setTimeout(wake, 4000);   // after the shell's own first load
+  // Phones land on Today — the first tab.
+  if (phone()) setTimeout(() => { try { window.wrTodayTab(); } catch (e) {} }, 0);
 })();
 </script>
 </body>
