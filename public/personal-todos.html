@@ -5523,7 +5523,7 @@
 
 <script type="module">
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-  import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDoc, getDocs, getCountFromServer, query, where, orderBy, writeBatch, runTransaction, waitForPendingWrites, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+  import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDocFromServer as getDoc, getDocsFromServer as getDocs, getCountFromServer, query, where, orderBy, writeBatch, runTransaction, waitForPendingWrites, onSnapshot, increment, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
   const firebaseConfig = {
     apiKey: "AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs",
     authDomain: "tv-todos.firebaseapp.com",
@@ -5533,7 +5533,15 @@
     appId: "1:566644863130:web:dacb2e5e7699c0a2e9af23"
   };
   const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
+  // This device's own copy of what it last saw (IndexedDB): listeners paint it
+  // at once and the server's answer replaces it. Anything that WRITES off what
+  // a listener shows waits for that answer (snap.metadata.fromCache) — and the
+  // one-off reads above are server-only (getDoc/getDocs are the FromServer
+  // versions), so read → decide → write code is exactly as before.
+  const db = (() => {
+    try { return initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+    catch (e) { console.warn('[firestore] local copy unavailable', e); return getFirestore(app); }
+  })();
   const todosCol = collection(db, 'tv_todos');
   const recurringCol = collection(db, 'recurring_tasks');
   const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -10172,7 +10180,7 @@
       hbHabits = hbNorm((d && Array.isArray(d.habits) && d.habits.length) ? d.habits : HB_DEFAULT_HABITS.slice());
       // One-time: fold the Don'ts into a config saved before they existed.
       // dontsSeeded stops the seed re-firing if they're later deleted on purpose.
-      if (d && Array.isArray(d.habits) && d.habits.length && !d.dontsSeeded
+      if (d && Array.isArray(d.habits) && d.habits.length && !d.dontsSeeded && !(snap.metadata && snap.metadata.fromCache)
           && !hbHabits.some(h => h.section === 'dont') && !_hbDontSeedTried){
         _hbDontSeedTried = true;
         setDoc(doc(db, 'health_config', 'habits'), {
@@ -11089,14 +11097,16 @@
   function tmrEnsureSubs(){
     if (tmrSubsOn) return;
     tmrSubsOn = true;
-    onSnapshot(doc(db, TMR_CFG_DOC[0], TMR_CFG_DOC[1]), snap => {
+    onSnapshot(doc(db, TMR_CFG_DOC[0], TMR_CFG_DOC[1]), { includeMetadataChanges: true }, snap => {
       if (snap.exists()){
         const d = snap.data() || {};
         tmrCfg = {
           projects: Array.isArray(d.projects) ? d.projects.filter(p => p && p.id) : [],
           targets: (d.targets && typeof d.targets === 'object') ? d.targets : {}
         };
-      } else {
+      } else if (!(snap.metadata && snap.metadata.fromCache)) {
+        // Only the server's "no config" seeds — a cache-only miss would
+        // overwrite the real projects and goals.
         tmrSeedDefaults();
       }
       tmrRerender();
@@ -15258,6 +15268,7 @@
   let _ntTask = null, _ntNewCat = null, _ntLayout = null, _ntTaskTok = 0, _ntTaskBusy = 0;   // task sheet · new-category form · pane layout
   const _ntTaskIdx = new Map();     // tv_todos made from note lines (live) — the category Tasks section
   const _ntTkBusy = new Set();      // task ids whose tick is still being written
+  let _ntTaskIdxShown = false;   // as _ntOpenShown, for the note-task index
   let _ntTaskIdxOn = false, _ntTaskIdxLoaded = false, _ntTaskIdxErr = false, _ntShowDoneTasks = false, _ntPendingLine = null;
   // All tasks: every open tv_todos doc (live), what was ticked done there this
   // session (so it can be un-ticked), and which row has its actions open.
@@ -15265,6 +15276,7 @@
   const _ntAllDone = new Map();
   const _ntAllBusy = new Set();     // task / parked ids with a push, delete or pull-in in flight
   const _ntAllReopened = new Map(); // ECM row id → when it was re-opened here (the sheet may still say Completed)
+  let _ntOpenShown = false;   // something to draw — last time's copy or the server's (display checks only)
   let _ntOpenOn = false, _ntOpenLoaded = false, _ntOpenErr = false, _ntOpenFresh = false;   // fresh: the current listener has answered
   let _ntRetryAt = 0;               // ntRetryLive: when a dead listener was last restarted
   let _ntAllRow = null, _ntAllDelArm = null, _ntParkAt = 0, _ntParkBusy = false;
@@ -16177,11 +16189,16 @@
   function ntEnsureTaskIdx(){
     if (_ntTaskIdxOn) return;
     _ntTaskIdxOn = true;
-    onSnapshot(query(collection(db, 'tv_todos'), where('noteId', '>', '')), snap => {
+    onSnapshot(query(collection(db, 'tv_todos'), where('noteId', '>', '')), { includeMetadataChanges: true }, snap => {
+      const cached = !!(snap.metadata && snap.metadata.fromCache);
+      // Server's already answered and this is only a write being confirmed.
+      if (!cached && _ntTaskIdxLoaded && !snap.docChanges().length) return;
       _ntTaskIdx.clear();
       snap.forEach(d => _ntTaskIdx.set(d.id, { id: d.id, ...d.data() }));
-      _ntTaskIdxLoaded = true; _ntTaskIdxErr = false;
+      _ntTaskIdxShown = true;
+      if (!cached) { _ntTaskIdxLoaded = true; _ntTaskIdxErr = false; }
       if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] tasks render', e); } }
+      if (cached && !_ntTaskIdxLoaded) return;   // last time's copy: drawn, never acted on
       // On every tab: the open note stays mounted while you're elsewhere.
       try { ntMirrorOpenChecks(); } catch (e) { console.warn('[notes] mirror', e); }
       ntDetSchedule();                     // details edited on another device
@@ -16199,7 +16216,21 @@
   function ntEnsureOpenIdx(){
     if (_ntOpenOn) return;
     _ntOpenOn = true;
-    onSnapshot(query(collection(db, 'tv_todos'), where('done', '==', false)), snap => {
+    onSnapshot(query(collection(db, 'tv_todos'), where('done', '==', false)), { includeMetadataChanges: true }, snap => {
+      const cached = !!(snap.metadata && snap.metadata.fromCache);
+      // Last time's list, before the server has answered: shown at once, and
+      // nothing below (Top 7 pruning, the priority reset, tick mirroring, the
+      // card's publish) runs on it.
+      if (cached && !_ntOpenLoaded) {
+        _ntOpenIdx.clear();
+        snap.forEach(d => _ntOpenIdx.set(d.id, { id: d.id, ...d.data() }));
+        _ntOpenShown = true;
+        if (_tabNotes && _ntMounted) { try { ntRenderLib(); } catch (e) { console.warn('[notes] all tasks render', e); } }
+        return;
+      }
+      // Server's already answered and this is only a write being confirmed.
+      if (!cached && _ntOpenLoaded && _ntOpenFresh && !snap.docChanges().length) return;
+      _ntOpenShown = true;
       // Tasks that just left the open list — ticked in Planned, a check-in,
       // Sprint, another device (routine copies aside: not listed there).
       let left = [];
@@ -16277,7 +16308,7 @@
     const today = todayKey();
     return t.done ? 'Done' : t.plannedFor ? ntDay(t.plannedFor) : t.planned ? 'Someday' : (t.date && t.date !== today ? ntDay(t.date) : 'Today');
   }
-  function ntHasGeneralTasks(){ return _ntTaskIdxLoaded && [..._ntTaskIdx.values()].some(t => ntTaskCat(t) === ''); }
+  function ntHasGeneralTasks(){ return _ntTaskIdxShown && [..._ntTaskIdx.values()].some(t => ntTaskCat(t) === ''); }
   function ntTaskMatches(t){ const q = ntQuery.trim().toLowerCase(); return !q || String(t.text || '').toLowerCase().includes(q); }
   function ntCatTasks(f){
     return [..._ntTaskIdx.values()].filter(t => !ntPdelHidden(t.id) && ntTaskInCat(t, f) && ntTaskMatches(t));
@@ -16289,7 +16320,7 @@
   function ntTaskSectionHTML(){
     if (_ntSelMode) return '';   // select mode picks notes — its boxes look just like these
     const f = ntFilter;
-    if (f === 'all' || f === 'tasks' || f === 'agenda' || f === 'pinned' || f === 'trash' || !_ntTaskIdxLoaded) return '';
+    if (f === 'all' || f === 'tasks' || f === 'agenda' || f === 'pinned' || f === 'trash' || !_ntTaskIdxShown) return '';
     const all = ntCatTasks(f);
     if (!all.length) return '';
     const open = all.filter(t => !t.done).sort(ntTaskOrder), done = all.filter(t => t.done).sort(ntTaskDoneOrder);
@@ -16310,7 +16341,7 @@
   function ntTaskOrder(a, b){ return ntTaskKey(a).localeCompare(ntTaskKey(b)); }
   function ntTaskDoneOrder(a, b){ return String(b.completedAt || b.doneAt || '').localeCompare(String(a.completedAt || a.doneAt || '')); }
   // The sidebar's All tasks count: every open task, and what's parked.
-  function ntOpenTaskCount(){ return _ntOpenLoaded ? ntAllOpen().length + ntParked().length : 0; }
+  function ntOpenTaskCount(){ return _ntOpenShown ? ntAllOpen().length + ntParked().length : 0; }
   // One task row, shared by a category's section and All tasks. o.cat adds
   // the task's category (dot + path) to the meta line. o.all (All tasks'
   // context) and o.place give the schedule and the due date as the Overview
@@ -16396,9 +16427,9 @@
       if (move.length) ptToast(move.length === 1 ? '1 unfinished task moved from Today to This week' : move.length + ' unfinished tasks moved from Today to This week');
     }).catch(e => { console.warn('[notes] prio reset', e); try { localStorage.removeItem('pt-nt-prio-day'); } catch {} });
   }
-  function ntPrioCount(){ return _ntOpenLoaded ? ntAllOpen().filter(t => ntPrioOf(t)).length : 0; }
+  function ntPrioCount(){ return _ntOpenShown ? ntAllOpen().filter(t => ntPrioOf(t)).length : 0; }
   function ntPrioHTML(){
-    if (!_ntOpenLoaded) return _ntOpenErr ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection.</div>' : '<div class="nt-empty-lib">Loading tasks…</div>';
+    if (!_ntOpenShown) return _ntOpenErr ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection.</div>' : '<div class="nt-empty-lib">Loading tasks…</div>';
     const c = ntAllCtx();
     let h = '<div class="nt-prio">', n = 0;
     NT_PRIO.forEach(([k, label]) => {
@@ -16628,10 +16659,11 @@
   function ntTopSub(){
     if (_ntTop.unsub) return;
     try {
-      _ntTop.unsub = onSnapshot(doc(db, 'personal_top7', 'current'), snap => {
+      _ntTop.unsub = onSnapshot(doc(db, 'personal_top7', 'current'), { includeMetadataChanges: true }, snap => {
         const v = snap.exists() ? (snap.data() || {}) : {};
         _ntTop.ids = Array.isArray(v.ids) ? v.ids.filter(x => typeof x === 'string').slice(0, 20) : [];
-        _ntTop.loaded = true;
+        // Adding to (or pruning) a stale copy would drop a newer pick.
+        if (!(snap.metadata && snap.metadata.fromCache)) _ntTop.loaded = true;
         ntDayPub();
       }, e => console.warn('[top7]', e));
     } catch (e) { console.warn('[top7]', e); }
@@ -16658,7 +16690,7 @@
     const post = o => { try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ type: 'warroom:search', q: s }, o), location.origin); } catch (e) { console.warn('[wr search]', e); } };
     if (!s) { post({ groups: [] }); return; }
     if (!_ntOpenOn) ntEnsureOpenIdx();
-    if (!_ntOpenLoaded || _ntOpenErr) { post({ groups: [], loading: true }); return; }
+    if (!_ntOpenShown || _ntOpenErr) { post({ groups: [], loading: true }); return; }
     const c = ntAllCtx(), tk = c.today, cut = x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 140);
     const secsBy = new Map();
     (((tmrDays.get(tk) || {}).sessions) || []).forEach(x => { if (x && x.taskId) secsBy.set(x.taskId, (secsBy.get(x.taskId) || 0) + (+x.secs || 0)); });
@@ -16850,7 +16882,7 @@
   // Past due is All tasks' Overdue group; due today is a deadline of today.
   // Built from the live list (0 reads) on every list render.
   function ntDueBarHTML(){
-    if (!_ntOpenLoaded) return '';
+    if (!_ntOpenShown) return '';
     const c = ntAllCtx(), tk = c.today, late = [], today = [];
     ntAllOpen().forEach(t => {
       const p = ntAllPlace(t, c);
@@ -17121,7 +17153,7 @@
   function ntAllTasksHTML(){
     _ntAllShown = _ntAllTotal = 0;
     if (ntTaskFilter().status === 'done') return ntCompletedHTML();
-    if (!_ntOpenLoaded) return _ntOpenErr
+    if (!_ntOpenShown) return _ntOpenErr
       ? '<div class="nt-empty-lib">Couldn’t load tasks — check your connection. <button class="nt-retry" type="button" data-nt-act="retry-live">Retry</button></div>'
       : '<div class="nt-empty-lib">Loading tasks…</div>';
     const c = ntAllCtx(), f = ntTaskFilter(), tfOn = ntTfOn(f);
@@ -17266,7 +17298,7 @@
       });
       return m;
     }
-    if (!_ntOpenLoaded) return m;
+    if (!_ntOpenShown) return m;
     const c = ntAllCtx();
     ntAllOpen().forEach(t => {
       if (!ntTaskMatches(t)) return;
@@ -17735,7 +17767,7 @@
   function ntSubBody(id){
     if (_ntBodyUnsub) { try { _ntBodyUnsub(); } catch {} _ntBodyUnsub = null; }
     _ntBodyErr = false;
-    _ntBodyUnsub = onSnapshot(doc(db, NT_BODY_COL, id), snap => {
+    _ntBodyUnsub = onSnapshot(doc(db, NT_BODY_COL, id), { includeMetadataChanges: true }, snap => {
       if (ntOpenId !== id || !_ntEls) return;
       const d = snap.exists() ? (snap.data() || {}) : null;
       const rev = d ? (d.rev | 0) : 0;
@@ -17743,6 +17775,15 @@
         // Offline with nothing cached: that "missing" doc is the cache
         // talking, not the server. Stay read-only until the server answers.
         if (!d && snap.metadata && snap.metadata.fromCache) return;
+        // The copy this device kept: on screen now, read-only. The server's
+        // copy (a moment later) is the one that loads for editing and saving
+        // — typing into a stale copy could save over newer text.
+        if (d && snap.metadata && snap.metadata.fromCache) {
+          _ntEls.editor.innerHTML = ntSanitize(String(d.html || ''));
+          _ntEls.editor.classList.remove('nt-loading');
+          try { ntAfterContentSwap(); } catch (e) { console.warn('[notes] cached body', e); }
+          return;
+        }
         _ntBodyLoaded = true;
         _ntEls.editor.classList.remove('nt-loading');
         _ntEls.editor.contentEditable = 'true';
