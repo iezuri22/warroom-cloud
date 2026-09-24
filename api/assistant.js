@@ -4,6 +4,7 @@
 // file. vercel.json rewrites keep the semantic URLs the pages already call:
 //   /api/health-chat → /api/assistant?mode=health
 //   /api/plan-chat   → /api/assistant?mode=plan
+//   /api/transcribe, /api/ink, /api/suggest-tasks, /api/notion → the Notes modes
 // Shared gates (cookie auth, POST-only, 501 without ANTHROPIC_API_KEY) run
 // once in the default export; each mode keeps its original behavior below.
 import Anthropic from '@anthropic-ai/sdk';
@@ -807,6 +808,96 @@ function cleanTasks(list, today) {
   }).slice(0, 40);
 }
 
+/* ============================== ink mode ==============================
+   Notes' ✍️ Handwrite: pages written with a stylus on the pad (pen strokes on
+   white, cropped to the writing) → { title, kind, date, markdown, tasks }.
+   Notes, plans and recipes: the writer's content, laid out cleanly. */
+const INK_SYSTEM = `You turn handwriting into clean, well-organized notes. The writer wrote with a stylus on a tablet — one or more pages, given in order — and wants a tidy typed version to keep in their notes app. It is usually notes, a plan or to-do list, or a recipe.
+
+Read it faithfully:
+- Keep everything the writer wrote, in their order and their own words. Never summarize, drop, or add ideas, names, amounts or steps.
+- Fix spelling, capitals and punctuation, and finish obvious slips of the pen. Expand shorthand only when you're sure of it ("w/" → "with", "b/c" → "because"); keep ordinary abbreviations and units (tbsp, tsp, oz, lb, g, ml, °F, min).
+- Words that are struck through or scribbled out were deleted — leave them out. Follow arrows, carets and circled inserts to where the writer meant them to go.
+- A word you can't read: [illegible]. A word you're unsure of: your best guess followed by [?].
+- A drawing or diagram: one short italic line saying what it shows, e.g. *Sketch: a timeline from May to July.*
+
+Then lay it out cleanly in Markdown, shaped by what it is:
+- A recipe: the dish's name as "## " (when it's written); "### Ingredients" as a bulleted list, one ingredient per line with its amount first ("2 tbsp olive oil"); "### Steps" as a numbered list, one action per step, in order; servings, times, tips or swaps the writer noted under "### Notes". Only what's on the page.
+- A plan or to-do list: "### " headings for the parts the page implies (days, phases, topics); things to do as "- [ ] " checkboxes (ticked on the page: "- [x] "), keeping dates, times and names as written.
+- Notes (a meeting, a class, ideas, a journal entry): short paragraphs and bullet lists; "### " headings only where the page has them or the topic clearly changes; words the writer underlined, boxed or circled in **bold**.
+- A point written indented under another stays nested under it (two spaces per level).
+- Several different things on the pages (a recipe and a shopping list, say): each gets its own "## " heading.
+
+Also return:
+- title: a short title for the whole thing (under 60 characters) — the dish, the plan or the topic, in the writer's words where possible.
+- kind: "recipe", "plan" or "notes".
+- date: when the pages are dated, that date as YYYY-MM-DD (a date written without a year takes the year that makes it the most recent such date that isn't in the future — today's date is given); otherwise null.
+- tasks: the concrete things the writer means to do — explicit to-dos (unticked boxes, "need to", "call…", "email…", "book…", "buy…") and clear commitments; never feelings, reflections, ticked boxes, vague wishes, or a recipe's own ingredients and steps. Each one short and actionable, starting with a verb, in the writer's words (under 90 characters). On a to-do list every item is a task, bare ones too ("Dry cleaning" → "Take the dry cleaning"); one line holding two separate jobs is two tasks. A due date only when the text gives one ("by Friday", "on the 30th") — resolve it against today's date; a date heading a whole list ("Saturday:", "this week") applies to each item under it. Otherwise null. Every task, in the order they appear (up to 40).
+
+Reply with ONLY a JSON object: {"title": "…", "kind": "recipe" | "plan" | "notes", "date": "YYYY-MM-DD" or null, "markdown": "…", "tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]}`;
+const INK_KINDS = { notes: 'notes', plan: 'a plan or to-do list', recipe: 'a recipe' };
+async function handleInk(req, res, body) {
+  const mt = ['image/png', 'image/jpeg', 'image/webp'].includes(body.mediaType) ? body.mediaType : 'image/png';
+  const pages = (Array.isArray(body.pages) ? body.pages : []).slice(0, 10)
+    .map(p => (typeof p === 'string' ? p.replace(/^data:[^,]*,/, '').trim() : ''));
+  const total = pages.reduce((n, p) => n + p.length, 0);
+  if (!pages.length || total > 6000000 || pages.some(p => !p || !/^[A-Za-z0-9+/]+=*$/.test(p.slice(0, 4000)))) {
+    res.status(400).json({ error: 'bad_image' });
+    return;
+  }
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(String(body.today || '')) ? body.today : new Date().toISOString().slice(0, 10);
+  const kind = INK_KINDS[body.kind] || '';
+  const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const intro = `Today is ${today}. `
+    + (pages.length > 1 ? `These are ${pages.length} pages, in order. ` : '')
+    + (kind ? `The writer says this is ${kind}. ` : '')
+    + (title ? `It goes into their note "${title}". ` : '')
+    + (body.journal ? 'This is their journal: use "### " for any heading (never "## "), and don\'t put the entry\'s date in the text — return it as date. ' : '')
+    + 'Turn the handwriting into clean notes.';
+  let raw = '';
+  try {
+    const client = new Anthropic();
+    const response = await client.beta.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 12000,
+      output_config: { effort: 'medium' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: INK_SYSTEM,
+      messages: [{ role: 'user', content: [
+        ...pages.map(data => ({ type: 'image', source: { type: 'base64', media_type: mt, data } })),
+        { type: 'text', text: intro },
+      ] }],
+    });
+    if (response.stop_reason === 'refusal') { res.status(200).json({ error: 'refused' }); return; }
+    raw = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  } catch (e) {
+    console.error('ink upstream error:', e);
+    const status = e && Number.isInteger(e.status) ? e.status : 502;
+    res.status(status >= 400 && status < 600 ? status : 502).json({ error: 'upstream_failed', message: e.message });
+    return;
+  }
+  if (!raw) { res.status(502).json({ error: 'empty_answer' }); return; }
+  // The JSON object; if the model wrapped it in prose or fences, find it.
+  let markdown = '', out = { title: '', kind: 'notes', date: null, tasks: [] };
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    const j = JSON.parse(m ? m[0] : raw);
+    markdown = typeof j.markdown === 'string' ? j.markdown : '';
+    out = {
+      title: String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      kind: ['recipe', 'plan', 'notes'].includes(j.kind) ? j.kind : 'notes',
+      date: typeof j.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(j.date) && j.date <= today ? j.date : null,
+      tasks: j.kind === 'recipe' ? [] : cleanTasks(j.tasks, today),
+    };
+  } catch {
+    markdown = raw.replace(/^```[\w]*\n?|\n?```$/g, '');
+  }
+  markdown = markdown.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 60000);
+  if (!markdown) { res.status(200).json({ error: 'nothing_read' }); return; }
+  res.status(200).json({ ...out, markdown });
+}
+
 /* ============================== tasks mode ==============================
    Notes' ✦ Suggest tasks: a note's text (or one journal day) → the to-dos in
    it, for the user to pick from. Nothing is created here. */
@@ -886,6 +977,7 @@ export default async function handler(req, res) {
   }
   if (mode === 'plan') return handlePlan(req, res, body);
   if (mode === 'transcribe') return handleTranscribe(req, res, body);
+  if (mode === 'ink') return handleInk(req, res, body);
   if (mode === 'tasks') return handleTasks(req, res, body);
   return handleHealth(req, res, body);
 }

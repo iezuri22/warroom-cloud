@@ -33,6 +33,7 @@
     'pt-nt-last',        // Notes' last open note — per-device, so two devices don't both hold it open
     'pt-nt-pdel',        // Notes: task lines removed on this device, waiting on Undo / the delete — per device
     'pt-nt-det-open',    // Notes: which task details are unfolded — per device
+    'pt-nt-ink',         // Notes' handwriting pad: pencil used here? do fingers write or scroll? — per device
     'personal-day-v1',   // today's plan vs done for the War Room's timer card — worked out on each device
     'wr-timer-ui',       // War Room's floating timer: where it sits, big or folded — per device
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
