@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F6F5F1">
+<title>Life log — War Room</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="/sync-client.js"></script>
+<!--
+  Life log — the things you did and need to remember: an oil change and when
+  the next one is due, a battery and how long its warranty runs, a dentist
+  cleaning, a registration renewal.
+
+  Data (Firestore project tv-todos, same as the rest of War Room):
+    life_records/{id}  one doc per thing you logged. `key` is the normalized
+                       title, and entries sharing it are one series: the newest
+                       one is "current" and owns the reminders.
+    life_photos/{id}   a receipt or photo as a base64 JPEG (downscaled to stay
+                       under the 1 MB doc cap — Firebase Storage needs the paid
+                       plan on this project, see hair-recovery.html).
+  Reminders are ordinary Personal tasks in tv_todos, shaped like the Notes
+  task sheet's "By deadline" tasks (planned + plannedFor + deadline), so
+  Personal lists them under Planned and lifts them to the top of Today on the
+  day (autoPromotePlannedDue). Ids are deterministic —
+  life_<entry>_<due|wty>_<deadline> — so saving twice can never make two, and
+  a new deadline is a new task rather than a moved one (a task already on
+  Today can't be pulled back off Personal's list from here).
+  Reminder tasks are only ever written from a user action here (save, delete,
+  dismiss, "Set it"); a page load never writes.
+-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  color-scheme:light;
+  --bg:#F6F5F1;
+  --surface:#FFFFFF;
+  --fill:rgba(33,30,25,.05);
+  --fill-2:rgba(33,30,25,.09);
+  --border:rgba(33,30,25,.08);
+  --border-strong:rgba(33,30,25,.16);
+  --ink:#211E19;
+  --ink-mid:rgba(33,30,25,.58);
+  --ink-dim:rgba(33,30,25,.38);
+  --accent:#F07E28;
+  --accent-soft:rgba(240,126,40,.13);
+  --accent-ink:#B35A14;
+  --on-accent:#FFF7EF;
+  --green:#1E9E6A; --green-soft:rgba(30,158,106,.12);
+  --red:#DC4B3E; --red-soft:rgba(220,75,62,.11);
+  --blue:#3B6FD4; --blue-soft:rgba(59,111,212,.11);
+  --purple:#7C63E8; --teal:#2AA79B; --amber:#E8A23D; --coral:#E96A5B;
+  --radius:16px; --radius-sm:11px;
+  --shadow-card:0 1px 3px rgba(33,30,25,.08);
+  --shadow-float:0 10px 28px rgba(33,30,25,.18);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+}
+html,body{background:var(--bg);color:var(--ink);font-family:var(--font);-webkit-font-smoothing:antialiased;letter-spacing:-0.01em}
+body{min-height:100vh;padding:22px 24px 72px}
+body.embed{padding-top:14px}
+body.sheet-open{overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;letter-spacing:inherit}
+input,textarea{font:inherit;color:inherit;letter-spacing:inherit}
+[hidden]{display:none !important}
+svg{display:block;flex-shrink:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.page{max-width:1180px;margin:0 auto}
+
+/* ---- header ---- */
+.top{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.top .ttl{flex:1;min-width:0}
+h1{font-size:26px;font-weight:800;letter-spacing:-.03em;line-height:1.15}
+.sub{margin-top:3px;font-size:13.5px;color:var(--ink-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub .late{color:var(--red);font-weight:600}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 15px;border-radius:999px;font-size:14px;font-weight:600;white-space:nowrap;transition:background .15s,filter .15s,opacity .15s}
+.btn svg{width:16px;height:16px}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.ghost{background:var(--fill)}
+.btn.ghost:hover{background:var(--fill-2)}
+.btn.danger{color:var(--red);padding:0 10px}
+.btn.danger.arm{background:var(--red);color:#fff;padding:0 14px}
+.btn:disabled{opacity:.45;cursor:default;filter:none}
+
+/* ---- toolbar (only once there's enough to filter) ---- */
+.tools{display:flex;gap:10px;align-items:center;margin-bottom:18px}
+.search{flex:0 1 300px;min-width:0;display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow-card);color:var(--ink-dim)}
+.search svg{width:15px;height:15px}
+.search input{flex:1;min-width:0;border:0;outline:0;background:none;font-size:14px;color:var(--ink)}
+.search input::placeholder{color:var(--ink-dim)}
+.chips{display:flex;gap:6px;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow-card);font-size:13px;font-weight:600;color:var(--ink-mid)}
+.chip svg{width:14px;height:14px;color:var(--c,currentColor)}
+.chip .n{font-weight:600;color:var(--ink-dim);font-size:12px}
+.chip.on{background:var(--ink);color:#fff;box-shadow:none}
+.chip.on svg,.chip.on .n{color:rgba(255,255,255,.7)}
+
+/* ---- layout: two columns on desktop, one stack on phones ---- */
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+@media (min-width:900px){ .grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:28px} }
+.col{display:flex;flex-direction:column;gap:24px;min-width:0}
+.sec-h{display:flex;align-items:baseline;gap:8px;padding:0 4px 9px}
+.sec-h h2{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-mid)}
+.sec-h .n{font-size:12px;font-weight:600;color:var(--ink-dim)}
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-card);overflow:hidden}
+.yr{display:flex;justify-content:space-between;align-items:baseline;padding:14px 6px 7px;font-size:12.5px;font-weight:700;color:var(--ink-dim)}
+.yr:first-child{padding-top:0}
+.yr span:last-child{font-weight:600}
+
+/* a row: icon · text · status */
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:62px;cursor:pointer;position:relative;outline-offset:-2px}
+.row + .row{border-top:1px solid var(--border)}
+@media (hover:hover){ .row:hover{background:rgba(33,30,25,.022)} }
+.ic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--c-soft);color:var(--c)}
+.ic svg{width:19px;height:19px}
+.mn{flex:1;min-width:0}
+.t{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;line-height:1.3}
+.t .tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t svg{width:13px;height:13px}
+.t .bell{color:var(--blue)}
+.t .warn{color:var(--red)}
+.s{font-size:12.5px;color:var(--ink-mid);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;text-align:right}
+.date{font-size:13px;font-weight:600;color:var(--ink-mid);white-space:nowrap}
+.glyphs{display:flex;gap:5px;color:var(--ink-dim)}
+.glyphs svg{width:13px;height:13px}
+.glyphs .g-ok{color:var(--green)}
+.pill{display:inline-flex;align-items:center;gap:4px;height:23px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--fill);color:var(--ink-mid)}
+.pill svg{width:12px;height:12px}
+.pill.soon{background:var(--accent-soft);color:var(--accent-ink)}
+.pill.late{background:var(--red-soft);color:var(--red)}
+.pill.ok{background:var(--green-soft);color:var(--green)}
+.acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.mini{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--fill);color:var(--ink)}
+.mini svg{width:13px;height:13px}
+.mini.go{background:var(--ink);color:#fff}
+@media (hover:hover){ .mini:hover{background:var(--fill-2)} .mini.go:hover{background:#000} }
+.bar{height:3px;border-radius:2px;background:var(--fill-2);margin-top:8px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:2px;background:var(--green)}
+.bar.soon i{background:var(--accent)}
+.bar.end i{background:var(--ink-dim)}
+
+.empty{padding:16px 16px 17px;font-size:13.5px;color:var(--ink-mid);line-height:1.5}
+.empty b{color:var(--ink);font-weight:600}
+
+/* first run: nothing logged yet */
+.hero{padding:30px 24px 26px;text-align:center}
+.hero .hi{width:52px;height:52px;border-radius:16px;margin:0 auto 14px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.hero .hi svg{width:26px;height:26px}
+.hero h2{font-size:19px;font-weight:700;letter-spacing:-.02em}
+.hero p{margin:6px auto 0;max-width:430px;font-size:14px;line-height:1.5;color:var(--ink-mid)}
+.quick{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:18px}
+.quick .chip svg{color:var(--c)}
+
+/* loading */
+.sk{height:62px;border-top:1px solid var(--border);background:linear-gradient(90deg,transparent,rgba(33,30,25,.035),transparent) 0 0/200% 100%;animation:sk 1.2s linear infinite}
+.sk:first-child{border-top:0}
+@keyframes sk{to{background-position:-200% 0}}
+.banner{display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;border-radius:12px;background:var(--red-soft);color:var(--red);font-size:13px;font-weight:500}
+.banner svg{width:15px;height:15px}
+
+.foot{margin-top:34px;text-align:center;font-size:11px;color:var(--ink-dim)}
+
+/* ---- sheet (the form and the detail view) ---- */
+.scrim{position:fixed;inset:0;z-index:50;background:rgba(33,30,25,.3);animation:fade .15s ease-out}
+.sheet{position:fixed;z-index:51;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 32px));max-height:min(88vh,880px);display:flex;flex-direction:column;background:var(--surface);border-radius:20px;box-shadow:var(--shadow-float);overflow:hidden;animation:pop .18s cubic-bezier(.2,.8,.2,1)}
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:translate(-50%,-48%) scale(.98)}}
+@keyframes up{from{transform:translateY(40px);opacity:0}}
+.sh-head{display:flex;align-items:center;gap:12px;padding:16px 14px 14px 20px;border-bottom:1px solid var(--border)}
+.sh-head .hd{flex:1;min-width:0}
+.sh-head h3{font-size:17px;font-weight:700;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-head .hs{font-size:12.5px;color:var(--ink-mid);margin-top:2px}
+.x{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--fill);color:var(--ink-mid);flex-shrink:0}
+.x svg{width:16px;height:16px}
+.sh-body{flex:1;overflow:auto;padding:4px 20px 18px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.sh-foot{display:flex;gap:8px;align-items:center;padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border)}
+.grow{flex:1}
+@media (max-width:640px){
+  body{padding:16px 16px 64px}
+  body.embed{padding-top:12px}
+  h1{font-size:23px}
+  .sheet{left:0;right:0;top:auto;bottom:0;transform:none;width:100%;max-height:94vh;max-height:94dvh;border-radius:20px 20px 0 0;animation:up .22s cubic-bezier(.2,.8,.2,1)}
+  .tools{flex-wrap:wrap}
+  .search{flex:1 1 100%}
+  .chips{flex:1 1 100%}
+  .chips .chip{flex:1 1 auto;justify-content:center;padding:0 10px}
+  .chip .chip-l{white-space:nowrap}
+  .sub{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  /* Four or more categories: icons carry them, so no label is ever cut. */
+  .chips.many .chip:not([data-v="all"]) .chip-l{display:none}
+}
+
+/* form */
+.f{padding:14px 0;border-bottom:1px solid var(--border)}
+.f:last-child{border-bottom:0}
+.lbl{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--ink-mid);margin-bottom:7px}
+.lbl svg{width:13px;height:13px}
+.lbl.lead{margin:12px 0 6px}
+.in{width:100%;height:40px;padding:0 12px;border-radius:10px;border:1px solid transparent;background:var(--fill);font-size:15px;outline:none;transition:background .15s,border-color .15s;-webkit-appearance:none;appearance:none}
+.in:focus{background:var(--surface);border-color:var(--border-strong)}
+.in::placeholder{color:var(--ink-dim)}
+textarea.in{height:auto;min-height:62px;padding:10px 12px;resize:vertical;line-height:1.45}
+input[type=date].in{min-width:0}
+.title-in{height:46px;font-size:18px;font-weight:600;letter-spacing:-.02em}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.two > label{display:block;min-width:0}
+.pre{position:relative;display:block}
+.pre > i{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-style:normal;font-size:15px;color:var(--ink-dim);pointer-events:none}
+.pre > .in{padding-left:24px}
+.opts{display:flex;gap:6px;flex-wrap:wrap}
+.cats{margin-top:10px}
+.opt{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--fill);font-size:13px;font-weight:600;color:var(--ink-mid);transition:background .12s,color .12s}
+.opt svg{width:14px;height:14px}
+@media (hover:hover){ .opt:hover{background:var(--fill-2)} }
+.opt.on{background:var(--ink);color:#fff}
+.opt .ls{display:none}
+.opt.cat svg{color:var(--c)}
+.opt.cat.on{background:var(--c);color:#fff}
+.opt.cat.on svg{color:#fff}
+.date-in{margin-top:8px;max-width:220px}
+.calc{display:flex;align-items:flex-start;gap:6px;margin-top:9px;font-size:13px;line-height:1.4;color:var(--ink-mid)}
+.calc svg{width:14px;height:14px;margin-top:1px}
+.calc b{color:var(--ink);font-weight:600}
+.calc.blue svg{color:var(--blue)}
+.calc.ok svg{color:var(--green)}
+.calc.warn{color:var(--red)}
+.check{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:14px;cursor:pointer;user-select:none}
+.check input{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
+.photos{display:flex;gap:8px;flex-wrap:wrap}
+.ph{width:68px;height:68px;border-radius:11px;background:var(--fill);position:relative;overflow:hidden;flex-shrink:0}
+.ph img{width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .2s}
+.ph.ok img{opacity:1}
+.ph .rm{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:rgba(0,0,0,.55);color:#fff}
+.ph .rm svg{width:12px;height:12px}
+button.ph{cursor:zoom-in}
+.add-ph{width:68px;height:68px;border-radius:11px;border:1.5px dashed var(--border-strong);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--ink-mid);font-size:11.5px;font-weight:600}
+.add-ph svg{width:18px;height:18px}
+
+/* detail */
+.chiprow{display:flex;gap:6px;flex-wrap:wrap;padding:14px 0 4px}
+.kv{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;padding:12px 0;border-top:1px solid var(--border);font-size:14px;line-height:1.45}
+.chiprow + .kv{border-top:0}
+.kv .k{font-size:12.5px;font-weight:600;color:var(--ink-mid);padding-top:1px}
+.kv .v{min-width:0;overflow-wrap:anywhere}
+.kv .v b{font-weight:600}
+.kv .notes{white-space:pre-wrap}
+.sm{font-size:12.5px;margin-top:3px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.sm svg{width:13px;height:13px}
+.dim{color:var(--ink-dim)}
+.sm.blue svg{color:var(--blue)}
+.sm.ok{color:var(--green)}
+.sm.warn{color:var(--red)}
+.lnk{color:var(--accent-ink);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.earlier{margin-top:4px;border-top:1px solid var(--border);padding-top:12px}
+.earlier .k{font-size:12.5px;font-weight:600;color:var(--ink-mid);margin-bottom:6px}
+.erow{display:flex;gap:10px;align-items:baseline;width:100%;padding:7px 0;font-size:13.5px;text-align:left}
+.erow + .erow{border-top:1px solid var(--border)}
+.erow .d{width:92px;flex-shrink:0;font-weight:600}
+.erow .w{flex:1;min-width:0;color:var(--ink-mid);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* photo viewer */
+.lightbox{position:fixed;inset:0;z-index:60;background:rgba(10,10,10,.92);display:flex;align-items:center;justify-content:center;padding:24px;animation:fade .15s}
+.lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
+.lightbox .x{position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;background:rgba(255,255,255,.14);color:#fff}
+
+.toast{position:fixed;left:50%;bottom:calc(22px + env(safe-area-inset-bottom));transform:translate(-50%,16px);z-index:70;max-width:calc(100vw - 32px);padding:11px 16px;border-radius:12px;background:#211E19;color:#fff;font-size:13.5px;font-weight:500;line-height:1.35;box-shadow:var(--shadow-float);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media (max-width:640px){
+  .in,.search input{font-size:16px} .title-in{font-size:18px}
+  .sh-body{padding:4px 16px 18px}
+  .sh-head{padding-left:16px}
+  .opts{gap:5px}
+  .opt{padding:0 9px}
+  .opt .lf{display:none} .opt .ls{display:inline}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div class="ttl">
+      <h1>Life log</h1>
+      <div class="sub" id="sub">Loading…</div>
+    </div>
+    <button class="btn primary" type="button" data-act="add" id="addBtn"></button>
+  </header>
+  <div class="banner" id="banner" hidden></div>
+  <div class="tools" id="tools" hidden>
+    <label class="search"><span id="searchIc"></span><input id="q" type="search" placeholder="Search your log" autocomplete="off" aria-label="Search your log"></label>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div id="hero" hidden></div>
+  <main class="grid" id="grid">
+    <div class="col">
+      <section>
+        <div class="sec-h"><h2>Coming up</h2><span class="n" id="dueN"></span></div>
+        <div id="dueList"></div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Under warranty</h2><span class="n" id="wtyN"></span></div>
+        <div id="wtyList"></div>
+      </section>
+    </div>
+    <div class="col">
+      <section>
+        <div class="sec-h"><h2>History</h2><span class="n" id="logN"></span></div>
+        <div id="logList"></div>
+      </section>
+    </div>
+  </main>
+  <div class="foot" id="foot"></div>
+</div>
+
+<datalist id="dlTitles"></datalist>
+<datalist id="dlWhere"></datalist>
+<input type="file" id="fFile" accept="image/*" multiple hidden>
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="shTitle" hidden></div>
+<div class="lightbox" id="lb" hidden><img id="lbImg" alt="Photo"><button class="x" type="button" data-act="lb-close" aria-label="Close photo"></button></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, getDocFromServer, getDocsFromServer, query, where as fsWhere } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+const app = initializeApp({
+  apiKey: 'AIzaSyDAWnQSN96g-zVpaeAZbaaw4btvCmGSRTs',
+  authDomain: 'tv-todos.firebaseapp.com',
+  projectId: 'tv-todos'
+});
+const db = getFirestore(app);
+const COL = 'life_records';
+const PHOTOS = 'life_photos';
+const TASKS = 'tv_todos';
+const BUILD = '2026-09-24.1';
+
+/* =====================================================================
+   Small helpers
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = n => String(n).padStart(2, '0');
+const dkey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const today = () => dkey(new Date());
+const isDay = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+// Noon, so a DST change can never push a date across midnight.
+const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d, 12); };
+function addDays(s, n){ const d = parse(s); d.setDate(d.getDate() + n); return dkey(d); }
+// Aug 31 + 6 months is Feb 28/29, not Mar 3.
+function addMonths(s, n){
+  const d = parse(s), day = d.getDate();
+  d.setDate(1); d.setMonth(d.getMonth() + n);
+  d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  return dkey(d);
+}
+const diffDays = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);   // b − a
+function monthsBetween(a, b){
+  const x = parse(a), y = parse(b);
+  let m = (y.getFullYear() - x.getFullYear()) * 12 + (y.getMonth() - x.getMonth());
+  if (y.getDate() < x.getDate()) m--;
+  return m;
+}
+// A distance in days, in words: "5 days", "3 wk", "6 mo", "2 yr 11 mo".
+function span(n, from){
+  n = Math.abs(n);
+  if (n < 14) return n + (n === 1 ? ' day' : ' days');
+  if (n < 60) return Math.round(n / 7) + ' wk';
+  const a = from || today(), b = addDays(a, n);
+  let mo = monthsBetween(a, b);
+  if (diffDays(addMonths(a, mo), b) >= 15) mo++;   // 5 months 26 days reads "6 mo"
+  if (mo < 12) return mo + ' mo';
+  const y = Math.floor(mo / 12), m = mo % 12;
+  return y + ' yr' + (m ? ' ' + m + ' mo' : '');
+}
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Month first ("Sep 24"); the year only when it isn't this one, or asked for.
+function fmt(s, year){
+  if (!isDay(s)) return '';
+  const d = parse(s);
+  return MON[d.getMonth()] + ' ' + d.getDate() + ((year || d.getFullYear() !== new Date().getFullYear()) ? ', ' + d.getFullYear() : '');
+}
+const fmtLong = s => isDay(s) ? parse(s).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '';
+function money(n){ return '$' + (Math.round(n * 100) % 100 ? n.toFixed(2) : Math.round(n).toLocaleString('en-US')); }
+const keyOf = t => String(t || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function hashStr(s){ let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+function msOf(v){ if (!v) return 0; if (typeof v === 'number') return v; if (typeof v.toMillis === 'function') return v.toMillis(); const t = Date.parse(v); return isNaN(t) ? 0 : t; }
+
+const ic = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const I = {
+  plus: ic('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+  x: ic('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  search: ic('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
+  bell: ic('<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>'),
+  shield: ic('<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>'),
+  repeat: ic('<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
+  check: ic('<path d="M20 6 9 17l-5-5"/>'),
+  camera: ic('<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>'),
+  alert: ic('<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>'),
+  log: ic('<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>'),
+};
+
+/* =====================================================================
+   Categories, presets and the choices the form offers
+   ===================================================================== */
+const CATS = [
+  { id: 'car', label: 'Car', color: 'var(--blue)', soft: 'var(--blue-soft)', icon: ic('<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>') },
+  { id: 'home', label: 'Home', color: 'var(--teal)', soft: 'rgba(42,167,155,.13)', icon: ic('<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>') },
+  { id: 'health', label: 'Health', color: 'var(--coral)', soft: 'rgba(233,106,91,.13)', icon: ic('<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/>') },
+  { id: 'tech', label: 'Tech', color: 'var(--purple)', soft: 'rgba(124,99,232,.12)', icon: ic('<path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>') },
+  { id: 'docs', label: 'Docs', color: '#B7791F', soft: 'rgba(232,162,61,.17)', icon: ic('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>') },
+  { id: 'other', label: 'Other', color: 'var(--ink-mid)', soft: 'var(--fill-2)', icon: ic('<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/>') },
+];
+const cat = id => CATS.find(c => c.id === id) || CATS[CATS.length - 1];
+const catStyle = c => `--c:${c.color};--c-soft:${c.soft}`;
+// First match wins, so the specific phrases sit ahead of the broad words
+// ("smoke detector batteries" is Home before "battery" can make it Car).
+const GUESS = [
+  ['home', /smoke detector|hvac|furnace|\bac\b|a\/c|air condition|water heater|plumb|roof|gutter|lawn|pest|termite|fridge|refrigerator|washer|dryer|dishwasher|microwave|oven|stove|mattress|couch|sofa|carpet|chimney|garage door|water filter|\brent|lease|apartment|house|\bhome\b/],
+  ['health', /dentist|dental|teeth|tooth|doctor|physical|check-?up|\beye|vision|glasses|contacts|optometr|vaccin|\bshot\b|booster|blood|lab work|derma|skin|therap|prescription|pharmacy|refill|clinic|x-?ray|\bmri\b|surgery|chiropract|massage|health/],
+  ['tech', /laptop|macbook|phone|iphone|android|pixel|ipad|tablet|computer|\bpc\b|monitor|\btv\b|television|headphone|airpods|earbuds|watch|console|playstation|xbox|nintendo|camera|printer|router|modem|keyboard|speaker|applecare/],
+  ['car', /oil|tire|tyre|brake|battery|wiper|alignment|transmission|coolant|antifreeze|inspection|smog|emission|registration|\bcar\b|truck|vehicle|\bauto|valvoline|jiffy|mechanic|muffler|spark plug|serpentine|timing belt|windshield|detailing|\btint/],
+  ['docs', /passport|license|licence|\bid\b|visa|social security|birth certificate|\btitle\b|insurance|policy|\btax|w-?2|1099|\bwill\b|permit|membership/],
+];
+const guessCat = t => { const s = String(t || '').toLowerCase(); const m = GUESS.find(([, re]) => re.test(s)); return m ? m[0] : ''; };
+// Usual rhythms, offered when you type the name. You can always change it.
+const PRESET_EVERY = [
+  [/\boil change\b/, '6m'], [/\btire rotation\b|\brotate (the )?tires\b/, '6m'], [/\bdent(ist|al)\b|\bteeth cleaning\b/, '6m'],
+  [/\beye exam\b/, '1y'], [/\bphysical\b|\bcheck-?up\b/, '1y'], [/\bflu shot\b/, '1y'],
+  [/\b(hvac|ac|a\/c|furnace)( air)? filter\b/, '3m'], [/\bsmoke detector/, '1y'], [/\bwater filter\b/, '6m'],
+  [/\binspection\b/, '1y'], [/\bregistration\b/, '1y'], [/\b(car|auto) insurance\b/, '6m'],
+  [/\bwiper/, '1y'], [/\bcabin (air )?filter\b/, '1y'],
+];
+const presetEvery = t => { const s = String(t || '').toLowerCase(); const m = PRESET_EVERY.find(([re]) => re.test(s)); return m ? m[1] : ''; };
+const QUICK = [
+  { title: 'Oil change', cat: 'car', every: '6m' },
+  { title: 'Car battery', cat: 'car', wterm: '3y' },
+  { title: 'Dentist cleaning', cat: 'health', every: '6m' },
+  { title: 'Registration renewal', cat: 'car', every: '1y' },
+  { title: 'HVAC filter', cat: 'home', every: '3m' },
+  { title: 'New laptop', cat: 'tech', wterm: '1y' },
+];
+// [value, label, shorter label for phones — each row fits on one line there]
+const EVERY = [['', 'No'], ['3m', '3 mo'], ['6m', '6 mo'], ['1y', '1 yr'], ['2y', '2 yr'], ['date', 'Pick date', 'Date']];
+const LEAD = [[0, 'On the day'], [7, 'A week before', '1 wk before'], [30, 'A month before', '1 mo before'], [-1, 'No reminder', 'Off']];
+const WTY = [['', 'None', 'No'], ['90d', '90 days', '90 d'], ['1y', '1 yr'], ['2y', '2 yr'], ['3y', '3 yr'], ['5y', '5 yr'], ['date', 'Pick date', 'Date']];
+const TERM_WORDS = { '90d': '90-day', '3m': '3-month', '6m': '6-month', '1y': '1-year', '2y': '2-year', '3y': '3-year', '5y': '5-year' };
+function applyTerm(date, term){
+  const m = /^(\d+)([dmy])$/.exec(term || '');
+  if (!m || !isDay(date)) return '';
+  const n = +m[1];
+  return m[2] === 'd' ? addDays(date, n) : addMonths(date, m[2] === 'm' ? n : n * 12);
+}
+
+/* =====================================================================
+   State
+   ===================================================================== */
+let entries = [];
+let fresh = false;             // the server has answered at least once
+let loadErr = '';
+let F = null;                  // the open form
+let D = null;                  // the open detail: { id, arm }
+const ui = { q: '', cat: 'all' };
+const syncing = new Set();     // series whose reminders are being written right now
+const taskState = new Map();   // reminder task id → { exists, done, at } as read from Personal
+const photoMem = new Map();    // photo id → data URL
+
+const later = (a, b) => a.date > b.date || (a.date === b.date && (a.createdAt || '') > (b.createdAt || ''));
+function currentMap(list){
+  const m = new Map();
+  for (const e of list) { const c = m.get(e.key); if (!c || later(e, c)) m.set(e.key, e); }
+  return m;
+}
+const byNewest = (a, b) => later(a, b) ? -1 : later(b, a) ? 1 : 0;
+
+/* =====================================================================
+   Local copy — paints the log at once while the server answers
+   (IndexedDB, not localStorage: sync-client would ship localStorage to Neon)
+   ===================================================================== */
+const IDB = (() => {
+  let p = null;
+  const open = () => p || (p = new Promise((res, rej) => {
+    const r = indexedDB.open('life-log', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const run = (mode, fn) => open().then(dbi => new Promise(res => {
+    const tx = dbi.transaction('kv', mode), st = tx.objectStore('kv');
+    let out; const q = fn(st); if (q) q.onsuccess = () => { out = q.result; };
+    tx.oncomplete = () => res(out); tx.onerror = () => res(undefined); tx.onabort = () => res(undefined);
+  })).catch(() => undefined);
+  return {
+    get: k => run('readonly', st => st.get(k)),
+    put: (k, v) => run('readwrite', st => { st.put(v, k); }),
+    del: k => run('readwrite', st => { st.delete(k); }),
+  };
+})();
+
+/* =====================================================================
+   Reminders in Personal
+   ===================================================================== */
+// What this entry should have in Personal right now. Only the newest entry of
+// a series reminds; an older one was replaced by the next time you did it.
+function desiredFor(e, isCur){
+  const out = { due: null, wty: null };
+  if (!isCur) return out;
+  const a = e.again;
+  if (a && isDay(a.due) && Number(a.lead) >= 0 && !e.dismissed) {
+    const bits = [`Last done ${fmt(e.date, true)}`];
+    if (e.where) bits.push('at ' + e.where);
+    const last = bits.join(' ') + (e.miles != null ? ` · ${e.miles.toLocaleString('en-US')} mi` : '') + '.';
+    out.due = {
+      plannedFor: addDays(a.due, -Number(a.lead)), deadline: a.due, text: e.title,
+      details: `${last}\nFrom your Life log. When it's done, log it there and the next reminder sets itself.`,
+    };
+  }
+  const w = e.wty;
+  if (w && isDay(w.until) && w.remind && w.until >= today()) {   // an ended warranty needs no heads-up
+    const term = TERM_WORDS[w.term] ? TERM_WORDS[w.term] + ' warranty' : 'Warranty';
+    out.wty = {
+      plannedFor: addDays(w.until, -30), deadline: w.until, text: `${e.title} warranty ends ${fmt(w.until, true)}`,
+      details: `${term} from ${fmt(e.date, true)}${e.where ? ' (' + e.where + ')' : ''}, ends ${fmt(w.until, true)}.\n`
+        + (e.photos && e.photos.length ? 'The receipt is in your Life log.' : 'Details are in your Life log.'),
+    };
+  }
+  return out;
+}
+const sigOf = w => `${w.plannedFor}|${w.deadline}`;
+const taskIdFor = (e, kind, w) => `life_${e.id}_${kind}_${w.deadline.replace(/-/g, '')}`;
+
+// Reads go to the server: these decide what gets written.
+async function readTask(tid){
+  const s = await getDocFromServer(doc(db, TASKS, tid));
+  taskState.delete(tid);
+  return s.exists() ? s.data() : null;
+}
+// Same shape as Personal's own planned tasks (createPlannedTask + the Notes
+// sheet's deadline/section), so Planned, All tasks and auto-promotion treat
+// it like any other. `freshRem`: this entry had no live reminder — it's the
+// newest again (the one after it was deleted), so a copy Life log closed when
+// that one replaced it comes back. One you ticked off in Personal stays done.
+async function putTask(tid, e, kind, w, freshRem){
+  const t = await readTask(tid);
+  const f = {
+    text: w.text, details: w.details, date: w.plannedFor, plannedFor: w.plannedFor, planned: true,
+    deadline: w.deadline, section: 'life', lifeId: e.id, lifeKind: kind,
+  };
+  if (!t) await setDoc(doc(db, TASKS, tid), { ...f, done: false, position: 0, timeSpent: 0, countdownSecs: 0, createdAt: new Date().toISOString() });
+  else if (!t.done) await updateDoc(doc(db, TASKS, tid), f);
+  else if (freshRem && t.lifeClosed === true) await updateDoc(doc(db, TASKS, tid), { ...f, done: false, completedAt: null, lifeClosed: false });
+}
+async function touchTask(tid, w){
+  const t = await readTask(tid);
+  if (t && !t.done) await updateDoc(doc(db, TASKS, tid), { text: w.text, details: w.details });
+}
+// A reminder that's no longer wanted. One that hasn't come up yet is only in
+// Firestore, so it goes. One Personal already put on Today sits on its list,
+// and deleting it would leave a dead id there — so it's ticked off instead.
+async function closeTask(tid){
+  const t = await readTask(tid);
+  if (!t || t.done) return;
+  const notYet = t.planned === true && isDay(t.plannedFor) && t.plannedFor > today() && !t.pinnedUntilDone;
+  if (notYet) await deleteDoc(doc(db, TASKS, tid));
+  else await updateDoc(doc(db, TASKS, tid), { done: true, completedAt: new Date().toISOString(), lifeClosed: true });
+}
+// Bring one entry's reminders in line with what it wants. `remSync` on the
+// entry records what was last written, so an edit that doesn't touch the
+// schedule never re-creates a reminder you deleted in Personal. `force` (the
+// "Set it" button) checks Personal and puts back one that's gone.
+async function syncEntry(e, isCur, force){
+  const want = desiredFor(e, isCur);
+  const rs = { ...(e.remSync || {}) };
+  let dirty = false;
+  const made = { due: null, wty: null };
+  for (const kind of ['due', 'wty']) {
+    const w = want[kind], last = rs[kind] || null;
+    const tid = w ? taskIdFor(e, kind, w) : '';
+    if (last && (!w || last.id !== tid)) { await closeTask(last.id); delete rs[kind]; dirty = true; }
+    if (!w) continue;
+    const cur = rs[kind], sig = sigOf(w), txt = hashStr(w.text + '\u0001' + w.details);
+    if (!cur || cur.sig !== sig) {
+      await putTask(tid, e, kind, w, !cur);
+      rs[kind] = { id: tid, sig, txt }; dirty = true;
+      made[kind] = w;
+    } else if (force && !(await readTask(tid))) {
+      await putTask(tid, e, kind, w, false);
+      made[kind] = w;
+    } else if (cur.txt !== txt) {
+      await touchTask(tid, w);
+      rs[kind] = { id: tid, sig, txt }; dirty = true;
+    }
+  }
+  if (dirty) {
+    await updateDoc(doc(db, COL, e.id), { remSync: rs });
+    const local = entries.find(x => x.id === e.id);
+    if (local) local.remSync = rs;
+  }
+  return made;
+}
+// A whole series, read fresh from the server: older entries hand their
+// reminders back, then the newest one takes them.
+async function syncSeries(key, force){
+  if (!key) return { ok: true };
+  syncing.add(key); render();
+  try {
+    const snap = await getDocsFromServer(query(collection(db, COL), fsWhere('key', '==', key)));
+    const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const cur = list.reduce((a, b) => (!a || later(b, a)) ? b : a, null);
+    for (const e of list) if (e !== cur) await syncEntry(e, false);
+    const r = cur ? await syncEntry(cur, true, force) : { due: null, wty: null };
+    return { ok: true, made: r.due, madeWty: r.wty, cur };
+  } catch (err) {
+    console.warn('[life] reminder sync failed', key, err);
+    return { ok: false };
+  } finally {
+    syncing.delete(key); render();
+  }
+}
+// Is the reminder showing "done" in Personal? Only asked for ones whose day
+// has come, and once per page load (a save or Retry asks again).
+let _taskCheckT = 0;
+function scheduleTaskCheck(){ clearTimeout(_taskCheckT); _taskCheckT = setTimeout(checkTasks, 400); }
+async function checkTasks(){
+  const t = today(), ids = [];
+  for (const e of currentMap(entries).values()) {
+    const rs = e.remSync && e.remSync.due;
+    if (!rs || !rs.id || !e.again || e.dismissed || taskState.has(rs.id)) continue;
+    if (String(rs.sig || '').split('|')[0] > t) continue;
+    ids.push(rs.id);
+  }
+  if (!ids.length) return;
+  await Promise.all(ids.map(async tid => {
+    try {
+      const s = await getDocFromServer(doc(db, TASKS, tid));
+      const d = s.exists() ? s.data() : null, ms = d ? msOf(d.completedAt) : 0;
+      taskState.set(tid, { exists: !!d, done: !!(d && d.done), at: ms ? dkey(new Date(ms)) : '' });
+    } catch (err) { console.warn('[life] reminder check', tid, err); }
+  }));
+  render();
+}
+// What the detail view says about a reminder.
+function remInfo(e, kind, isCur){
+  const w = desiredFor(e, isCur)[kind];
+  if (!w) return null;
+  const rs = e.remSync && e.remSync[kind];
+  if (syncing.has(e.key)) return { cls: 'dim', html: I.bell + '<span>Setting the reminder…</span>' };
+  if (!rs || rs.id !== taskIdFor(e, kind, w) || rs.sig !== sigOf(w)) {
+    return { cls: 'warn', html: I.alert + `<span>Reminder isn’t in Personal yet ·</span><button class="lnk" type="button" data-act="retry" data-id="${esc(e.id)}">Set it</button>`, bad: true };
+  }
+  const st = taskState.get(rs.id);
+  if (st && !st.exists) return { cls: 'warn', html: I.alert + `<span>Removed from Personal ·</span><button class="lnk" type="button" data-act="retry" data-id="${esc(e.id)}">Put it back</button>`, bad: true };
+  if (st && st.done) return { cls: 'ok', html: I.check + `<span>Ticked off in Personal${st.at ? ' ' + fmt(st.at) : ''}</span>` };
+  if (w.plannedFor <= today()) return { cls: 'blue', html: I.bell + '<span>On your Personal list now</span>' };
+  return { cls: 'blue', html: I.bell + `<span>Shows up in Personal ${fmt(w.plannedFor, true)}</span>` };
+}
+
+/* =====================================================================
+   Photos — stored as downscaled JPEGs in their own docs
+   ===================================================================== */
+async function shrink(file){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = url; });
+    let max = 1800, q = 0.8, out = null;
+    for (let n = 0; n < 5; n++) {
+      const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * sc)), h = Math.max(1, Math.round(img.naturalHeight * sc));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+      const dataUrl = c.toDataURL('image/jpeg', q);
+      out = { dataUrl, w, h, bytes: Math.round((dataUrl.length - 23) * 3 / 4) };
+      if (dataUrl.length < 880000) return out;   // well inside Firestore's 1 MB per doc
+      max = Math.round(max * 0.8); q = Math.max(0.5, q - 0.08);
+    }
+    return null;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function photoSrc(id){
+  if (photoMem.has(id)) return photoMem.get(id);
+  let v = await IDB.get('photo:' + id);
+  if (!v) {
+    try { const s = await getDoc(doc(db, PHOTOS, id)); if (s.exists()) { v = s.data().b64 || ''; if (v) IDB.put('photo:' + id, v); } }
+    catch (err) { console.warn('[life] photo', id, err); }
+  }
+  if (v) photoMem.set(id, v);
+  return v || '';
+}
+function hydratePhotos(root){
+  root.querySelectorAll('img[data-pid]').forEach(async img => {
+    const src = await photoSrc(img.getAttribute('data-pid'));
+    if (src && img.isConnected) { img.src = src; const b = img.closest('.ph'); if (b) b.classList.add('ok'); }
+  });
+}
+
+/* =====================================================================
+   Rendering the page
+   ===================================================================== */
+function matches(e){
+  if (ui.cat !== 'all' && e.cat !== ui.cat) return false;
+  const q = ui.q.trim().toLowerCase();
+  if (!q) return true;
+  return [e.title, e.where, e.notes, cat(e.cat).label, fmt(e.date, true)].join(' ').toLowerCase().includes(q);
+}
+function derive(){
+  const t = today(), cur = currentMap(entries);
+  const due = [], wty = [];
+  for (const e of cur.values()) {
+    if (!matches(e)) continue;
+    if (e.again && isDay(e.again.due) && !e.dismissed) {
+      const rs = e.remSync && e.remSync.due, st = rs && taskState.get(rs.id);
+      const handled = !!(st && st.done && rs.sig === sigOf(desiredFor(e, true).due || { plannedFor: '', deadline: '' }));
+      due.push({ e, due: e.again.due, days: diffDays(t, e.again.due), handled, at: handled ? st.at : '' });
+    }
+    if (e.wty && isDay(e.wty.until)) {
+      const days = diffDays(t, e.wty.until);
+      if (days >= -30) wty.push({ e, until: e.wty.until, days });
+    }
+  }
+  due.sort((a, b) => (a.handled - b.handled) || a.due.localeCompare(b.due));
+  wty.sort((a, b) => a.until.localeCompare(b.until));
+  const log = entries.filter(matches).sort(byNewest);
+  return { cur, due, wty, log };
+}
+function rowIcon(e){ const c = cat(e.cat); return `<span class="ic" style="${catStyle(c)}">${c.icon}</span>`; }
+function bellGlyph(e, cur){
+  if (cur.get(e.key) !== e) return '';
+  const r = remInfo(e, 'due', true);
+  if (!r) return '';
+  return r.bad ? `<span class="warn" title="Reminder isn’t in Personal yet">${I.alert}</span>` : `<span class="bell" title="Reminder in Personal">${I.bell}</span>`;
+}
+function dueRowHTML(it, cur){
+  const e = it.e, id = esc(e.id), acts = [];
+  let pill;
+  if (it.handled) {
+    // Ticked off in Personal but not logged here: offer to log it (on the
+    // day it was ticked), or just let it go.
+    pill = `<span class="pill ok">${I.check}Done${it.at ? ' ' + fmt(it.at) : ''}</span>`;
+    acts.push(`<button class="mini go" type="button" data-act="again" data-id="${id}"${it.at ? ` data-date="${it.at}"` : ''}>Log it</button>`);
+    acts.push(`<button class="mini" type="button" data-act="dismiss" data-id="${id}">Dismiss</button>`);
+  } else {
+    pill = it.days < 0 ? `<span class="pill late">${span(it.days, e.again.due)} late</span>`
+      : it.days === 0 ? '<span class="pill late">Due today</span>'
+      : it.days === 1 ? '<span class="pill soon">Tomorrow</span>'
+      : `<span class="pill${it.days <= 30 ? ' soon' : ''}">in ${span(it.days)}</span>`;
+    const r = remInfo(e, 'due', true);
+    if (r && r.bad) acts.push(`<button class="mini" type="button" data-act="retry" data-id="${id}">${I.bell}Set reminder</button>`);
+    if (it.days <= 7) acts.push(`<button class="mini go" type="button" data-act="again" data-id="${id}">${I.check}Did it</button>`);
+  }
+  const sub = `Due ${fmt(it.due)} · last ${fmt(e.date)}${e.where ? ' at ' + esc(e.where) : ''}`;
+  return `<div class="row" role="button" tabindex="0" data-act="open" data-id="${id}">${rowIcon(e)}<div class="mn"><div class="t"><span class="tx">${esc(e.title)}</span>${bellGlyph(e, cur)}</div><div class="s">${sub}</div>${acts.length ? `<div class="acts">${acts.join('')}</div>` : ''}</div><div class="rt">${pill}</div></div>`;
+}
+function wtyRowHTML(it){
+  const e = it.e, total = Math.max(1, diffDays(e.date, it.until)), used = Math.min(1, Math.max(0, diffDays(e.date, today()) / total));
+  const ended = it.days < 0, soon = !ended && it.days <= 30;
+  const pill = ended ? `<span class="pill">Ended ${fmt(it.until)}</span>`
+    : it.days === 0 ? '<span class="pill soon">Ends today</span>'
+    : `<span class="pill ${soon ? 'soon' : 'ok'}">${span(it.days)} left</span>`;
+  const sub = [e.where ? esc(e.where) : '', 'until ' + fmt(it.until, true)].filter(Boolean).join(' · ');
+  return `<div class="row" role="button" tabindex="0" data-act="open" data-id="${esc(e.id)}">${rowIcon(e)}<div class="mn"><div class="t"><span class="tx">${esc(e.title)}</span></div><div class="s">${sub}</div><div class="bar${ended ? ' end' : soon ? ' soon' : ''}"><i style="width:${(used * 100).toFixed(1)}%"></i></div></div><div class="rt">${pill}</div></div>`;
+}
+function logRowHTML(e, cur){
+  const bits = [];
+  if (e.where) bits.push(esc(e.where));
+  if (typeof e.cost === 'number') bits.push(money(e.cost));
+  if (typeof e.miles === 'number') bits.push(e.miles.toLocaleString('en-US') + ' mi');
+  const isCur = cur.get(e.key) === e, t = today();
+  const g = [];
+  if (isCur && e.again && isDay(e.again.due) && !e.dismissed) g.push(`<span title="Due again ${fmt(e.again.due, true)}">${I.repeat}</span>`);
+  if (isCur && e.wty && isDay(e.wty.until) && e.wty.until >= t) g.push(`<span class="g-ok" title="Under warranty until ${fmt(e.wty.until, true)}">${I.shield}</span>`);
+  if (e.photos && e.photos.length) g.push(`<span title="${e.photos.length} photo${e.photos.length > 1 ? 's' : ''}">${I.camera}</span>`);
+  return `<div class="row" role="button" tabindex="0" data-act="open" data-id="${esc(e.id)}">${rowIcon(e)}<div class="mn"><div class="t"><span class="tx">${esc(e.title)}</span></div><div class="s">${bits.join(' · ') || cat(e.cat).label}</div></div><div class="rt"><span class="date">${fmt(e.date)}</span>${g.length ? `<span class="glyphs">${g.join('')}</span>` : ''}</div></div>`;
+}
+function logHTML(list, cur){
+  const years = new Map();
+  for (const e of list) { const y = e.date.slice(0, 4); if (!years.has(y)) years.set(y, []); years.get(y).push(e); }
+  let h = '';
+  for (const [y, arr] of years) {
+    const total = arr.reduce((s, e) => s + (typeof e.cost === 'number' ? e.cost : 0), 0);
+    h += `<div class="yr"><span>${y}</span>${total ? `<span>${money(total)}</span>` : ''}</div><div class="card">${arr.map(e => logRowHTML(e, cur)).join('')}</div>`;
+  }
+  return h;
+}
+function summaryHTML(d){
+  if (!entries.length) return fresh ? 'Log what you did — get a nudge in Personal when it’s due again.' : 'Loading…';
+  const bits = [];
+  const late = d.due.filter(i => !i.handled && i.days < 0);
+  if (late.length === 1) bits.push(`<span class="late">${esc(late[0].e.title)} is ${span(late[0].days, late[0].due)} overdue</span>`);
+  else if (late.length > 1) bits.push(`<span class="late">${late.length} things overdue</span>`);
+  else {
+    const n = d.due.find(i => !i.handled && i.days >= 0);
+    if (n) bits.push(`Next: ${esc(n.e.title)} ${n.days === 0 ? 'today' : n.days === 1 ? 'tomorrow' : fmt(n.due)}`);
+  }
+  const act = d.wty.filter(i => i.days >= 0).length;
+  if (act) bits.push(`${act} under warranty`);
+  if (!bits.length) bits.push(`${entries.length} logged`);
+  return bits.join(' · ');
+}
+const skel = n => `<div class="card">${'<div class="sk"></div>'.repeat(n)}</div>`;
+function render(){
+  const d = derive(), loading = !entries.length && !fresh && !loadErr;
+  $('#sub').innerHTML = summaryHTML(d);
+  const ban = $('#banner');
+  ban.hidden = !loadErr;
+  if (loadErr) ban.innerHTML = I.alert + `<span>${esc(loadErr)}</span>`;
+  // Search and filters only once there's something to sift.
+  const inUse = CATS.filter(c => entries.some(e => e.cat === c.id));
+  const showTools = entries.length >= 6 || inUse.length >= 2;
+  $('#tools').hidden = !showTools;
+  if (showTools) {
+    if (ui.cat !== 'all' && !inUse.some(c => c.id === ui.cat)) ui.cat = 'all';
+    $('#chips').classList.toggle('many', inUse.length >= 4);
+    $('#chips').innerHTML = `<button class="chip${ui.cat === 'all' ? ' on' : ''}" type="button" data-act="filter" data-v="all"><span class="chip-l">All</span></button>`
+      + inUse.map(c => `<button class="chip${ui.cat === c.id ? ' on' : ''}" type="button" data-act="filter" data-v="${c.id}" style="${catStyle(c)}" aria-label="${c.label}">${c.icon}<span class="chip-l">${c.label}</span></button>`).join('');
+  }
+  const empty = fresh && !entries.length && !loadErr;
+  $('#hero').hidden = !empty;
+  $('#grid').hidden = empty;
+  renderLists();
+  if (empty) {
+    $('#hero').innerHTML = `<div class="card hero"><div class="hi">${I.log}</div><h2>Start your life log</h2><p>Oil changes, batteries, dentist cleanings, renewals — log it once, and Personal reminds you when it’s due again. Warranties and receipts stay here for when you need them.</p><div class="quick">${QUICK.map((q, i) => { const c = cat(q.cat); return `<button class="chip" type="button" data-act="quick" data-i="${i}" style="${catStyle(c)}">${c.icon}<span class="chip-l">${esc(q.title)}</span></button>`; }).join('')}</div></div>`;
+    renderSheetIfOpen();
+    return;
+  }
+  const filtering = ui.q.trim() || ui.cat !== 'all';
+  $('#dueN').textContent = d.due.length ? d.due.length : '';
+  $('#dueList').innerHTML = loading ? skel(2)
+    : d.due.length ? `<div class="card">${d.due.map(it => dueRowHTML(it, d.cur)).join('')}</div>`
+    : `<div class="card"><div class="empty">${filtering ? 'Nothing due matches.' : 'Nothing due. When you log something, pick <b>Do it again</b> — every 6 months, every year — and Personal reminds you when it’s time.'}</div></div>`;
+  $('#wtyN').textContent = d.wty.length ? d.wty.length : '';
+  $('#wtyList').innerHTML = loading ? skel(1)
+    : d.wty.length ? `<div class="card">${d.wty.map(wtyRowHTML).join('')}</div>`
+    : `<div class="card"><div class="empty">${filtering ? 'No warranties match.' : 'No warranties yet. Add one when you log something that has one — a battery, tires, a laptop.'}</div></div>`;
+  $('#logN').textContent = d.log.length ? d.log.length : '';
+  $('#logList').innerHTML = loading ? skel(3)
+    : d.log.length ? logHTML(d.log, d.cur)
+    : `<div class="card"><div class="empty">${filtering ? 'Nothing matches.' : 'Nothing logged yet.'}</div></div>`;
+  renderSheetIfOpen();
+}
+// Suggestions for the form: what you've logged before, then the usual things.
+function renderLists(){
+  const seen = new Set(), titles = [], wheres = [];
+  for (const e of entries.slice().sort(byNewest)) {
+    if (!seen.has(e.key)) { seen.add(e.key); titles.push(e.title); }
+    if (e.where && !wheres.some(w => w.toLowerCase() === e.where.toLowerCase())) wheres.push(e.where);
+  }
+  ['Oil change', 'Tire rotation', 'Car battery', 'Brake pads', 'State inspection', 'Registration renewal', 'Car insurance', 'Dentist cleaning', 'Eye exam', 'Physical', 'Flu shot', 'HVAC filter', 'Smoke detector batteries', 'Water filter', 'Passport', 'Driver’s license']
+    .forEach(t => { const k = keyOf(t); if (!seen.has(k)) { seen.add(k); titles.push(t); } });
+  $('#dlTitles').innerHTML = titles.map(t => `<option value="${esc(t)}">`).join('');
+  $('#dlWhere').innerHTML = wheres.map(w => `<option value="${esc(w)}">`).join('');
+}
+
+/* =====================================================================
+   The sheet
+   ===================================================================== */
+function openSheet(html){
+  const sh = $('#sheet');
+  sh.innerHTML = html; sh.hidden = false; $('#scrim').hidden = false;
+  document.body.classList.add('sheet-open');
+  sh.scrollTop = 0;
+}
+function closeSheet(force){
+  if (F && F.busy && !force) return;
+  F = null; D = null;
+  const sh = $('#sheet');
+  sh.hidden = true; sh.innerHTML = ''; $('#scrim').hidden = true;
+  document.body.classList.remove('sheet-open');
+}
+// A snapshot while the detail is open redraws it (reminder status, new
+// photos) without losing your place; the form is left alone.
+function renderSheetIfOpen(){
+  if (!D) return;
+  const e = entries.find(x => x.id === D.id);
+  if (!e) { closeSheet(true); return; }
+  const body = $('#sheet .sh-body'), top = body ? body.scrollTop : 0;
+  $('#sheet').innerHTML = detailHTML(e);
+  const nb = $('#sheet .sh-body'); if (nb) nb.scrollTop = top;
+  hydratePhotos($('#sheet'));
+}
+
+// ---- detail ----
+function openDetail(id){
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  F = null; D = { id, arm: false };
+  openSheet(detailHTML(e));
+  hydratePhotos($('#sheet'));
+  scheduleTaskCheck();
+}
+const kv = (k, v) => `<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+function detailHTML(e){
+  const c = cat(e.cat), t = today(), cur = currentMap(entries), isCur = cur.get(e.key) === e;
+  const chips = [], rows = [];
+  if (e.where) rows.push(kv('Where', esc(e.where)));
+  if (typeof e.cost === 'number') rows.push(kv('Cost', money(e.cost)));
+  if (typeof e.miles === 'number') rows.push(kv('Odometer', e.miles.toLocaleString('en-US') + ' mi'));
+  if (e.again && isDay(e.again.due)) {
+    const n = diffDays(t, e.again.due);
+    let v = `<b>${fmtLong(e.again.due)}</b> <span class="dim">· ${n === 0 ? 'today' : n > 0 ? 'in ' + span(n) : span(n, e.again.due) + ' ago'}</span>`;
+    if (!isCur) v += '<div class="sm dim">Done again since — see the newer entry</div>';
+    else if (e.dismissed) v += '<div class="sm dim">Dismissed</div>';
+    else {
+      const r = remInfo(e, 'due', true);
+      v += r ? `<div class="sm ${r.cls}">${r.html}</div>` : '<div class="sm dim">No reminder</div>';
+      chips.push(n < 0 ? `<span class="pill late">${I.repeat}Due ${fmt(e.again.due)} · ${span(n, e.again.due)} late</span>` : `<span class="pill${n <= 30 ? ' soon' : ''}">${I.repeat}Due again ${fmt(e.again.due)}</span>`);
+    }
+    rows.push(kv('Next time', v));
+  }
+  if (e.wty && isDay(e.wty.until)) {
+    const n = diffDays(t, e.wty.until);
+    let v = `Until <b>${fmtLong(e.wty.until)}</b> <span class="dim">· ${n > 0 ? span(n) + ' left' : n === 0 ? 'ends today' : 'ended'}</span>`
+      + `<div class="sm dim">${TERM_WORDS[e.wty.term] ? TERM_WORDS[e.wty.term] + ' warranty' : 'Warranty'} from ${fmt(e.date, true)}</div>`;
+    if (isCur && n >= 0) {
+      const r = remInfo(e, 'wty', true);
+      if (r) v += `<div class="sm ${r.cls}">${r.html}</div>`;
+      chips.push(`<span class="pill ${n <= 30 ? 'soon' : 'ok'}">${I.shield}Under warranty</span>`);
+    }
+    rows.push(kv('Warranty', v));
+  }
+  if (e.notes) rows.push(kv('Notes', `<div class="notes">${esc(e.notes)}</div>`));
+  if (e.photos && e.photos.length) rows.push(kv('Photos', `<div class="photos">${e.photos.map(p => `<button class="ph" type="button" data-act="photo" data-id="${esc(p.id)}" aria-label="Open photo"><img data-pid="${esc(p.id)}" alt=""></button>`).join('')}</div>`));
+  const earlier = entries.filter(x => x.key === e.key && x.id !== e.id).sort(byNewest);
+  const hist = earlier.length ? `<div class="earlier"><div class="k">${isCur ? 'Earlier' : 'Other times'}</div>${earlier.map(x => `<button class="erow" type="button" data-act="open" data-id="${esc(x.id)}"><span class="d">${fmt(x.date, true)}</span><span class="w">${esc([x.where, typeof x.cost === 'number' ? money(x.cost) : ''].filter(Boolean).join(' · ') || '—')}</span></button>`).join('')}</div>` : '';
+  return `<div class="sh-head"><span class="ic" style="${catStyle(c)}">${c.icon}</span><div class="hd"><h3 id="shTitle">${esc(e.title)}</h3><div class="hs">${c.label} · ${fmtLong(e.date)}${e.date === t ? ' · today' : ''}</div></div><button class="x" type="button" data-act="close" aria-label="Close">${I.x}</button></div>`
+    + `<div class="sh-body">${chips.length ? `<div class="chiprow">${chips.join('')}</div>` : ''}${rows.join('') || '<div class="empty" style="padding-left:0">Nothing else noted.</div>'}${hist}</div>`
+    + `<div class="sh-foot"><button class="btn danger${D && D.arm ? ' arm' : ''}" type="button" data-act="delete" data-id="${esc(e.id)}">${D && D.arm ? 'Delete it?' : 'Delete'}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="edit" data-id="${esc(e.id)}">Edit</button><button class="btn primary" type="button" data-act="again" data-id="${esc(e.id)}">Log again</button></div>`;
+}
+
+// ---- form ----
+function openForm(o = {}){
+  const ed = o.edit ? entries.find(x => x.id === o.edit) : null;
+  const src = !ed && o.againFrom ? entries.find(x => x.id === o.againFrom) : null;
+  const base = ed || src;
+  const every = base && base.again ? (base.again.every === 'date' && !ed ? '' : base.again.every) : (o.every || '');
+  F = {
+    id: ed ? ed.id : null,
+    headline: ed ? 'Edit' : src ? 'Log it again' : 'Log something',
+    title: base ? base.title : (o.title || ''),
+    cat: base ? base.cat : (o.cat || ''), catTouched: !!(base || o.cat),
+    date: ed ? ed.date : (isDay(o.date) && o.date <= today() ? o.date : today()),
+    where: base ? (base.where || '') : '',
+    cost: ed && typeof ed.cost === 'number' ? String(ed.cost) : '',
+    miles: ed && typeof ed.miles === 'number' ? String(ed.miles) : '',
+    notes: ed ? (ed.notes || '') : '',
+    every, everyTouched: !!(base || o.every),
+    againDate: ed && ed.again && ed.again.every === 'date' ? ed.again.due : '',
+    lead: base && base.again && Number(base.again.lead) >= -1 ? Number(base.again.lead) : 0,
+    wterm: ed && ed.wty ? ed.wty.term : (o.wterm || ''),
+    wdate: ed && ed.wty && ed.wty.term === 'date' ? ed.wty.until : '',
+    wremind: !!(ed && ed.wty && ed.wty.remind),
+    photos: ed ? (ed.photos || []).slice() : [], added: [], removed: new Set(),
+    busy: false,
+  };
+  if (!F.cat) F.cat = guessCat(F.title) || 'other';
+  D = null;
+  openSheet(formHTML());
+  updCats(); updAgain(); updWty(); updPhotos(); updSave();
+  const ti = $('#fTitle');
+  if (ti && !F.title) setTimeout(() => ti.focus(), 60);
+}
+const optsHTML = (list, act, cur) => list.map(([v, l, sh]) => `<button class="opt" type="button" data-act="${act}" data-v="${v}" aria-pressed="${String(v) === String(cur)}"${sh ? ` aria-label="${l}"` : ''}>${sh ? `<span class="lf">${l}</span><span class="ls">${sh}</span>` : l}</button>`).join('');
+function formHTML(){
+  return `<div class="sh-head"><div class="hd"><h3 id="shTitle">${F.headline}</h3></div><button class="x" type="button" data-act="close" aria-label="Close">${I.x}</button></div>
+  <div class="sh-body">
+    <div class="f">
+      <input class="in title-in" id="fTitle" list="dlTitles" placeholder="What did you do?" value="${esc(F.title)}" maxlength="120" autocomplete="off" enterkeyhint="next" aria-label="What did you do?">
+      <div class="opts cats" id="fCats">${CATS.map(c => `<button class="opt cat" type="button" data-act="f-cat" data-v="${c.id}" style="${catStyle(c)}">${c.icon}<span>${c.label}</span></button>`).join('')}</div>
+    </div>
+    <div class="f two">
+      <label><span class="lbl">When</span><input class="in" type="date" id="fDate" value="${F.date}" max="${today()}"></label>
+      <label><span class="lbl">Where</span><input class="in" id="fWhere" list="dlWhere" placeholder="Shop, office, store" value="${esc(F.where)}" maxlength="80" autocomplete="off"></label>
+    </div>
+    <div class="f two">
+      <label><span class="lbl">Cost</span><span class="pre"><i>$</i><input class="in" id="fCost" inputmode="decimal" placeholder="0" value="${esc(F.cost)}" autocomplete="off"></span></label>
+      <label id="fMilesWrap"><span class="lbl">Odometer</span><input class="in" id="fMiles" inputmode="numeric" placeholder="Miles" value="${esc(F.miles)}" autocomplete="off"></label>
+    </div>
+    <div class="f">
+      <span class="lbl">${I.repeat}Do it again</span>
+      <div class="opts" id="fEvery">${optsHTML(EVERY, 'f-every', F.every)}</div>
+      <input class="in date-in" type="date" id="fAgainDate" value="${F.againDate}" aria-label="Due again on" hidden>
+      <div class="calc" id="fAgainCalc" hidden></div>
+      <div id="fLeadWrap" hidden>
+        <span class="lbl lead">${I.bell}Remind me in Personal</span>
+        <div class="opts" id="fLead">${optsHTML(LEAD, 'f-lead', F.lead)}</div>
+        <div class="calc blue" id="fLeadCalc"></div>
+      </div>
+    </div>
+    <div class="f">
+      <span class="lbl">${I.shield}Warranty</span>
+      <div class="opts" id="fWty">${optsHTML(WTY, 'f-wty', F.wterm)}</div>
+      <input class="in date-in" type="date" id="fWtyDate" value="${F.wdate}" aria-label="Warranty ends on" hidden>
+      <div class="calc ok" id="fWtyCalc" hidden></div>
+      <label class="check" id="fWRemWrap" hidden><input type="checkbox" id="fWRem"${F.wremind ? ' checked' : ''}><span>Remind me in Personal a month before it ends</span></label>
+    </div>
+    <div class="f">
+      <label for="fNotes" class="lbl">Notes</label>
+      <textarea class="in" id="fNotes" rows="2" placeholder="Receipt #, part number, who to call…" maxlength="4000">${esc(F.notes)}</textarea>
+    </div>
+    <div class="f">
+      <span class="lbl">${I.camera}Receipt or photos</span>
+      <div class="photos" id="fPhotos"></div>
+    </div>
+  </div>
+  <div class="sh-foot"><span class="grow"></span><button class="btn ghost" type="button" data-act="close">Cancel</button><button class="btn primary" type="button" data-act="save" id="fSave">Save</button></div>`;
+}
+function setOpts(sel, v){ document.querySelectorAll(sel + ' .opt').forEach(b => b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === String(v)))); document.querySelectorAll(sel + ' .opt').forEach(b => b.classList.toggle('on', b.getAttribute('data-v') === String(v))); }
+function updCats(){
+  setOpts('#fCats', F.cat);
+  const mw = $('#fMilesWrap'); if (mw) mw.style.visibility = F.cat === 'car' ? '' : 'hidden';
+}
+function againDue(){
+  if (!F.every) return '';
+  if (F.every === 'date') return isDay(F.againDate) ? F.againDate : '';
+  return applyTerm(F.date, F.every);
+}
+function updAgain(){
+  setOpts('#fEvery', F.every);
+  const di = $('#fAgainDate'), calc = $('#fAgainCalc'), lw = $('#fLeadWrap');
+  di.hidden = F.every !== 'date';
+  if (isDay(F.date)) di.min = addDays(F.date, 1);
+  const due = againDue(), t = today();
+  calc.hidden = !due; lw.hidden = !due;
+  if (!due) return;
+  const n = diffDays(t, due);
+  calc.innerHTML = I.repeat + `<span>Next one <b>${fmtLong(due)}</b> · ${n === 0 ? 'today' : n > 0 ? 'in ' + span(n) : `<span style="color:var(--red)">${span(n, due)} ago</span>`}</span>`;
+  setOpts('#fLead', F.lead);
+  const lc = $('#fLeadCalc');
+  if (F.lead < 0) { lc.className = 'calc'; lc.innerHTML = '<span>It still shows under Coming up here.</span>'; return; }
+  const on = addDays(due, -F.lead);
+  lc.className = 'calc blue';
+  lc.innerHTML = I.bell + (on <= t ? '<span>Goes on your Personal list <b>right away</b></span>' : `<span>Shows up in Personal <b>${fmtLong(on)}</b>, then stays on top of Today until you tick it</span>`);
+}
+function wtyUntil(){
+  if (!F.wterm) return '';
+  if (F.wterm === 'date') return isDay(F.wdate) ? F.wdate : '';
+  return applyTerm(F.date, F.wterm);
+}
+function updWty(){
+  setOpts('#fWty', F.wterm);
+  const di = $('#fWtyDate'), calc = $('#fWtyCalc'), rw = $('#fWRemWrap');
+  di.hidden = F.wterm !== 'date';
+  if (isDay(F.date)) di.min = addDays(F.date, 1);
+  const u = wtyUntil();
+  calc.hidden = !u; rw.hidden = !u;
+  if (!u) return;
+  const n = diffDays(today(), u);
+  calc.innerHTML = I.shield + `<span>Covered until <b>${fmtLong(u)}</b>${n >= 0 ? ' · ' + span(n) + ' left' : ' · <span style="color:var(--red)">already ended</span>'}</span>`;
+}
+function updPhotos(){
+  const box = $('#fPhotos'); if (!box) return;
+  const kept = F.photos.filter(p => !F.removed.has(p.id));
+  box.innerHTML = kept.map(p => `<div class="ph"><img data-pid="${esc(p.id)}" alt=""><button class="rm" type="button" data-act="f-rmphoto" data-id="${esc(p.id)}" aria-label="Remove photo">${I.x}</button></div>`).join('')
+    + F.added.map(p => `<div class="ph ok"><img src="${p.dataUrl}" alt=""><button class="rm" type="button" data-act="f-rmadded" data-id="${esc(p.tmp)}" aria-label="Remove photo">${I.x}</button></div>`).join('')
+    + (kept.length + F.added.length < 6 ? `<button class="add-ph" type="button" data-act="f-addphoto">${I.camera}<span>Add</span></button>` : '');
+  hydratePhotos(box);
+}
+function updSave(){ const b = $('#fSave'); if (b) { b.disabled = !F.title.trim() || F.busy; b.textContent = F.busy ? 'Saving…' : 'Save'; } }
+// Typing a name fills in what's probably right — the category, and the
+// rhythm you used last time (or the usual one) — until you pick your own.
+function onTitle(v){
+  F.title = v;
+  const k = keyOf(v);
+  const last = k ? entries.filter(e => e.key === k).sort(byNewest)[0] : null;
+  if (!F.catTouched) { F.cat = last ? last.cat : (guessCat(v) || 'other'); updCats(); }
+  if (!F.everyTouched) {
+    const pre = last ? (last.again && last.again.every !== 'date' ? last.again.every : '') : presetEvery(v);
+    if (pre !== F.every) { F.every = pre; if (last && last.again) F.lead = Number(last.again.lead) || 0; updAgain(); }
+  }
+  updSave();
+}
+async function addPhotos(files){
+  const room = 6 - (F.photos.filter(p => !F.removed.has(p.id)).length + F.added.length);
+  const list = [...files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(f.name)).slice(0, Math.max(0, room));
+  if (!list.length) return;
+  for (const f of list) {
+    try {
+      const p = await shrink(f);
+      if (!F) return;
+      if (!p) { toast('That photo is too big to store — try a smaller one'); continue; }
+      F.added.push({ tmp: newId(), ...p });
+      updPhotos();
+    } catch (err) { console.warn('[life] photo read', err); toast('Couldn’t read that photo — try a JPG or PNG'); }
+  }
+}
+const numOrNull = v => { const n = parseFloat(String(v || '').replace(/[$,\s]/g, '')); return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; };
+const intOrNull = v => { const n = parseInt(String(v || '').replace(/[,\s]/g, ''), 10); return isFinite(n) && n >= 0 ? n : null; };
+async function saveForm(){
+  if (!F || F.busy) return;
+  const title = F.title.replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!title) { toast('Give it a name'); $('#fTitle')?.focus(); return; }
+  if (!isDay(F.date)) { toast('Pick the date'); return; }
+  if (F.date > today()) { toast('That date is in the future — log it once it’s done'); return; }
+  const due = againDue();
+  if (F.every && !due) { toast('Pick when it’s due again'); return; }
+  if (due && due <= F.date) { toast('“Do it again” has to be after the date you did it'); return; }
+  const until = wtyUntil();
+  if (F.wterm && !until) { toast('Pick when the warranty ends'); return; }
+  if (until && until <= F.date) { toast('The warranty has to end after the date you got it'); return; }
+  F.busy = true; updSave();
+  const f = F, prev = f.id ? entries.find(x => x.id === f.id) : null, id = f.id || newId(), now = new Date().toISOString();
+  // A write waits for the server; on bad signal say so rather than spin.
+  const slow = setTimeout(() => toast('Still saving — weak signal? Keep this open and it’ll finish.', 5000), 8000);
+  try {
+    const photos = f.photos.filter(p => !f.removed.has(p.id));
+    for (const p of f.added) {
+      const pid = newId();
+      await setDoc(doc(db, PHOTOS, pid), { id: pid, entryId: id, b64: p.dataUrl, w: p.w, h: p.h, bytes: p.bytes, ts: Date.now() });
+      photoMem.set(pid, p.dataUrl); IDB.put('photo:' + pid, p.dataUrl);
+      photos.push({ id: pid, w: p.w, h: p.h, bytes: p.bytes });
+    }
+    const again = due ? { every: f.every, due, lead: f.lead } : null;
+    const e = {
+      id, key: keyOf(title), title, cat: f.cat, date: f.date,
+      where: f.where.replace(/\s+/g, ' ').trim().slice(0, 80),
+      cost: numOrNull(f.cost), miles: f.cat === 'car' ? intOrNull(f.miles) : null,
+      notes: f.notes.trim().slice(0, 4000),
+      again, wty: until ? { term: f.wterm, until, remind: !!f.wremind } : null,
+      photos,
+      // A dismissal is about that one due date: a new date brings it back.
+      dismissed: prev && prev.dismissed && prev.again && again && prev.again.due === again.due ? prev.dismissed : '',
+      remSync: (prev && prev.remSync) || {},
+      createdAt: (prev && prev.createdAt) || now, updatedAt: now,
+    };
+    await setDoc(doc(db, COL, id), e);
+    clearTimeout(slow);
+    const i = entries.findIndex(x => x.id === id);
+    if (i >= 0) entries[i] = e; else entries.push(e);
+    for (const pid of f.removed) { deleteDoc(doc(db, PHOTOS, pid)).catch(() => {}); IDB.del('photo:' + pid); photoMem.delete(pid); }
+    f.busy = false;
+    closeSheet(true);
+    render();
+    const keys = [e.key];
+    if (prev && prev.key !== e.key) keys.push(prev.key);
+    let res = { ok: true };
+    for (const k of keys) { const r = await syncSeries(k); if (k === e.key) res = r; else if (!r.ok) res = { ok: false }; }
+    if (!res.ok) toast('Saved — but the reminder didn’t reach Personal. Open it and tap “Set it”.', 4200);
+    else if (res.made && res.cur && res.cur.id === id) toast(`${prev ? 'Saved' : 'Logged'} · Personal reminds you ${res.made.plannedFor <= today() ? 'now' : fmt(res.made.plannedFor, true)}`, 3400);
+    else if (res.madeWty && res.cur && res.cur.id === id) toast(`${prev ? 'Saved' : 'Logged'} · warranty heads-up in Personal ${res.madeWty.plannedFor <= today() ? 'now' : fmt(res.madeWty.plannedFor, true)}`, 3400);
+    else if (prev && res.cur && res.cur.id !== id && prev.key === e.key) toast('Saved');
+    else toast(prev ? 'Saved' : 'Logged');
+    scheduleTaskCheck();
+  } catch (err) {
+    clearTimeout(slow);
+    console.error('[life] save failed', err);
+    f.busy = false;
+    if (F === f) updSave();
+    toast('Couldn’t save — check your connection and try again', 3600);
+  }
+}
+
+// ---- actions ----
+async function deleteEntry(id){
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  closeSheet(true);
+  try {
+    // Its reminders go first, so a failed delete can't strand one in Personal.
+    await syncEntry(e, false);
+    await deleteDoc(doc(db, COL, id));
+    entries = entries.filter(x => x.id !== id);
+    render();
+    for (const p of e.photos || []) { deleteDoc(doc(db, PHOTOS, p.id)).catch(() => {}); IDB.del('photo:' + p.id); photoMem.delete(p.id); }
+    // The one before it may be the newest again, and take the reminder back.
+    const r = await syncSeries(e.key);
+    toast(r.ok ? 'Deleted' : 'Deleted — but a reminder didn’t update. Open the item and tap “Set it”.', r.ok ? 2400 : 4200);
+  } catch (err) {
+    console.error('[life] delete failed', err);
+    toast('Couldn’t delete — check your connection and try again', 3600);
+  }
+}
+async function dismiss(id){
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  try {
+    await updateDoc(doc(db, COL, id), { dismissed: today() });
+    e.dismissed = today(); render();
+    await syncSeries(e.key);
+    toast('Dismissed — it’s still in History');
+  } catch (err) { console.warn('[life] dismiss', err); toast('Couldn’t update that — try again'); }
+}
+async function retry(id){
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  const r = await syncSeries(e.key, true);
+  toast(r.ok ? 'Reminder is in Personal' : 'Still couldn’t reach Personal — check your connection', 3000);
+  scheduleTaskCheck();
+}
+function openPhoto(id){
+  photoSrc(id).then(src => {
+    if (!src) { toast('Couldn’t load that photo'); return; }
+    $('#lbImg').src = src; $('#lb').hidden = false;
+  });
+}
+
+/* =====================================================================
+   Wiring
+   ===================================================================== */
+let toastT = 0;
+function toast(msg, ms = 2600){
+  const el = $('#toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), ms);
+}
+// A stray tap outside the form, or Esc, never throws away what you typed.
+function softClose(){
+  if (F && F.dirty) { toast('Tap Cancel to close without saving'); return; }
+  closeSheet();
+}
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-act]');
+  if (!b) { if (ev.target === $('#scrim')) softClose(); return; }
+  if (F && /^f-/.test(b.getAttribute('data-act'))) F.dirty = true;
+  const act = b.getAttribute('data-act'), id = b.getAttribute('data-id'), v = b.getAttribute('data-v');
+  if (act !== 'delete' && D && D.arm) { D.arm = false; }
+  switch (act) {
+    case 'add': openForm(); break;
+    case 'quick': { const q = QUICK[+b.getAttribute('data-i')]; if (q) openForm({ title: q.title, cat: q.cat, every: q.every, wterm: q.wterm }); break; }
+    case 'open': openDetail(id); break;
+    case 'again': openForm({ againFrom: id, date: b.getAttribute('data-date') || '' }); break;
+    case 'edit': openForm({ edit: id }); break;
+    case 'dismiss': dismiss(id); break;
+    case 'retry': retry(id); break;
+    case 'filter': ui.cat = v || 'all'; render(); break;
+    case 'close': closeSheet(); break;
+    case 'photo': openPhoto(id); break;
+    case 'lb-close': $('#lb').hidden = true; $('#lbImg').removeAttribute('src'); break;
+    case 'delete':
+      if (!D) break;
+      if (!D.arm) { D.arm = true; renderSheetIfOpen(); setTimeout(() => { if (D && D.arm) { D.arm = false; renderSheetIfOpen(); } }, 4000); }
+      else deleteEntry(id);
+      break;
+    case 'f-cat': if (F) { F.cat = v; F.catTouched = true; updCats(); } break;
+    case 'f-every':
+      if (F) {
+        F.every = v; F.everyTouched = true; updAgain();
+        if (v === 'date') { const di = $('#fAgainDate'); try { di.showPicker(); } catch { di.focus(); } }
+      }
+      break;
+    case 'f-lead': if (F) { F.lead = Number(v); updAgain(); } break;
+    case 'f-wty':
+      if (F) {
+        F.wterm = v; updWty();
+        if (v === 'date') { const di = $('#fWtyDate'); try { di.showPicker(); } catch { di.focus(); } }
+      }
+      break;
+    case 'f-addphoto': $('#fFile').click(); break;
+    case 'f-rmphoto': if (F) { F.removed.add(id); updPhotos(); } break;
+    case 'f-rmadded': if (F) { F.added = F.added.filter(p => p.tmp !== id); updPhotos(); } break;
+    case 'save': saveForm(); break;
+  }
+});
+document.addEventListener('input', ev => {
+  const t = ev.target;
+  if (t.id === 'q') { ui.q = t.value; render(); return; }
+  if (!F) return;
+  F.dirty = true;
+  switch (t.id) {
+    case 'fTitle': onTitle(t.value); break;
+    case 'fWhere': F.where = t.value; break;
+    case 'fCost': F.cost = t.value; break;
+    case 'fMiles': F.miles = t.value; break;
+    case 'fNotes': F.notes = t.value; break;
+  }
+});
+document.addEventListener('change', ev => {
+  const t = ev.target;
+  if (t.id === 'fFile') { const fs = [...(t.files || [])]; t.value = ''; if (F) { F.dirty = true; addPhotos(fs); } return; }
+  if (!F) return;
+  F.dirty = true;
+  switch (t.id) {
+    case 'fDate': if (isDay(t.value)) { F.date = t.value; updAgain(); updWty(); } break;
+    case 'fAgainDate': F.againDate = t.value; updAgain(); break;
+    case 'fWtyDate': F.wdate = t.value; updWty(); break;
+    case 'fWRem': F.wremind = t.checked; break;
+  }
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') {
+    if (!$('#lb').hidden) { $('#lb').hidden = true; return; }
+    if (!$('#sheet').hidden) { softClose(); return; }
+  }
+  if (F && ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); saveForm(); return; }
+  if (F && ev.key === 'Enter' && ev.target.id === 'fTitle') { ev.preventDefault(); $('#fWhere')?.focus(); return; }
+  if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('.row[role=button]')) { ev.preventDefault(); ev.target.click(); }
+});
+$('#lb').addEventListener('click', ev => { if (ev.target === $('#lb')) { $('#lb').hidden = true; $('#lbImg').removeAttribute('src'); } });
+
+/* =====================================================================
+   Boot
+   ===================================================================== */
+$('#addBtn').innerHTML = I.plus + '<span>Log</span>';
+$('#searchIc').outerHTML = I.search;
+$('#lb .x').innerHTML = I.x;
+$('#foot').textContent = 'Life log · build ' + BUILD;
+if (new URLSearchParams(location.search).has('embed')) document.body.classList.add('embed');
+render();
+IDB.get('entries').then(cached => {
+  if (Array.isArray(cached) && !fresh && cached.length) { entries = cached; render(); }
+});
+onSnapshot(collection(db, COL), snap => {
+  // A cache-only answer (offline) never blanks the copy already painted.
+  if (snap.metadata.fromCache && !snap.size && entries.length) return;
+  entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if (!snap.metadata.fromCache) {
+    fresh = true; loadErr = '';
+    IDB.put('entries', entries);
+    scheduleTaskCheck();
+  }
+  render();
+}, err => {
+  console.error('[life] load failed', err);
+  loadErr = /quota|resource-exhausted/i.test(String(err && (err.code || err.message))) ? 'The database is over its daily limit — showing the copy saved on this device.' : 'Couldn’t reach the database — showing the copy saved on this device.';
+  fresh = true;
+  render();
+});
+// Tick-offs in Personal while this page sat in the background.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !fresh) return;
+  for (const [tid, st] of taskState) if (!st.done) taskState.delete(tid);
+  scheduleTaskCheck();
+});
+// Midnight: "in 3 days" becomes "in 2 days".
+(function atMidnight(){
+  const n = new Date(), m = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1, 0, 0, 5);
+  setTimeout(() => { render(); atMidnight(); }, m - n);
+})();
+</script>
+</body>
+</html>
