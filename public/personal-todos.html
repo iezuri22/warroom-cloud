@@ -4040,6 +4040,15 @@
   .nt-ink-hist { display: flex; gap: 2px; flex: none; }
   .nt-ink-convert { flex: none; }
   .nt-ink-pagebtn svg:last-child { width: 14px; height: 14px; opacity: .6; }
+  .nt-ink-tmr { width: auto; gap: 6px; padding: 0 10px; font: 700 13px var(--font-family); color: var(--ink-mid); }
+  .nt-ink-tmr .lb { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .nt-ink-tmr.on { color: var(--accent); background: var(--accent-soft); }
+  .nt-ink-tmr[aria-expanded="true"] { background: var(--accent-soft); color: var(--ink); }
+  .nt-ink.bar-1s .nt-ink-tmr:not(.on) .lb, .nt-ink.bar-c .nt-ink-tmr:not(.on) .lb { display: none; }
+  .nt-ink.bar-2 .nt-ink-bar > .nt-ink-tmr, .nt-ink.bar-c .nt-ink-bar > .nt-ink-tmr { order: 9; }
+  .nt-ink-tmrrun { margin: 2px 0 8px; font: 800 20px var(--font-family); font-variant-numeric: tabular-nums; color: var(--ink); }
+  .nt-ink-tmrs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .nt-ink-tmrs button { flex: 1 1 0; min-width: 56px; justify-content: center; background: var(--fill); }
   /* Colour & size: a dot in the colour in hand, sized by its width (a bar for the highlighter) */
   .nt-ink-style i { width: var(--d, 9px); height: var(--d, 9px); border-radius: 50%; background: var(--c, #1D1B17); box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.5px var(--border-strong); }
   .nt-ink-style.hl i { width: 8px; border-radius: 3px; }
@@ -23527,6 +23536,14 @@
   // The note header's Timer button: the countdown (or time so far) while
   // the timer runs on this note.
   function ntNoteTmrPaint(){
+    try {   // the pad's button shows any running timer's clock
+      const K = _ntInk, pb = K && K.el && K.el.querySelector('.nt-ink-tmr');
+      if (pb) {
+        pb.classList.toggle('on', !!tmrRun);
+        const tx = !tmrRun ? 'Timer' : tmrRun.until ? tmrFmtClock(Math.max(0, (tmrRun.until - Date.now()) / 1000)) + ' left' : tmrFmtClock(tmrLiveSecs());
+        const l = pb.querySelector('.lb'); if (l && l.textContent !== tx) l.textContent = tx;
+      }
+    } catch {}
     const b = document.getElementById('ntNoteTmr');
     if (!b) return;
     const on = !!(tmrRun && ntOpenId && tmrRun.noteId === ntOpenId);
@@ -23841,6 +23858,7 @@
     ntInkShell(true);
     if (!_ntFocus) { ntSetFocus(true, { noCaret: true }); K.focusByUs = _ntFocus; }
     ntInkWire(K);
+    try { ntNoteTmrPaint(); } catch {}
     ntInkLayout(K);
     ntInkPagesSync(K);
     if (K.ctx) ntInkCtxRender(K);
@@ -23870,6 +23888,8 @@
       + '</div>'
       + '<button class="nt-ink-b nt-ink-style" type="button" data-ink="style" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Color and size" aria-label="Color and size"><i></i></button>'
       + `<button class="nt-ink-b nt-ink-pagebtn" type="button" data-ink="page" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Page — lines, paper, one-finger scrolling" aria-label="Page">${NT_SVG.lines}<span class="lb">Page</span>${NT_SVG.chevS}</button>`
+      // The timer: its clock while one runs (any timer), else "Timer"; a tap opens its menu.
+      + `<button class="nt-ink-b nt-ink-tmr" type="button" data-ink="timer" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Timer — time this writing: count up, or down from 15 / 25 / 45 / 60 minutes" aria-label="Timer">${NT_SVG.clock}<span class="lb">Timer</span></button>`
       + '<span class="nt-ink-sp b"></span>'
       + '<div class="nt-ink-hist">' + b('undo', NT_SVG.undo, 'Undo (⌘Z)') + b('redo', NT_SVG.redo, 'Redo (⌘⇧Z)') + '</div>'
       + `<button class="nt-ink-convert" type="button" data-ink="convert" title="Turn the handwriting into clean notes (⌘↵)">${NT_SVG.spark}<span class="full">Make clean notes</span><span class="short">Clean notes</span></button>`
@@ -23942,6 +23962,21 @@
         + `</div><h4>Size</h4><div class="nt-ink-szs${hl ? ' hl' : ''}" role="radiogroup" aria-label="Size">`
         + ['Fine', 'Medium', 'Bold'].map((n, i) => `<button type="button" class="nt-ink-sz" role="radio" data-ink="w" data-v="${i}" aria-checked="${i === sz}" aria-label="${n}" title="${n}" style="--c:${hex};--d:${dots[i]}px"><i></i></button>`).join('')
         + '</div><p class="nt-ink-note">Colored ink comes back as colored text; highlights stay highlighted.</p>';
+    }
+    if (kind === 'timer') {   // the note's timer, like the note header's ⏱ (ntPopTimer), in the pad's own popover
+      const mine = ntTmrIsOn('note', K.nid), left = tmrRun && tmrRun.until ? Math.max(0, (tmrRun.until - Date.now()) / 1000) : null;
+      const row = (v, t) => `<button type="button" class="nt-ink-row" data-ink="tmr" data-v="${v}">${t}</button>`;
+      const downs = '<div class="nt-ink-tmrs">' + NT_TMR_MINS.map(m => `<button type="button" class="nt-ink-row" data-ink="tmr" data-v="${m}">${m === 60 ? '1 hr' : m + ' min'}</button>`).join('') + '</div>';
+      let h = '<h4>Timer</h4>';
+      if (tmrRun) {
+        h += `<p class="nt-ink-note">${escHtml(mine ? ntTmrName('note', K.nid) : (tmrRun.taskName || tmrRunLabel()))}</p>`
+          + `<p class="nt-ink-tmrrun">${escHtml(tmrFmtClock(left != null ? left : tmrLiveSecs()))}${left != null ? ' left' : ''}</p>`
+          + row('stop', '■ Stop and log it') + (tmrRun.until ? row('add5', '+5 minutes') : '');
+        if (!mine) h += '<div class="nt-ink-hr"></div><h4>Time this writing instead</h4>' + row('0', '▶ Count up') + downs;
+      } else {
+        h += `<p class="nt-ink-note">${escHtml(ntTmrName('note', K.nid))}</p>` + row('0', '▶ Start — count up') + '<h4>Or count down</h4>' + downs;
+      }
+      return h;
     }
     if (kind === 'day') {   // the Journal: today, yesterday, up to 5 of its other days (newest first), any other day
       const t = todayKey(), y = ntAddDays(t, -1), seen = new Set([t, y]);
@@ -24212,6 +24247,13 @@
     (d && Array.isArray(d.strokes) ? d.strokes : []).forEach(s => { if (!okS(s)) return; const o = { p: s.p | 0, w: (+s.w > 0 && +s.w < 20) ? +s.w : NT_INK_PEN, pts: s.pts }; if (s.c !== 'ink' && ntInkPenOk(s.c)) o.c = s.c; out.push(o); });
     return out;
   }
+  // The pad's timer menu: the same actions as the note header's (ntPopTimer's data-np-tmr).
+  function ntInkTmr(K, v){
+    if (v === 'stop') { if (tmrRun) tmrStop(); }
+    else if (v === 'add5') { if (tmrRun && tmrRun.until) { tmrRun.until += 5 * 60000; tmrSaveRun(); tmrPaintCapsule(); ptToast('+5 minutes'); } }
+    else ntTmrStart('note', K.nid, +v || 0);
+    try { ntNoteTmrPaint(); } catch {}
+  }
   function ntInkWire(K){
     const el = K.el, sc = K.scroll;
     el.addEventListener('click', e => {
@@ -24232,6 +24274,8 @@
         case 'rule': ntInkRule(K, +b.dataset.v); break;
         case 'paper': ntInkPaper(K, b.dataset.v); break;
         case 'page': ntInkPopToggle(K, 'page', b, e); break;
+        case 'timer': ntInkPopToggle(K, 'timer', b, e); break;
+        case 'tmr': ntInkPopClose(K); ntInkTmr(K, b.dataset.v); break;
         case 'finger': ntInkFingers(K, b.dataset.v === 'draw'); break;
         case 'clear': ntInkPopClose(K); ntInkClear(K); break;
         case 'undo': case 'redo': ntInkUndoStep(K, k === 'redo'); break;
