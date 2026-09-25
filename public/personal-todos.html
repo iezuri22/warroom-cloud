@@ -25804,6 +25804,7 @@
     d.r.continuous = true; d.r.interimResults = true;
     d.r.lang = navigator.language || 'en-US';
     d.r.onresult = e => {
+      if (!d.on && Date.now() - (d.stopAt || 0) > 1500) return;   // stopped: only a phrase already in flight lands
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i], txt = String((res[0] && res[0].transcript) || '');
@@ -25832,7 +25833,12 @@
   function ntDictStop(){
     const d = _ntDict;
     _ntDict = null;
-    if (d) { d.on = false; try { d.r.stop(); } catch {} }   // a phrase still in flight is typed in as it lands
+    if (d) {
+      d.on = false; d.stopAt = Date.now();
+      try { d.r.stop(); } catch {}   // a phrase still in flight is typed in as it lands…
+      // …then it's cut off: iOS Safari can keep a continuous recognizer listening after stop().
+      setTimeout(() => { try { d.r.onresult = null; d.r.onend = null; d.r.abort(); } catch {} }, 1500);
+    }
     document.removeEventListener('keydown', ntDictKey, true);
     document.removeEventListener('visibilitychange', ntDictHidden);
     ntDictPaint();
@@ -25905,6 +25911,7 @@
       p.innerHTML = '<span class="dot" aria-hidden="true"></span><span class="tx"></span><button type="button">Stop</button>';
       const b = p.querySelector('button');
       b.addEventListener('mousedown', e => e.preventDefault());   // the cursor stays in the note
+      b.addEventListener('pointerup', e => { e.preventDefault(); ntDictStop(); });   // a tap on the iPad, whether or not a click follows
       b.addEventListener('click', () => ntDictStop());
       document.body.appendChild(p);
     }
