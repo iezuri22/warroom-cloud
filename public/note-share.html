@@ -42,6 +42,11 @@
   .body li[data-hl="blue"] { --hlc: rgba(74, 168, 255, .2); } .body li[data-hl="pink"] { --hlc: rgba(255, 111, 174, .2); }
   .body li[data-hl="orange"] { --hlc: rgba(255, 159, 10, .22); } .body li[data-hl="purple"] { --hlc: rgba(180, 108, 240, .2); }
   .body li[data-task-id][data-checked="true"] { background: none; box-shadow: none; }
+  .body span[data-c="blue"] { color: #2F5FC4; } .body span[data-c="red"] { color: #C23B2F; } .body span[data-c="green"] { color: #147A52; } .body span[data-c="purple"] { color: #6B50DA; }
+  .body li[data-checked="true"] span[data-c] { color: inherit; }
+  .body mark[data-hl] { color: inherit; border-radius: 3px; padding: 0 .1em; -webkit-box-decoration-break: clone; box-decoration-break: clone; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .body mark[data-hl="yellow"] { background: #FBE89B; } .body mark[data-hl="green"] { background: #B2E9BD; } .body mark[data-hl="pink"] { background: #FFC8DD; }
+  .body mark[data-hl="blue"] { background: #BADDFC; } .body mark[data-hl="orange"] { background: #FFD9A8; } .body mark[data-hl="purple"] { background: #E2D2FB; }
   .body blockquote { margin: 6px 0 10px; padding: 1px 0 1px 12px; border-left: 3px solid var(--border-strong); color: var(--ink-mid); }
   .body pre { margin: 6px 0 10px; padding: 10px 12px; border-radius: 9px; background: var(--fill); overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .body code { font: 500 .9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--fill); border-radius: 5px; padding: 1px 5px; }
@@ -100,7 +105,7 @@ function setSt(t){ $('st').textContent = t || ''; }
 // The same rules War Room applies before a note is saved: a fixed set of tags,
 // links only to http(s)/mailto, images only from War Room's own storage, and a
 // task line keeps its link attributes (War Room re-checks them on load).
-const TAGS = new Set(['P', 'H1', 'H2', 'H3', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'A', 'BR', 'HR', 'IMG']);
+const TAGS = new Set(['P', 'H1', 'H2', 'H3', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'A', 'BR', 'HR', 'IMG', 'SPAN', 'MARK']);
 const DROP = /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|SVG|MATH|TEMPLATE|NOSCRIPT|LINK|META|FORM|INPUT|BUTTON|TEXTAREA|SELECT|VIDEO|AUDIO|CANVAS)$/;
 const IMG_OK = /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/tv-todos\.firebasestorage\.app\/o\/[^\s"'<>]{1,1500}$/;
 function clean(html){
@@ -113,12 +118,17 @@ function clean(html){
       const t = n.tagName.toUpperCase();
       if (DROP.test(t)) continue;
       if (!TAGS.has(t)) { walk(n, to); continue; }
+      // Coloured and highlighted words: only War Room's fixed palettes; any other span or mark is unwrapped.
+      if (t === 'SPAN' && !/^(blue|red|green|purple)$/.test(n.getAttribute('data-c') || '')) { walk(n, to); continue; }
+      if (t === 'MARK' && !/^(yellow|green|blue|pink|orange|purple)$/.test(n.getAttribute('data-hl') || '')) { walk(n, to); continue; }
       if (t === 'IMG') {
         const s = n.getAttribute('src') || '';
         if (IMG_OK.test(s)) { const im = document.createElement('img'); im.setAttribute('src', s); im.setAttribute('alt', (n.getAttribute('alt') || '').slice(0, 200)); const w = parseInt(n.getAttribute('width') || '', 10); if (w >= 40 && w <= 2400) im.setAttribute('width', String(w)); to.appendChild(im); }
         continue;
       }
       const el = document.createElement(t === 'B' ? 'strong' : t === 'I' ? 'em' : t.toLowerCase());
+      if (t === 'SPAN') el.setAttribute('data-c', n.getAttribute('data-c'));
+      if (t === 'MARK') el.setAttribute('data-hl', n.getAttribute('data-hl'));
       if (t === 'A') {
         const h = (n.getAttribute('href') || '').trim();
         if (/^(https?:|mailto:)/i.test(h)) { el.setAttribute('href', h); el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }

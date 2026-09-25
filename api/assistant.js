@@ -798,7 +798,7 @@ function cleanTasks(list, today) {
   if (!Array.isArray(list)) return [];
   const seen = new Set();
   return list.map(t => ({
-    text: String((t && t.text) || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    text: String((t && t.text) || '').replace(/\{\/?(?:c|hl)(?::[a-z]+)?\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 200),
     due: (t && typeof t.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due) && t.due >= '2000-01-01') ? t.due : null,
   })).filter(t => {
     const k = t.text.toLowerCase();
@@ -836,6 +836,33 @@ Also return:
 
 Reply with ONLY a JSON object: {"title": "…", "kind": "recipe" | "plan" | "notes", "date": "YYYY-MM-DD" or null, "markdown": "…", "tasks": [{"text": "…", "due": "YYYY-MM-DD" or null}]}`;
 const INK_KINDS = { notes: 'notes', plan: 'a plan or to-do list', recipe: 'a recipe' };
+const INK_TAGS = /\{\/?(?:c|hl)(?::[a-z]+)?\}/g;                       // colour/highlight tags (Stage 5)
+const inkDayLabel = ds => new Date(ds + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const INK_HL_BOLD = 'Light colored bands behind some words are highlighter marks, never crossings-out: keep those words and make them **bold**. ';
+const INK_HL_TAGS = 'Light colored bands behind some words are highlighter marks, never crossings-out: keep those words and wrap each highlighted run as {hl:COLOR}words{/hl}, where COLOR is yellow, green, pink or blue (the band\'s color). ';
+const INK_COLORS = 'Some words are written in colored ink: wrap each run written in blue, red, green or purple ink as {c:COLOR}words{/c}; black or dark grey ink gets no tag. Open and close a tag on the same line, and use these tags only in the markdown — never in the title or the tasks. ';
+// The words that go with the pages: pure, so it can be checked without calling
+// Claude. With no day and no marks it is exactly the intro it always was.
+export function inkIntro(body, n, today) {
+  const kind = INK_KINDS[body.kind] || '';
+  const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const day = body.journal && typeof body.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.day) && body.day >= '2000-01-01' && body.day <= today ? body.day : '';
+  const marks = body.marks && typeof body.marks === 'object' ? body.marks : {};
+  // A page that knows the colour tags says so (marks.colors is always there, true or false);
+  // an older open tab can't read them, so its highlights still come back bold.
+  const tags = typeof marks.colors === 'boolean';
+  return `Today is ${today}. `
+    + (n > 1 ? `These are ${n} pages, in order. ` : '')
+    + (kind ? `The writer says this is ${kind}. ` : '')
+    + (title ? `It goes into their note "${title}". ` : '')
+    + (body.journal ? (day
+        ? `This is their journal entry for ${inkDayLabel(day)}: use "### " for any heading (never "## "). If the pages begin with that same date, leave it out of the text (the entry already sits under it); any other date the writer wrote stays in the text where it is, and is returned as date. `
+        : 'This is their journal: use "### " for any heading (never "## "), and don\'t put the entry\'s date in the text — return it as date. ')
+      : '')
+    + (marks.hl === true ? (tags ? INK_HL_TAGS : INK_HL_BOLD) : '')
+    + (marks.colors === true ? INK_COLORS : '')
+    + 'Turn the handwriting into clean notes.';
+}
 async function handleInk(req, res, body) {
   const mt = ['image/png', 'image/jpeg', 'image/webp'].includes(body.mediaType) ? body.mediaType : 'image/png';
   const pages = (Array.isArray(body.pages) ? body.pages : []).slice(0, 10)
@@ -846,14 +873,7 @@ async function handleInk(req, res, body) {
     return;
   }
   const today = /^\d{4}-\d{2}-\d{2}$/.test(String(body.today || '')) ? body.today : new Date().toISOString().slice(0, 10);
-  const kind = INK_KINDS[body.kind] || '';
-  const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  const intro = `Today is ${today}. `
-    + (pages.length > 1 ? `These are ${pages.length} pages, in order. ` : '')
-    + (kind ? `The writer says this is ${kind}. ` : '')
-    + (title ? `It goes into their note "${title}". ` : '')
-    + (body.journal ? 'This is their journal: use "### " for any heading (never "## "), and don\'t put the entry\'s date in the text — return it as date. ' : '')
-    + 'Turn the handwriting into clean notes.';
+  const intro = inkIntro(body, pages.length, today);
   let raw = '';
   try {
     const client = new Anthropic();
@@ -885,7 +905,7 @@ async function handleInk(req, res, body) {
     const j = JSON.parse(m ? m[0] : raw);
     markdown = typeof j.markdown === 'string' ? j.markdown : '';
     out = {
-      title: String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      title: String(j.title || '').replace(INK_TAGS, '').replace(/\s+/g, ' ').trim().slice(0, 120),
       kind: ['recipe', 'plan', 'notes'].includes(j.kind) ? j.kind : 'notes',
       date: typeof j.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(j.date) && j.date <= today ? j.date : null,
       tasks: j.kind === 'recipe' ? [] : cleanTasks(j.tasks, today),

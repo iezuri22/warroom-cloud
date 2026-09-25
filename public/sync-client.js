@@ -33,9 +33,10 @@
     'pt-nt-last',        // Notes' last open note — per-device, so two devices don't both hold it open
     'pt-nt-pdel',        // Notes: task lines removed on this device, waiting on Undo / the delete — per device
     'pt-nt-det-open',    // Notes: which task details are unfolded — per device
-    'pt-nt-ink',         // Notes' handwriting pad: pencil used here? do fingers write or scroll? — per device
+    'pt-nt-ink',         // Notes' handwriting pad: pencil used here? finger mode, pen/highlighter picks, default lines and paper — per device
     'personal-day-v1',   // today's plan vs done for the War Room's timer card — worked out on each device
     'wr-timer-ui',       // War Room's floating timer: where it sits, big or folded — per device
+    'wr-tablet-force',   // per-device layout override (Settings › Layout on this device)
     // Internal sync-client bookkeeping. Must never be sent to the cloud —
     // otherwise the poison list itself gets poisoned (yes, this happened).
     '__sync_poisoned_keys',
@@ -412,7 +413,13 @@
   }
 
   // ----- Visual sync indicator -----
+  // One pill per screen: a page inside the War Room shell (an iframe) reports
+  // to the shell's pill instead of drawing its own. Standalone pages are the
+  // top document, so they keep theirs.
+  const IS_TOP = (() => { try { return window.top === window.self; } catch (e) { return true; } })();
   function injectIndicator() {
+    if (!IS_TOP) return;                                   // frames report to the shell's pill
+    window.__wrSyncStatus = updateSyncIndicator;
     if (document.getElementById('wr-sync-indicator')) return;
     const el = document.createElement('div');
     el.id = 'wr-sync-indicator';
@@ -427,6 +434,7 @@
   }
 
   function updateSyncIndicator(status) {
+    if (!IS_TOP) { try { window.top.__wrSyncStatus && window.top.__wrSyncStatus(status); } catch (e) {} return; }
     const el = document.getElementById('wr-sync-indicator');
     if (!el) return;
     const colors = {
@@ -435,11 +443,20 @@
       error:   { bg: 'rgba(220,38,38,.85)',  text: 'SYNC ERR' },
       offline: { bg: 'rgba(107,114,128,.85)',text: 'OFFLINE' }
     };
-    const c = colors[status] || colors.synced;
-    el.style.background = c.bg;
-    el.textContent = c.text;
-    el.style.opacity = '1';
-    setTimeout(() => { el.style.opacity = '0'; }, 1500);
+    function paint(s, sticky) {
+      const c = colors[s] || colors.synced;
+      el.style.background = c.bg;
+      el.textContent = c.text;
+      el.style.opacity = '1';
+      if (!sticky) el._t = setTimeout(() => { el.style.opacity = '0'; }, 1500);
+    }
+    clearTimeout(el._t); clearTimeout(el._d);
+    if (document.documentElement.classList.contains('wr-tablet')) {
+      if (status === 'synced') { el.style.opacity = '0'; return; }               // iPad: success is silent
+      if (status === 'syncing') { el._d = setTimeout(() => paint('syncing', false), 800); return; }
+      return paint(status, true);                                               // offline / error stay until the next success
+    }
+    paint(status, false);                                                       // desktop / phone: the 1.5s flash
   }
 
   // Expose manual logout for UI

@@ -3,6 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<script>
+/* wr-tablet — ONE signal for "touch tablet". Device-based (rotation, Split View,
+   a trackpad don't flip it). Override per device: localStorage 'wr-tablet-force'
+   = '1' | '0' (Settings › Layout on this device; SKIP_SYNC in sync-client). */
+(function(){
+  var t = false;
+  try {
+    var f = localStorage.getItem('wr-tablet-force');
+    if (f === '1' || f === '0') t = (f === '1');
+    else {
+      var n = navigator, tp = n.maxTouchPoints || 0, ua = n.userAgent || '';
+      var ipad = /\biPad\b/.test(ua) || (n.platform === 'MacIntel' && tp > 1);
+      var droidTab = /Android/.test(ua) && !/Mobile/.test(ua);
+      var coarse = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+      t = tp > 1 && (ipad || droidTab || coarse)
+          && Math.min(screen.width || 0, screen.height || 0) >= 700;
+    }
+  } catch (e) {}
+  window.WR_TABLET = t;
+  if (t) {
+    document.documentElement.classList.add('wr-tablet');
+    /* Home Screen: let the strip pad itself below the status bar (A6). Shell only. */
+    var m = document.querySelector('meta[name=viewport]');
+    if (m && !/viewport-fit/.test(m.content)) m.content += ', viewport-fit=cover';
+  }
+})();
+</script>
 <title>Daily War Room</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -1300,7 +1327,7 @@ body.focus-big-min .focus-big{cursor:pointer}
 .yt-empty{text-align:center;padding:32px;color:var(--text-dim);font-size:13px;border:1px dashed var(--border);border-radius:10px}
 
 /* =========== MOBILE (iPhone-first) — PLACED LAST SO IT OVERRIDES DESKTOP RULES =========== */
-@media(max-width:768px){
+@media(max-width:760px){
   .main{padding:14px 12px 100px}
   .plan-layout{flex-direction:column;gap:0}
   .header{padding:14px 12px;flex-wrap:wrap;gap:10px}
@@ -1638,22 +1665,13 @@ body.focus-big-min .focus-big{cursor:pointer}
   font-variant-numeric:tabular-nums; font-weight:800;
   letter-spacing:.2px;
 }
-.hour-goal-pill.done{
-  border-color:rgba(74,222,128,.45);
-  color:#4ADE80;
-}
+/* Readable on the light strip (the old neon green / pale gold were ~1.3:1). */
+.hour-goal-pill.done{border-color:rgba(30,158,106,.40);color:var(--green,#1E9E6A)}
 .hour-goal-pill.done .lbl{opacity:.7}
-/* PR Week pill — gold accent to read as a personal record / achievement */
-.hour-goal-pill.pr-week-pill{
-  border-color:rgba(255,200,77,.32);
-  color:#FFD166;
-  background:rgba(255,200,77,.06);
-}
-.hour-goal-pill.pr-week-pill:hover{
-  border-color:#FFD166;
-  background:rgba(255,200,77,.12);
-}
-.hour-goal-pill.pr-week-pill .lbl{opacity:.85}
+/* PR Week pill — dark gold to read as a personal record / achievement */
+.hour-goal-pill.pr-week-pill{border-color:rgba(138,90,0,.30);color:#8A5A00;background:rgba(232,162,61,.14)}
+.hour-goal-pill.pr-week-pill:hover{border-color:#8A5A00;background:rgba(232,162,61,.22)}
+.hour-goal-pill.pr-week-pill .lbl{opacity:.75}
 
 /* ============ FULLSCREEN ANALYTICS ============ */
 .stats-overlay{
@@ -2046,7 +2064,7 @@ body.stats-open{overflow:hidden}
 .tab.current-mobile{display:none}
 .mobile-menu-btn{display:none}
 /* Mobile drawer stays hidden on desktop — only the mobile media query reveals it */
-@media(min-width:769px){
+@media(min-width:761px){
   .nav-drawer,.nav-drawer-overlay{display:none !important}
 }
 .tab{
@@ -2060,6 +2078,24 @@ body.stats-open{overflow:hidden}
   color:var(--ios-accent);background:rgba(255,138,61,.12);
   border-bottom-color:transparent;font-weight:700;
 }
+/* L1 — the strip on one row (761–1279 by width on purpose; ≥1280 unchanged).
+   What doesn't fit moves into ⋯ (#wrMoreBtn / #wrMorePop). */
+.tabs{align-items:center}
+.tabs>.tab,.tabs>.header-right,.tabs .header-right>*{flex-shrink:0}
+.hour-goal-pill{white-space:nowrap}
+@media (min-width:761px) and (max-width:1099.98px){ .tabs .tab{padding:8px 12px;font-size:14px} }
+@media (min-width:761px) and (max-width:1279.98px){ #prWeekPill,#musicToggleBtn,#refreshBtn{display:none !important} }
+@media (min-width:761px) and (max-width:1023.98px){ .tabs #hourGoalRow,#fsToggleBtn{display:none !important} }
+.tabs .header-right .header-btn.wr-more-btn{display:none !important}
+@media (min-width:761px) and (max-width:1279.98px){ html .tabs .header-right .header-btn.wr-more-btn{display:inline-flex !important} }
+/* Touch tablets (html.wr-tablet, set in <head>) */
+html.wr-tablet .tabs{padding:calc(6px + env(safe-area-inset-top)) 12px 6px}
+/* M1: no `display` here — #mobileTabLabel (.tab.current-mobile) must stay display:none */
+html.wr-tablet .tabs .tab{padding-top:10px;padding-bottom:10px;line-height:20px}
+html.wr-tablet .tabs .header-right .header-btn{min-width:40px;min-height:40px}
+html.wr-tablet .hour-goal-pill{min-height:36px}
+html.wr-tablet #musicToggleBtn,html.wr-tablet #refreshBtn,html.wr-tablet #fsToggleBtn{display:none !important}
+html.wr-tablet .tabs .header-right .header-btn.wr-more-btn{display:inline-flex !important}
 
 /* Fullscreen + Exit: icon-only pills inside header-right, left of Settings */
 .fs-toggle,.fs-exit{display:inline-flex;align-items:center;justify-content:center}
@@ -2082,10 +2118,13 @@ body.fullscreen .tabs{
   backdrop-filter:saturate(180%) blur(20px);
 }
 body.fullscreen .main{padding:0 !important;max-width:none !important}
-body.fullscreen #focusView iframe,
-body.fullscreen #todosView iframe,
-body.fullscreen #calendarView iframe{
-  min-height:100vh !important;height:100vh !important;border-radius:0 !important;
+/* Phones only; at ≥761 the measured .wr-frame height fits under the strip. */
+@media (max-width:760px){
+  body.fullscreen #focusView iframe,
+  body.fullscreen #todosView iframe,
+  body.fullscreen #calendarView iframe{
+    min-height:100vh !important;height:100vh !important;border-radius:0 !important;
+  }
 }
 
 /* (Calendar styling left at original — compact on purpose) */
@@ -2106,6 +2145,58 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 
 /* Scrollbars hidden on webkit for iOS feel (desktop still works) */
 .tabs,.cal-sidebar{scrollbar-width:thin}
+
+/* L2 — the ⋯ menu. Opens only from a tap on #wrMoreBtn. The scrim catches a
+   tap outside (a tap inside an iframe never reaches this document). */
+.wr-scrim{position:fixed;inset:0;z-index:695;background:transparent;cursor:pointer}
+.wr-scrim[hidden],.wr-more-pop[hidden]{display:none}
+/* z 9991: a menu the owner just opened sits above the timer card/pill (.wrt, 9990). */
+.wr-more-pop{position:fixed;top:calc(var(--wr-tabs-h,52px) + 6px);right:12px;z-index:9991;width:280px;padding:6px;
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px rgba(33,30,25,.16)}
+.wr-more-pop>button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:44px;padding:0 12px;
+  border:0;border-radius:10px;background:none;font:600 15px var(--ios-font,inherit);color:var(--text);cursor:pointer}
+.wr-more-pop>button:hover,.wr-more-pop>button:active{background:var(--ios-fill-2,rgba(33,30,25,.06))}
+.wr-more-pop .b{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--overdue);color:#fff;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center}
+.wr-more-pop .b[hidden]{display:none}
+.wr-more-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px 4px 8px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.wr-more-stats:empty{display:none}
+.wr-more-stats button{min-height:52px;border:1px solid var(--border);border-radius:10px;background:none;text-align:left;padding:6px 8px;cursor:pointer}
+.wr-more-stats .l{display:block;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim)}
+.wr-more-stats .v{display:block;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wr-more-stats .g{display:block;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Tablets open Lofi from ⋯; like the menu, it sits above the timer pill. */
+html.wr-tablet .lofi-popover{z-index:9991}
+#wrMoreBtn{position:relative}
+#wrMoreBtn.playing::after{content:'';position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--accent,#F07E28)}
+
+/* L3 — frames end exactly at the screen bottom; the shell can't scroll.
+   --wr-chrome = the frame's measured top (wrSizeChrome). */
+.wr-frame{width:100%;border:none;display:block;border-radius:12px;
+  height:calc(100vh - var(--wr-chrome,64px));height:calc(100dvh - var(--wr-chrome,64px))}
+html.wr-tablet body.iframe-tab{overflow:hidden;overscroll-behavior:none}
+@media (min-width:761px){
+  html.wr-tablet .wr-frame{height:calc(100dvh - var(--wr-chrome,52px) - env(safe-area-inset-bottom,0px))}
+  body.fullscreen .wr-frame{border-radius:0}
+}
+/* L4 — edge to edge for Personal and ECM only (Calendar, Meals, Recovery and
+   Life log keep the shell's inset). */
+@media (min-width:761px){
+  html.wr-tablet body.iframe-tab[data-wr-tab="todos"] .main,
+  html.wr-tablet body.iframe-tab[data-wr-tab="ecm"] .main{padding:0}
+  html.wr-tablet #todosFrame,html.wr-tablet #ecmFrame{border-radius:0}
+}
+/* L6 — calendar panel under the strip (761–1279 by width, and every tablet ≥761) */
+@media (min-width:761px) and (max-width:1279.98px){
+  .cal-sidebar{top:calc(var(--wr-tabs-h,52px) + 8px);right:12px;width:min(400px,calc(100vw - 24px));max-height:calc(100dvh - var(--wr-tabs-h,52px) - 20px)}
+}
+@media (min-width:761px){
+  /* z 9991: opened from ⋯ and closed by the scrim, so it sits above the timer pill too. */
+  html.wr-tablet .cal-sidebar{top:calc(var(--wr-tabs-h,52px) + 8px);right:12px;width:min(400px,calc(100vw - 24px));max-height:calc(100dvh - var(--wr-tabs-h,52px) - 20px);z-index:9991}
+}
+/* L9 — the legacy bottom nav is retired (the phone tab bar replaced it). */
+#mobileNav{display:none !important}
+/* Settings grows by one row; a tablet body can't scroll, so the panel does. */
+#apiKeyPanel{max-height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 </style>
 </head>
 <body>
@@ -2914,6 +3005,10 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
     <button class="header-btn" onclick="toggleApiKeyPanel()" title="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
+    <button class="header-btn wr-more-btn" id="wrMoreBtn" type="button" onclick="wrMoreToggle(event)"
+            title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="wrMorePop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg>
+    </button>
   </div>
   <!-- Mobile-only hamburger: opens nav drawer -->
   <button class="mobile-menu-btn" onclick="toggleNavDrawer()" aria-label="Menu" style="display:none">
@@ -2976,37 +3071,37 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
 <div class="main">
   <!-- MEALS VIEW (🎯 Two Meals) -->
   <div class="meals-view" id="mealsView" style="display:none">
-    <iframe id="mealsFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="mealsFrame" src="about:blank" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- RECOVERY VIEW (hair-transplant recovery tracker) -->
   <div class="recovery-view" id="recoveryView" style="display:none">
-    <iframe id="recoveryFrame" src="about:blank" allow="camera" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="recoveryFrame" src="about:blank" allow="camera" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- LIFE LOG VIEW (oil changes, warranties, renewals — reminders land in Personal) -->
   <div class="life-view" id="lifeView" style="display:none">
-    <iframe id="lifeFrame" src="about:blank" allow="camera" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="lifeFrame" src="about:blank" allow="camera" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- FOCUS VIEW -->
   <div class="focus-view" id="focusView" style="display:none">
-    <iframe id="focusFrame" src="about:blank" style="width:100%;border:none;background:var(--bg);border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="focusFrame" src="about:blank" class="wr-frame" style="background:var(--bg)" loading="lazy"></iframe>
   </div>
 
   <!-- TODOS VIEW (default) -->
   <div class="todos-view" id="todosView">
-    <iframe id="todosFrame" src="about:blank" allow="microphone" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="todosFrame" src="about:blank" allow="microphone" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- ECM VIEW -->
   <div class="ecm-view" id="ecmView" style="display:none">
-    <iframe id="ecmFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="ecmFrame" src="about:blank" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- CALENDAR VIEW -->
   <div class="calendar-view" id="calendarView" style="display:none">
-    <iframe id="calendarFrame" src="about:blank" style="width:100%;border:none;background:#F6F5F1;border-radius:12px;min-height:calc(100vh - 60px);height:calc(100vh - 60px);display:block" loading="lazy"></iframe>
+    <iframe id="calendarFrame" src="about:blank" class="wr-frame" style="background:#F6F5F1" loading="lazy"></iframe>
   </div>
 
   <!-- PLAN VIEW -->
@@ -3265,6 +3360,16 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
   </button>
 </div>
 
+<!-- ⋯ menu (L2): what the one-row strip has no room for. Opens only from a tap on #wrMoreBtn. -->
+<div class="wr-scrim" id="wrScrim" hidden></div>
+<div class="wr-more-pop" id="wrMorePop" role="menu" hidden>
+  <div class="wr-more-stats" id="wrMoreStats"></div>
+  <button type="button" role="menuitem" data-wrm="cal">Calendar <span class="b" id="wrMoreCalBadge" hidden></span></button>
+  <button type="button" role="menuitem" data-wrm="lofi"><span id="wrMoreLofiLbl">Lofi music</span></button>
+  <button type="button" role="menuitem" data-wrm="fs">Full screen</button>
+  <button type="button" role="menuitem" data-wrm="refresh">Refresh</button>
+</div>
+
 <div id="apiKeyPanel" style="display:none;position:fixed;top:0;left:0;right:0;background:var(--surface);border-bottom:2px solid var(--border);padding:14px 20px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.08)">
   <div style="max-width:500px;margin:0 auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -3307,6 +3412,16 @@ input[type="text"],input[type="search"],input[type="password"],textarea,select{
           <button onclick="saveSmartsheetsSettings()" style="margin-left:auto;font-family:var(--ios-font);font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:none;background:var(--text);color:var(--bg);cursor:pointer">Save</button>
         </div>
         <div id="ssStatus" style="font-size:11px;color:var(--text-dim)"></div>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+      <span style="font-size:13px;font-weight:700">Layout on this device</span>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <select id="wrLayoutSel" onchange="wrLayoutPick(this.value)" style="font-family:var(--ios-font);font-size:12px;font-weight:600;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <option value="auto">Automatic</option><option value="1">Tablet</option><option value="0">Desktop</option>
+        </select>
+        <span id="wrLayoutNote" style="font-size:11px;color:var(--text-dim)"></span>
+        <button id="wrLayoutReload" type="button" hidden onclick="location.reload()" style="font-family:var(--ios-font);font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer">Reload now</button>
       </div>
     </div>
     <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
@@ -3660,6 +3775,23 @@ function updatePlanSidebarCounts(){
   }catch{}
 }
 
+// L3 — measured chrome. --wr-tabs-h = the strip's height (0 when hidden);
+// --wr-chrome = the visible frame's top (strip + .main's top padding), so a
+// frame ends exactly at the screen bottom and the shell never scrolls.
+(function(){
+  const root = document.documentElement, tabs = document.querySelector('.tabs');
+  function wrSizeChrome(){
+    const th = tabs && tabs.getClientRects().length ? Math.round(tabs.getBoundingClientRect().height) : 0;
+    root.style.setProperty('--wr-tabs-h', th + 'px');
+    const f = [...document.querySelectorAll('.wr-frame')].find(x => x.getClientRects().length);
+    root.style.setProperty('--wr-chrome', (f ? Math.round(f.getBoundingClientRect().top + window.scrollY) : th) + 'px');
+  }
+  try { new ResizeObserver(wrSizeChrome).observe(tabs); } catch (e) {}
+  addEventListener('resize', wrSizeChrome);
+  window.wrSizeChrome = wrSizeChrome;
+  wrSizeChrome();
+})();
+
 // --- Init ---
 function init(){
   updateDateUI();
@@ -3674,9 +3806,10 @@ function init(){
   render();
   // Restore persisted UI state (tab, fullscreen, calendar panel)
   const ui=loadUiState();
-  const isMobile=window.matchMedia('(max-width:768px)').matches;
-  // Calendar: respect saved state; first-time default is open on desktop, closed on mobile
-  const wantCalOpen=('calOpen' in ui) ? !!ui.calOpen : !isMobile;
+  const isMobile=window.matchMedia('(max-width:760px)').matches;
+  // Calendar: respect saved state; first-time default is open on desktop, closed on mobile.
+  // Tablets never open it by themselves (⋯ › Calendar opens it) and ignore the synced calOpen.
+  const wantCalOpen=window.WR_TABLET ? false : (('calOpen' in ui) ? !!ui.calOpen : !isMobile);
   if(wantCalOpen){
     document.getElementById('calSidebar').classList.add('open');
     calOpen=true;
@@ -3702,9 +3835,11 @@ function init(){
   try { switchTab(__initialTab); } catch(e){}
   // Reflect saved music-bar visibility on the shell button so user can see it
   try { syncMusicToggleBtn(); } catch(e){}
-  // Restore fullscreen body class (native fullscreen requires a user gesture so we just restyle)
-  if(ui.fullscreen){
+  // Restore fullscreen body class (native fullscreen requires a user gesture so we just restyle).
+  // Tablets ignore the synced flag (a desktop's cast mode shouldn't follow you to the iPad).
+  if(ui.fullscreen && !window.WR_TABLET){
     document.body.classList.add('fullscreen');
+    window.wrSizeChrome && wrSizeChrome();
   }
   // Restore focus immersion only if there's an active session; otherwise clear it
   if(ui.focusImmersive){
@@ -4749,6 +4884,13 @@ window.addEventListener('message', (ev) => {
     setNotesFocus(!!d.on);
     return;
   }
+  // Personal's handwriting pad is up (or gone): the timer card steps out of the way.
+  if (d.type === 'warroom:notes-ink') {
+    const tf = document.getElementById('todosFrame');
+    if (!tf || ev.source !== tf.contentWindow) return;
+    document.body.classList.toggle('notes-inking', !!d.on && (typeof currentTab === 'undefined' || currentTab === 'todos'));
+    return;
+  }
   if (d.type === 'warroom:personal-time') {
     const secs = Number(d.seconds) || 0;
     if (secs < 1) return;
@@ -4785,16 +4927,18 @@ function broadcastFullscreenToFrames(on){
 }
 function enterFullscreen(){
   document.body.classList.add('fullscreen');
-  saveUiState({fullscreen:true});
+  if(!window.WR_TABLET) saveUiState({fullscreen:true});
   broadcastFullscreenToFrames(true);
+  window.wrSizeChrome && wrSizeChrome();
   // Nudge native fullscreen if the user prefers it (fails silently on iOS Safari)
   try { (document.documentElement.requestFullscreen && document.documentElement.requestFullscreen()) || null; } catch(e){}
 }
 function exitFullscreen(){
   document.body.classList.remove('fullscreen');
-  saveUiState({fullscreen:false});
+  if(!window.WR_TABLET) saveUiState({fullscreen:false});
   broadcastFullscreenToFrames(false);
   try { if(document.fullscreenElement) document.exitFullscreen(); } catch(e){}
+  window.wrSizeChrome && wrSizeChrome();
 }
 // One toggle button — picks enter or exit based on current state
 // --- Notes writing mode (Personal asks via postMessage) ---
@@ -4823,6 +4967,7 @@ function setNotesFocus(on){
     }
     _notesFocusNative = false;
   }
+  window.wrSizeChrome && wrSizeChrome();
 }
 function toggleFullscreen(){
   if (document.body.classList.contains('fullscreen')) exitFullscreen();
@@ -4876,6 +5021,7 @@ function renderLofiPopover(){
   const playing = !!st.vibe;
   pop.classList.toggle('playing', playing);
   if (btn) btn.classList.toggle('active', playing);
+  wrMorePlaying(playing);
   chipsEl.innerHTML = LOFI_VIBES.map(v => `
     <button class="lofi-vibe-chip ${st.vibe === v.id ? 'active' : ''}" data-vibe="${v.id}">${v.label}</button>
   `).join('');
@@ -4890,7 +5036,8 @@ function renderLofiPopover(){
 }
 function positionLofiPopover(){
   const pop = document.getElementById('lofiPopover');
-  const btn = document.getElementById('musicToggleBtn');
+  // Anchor to the music button, or to ⋯ when the strip has moved Lofi into it.
+  const btn = ['musicToggleBtn', 'wrMoreBtn'].map(id => document.getElementById(id)).find(b => b && b.getClientRects().length);
   if (!pop || !btn) return;
   const r = btn.getBoundingClientRect();
   const desiredRight = Math.max(8, window.innerWidth - r.right - 4);
@@ -4916,6 +5063,8 @@ document.addEventListener('click', (ev) => {
   const pop = document.getElementById('lofiPopover');
   const btn = document.getElementById('musicToggleBtn');
   if (!pop || pop.hasAttribute('hidden')) return;
+  // ⋯ › Lofi opens the popover from inside the menu — that tap isn't "outside".
+  if (ev.target && ev.target.closest && ev.target.closest('#wrMoreBtn, #wrMorePop')) return;
   if (pop.contains(ev.target) || (btn && btn.contains(ev.target))) return;
   pop.setAttribute('hidden', '');
 });
@@ -4930,6 +5079,7 @@ window.addEventListener('storage', (ev) => {
     const btn = document.getElementById('musicToggleBtn');
     const st = lofiState();
     if (btn) btn.classList.toggle('active', !!st.vibe);
+    wrMorePlaying(!!st.vibe);
     const pop = document.getElementById('lofiPopover');
     if (pop && !pop.hasAttribute('hidden')) renderLofiPopover();
   }
@@ -4938,11 +5088,118 @@ function syncMusicToggleBtn(){
   // Reflect "playing" state on the button so user sees something happen
   // when audio is on. Title also updates.
   const btn = document.getElementById('musicToggleBtn');
-  if (!btn) return;
   const st = lofiState();
+  wrMorePlaying(!!st.vibe);
+  if (!btn) return;
   btn.classList.toggle('active', !!st.vibe);
   btn.title = st.vibe ? `Lofi · ${LOFI_VIBES.find(v => v.id === st.vibe)?.label || 'on'}` : 'Lofi music';
 }
+// ---- ⋯ menu (L2) and the one shared scrim ----
+// One scrim, one current owner. A tap inside an iframe never reaches this
+// document, so "tap outside" has to be a scrim over the page. It gets a direct
+// click listener (iOS doesn't send document clicks from a plain div).
+let _wrScrimTap = null;
+function wrScrim(on, onTap){
+  const s = document.getElementById('wrScrim');
+  if (!s) return;
+  if (!s._wrWired) {
+    s._wrWired = true;
+    s.addEventListener('click', ev => {
+      ev.preventDefault();
+      const f = _wrScrimTap; _wrScrimTap = null;
+      s.hidden = true;
+      if (f) { try { f(); } catch (e) {} }
+    });
+  }
+  _wrScrimTap = on ? (onTap || null) : null;
+  s.hidden = !on;
+}
+function wrMorePlaying(on){
+  const b = document.getElementById('wrMoreBtn');
+  if (b) b.classList.toggle('playing', !!on);
+}
+function wrMoreIsOpen(){
+  const pop = document.getElementById('wrMorePop');
+  return !!(pop && !pop.hidden);
+}
+// Stat tiles for the strip pills the width rules hid (no client rects).
+function wrMoreRender(){
+  const stats = document.getElementById('wrMoreStats');
+  if (stats) {
+    const noGoals = (document.getElementById('hourGoalRow') || {}).hidden;
+    const tiles = [['hgToday', 'Today', 'hgTodayVal'], ['hgWeek', 'Week', 'hgWeekVal'], ['prWeekPill', 'PR Week', 'prWeekVal']]
+      .filter(([id]) => { const el = document.getElementById(id); return el && !el.getClientRects().length && !(noGoals && id !== 'prWeekPill'); })
+      .map(([id, l, v]) => {
+        const val = ((document.getElementById(v) || {}).textContent || '—').trim(), i = val.indexOf(' / ');
+        // "1h 27m / 25h": the time, then "of 25h" under it — a tile is too narrow for both on one line.
+        const g = i > 0 ? `<span class="g">of ${esc(val.slice(i + 3))}</span>` : '';
+        return `<button type="button" data-wrm-tile="${id}"><span class="l">${l}</span><span class="v">${esc(i > 0 ? val.slice(0, i) : val)}</span>${g}</button>`;
+      });
+    stats.innerHTML = tiles.join('');
+  }
+  try { updateCalBadge(); } catch (e) {}   // also writes #wrMoreCalBadge
+  const lb = document.getElementById('wrMoreLofiLbl');
+  if (lb) {
+    const st = lofiState();
+    lb.textContent = st.vibe ? `Lofi · ${(LOFI_VIBES.find(v => v.id === st.vibe) || {}).label || 'on'}` : 'Lofi music';
+  }
+}
+function wrMoreClose(){
+  const pop = document.getElementById('wrMorePop'), btn = document.getElementById('wrMoreBtn');
+  if (!pop || pop.hidden) return;
+  pop.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  // The calendar panel on a tablet owns the scrim while it's open.
+  if (window.WR_TABLET && typeof calOpen !== 'undefined' && calOpen) wrScrim(true, () => { if (calOpen) toggleCalPanel(); });
+  else wrScrim(false);
+}
+// Opens only from a tap on ⋯ — nothing else ever opens it.
+function wrMoreToggle(ev){
+  if (ev) ev.stopPropagation();
+  const pop = document.getElementById('wrMorePop'), btn = document.getElementById('wrMoreBtn');
+  if (!pop) return;
+  if (!pop.hidden) { wrMoreClose(); return; }
+  wrMoreRender();
+  pop.hidden = false;
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  wrScrim(true, wrMoreClose);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const pop = document.getElementById('wrMorePop');
+  if (!pop) return;
+  pop.addEventListener('click', ev => {
+    const tile = ev.target.closest('[data-wrm-tile]'), row = ev.target.closest('[data-wrm]');
+    if (!tile && !row) return;
+    ev.stopPropagation();
+    wrMoreClose();
+    if (tile) { const el = document.getElementById(tile.dataset.wrmTile); if (el) el.click(); return; }
+    const a = row.dataset.wrm;
+    if (a === 'cal') toggleCalPanel();
+    else if (a === 'lofi') toggleLofiPopover(ev);       // stops propagation: no open-and-close on one tap
+    else if (a === 'fs') toggleFullscreen();
+    else if (a === 'refresh') refreshApp();
+  });
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && wrMoreIsOpen()) wrMoreClose(); });
+window.addEventListener('resize', () => { if (wrMoreIsOpen()) wrMoreClose(); });
+
+// ---- L21: the visible area for the active frame (tablets) ----
+// An iframe never learns where the software keyboard is, so the shell feeds
+// the showing frame --wr-vv-top / --wr-vv-h (its visible slice, in frame px);
+// Personal's Add and Coach sheets anchor to them. No other reads, no writes.
+if (window.WR_TABLET && window.visualViewport) {
+  const vv = window.visualViewport; let raf = 0;
+  const run = () => { raf = 0;
+    const f = [...document.querySelectorAll('.wr-frame')].find(x => x.getClientRects().length); if (!f) return;
+    let d; try { d = f.contentDocument && f.contentDocument.documentElement; } catch (e) { return; } if (!d) return;
+    const r = f.getBoundingClientRect(), top = Math.max(r.top, vv.offsetTop), bot = Math.min(r.bottom, vv.offsetTop + vv.height);
+    d.style.setProperty('--wr-vv-top', Math.round(top - r.top) + 'px');
+    d.style.setProperty('--wr-vv-h', Math.max(0, Math.round(bot - top)) + 'px');
+  };
+  const q = () => { if (!raf) raf = requestAnimationFrame(run); };
+  vv.addEventListener('resize', q); vv.addEventListener('scroll', q);
+}
+
 // Stop button on the popover
 document.addEventListener('DOMContentLoaded', () => {
   const stopBtn = document.getElementById('lofiPopStop');
@@ -5783,9 +6040,10 @@ document.addEventListener('fullscreenchange', () => {
   if(document.body.classList.contains('notes-focus')){
     const ours = _notesFocusNative; _notesFocusNative = false;
     document.body.classList.remove('notes-focus'); notesFocusTellFrame();
-    if(ours) return;
+    if(ours){ window.wrSizeChrome && wrSizeChrome(); return; }
   }
   document.body.classList.remove('fullscreen');
+  window.wrSizeChrome && wrSizeChrome();
 });
 
 // --- Analytics ---
@@ -5813,9 +6071,12 @@ function switchTab(tab){
   // Goals / Board / Learning were retired outright. Saved ui-state and old
   // deep links can still name any of them — send them to Personal rather
   // than a blank screen.
-  if(tab==='habits'||tab==='goals'||tab==='board'||tab==='learning') tab='todos';
+  if(tab==='habits'||tab==='goals'||tab==='board'||tab==='learning'||tab==='analytics') tab='todos';
+  try { wrMoreClose(); } catch(e){}
   if(tab!=='todos' && document.body.classList.contains('notes-focus')){ setNotesFocus(false); notesFocusTellFrame(); }
+  if(tab!=='todos') document.body.classList.remove('notes-inking');   // the pad's frame is hidden: the timer card comes back
   currentTab=tab;
+  document.body.dataset.wrTab = tab;
   saveUiState({tab});
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   updateMobileTabLabel(tab);
@@ -5884,6 +6145,7 @@ function switchTab(tab){
     }
   }
   if(typeof mobileNavUpdateActive==='function')mobileNavUpdateActive(tab);
+  window.wrSizeChrome && wrSizeChrome();
 }
 function setPeriod(p){
   analyticsPeriod=p;
@@ -6539,11 +6801,31 @@ function reorderYT(draggedId,targetId){
 // The old in-shell AI Coach was retired; planning chat now lives in
 // personal-todos.html (Coach sheet → /api/plan-chat).
 function getApiKey(){return localStorage.getItem('goals-api-key')||''}
+// Settings › Layout on this device — per-device override of the tablet signal
+// (wr-tablet-force is in sync-client's SKIP_SYNC). Nothing reloads by itself:
+// the new layout applies after the owner taps "Reload now" (or reloads later).
+function wrLayoutPaint(){
+  const sel=document.getElementById('wrLayoutSel'), note=document.getElementById('wrLayoutNote');
+  let v=null; try { v=localStorage.getItem('wr-tablet-force'); } catch(e){}
+  if(sel) sel.value=(v==='1'||v==='0')?v:'auto';
+  if(note) note.textContent='Now: '+(window.WR_TABLET?'Tablet':'Desktop');
+  const rb=document.getElementById('wrLayoutReload'); if(rb) rb.hidden=true;
+}
+function wrLayoutPick(v){
+  try {
+    if(v==='1'||v==='0') localStorage.setItem('wr-tablet-force', v);
+    else localStorage.removeItem('wr-tablet-force');
+  } catch(e){}
+  const note=document.getElementById('wrLayoutNote'), rb=document.getElementById('wrLayoutReload');
+  if(note) note.textContent='Applies after a reload';
+  if(rb) rb.hidden=false;
+}
 function toggleApiKeyPanel(){
   const p=document.getElementById('apiKeyPanel');
   const showing=p.style.display==='none';
   p.style.display=showing?'':'none';
   if(showing){
+    try { wrLayoutPaint(); } catch(e){}
     const key=getApiKey();
     document.getElementById('apiKeyInput').value=key;
     document.getElementById('apiKeyStatus').textContent=key?'Key is set.':'No key saved yet.';
@@ -6841,10 +7123,13 @@ let calMonthYear={month:new Date().getMonth(),year:new Date().getFullYear()};
 
 function toggleCalPanel(){
   calOpen=!calOpen;
-  saveUiState({calOpen});
+  // Tablets never write calOpen (a desktop's open panel shouldn't open itself on the iPad).
+  if(!window.WR_TABLET) saveUiState({calOpen});
   document.getElementById('calSidebar').classList.toggle('open',calOpen);
   if(calOpen){renderCalMonth();renderCalEvents();updateSyncedLabel()}
   updateCalBadge();
+  // Tablets: a tap outside the panel (the scrim) closes it.
+  if(window.WR_TABLET) wrScrim(calOpen, () => { if (calOpen) toggleCalPanel(); });
 }
 
 function fetchCalendar(){
@@ -7668,6 +7953,9 @@ function updateCalBadge(){
     if(count>0){mnBadge.style.display='flex';mnBadge.textContent=count}
     else{mnBadge.style.display='none'}
   }
+  // ⋯ menu's Calendar row
+  const moreBadge=document.getElementById('wrMoreCalBadge');
+  if(moreBadge){ moreBadge.textContent=count>0?String(count):''; moreBadge.hidden=!(count>0); }
 }
 
 // --- Mobile bottom nav (tab switcher) ---
@@ -11221,6 +11509,17 @@ _pdRender();
   .mtb-tab{ font-size:9px }
   .mtb-tab svg{ width:20px; height:20px }
 }
+/* L5 — tablets in the phone band (iPad mini portrait, narrow Split View):
+   below the status bar from the Home Screen, and frames sized from the
+   measured chrome with dvh (the phone rule above uses vh). */
+@media (max-width:760px){
+  html.wr-tablet body:not(.notes-focus) .main{padding-top:max(12px, env(safe-area-inset-top)) !important}
+  html.wr-tablet body:not(.notes-focus) #focusFrame, html.wr-tablet body:not(.notes-focus) #todosFrame,
+  html.wr-tablet body:not(.notes-focus) #ecmFrame, html.wr-tablet body:not(.notes-focus) #calendarFrame,
+  html.wr-tablet body:not(.notes-focus) #mealsFrame, html.wr-tablet body:not(.notes-focus) #recoveryFrame,
+  html.wr-tablet body:not(.notes-focus) #lifeFrame{
+    height:calc(100dvh - var(--wr-chrome,12px) - 58px - env(safe-area-inset-bottom)) !important;min-height:0 !important}
+}
 /* Notes writing mode — Personal's Notes page asked for the whole screen.
    Unlike cast fullscreen (which keeps tabs for navigation), every piece of
    shell chrome goes, phones included, and the Personal iframe fills it. */
@@ -11230,14 +11529,27 @@ body.notes-focus .focus-bar,
 body.notes-focus .add-plan,
 body.notes-focus .notepad-fab,
 body.notes-focus .mobile-tabbar,
-body.notes-focus #wr-sync-indicator,
 body.notes-focus .pd-float{ display:none !important }
+/* The one sync pill (frames report to it): in writing mode it sits where the
+   frame's own pill used to (bottom right, the tab bar is gone); only the
+   handwriting pad hides it. */
+body.notes-focus #wr-sync-indicator{ bottom:12px !important }
+body.notes-inking #wr-sync-indicator{ display:none !important }
+/* L7 — the timer card (card, pill or docked Today) steps aside while writing
+   on a tablet, and while the handwriting pad is up (body.notes-inking, set by
+   the pad's warroom:notes-ink message). ONE rule — add selectors here, never a
+   second .wrt rule. visibility (not display) so place() still measures. */
+html.wr-tablet body.notes-focus .wrt,
+body.notes-inking .wrt{ visibility:hidden !important; pointer-events:none !important }
 body.notes-focus .main{ padding:0 !important; margin:0 !important; max-width:none !important }
 body.notes-focus #todosFrame{
   height:100vh !important; min-height:100vh !important;
   height:100dvh !important; min-height:100dvh !important;
   border-radius:0 !important;
 }
+/* Tablets from the Home Screen: writing mode sits below the status bar. */
+html.wr-tablet body.notes-focus #todosFrame{margin-top:env(safe-area-inset-top,0px) !important;
+  height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)) !important;min-height:0 !important}
 </style>
 
 <script>
@@ -11317,7 +11629,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt { position: fixed; z-index: 9990; left: 0; top: 0; touch-action: none; user-select: none; -webkit-user-select: none;
          font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif); }
   .wrt[hidden] { display: none !important; }
-  /* Phones: the Today tab — the card as a full page above the tab bar. */
+  /* Phones: the Today tab — the card as a full page above the tab bar.
+     Phone band only: rotating past 760 undocks (wrTodayOff), and nothing
+     docked may leak into the strip layout meanwhile. */
+  @media (max-width: 760px) {
   .wrt.docked { left: 0 !important; top: 0 !important; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); touch-action: auto; z-index: 9400; }
   .wrt.docked .wrt-big { display: block !important; width: 100%; max-width: none; height: 100%; max-height: none; border-radius: 0; border: 0; box-shadow: none;
                          cursor: auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: calc(14px + env(safe-area-inset-top)) 16px 20px; background: #FBEFE5; }
@@ -11327,6 +11642,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt.docked .wrt-lbl { font-size: 12px; }
   body.wr-today-docked .nav-drawer-overlay { z-index: 9590; }
   body.wr-today-docked .nav-drawer { z-index: 9600; }
+  }
   .wrt-big { width: 390px; max-width: calc(100vw - 24px); box-sizing: border-box; padding: 14px 16px 14px; border-radius: 18px; cursor: grab;
              background: #FBEFE5; border: 1px solid rgba(240, 126, 40, .35); box-shadow: 0 12px 34px rgba(33, 30, 25, .16), 0 2px 6px rgba(33, 30, 25, .08); }
   .wrt.min .wrt-big { display: none; }
@@ -11355,6 +11671,7 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
               background: #FBEFE5; border: 1px solid rgba(240, 126, 40, .35); box-shadow: 0 8px 24px rgba(33, 30, 25, .16); max-width: min(360px, calc(100vw - 24px)); box-sizing: border-box; }
   .wrt-pname { min-width: 0; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: #211E19; }
   .wrt-ptime { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; color: #211E19; }
+  html.wr-tablet .wrt-ptime { white-space: nowrap; }      /* "12:34 left" on one line (tablets; desktop and phones as they were) */
   .wrt-pill .wrt-ic { margin-left: 0; }
   .wrt-pill .wrt-ic:first-of-type { margin-left: auto; }
   .wrt-ic.stop { color: #E0701F; font-size: 13px; }
@@ -11446,6 +11763,10 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   .wrt-det a { color: #1f6feb; } .wrt-det img { max-width: 100%; border-radius: 8px; }
   .wrt-det li.md-task { list-style: none; display: flex; align-items: baseline; gap: 7px; margin-left: -18px; } .wrt-det .md-cb { flex-shrink: 0; width: 10px; height: 10px; border: 1.5px solid #bbb; border-radius: 3px; transform: translateY(1px); }
   .wrt-det li.md-task.on .md-cb { background: #F07E28; border-color: #F07E28; }
+  /* Tablets: the card never takes over the screen, and its icons are touch-sized. */
+  html.wr-tablet .wrt:not(.docked) .wrt-big { max-height: min(560px, calc(100dvh - var(--wr-chrome, 52px) - 24px)); }
+  html.wr-tablet .wrt:not(.docked) .wrt-list { max-height: 28vh; }
+  html.wr-tablet .wrt-ic { width: 36px; height: 36px; }
 </style>
 <script>
 (function () {
@@ -11453,9 +11774,12 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   const el = document.getElementById('wrTimer');
   if (!el) return;
   const $ = id => document.getElementById(id);
-  let ui = { x: null, y: null, min: window.innerWidth < 600 };
+  let ui = { x: null, y: null, min: window.innerWidth < 600 || !!window.WR_TABLET };
+  if (window.WR_TABLET) ui.planIdle = false;              // idle card opens with the plan folded
   try { const u = JSON.parse(localStorage.getItem(UI) || 'null'); if (u && typeof u === 'object') ui = Object.assign(ui, u); } catch (e) {}
   const saveUi = () => { try { localStorage.setItem(UI, JSON.stringify(ui)); } catch (e) {} };
+  // Once per device: an iPad that saved the desktop-sized card starts folded to the pill.
+  if (window.WR_TABLET && ui.tabletV !== 1) { ui.tabletV = 1; ui.min = true; saveUi(); }
   // personal-day-v1: today's plan vs done and the priorities, worked out by
   // Personal (per device) while the card is pinned or a timer runs.
   const DAYK = 'personal-day-v1';
@@ -11813,13 +12137,28 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     document.body.classList.remove('wr-today-docked');
     if (ui.dock) { ui.dock = false; saveUi(); }
     el.style.left = ''; el.style.top = '';
+    // The bar follows the tab now showing (a rotation undocks with no switchTab after it).
+    try { window._mtbSync && window._mtbSync(currentTab); } catch (e) {}
     paint(true);
   };
+  // Leaving the phone band (rotation, a wider window) undocks; rotating back doesn't dock again.
+  try { matchMedia('(max-width: 760px)').addEventListener('change', e => { if (!e.matches) window.wrTodayOff(); }); } catch (e) {}
   function place(){
     if (docked) return;                       // the page fills the screen; nothing to place
+    // Tablets: measured from the left edge — at its old spot after a narrowing
+    // resize (a rotation) the pill would shrink to fit what's left of the
+    // screen, and stay squashed. Desktop and phones: as they were.
+    if (window.WR_TABLET) el.style.left = '0px';
     const r = el.getBoundingClientRect(), w = r.width || 330, h = r.height || 200;
     let x = ui.x == null ? window.innerWidth - w - 20 : ui.x, y = ui.y == null ? window.innerHeight - h - 20 : ui.y;
-    x = Math.max(8, Math.min(x, window.innerWidth - w - 8)); y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+    x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+    // Tablets: never over the strip (--wr-tabs-h is 0 at ≤760 and in writing mode → 8),
+    // nor over the tab bar (iPad mini portrait, narrow Split View).
+    const th = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--wr-tabs-h'));
+    const minY = window.WR_TABLET && Number.isFinite(th) ? th + 8 : 8;
+    let maxY = window.innerHeight - h - 8;
+    if (window.WR_TABLET) { const tb = document.getElementById('mobileTabbar'), tr = tb && tb.getBoundingClientRect(); if (tr && tr.height > 0 && getComputedStyle(tb).display !== 'none') maxY = Math.min(maxY, tr.top - h - 8); }
+    y = Math.max(minY, Math.min(y, maxY));
     el.style.left = x + 'px'; el.style.top = y + 'px';
   }
   function paint(full){
@@ -11972,7 +12311,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
     if (!f.src || f.src === 'about:blank' || !f.src.includes('personal-todos.html')) f.src = '/personal-todos.html?embed=1';
     else { try { f.contentWindow && f.contentWindow.postMessage({ type: 'warroom:timer', action: 'day' }, '*'); } catch (e) {} }
   }
-  window.wrTimerPin = () => { ui.pin = !ui.pin; if (ui.pin) { ui.min = false; wake(); } saveUi(); paintPin(); paint(true); };
+  // Tablets keep the current size (⤢ / − change it, and that's remembered).
+  window.wrTimerPin = () => { ui.pin = !ui.pin; if (ui.pin) { if (!window.WR_TABLET) ui.min = false; wake(); } saveUi(); paintPin(); paint(true); };
   // Today: drag a row by its ⋮⋮ (mouse, pen or touch). The row moves live;
   // the drop sends the new order to Personal, which keeps it for the day.
   el.addEventListener('pointerdown', e => {
@@ -12039,8 +12379,8 @@ console.log('[warroom] mobile bottom tabbar build 2026-05-25-v15 loaded');
   read();
   paintPin();
   if (ui.pin) setTimeout(wake, 4000);   // after the shell's own first load
-  // Phones land on Today — the first tab.
-  if (phone()) setTimeout(() => { try { window.wrTodayTab(); } catch (e) {} }, 0);
+  // Phones land on Today — the first tab. Tablets (iPad mini portrait) land on their saved tab.
+  if (phone() && !window.WR_TABLET) setTimeout(() => { try { window.wrTodayTab(); } catch (e) {} }, 0);
 })();
 </script>
 </body>
