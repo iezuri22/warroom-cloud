@@ -23832,6 +23832,7 @@
       nid, el, spot, W, H, s: 1, laid: false,
       scroll: null, pagesEl: null,
       strokes: ntInkRestore(draft), pages: [], undo: [], redo: [],
+      texts: ntInkRestoreTexts(draft), fontWait: false,   // dictated lines typed on the pages (ntInkDictLines); Inter still loading
       tool: 'pen', kind: 'auto', fingersDraw: p.fingers ? p.fingers === 'draw' : !p.pen, penSeen: false,
       live: new Map(), penAt: 0, fling: 0, paintQ: new Set(), paintRaf: 0, paintT: 0,
       busy: false, ab: null, cancelled: false, timedOut: false, saveT: 0, io: null, ro: null, focusByUs: false,
@@ -23894,7 +23895,7 @@
       + `<button class="nt-ink-b nt-ink-pagebtn" type="button" data-ink="page" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Page — lines, paper, one-finger scrolling" aria-label="Page">${NT_SVG.lines}<span class="lb">Page</span>${NT_SVG.chevS}</button>`
       // The timer: its clock while one runs (any timer), else "Timer"; a tap opens its menu.
       + `<button class="nt-ink-b nt-ink-tmr" type="button" data-ink="timer" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Timer — time this writing: count up, or down from 15 / 25 / 45 / 60 minutes" aria-label="Timer">${NT_SVG.clock}<span class="lb">Timer</span></button>`
-      + `<button class="nt-ink-b nt-ink-dictb" type="button" data-ink="dictate" aria-pressed="false" title="Dictate — speak and it’s typed into the note (the Journal: under the pad’s day) · say “new line”, “period”, “comma”" aria-label="Dictate">${NT_SVG.mic}</button>`
+      + `<button class="nt-ink-b nt-ink-dictb" type="button" data-ink="dictate" aria-pressed="false" title="Dictate — speak and it’s typed on your page, on the lines, so you can write around it · say “new line”, “period”, “comma”" aria-label="Dictate">${NT_SVG.mic}</button>`
       + '<span class="nt-ink-sp b"></span>'
       + '<div class="nt-ink-hist">' + b('undo', NT_SVG.undo, 'Undo (⌘Z)') + b('redo', NT_SVG.redo, 'Redo (⌘⇧Z)') + '</div>'
       + `<button class="nt-ink-convert" type="button" data-ink="convert" title="Turn the handwriting into clean notes (⌘↵)">${NT_SVG.spark}<span class="full">Make clean notes</span><span class="short">Clean notes</span></button>`
@@ -23947,7 +23948,7 @@
   }
   function ntInkPopHTML(K, kind){
     if (kind === 'page') {
-      const has = K.strokes.some(s => !s.live);
+      const has = ntInkHasInk(K);
       return ''
         + '<h4>Line spacing</h4>' + ntInkSeg2('rule', NT_INK_RULES, K.rule, 'Line spacing')
         + '<h4>Paper</h4>' + ntInkSeg2('paper', NT_INK_PAPERS, K.paper, 'Paper')
@@ -24008,7 +24009,7 @@
   // The draft's day → (an older pad with ink and no day) the day it was written → the cursor's day → today.
   function ntInkDefaultDay(draft, spot){
     if (draft && ntInkDayOk(draft.day)) return draft.day;
-    const inked = draft && ((Array.isArray(draft.strokes) && draft.strokes.length) || (Array.isArray(draft.hl) && draft.hl.length));
+    const inked = ntInkSnapHas(draft);
     if (inked && !draft.day && +draft.ts > 0) { const d = dkey(new Date(+draft.ts)); if (ntInkDayOk(d)) return d; }   // an older pad: the day it was written
     return ntInkDayAt(spot) || todayKey();
   }
@@ -24017,11 +24018,10 @@
     if (!ntInkDayOk(ds)) { ptToast('Pick a day up to today'); return; }
     ntInkPopClose(K);
     if (ds === K.day) return;
-    try { if (_ntDict && _ntDict.pad) _ntDict.blk = null; } catch {}
     K.day = ds;
     if (K.ctx) { K.ctx.all = false; K.ctx.open.clear(); ntInkCtxRender(K); ntInkScrollToLanding(K); }
     ntInkSync(K); ntInkBarFit(K);
-    if (K.strokes.some(s => !s.live)) ntInkSaveSoon(K);
+    if (ntInkHasInk(K)) ntInkSaveSoon(K);
   }
   // ---- the pad: the Journal stays in view ----
   // A read-only copy of the Journal inside the pad's scroller, in the Journal's
@@ -24155,19 +24155,32 @@
   }
   // The most recent writing on screen (before a resize — the scroller was h0
   // tall, as for the anchor): its page and lowest point, page units. Newest
-  // first, so it stops at the line you were on.
+  // first, so it stops at the line you were on. Dictated lines are writing
+  // too: the newest one on screen, when it's lower than that stroke (the
+  // anchor only scrolls up, so keeping the lower of the two keeps both).
   function ntInkSeenInk(K, h0){
     const R = K.scroll.getBoundingClientRect(), bot = R.top + (h0 || R.height), tops = new Map();
+    const top = p => { if (!tops.has(p)) tops.set(p, K.pages[p].el.getBoundingClientRect().top); return tops.get(p); };
+    let ink = null;
     for (let j = K.strokes.length - 1; j >= 0; j--) {
       const st = K.strokes[j], pg = K.pages[st.p], P = st.pts;
       if (!pg || !P || P.length < 3) continue;
-      if (!tops.has(st.p)) tops.set(st.p, pg.el.getBoundingClientRect().top);
       let y0 = Infinity, y1 = -Infinity;
       for (let k = 1; k < P.length; k += 3) { if (P[k] < y0) y0 = P[k]; if (P[k] > y1) y1 = P[k]; }
-      const t = tops.get(st.p), w = (st.w || 0) / 2;
-      if (t + (y1 + w) * K.s > R.top && t + (y0 - w) * K.s < bot) return { p: st.p, y: y1 + w };
+      const t = top(st.p), w = (st.w || 0) / 2;
+      if (t + (y1 + w) * K.s > R.top && t + (y0 - w) * K.s < bot) { ink = { p: st.p, y: y1 + w }; break; }
     }
-    return null;
+    const T = K.texts || [];
+    for (let j = T.length - 1; j >= 0; j--) {
+      const x = T[j];
+      if (!K.pages[x.p]) continue;
+      const t = top(x.p), yb = ntInkTextBottom(x);
+      if (t + yb * K.s > R.top && t + (x.y - x.fs) * K.s < bot) {
+        if (!ink || x.p > ink.p || (x.p === ink.p && yb > ink.y)) ink = { p: x.p, y: yb };
+        break;
+      }
+    }
+    return ink;
   }
   function ntInkCtxJump(K){ const R = K.scroll.getBoundingClientRect(); K.scroll.scrollTop += K.ctx.bottom.getBoundingClientRect().top - R.top - 12; }
   function ntInkNudge(K){ const l = K.ctx && K.ctx.top.querySelector('.nt-ink-ctx-land'); if (!l) return; l.classList.remove('nudge'); void l.offsetWidth; l.classList.add('nudge'); setTimeout(() => l.classList.remove('nudge'), 600); }
@@ -24211,14 +24224,14 @@
     K.rule = v; ntInkPref('rule', v);
     ntInkLayout(K, { force: true });                     // tablets: s snaps to the new spacing; your line stays in view
     ntInkPopRefresh(K); ntInkSync(K);
-    if (K.strokes.some(s => !s.live)) ntInkSaveSoon(K);
+    if (ntInkHasInk(K)) ntInkSaveSoon(K);
   }
   function ntInkPaper(K, v){
     if (!ntInkPaperOk(v) || v === K.paper) return;
     K.paper = v; ntInkPref('paper', v);
     K.pages.forEach(pg => ntInkSize(K, pg.el));
     ntInkPopRefresh(K); ntInkSync(K);
-    if (K.strokes.some(s => !s.live)) ntInkSaveSoon(K);
+    if (ntInkHasInk(K)) ntInkSaveSoon(K);
   }
   // Tell the War Room shell the pad is up (or gone): its timer card steps out of the way.
   function ntInkShell(on){ try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'warroom:notes-ink', on: !!on }, '*'); } catch {} }
@@ -24253,6 +24266,19 @@
     (d && Array.isArray(d.strokes) ? d.strokes : []).forEach(s => { if (!okS(s)) return; const o = { p: s.p | 0, w: (+s.w > 0 && +s.w < 20) ? +s.w : NT_INK_PEN, pts: s.pts }; if (s.c !== 'ink' && ntInkPenOk(s.c)) o.c = s.c; out.push(o); });
     return out;
   }
+  // …and its dictated lines (texts, additive: a draft without them opens as
+  // before): {p, x, y (the baseline), t, fs}, page units, one per line.
+  function ntInkRestoreTexts(d){
+    const fin = v => typeof v === 'number' && isFinite(v);
+    return (d && Array.isArray(d.texts) ? d.texts : []).filter(x => x && typeof x.t === 'string' && x.t.trim() && x.t.length <= 500
+      && Number.isInteger(x.p) && x.p >= 0 && x.p < NT_INK_MAX_PAGES && fin(x.x) && fin(x.y) && fin(x.fs)
+      && x.x >= 0 && x.x <= 2000 && x.y >= 0 && x.y <= 3000 && x.fs > 0 && x.fs <= 200).slice(0, 2000)
+      .map(x => ({ p: x.p, x: x.x, y: x.y, t: x.t, fs: x.fs }));
+  }
+  // Anything on the pages: finished strokes, or typed lines.
+  function ntInkHasInk(K){ return K.texts.length > 0 || K.strokes.some(s => !s.live); }
+  // A saved pad (a snap, a draft) holds something.
+  function ntInkSnapHas(d){ return !!(d && ((Array.isArray(d.strokes) && d.strokes.length) || (Array.isArray(d.hl) && d.hl.length) || (Array.isArray(d.texts) && d.texts.length))); }
   // The pad's timer menu: the same actions as the note header's (ntPopTimer's data-np-tmr).
   function ntInkTmr(K, v){
     if (v === 'stop') { if (tmrRun) tmrStop(); }
@@ -24418,6 +24444,7 @@
   function ntInkPagesSync(K){
     let last = -1;
     K.strokes.forEach(s => { if (s.p > last) last = s.p; });
+    K.texts.forEach(x => { if (x.p > last) last = x.p; });
     const want = Math.min(NT_INK_MAX_PAGES, Math.max(1, last + 2));
     while (K.pages.length < want) ntInkAddPage(K);
     while (K.pages.length > want) {
@@ -24484,9 +24511,40 @@
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, pg.cv.width, pg.cv.height);
     g.setTransform(pg.kx, 0, 0, pg.ky, 0, 0);
-    // Highlights first, then the ink over them: a highlight never covers writing.
+    // Highlights first, then the typed lines and the ink over them: a highlight never covers writing.
     K.strokes.forEach(s => { if (s.p === i && s.t === 'hl' && s.pts.length) ntInkDraw(g, s); });
+    let typed = false;
+    K.texts.forEach(x => { if (x.p === i) { ntInkText(g, x); typed = true; } });
+    if (typed) ntInkFontWait(K);
     K.strokes.forEach(s => { if (s.p === i && s.t !== 'hl' && s.pts.length) ntInkDraw(g, s); });
+  }
+  // A typed line (page units: the page's transform scales it like the ink).
+  function ntInkFont(fs){ return (Math.round(fs * 100) / 100) + 'px Inter, -apple-system, system-ui, sans-serif'; }
+  function ntInkText(g, x, color){
+    g.font = ntInkFont(x.fs); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = color || NT_INK_COLOR;
+    g.fillText(x.t, x.x, x.y);
+  }
+  // Inter not loaded yet (the lines drew in a stand-in): once it is, they're measured and drawn again.
+  function ntInkFontWait(K){
+    const F = document.fonts, f = ntInkFont(20);
+    if (!F || K.fontWait) return;
+    try { if (F.check(f)) return; } catch { return; }
+    K.fontWait = true;
+    F.load(f).then(() => { if (_ntInk !== K) return; K.texts.forEach(x => { x.w = null; }); new Set(K.texts.map(x => x.p)).forEach(i => ntInkRepaint(K, i)); }).catch(() => {});
+  }
+  // A line's width, in page units (the font's size is in page units).
+  function ntInkMeasure(t, fs){
+    let g = ntInkMeasure.g;
+    if (!g) { try { g = ntInkMeasure.g = document.createElement('canvas').getContext('2d'); } catch { g = null; } }
+    if (!g) return String(t).length * fs * 0.56;
+    g.font = ntInkFont(fs);
+    return g.measureText(String(t)).width;
+  }
+  // Its box (for the eraser and the export's crop): the cap height above the baseline, the descenders below.
+  function ntInkTextBox(x){
+    if (x.w == null) x.w = ntInkMeasure(x.t, x.fs);
+    return [x.x, x.y - x.fs * 0.78, x.x + x.w, x.y + x.fs * 0.28];
   }
   // Repaints wait for the next frame (a 120ms timer stands in if frames stop).
   function ntInkRepaint(K, i){
@@ -24774,12 +24832,35 @@
       }
       return out;                                       // indices, descending
     };
-    let list;
-    if (L.ek) list = hits(L.ek === 'hl');
-    else { list = hits(false); if (list.length) L.ek = 'pen'; else { list = hits(true); if (list.length) L.ek = 'hl'; } }
-    if (!list.length) return;
+    // A typed line counts as ink: the eraser touching its box takes the whole line.
+    const typed = () => {
+      const out = [];
+      for (let j = K.texts.length - 1; j >= 0; j--) {
+        const t = K.texts[j];
+        if (t.p !== L.pg) continue;
+        const b = ntInkTextBox(t);
+        if (x >= b[0] - r && x <= b[2] + r && y >= b[1] - r && y <= b[3] + r) out.push(j);
+      }
+      return out;                                       // indices, descending
+    };
+    let list, tl = [];
+    if (L.ek) { list = hits(L.ek === 'hl'); if (L.ek === 'pen') tl = typed(); }
+    else { list = hits(false); tl = typed(); if (list.length || tl.length) L.ek = 'pen'; else { list = hits(true); if (list.length) L.ek = 'hl'; } }
+    if (!list.length && !tl.length) return;
     list.forEach(j => { const s = K.strokes[j]; K.strokes.splice(j, 1); L.hits.push({ s, i: j }); });   // i: its place at that moment — Undo puts them back in reverse
+    tl.forEach(j => { const t = K.texts[j]; K.texts.splice(j, 1); L.hits.push({ x: t, i: j }); });      // a typed line: {x, i} in K.texts
     ntInkRepaint(K, L.pg);
+  }
+  // What an erase (or Clear) took, put back in reverse — strokes {s, i}, typed lines {x, i} — or taken again (redo).
+  function ntInkPutBack(K, list, pages){
+    for (let k = list.length - 1; k >= 0; k--) {
+      const h = list[k];
+      if (h.x) { K.texts.splice(Math.min(h.i, K.texts.length), 0, h.x); pages.add(h.x.p); }
+      else { K.strokes.splice(Math.min(h.i, K.strokes.length), 0, h.s); pages.add(h.s.p); }
+    }
+  }
+  function ntInkTakeOut(K, list, pages){
+    list.forEach(h => { const A = h.x ? K.texts : K.strokes, o = h.x || h.s, j = A.indexOf(o); if (j >= 0) A.splice(j, 1); pages.add(o.p); });
   }
   function ntInkHit(s, x, y, r){
     const P = s.pts, n = P.length / 3, r2 = r * r;
@@ -25074,7 +25155,7 @@
   function ntInkEraseCancel(K, L){
     if (!L.hits || !L.hits.length) { ntInkEraserDot(K, null); return; }
     const pages = new Set();
-    for (let k = L.hits.length - 1; k >= 0; k--) { const h = L.hits[k]; K.strokes.splice(Math.min(h.i, K.strokes.length), 0, h.s); pages.add(h.s.p); }
+    ntInkPutBack(K, L.hits, pages);
     L.hits = []; pages.forEach(i => ntInkRepaint(K, i)); ntInkEraserDot(K, null);
   }
   function ntInkSettle(K, L, now){ if (!L.s) return; if (now - L.t0 < 250 || L.s.pts.length < 24) ntInkDrop(K, L); else ntInkEnd(K, L, false); L.s = null; }
@@ -25103,11 +25184,11 @@
       if (redo) K.strokes.push(a.s);
       else { const j = K.strokes.indexOf(a.s); if (j >= 0) K.strokes.splice(j, 1); }
       pages.add(a.s.p);
-    } else if (redo) {
-      a.list.forEach(h => { const j = K.strokes.indexOf(h.s); if (j >= 0) K.strokes.splice(j, 1); pages.add(h.s.p); });
-    } else {
-      for (let k = a.list.length - 1; k >= 0; k--) { const h = a.list[k]; K.strokes.splice(Math.min(h.i, K.strokes.length), 0, h.s); pages.add(h.s.p); }
-    }
+    } else if (a.t === 'text') {   // a dictated phrase: its lines (and the punctuation it put on the line before)
+      if (a.edit) { a.edit.x.t = redo ? a.edit.to : a.edit.from; a.edit.x.w = null; pages.add(a.edit.x.p); }
+      a.list.forEach(x => { const j = K.texts.indexOf(x); if (redo) { if (j < 0) K.texts.push(x); } else if (j >= 0) K.texts.splice(j, 1); pages.add(x.p); });
+    } else if (redo) ntInkTakeOut(K, a.list, pages);
+    else ntInkPutBack(K, a.list, pages);
     (redo ? K.undo : K.redo).push(a);
     ntInkPagesSync(K);
     pages.forEach(i => ntInkRepaint(K, i));
@@ -25115,12 +25196,13 @@
     ntInkSaveSoon(K);
   }
   function ntInkClear(K){
-    const done = K.strokes.filter(s => !s.live);
-    if (!done.length) return;
-    const pages = new Set(done.map(s => s.p));
+    const done = K.strokes.filter(s => !s.live), typed = K.texts.slice();
+    if (!done.length && !typed.length) return;
+    const pages = new Set(done.map(s => s.p).concat(typed.map(x => x.p)));
     // As if taken from the front one at a time, so Undo's reverse puts them back in order.
-    ntInkPush(K, { t: 'clear', list: done.map(s => ({ s, i: 0 })) });
+    ntInkPush(K, { t: 'clear', list: done.map(s => ({ s, i: 0 })).concat(typed.map(x => ({ x, i: 0 }))) });
     K.strokes = K.strokes.filter(s => s.live);
+    K.texts = [];
     ntInkPagesSync(K);
     pages.forEach(i => ntInkRepaint(K, i));
     ntInkSync(K);
@@ -25129,8 +25211,8 @@
   }
   function ntInkTool(K, t){ ntInkPopClose(K); K.tool = t; if (t !== 'erase') K.inkTool = t; ntInkCursor(K, null); ntInkSync(K); }
   function ntInkSync(K){
-    const q = sel => K.el.querySelector(sel), has = K.strokes.some(s => !s.live);
-    const pens = K.strokes.some(s => !s.live && s.t !== 'hl');   // only pen ink is read: highlights alone make no notes
+    const q = sel => K.el.querySelector(sel), has = ntInkHasInk(K);
+    const pens = K.texts.length > 0 || K.strokes.some(s => !s.live && s.t !== 'hl');   // only pen ink (and typed lines) is read: highlights alone make no notes
     K.el.querySelectorAll('.nt-ink-tools [data-ink]').forEach(b => b.setAttribute('aria-checked', String(K.tool === b.dataset.ink)));
     q('[data-ink="undo"]').disabled = !K.undo.length;
     q('[data-ink="redo"]').disabled = !K.redo.length;
@@ -25165,6 +25247,127 @@
     if (mine) e.preventDefault();
     e.stopImmediatePropagation();   // while the pad is up, the note underneath hears no keys
   }
+  // ---- the pad: dictation typed on the ruled lines ----
+  // A phrase (ntDictPadType) goes on the pages, not into the note: on the line
+  // after the last one dictated — or, fresh, the first line below everything on
+  // the page most in view — at the margin, wrapped to the page, a line per rule;
+  // "new line" moves to the next rule; past the last rule, the next page. Each
+  // line is {p, x, y (baseline), t, fs} in K.texts, page units, kept in the
+  // draft with the ink (never Firestore); one Undo takes the phrase back.
+  // A phrase begins its own line, so it begins with a capital (as a line does
+  // in the note after "new line"). Since a pause already starts a new line,
+  // "new line" said on its own — or twice — leaves a rule empty (d.padGap
+  // carries that to the next phrase). K.hearing: Make clean notes is waiting
+  // for the last phrase, so it still lands (and is read) though the pad is busy.
+  function ntInkDictLines(K, t, d){
+    if (!K || _ntInk !== K || (K.busy && !K.hearing)) return;
+    const r = K.rule || NT_INK_RULE, fs = Math.round(r * 62) / 100, lift = Math.round(r * 0.16);   // the text sits just above its rule
+    const x0 = NT_INK_MARGIN + 10, maxW = K.W - x0 - 32, kmax = Math.floor((K.H - NT_INK_TOP - 1) / r);   // the last rule on the page
+    if (kmax < 1 || maxW < 60) return;
+    const segs = String(t || '').split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i);
+    // The page: the last dictated line's while it's on screen (phrases flow on), else the one most in view.
+    const last = d && d.padLine && K.texts.includes(d.padLine) ? d.padLine : null;
+    let p = last && ntInkLineSeen(K, last) ? last.p : ntInkViewPage(K);
+    let k = ntInkNextBand(K, p, r);
+    // Carrying on from that line (nothing written under it since): its sentence goes on.
+    const cont = !!(last && last.p === p && ntInkLowest(K, p) <= ntInkTextBottom(last) + 0.5);
+    const items = [];
+    let edit = null, full = false, brk = 0;   // brk: "new line"s said since the last words
+    const put = s => {   // one line on rule k of page p — the next page's first free rule once this one is full
+      while (k > kmax) { if (p + 1 >= NT_INK_MAX_PAGES) { full = true; return false; } p++; k = ntInkNextBand(K, p, r); }
+      const x = { p, x: x0, y: NT_INK_TOP + k * r - lift, t: s.slice(0, 500), fs };
+      K.texts.push(x); items.push(x); k++;
+      return true;
+    };
+    segs.forEach((seg, i) => {
+      if (full) return;
+      if (i) brk++;
+      seg = seg.trim();
+      if (!seg) return;
+      if (!i && cont && /^[.,!?:;]/.test(seg)) {   // "period" on its own ends the line before
+        const m = seg.match(/^[.,!?:;]+/)[0];
+        edit = { x: last, from: last.t, to: (last.t + m).slice(0, 500) };
+        last.t = edit.to; last.w = null;
+        seg = seg.slice(m.length).trim();
+        if (!seg) return;
+      }
+      // Words after words (this phrase — or its "period" on the line before): the first "new line" just ends the line, each more leaves one empty.
+      // The phrase's first words: already on a line of their own, so every "new line" (and any carried) leaves one empty.
+      k += items.length || edit ? Math.max(0, brk - 1) : brk + ((d && d.padGap) || 0);
+      brk = 0; if (d) d.padGap = 0;
+      seg = seg.charAt(0).toUpperCase() + seg.slice(1);   // each line of words begins one
+      for (const s of ntInkWrap(seg, fs, maxW)) if (!put(s)) break;
+    });
+    // "new line" at the end: the first goes with the pause that follows (the next phrase starts a line anyway); more are kept for it.
+    if (d && brk && !full) d.padGap = ((d.padGap) || 0) + (items.length || edit ? brk - 1 : brk);
+    if (full) ptToast(items.length ? 'The pages are full — the rest didn’t fit' : 'The pages are full — make clean notes, or clear some, to keep dictating');
+    if (!items.length && !edit) return;
+    ntInkPush(K, { t: 'text', list: items, edit });
+    const end = items.length ? items[items.length - 1] : edit.x;
+    if (d) d.padLine = end;
+    ntInkChanged(K);
+    new Set(items.map(x => x.p).concat(edit ? [edit.x.p] : [])).forEach(i => ntInkRepaint(K, i));
+    ntInkReveal(K, end);
+  }
+  // Words into lines no wider than w (page units); a word longer than a line breaks where it must.
+  function ntInkWrap(t, fs, w){
+    const out = [], fits = s => ntInkMeasure(s, fs) <= w;
+    let cur = '';
+    String(t).split(' ').filter(Boolean).forEach(word => {
+      if (cur && fits(cur + ' ' + word)) { cur += ' ' + word; return; }
+      if (cur) out.push(cur);
+      cur = '';
+      if (fits(word)) { cur = word; return; }
+      for (const ch of word) { if (cur && !fits(cur + ch)) { out.push(cur); cur = ''; } cur += ch; }
+    });
+    if (cur) out.push(cur);
+    return out;
+  }
+  // The page most in view: the one across the scroller's middle, else the nearest (page 1 when the Journal copy fills the view).
+  function ntInkViewPage(K){
+    const R = K.scroll.getBoundingClientRect(), mid = (R.top + R.bottom) / 2;
+    let best = 0, bd = Infinity;
+    K.pages.forEach(pg => { const b = pg.el.getBoundingClientRect(), dd = mid < b.top ? b.top - mid : mid > b.bottom ? mid - b.bottom : 0; if (dd < bd) { bd = dd; best = pg.i; } });
+    return best;
+  }
+  // A typed line is on screen.
+  function ntInkLineSeen(K, x){
+    const pg = K.pages[x.p]; if (!pg) return false;
+    const R = K.scroll.getBoundingClientRect(), top = pg.el.getBoundingClientRect().top;
+    return R.height > 0 && top + x.y * K.s > R.top && top + (x.y - x.fs) * K.s < R.bottom;
+  }
+  // The lowest thing on a page (page units): a stroke's box (a stroke still being written, as far as it's got), a typed line's descenders.
+  function ntInkTextBottom(x){ return x.y + x.fs * 0.3; }
+  function ntInkLowest(K, p){
+    let b = -Infinity;
+    K.strokes.forEach(s => {
+      if (s.p !== p || !s.pts.length) return;
+      if (!s.live) { const y = ntInkBox(s)[3]; if (y > b) b = y; return; }
+      const P = s.pts; for (let j = 1; j < P.length; j += 3) if (P[j] + s.w > b) b = P[j] + s.w;   // live: never its cached box
+    });
+    K.texts.forEach(x => { if (x.p === p) { const y = ntInkTextBottom(x); if (y > b) b = y; } });
+    return b;
+  }
+  // The first free rule k (its line at NT_INK_TOP + k·r) below everything on the page: one whose
+  // rule above is clear of it (a descender may reach 0.3 of a line into it). Nothing there: the first.
+  function ntInkNextBand(K, p, r){
+    const B = ntInkLowest(K, p);
+    return B === -Infinity ? 1 : Math.max(1, Math.ceil((B - 0.3 * r - NT_INK_TOP) / r - 1e-6) + 1);
+  }
+  // The line just typed, below (or above) the view: scrolled in, with a line to spare — never under the pencil or a finger,
+  // nor under the Listening… Stop pill (fixed near the bottom, over the page): the view ends above it.
+  function ntInkReveal(K, x){
+    const pg = K.pages[x.p];
+    if (!pg || K.peek || K.fling || K.live.size || ntInkPenNear(K)) return;
+    const sc = K.scroll, R = sc.getBoundingClientRect(), top = pg.el.getBoundingClientRect().top, ln = (K.rule || NT_INK_RULE) * K.s;
+    if (R.height <= 0) return;
+    let bot = R.bottom;
+    const pill = document.getElementById('ntDictPill');
+    if (pill && !pill.hidden) { const b = pill.getBoundingClientRect(); if (b.height > 0 && b.top > R.top + 3 * ln) bot = Math.min(bot, b.top - 8); }
+    const y0 = top + (x.y - x.fs) * K.s, y1 = top + x.y * K.s + ln;
+    if (y1 > bot) sc.scrollTop += Math.min(y1 - bot, y0 - R.top);
+    else if (y0 < R.top) sc.scrollTop -= R.top - y0 + ln;
+  }
   // ---- the pad: kept, closed ----
   // The draft (v2): pens in strokes (a colour only when not black), highlights
   // in hl, and the lines/paper only when they aren't the standard ones.
@@ -25174,6 +25377,7 @@
     const snap = { W: K.W, H: K.H, strokes: done.filter(s => s.t !== 'hl').map(pack) };
     const hl = done.filter(s => s.t === 'hl').map(pack);
     if (hl.length) snap.hl = hl;
+    if (K.texts.length) snap.texts = K.texts.map(x => ({ p: x.p, x: x.x, y: x.y, t: x.t, fs: x.fs }));   // dictated lines (additive)
     if (K.rule && K.rule !== NT_INK_RULE) snap.rule = K.rule;
     if (K.paper && K.paper !== 'lined') snap.paper = K.paper;
     if (K.journal && K.day) snap.day = K.day;
@@ -25184,8 +25388,8 @@
     clearTimeout(K.saveT); K.saveT = 0;
     const snap = ntInkSnap(K);
     // A placed copy on show (the strip) stays under its own key until "Keep writing" (or a stroke).
-    if (K.placedAt) { if (snap.strokes.length || snap.hl) ntDraftPut({ id: 'ink-placed:' + K.nid, v: 2, ts: Date.now(), placed: K.placedAt, ...snap }); else ntDraftDel('ink-placed:' + K.nid); return; }
-    if (snap.strokes.length || snap.hl) ntDraftPut({ id: 'ink:' + K.nid, v: 2, ts: Date.now(), ...snap });
+    if (K.placedAt) { if (ntInkSnapHas(snap)) ntDraftPut({ id: 'ink-placed:' + K.nid, v: 2, ts: Date.now(), placed: K.placedAt, ...snap }); else ntDraftDel('ink-placed:' + K.nid); return; }
+    if (ntInkSnapHas(snap)) ntDraftPut({ id: 'ink:' + K.nid, v: 2, ts: Date.now(), ...snap });
     else ntDraftDel('ink:' + K.nid);
   }
   function ntInkHidden(e){ const K = _ntInk; if (K && (e.type === 'pagehide' || document.visibilityState === 'hidden')) ntInkSaveNow(K); }
@@ -25214,7 +25418,7 @@
     document.body.classList.remove('nt-inking');
     ntInkShell(false);
     if (K.focusByUs && _ntFocus) ntSetFocus(false);
-    if (ntOpenId === K.nid) { _ntInkHas = !(o && (o.discard || o.placed)) && K.strokes.some(s => !s.live && s.pts.length); ntInkBadgePaint(); }
+    if (ntOpenId === K.nid) { _ntInkHas = !(o && (o.discard || o.placed)) && (K.texts.length > 0 || K.strokes.some(s => !s.live && s.pts.length)); ntInkBadgePaint(); }
     // Back in the Journal: the day you wrote for is in view.
     if (!(o && o.placed) && K.journal && K.day) setTimeout(() => { if (!_ntInk && ntOpenId === K.nid) ntRevealAt(ntInkDayHead(K.day)); }, 450);
   }
@@ -25227,7 +25431,7 @@
     const nid = ntOpenId;
     const d = nid ? await ntDraftGet('ink:' + nid) : null;
     if (nid !== ntOpenId || _ntInk) return;
-    _ntInkHas = !!(d && ((Array.isArray(d.strokes) && d.strokes.length) || (Array.isArray(d.hl) && d.hl.length)));
+    _ntInkHas = ntInkSnapHas(d);
     ntInkBadgePaint();
   }
   // ---- ✦ the handwriting becomes notes ----
@@ -25241,21 +25445,24 @@
   function ntInkExport(K){
     const pages = [];
     for (let i = 0; i < NT_INK_MAX_PAGES; i++) {
-      const list = K.strokes.filter(s => s.p === i && !s.live && s.pts.length);
-      if (list.some(s => s.t !== 'hl')) pages.push(list);   // a page of highlights alone has nothing to read
+      const list = K.strokes.filter(s => s.p === i && !s.live && s.pts.length), typed = K.texts.filter(x => x.p === i);
+      if (typed.length || list.some(s => s.t !== 'hl')) pages.push([list, typed]);   // a page of highlights alone has nothing to read; typed lines alone do
     }
     const colors = ntInkColored(K);
     const tries = [['image/png', 1, 2000], ['image/jpeg', 0.9, 1600], ['image/jpeg', 0.82, 1200]];
     let out = null;
     for (const [type, q, edge] of tries) {
-      out = { type, colors, pages: pages.map(list => ntInkPageImage(K, list, type, q, edge, colors)) };
+      out = { type, colors, pages: pages.map(([list, typed]) => ntInkPageImage(K, list, type, q, edge, colors, typed)) };
       if (out.pages.reduce((n, d) => n + d.length, 0) <= 3300000) break;
     }
     return out;
   }
-  function ntInkPageImage(K, list, type, q, edge, colors){
+  function ntInkPageImage(K, list, type, q, edge, colors, typed){
+    typed = typed || [];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    list.forEach(s => { const b = ntInkBox(s); x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); });
+    const grow = b => { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); };
+    list.forEach(s => grow(ntInkBox(s)));
+    typed.forEach(x => grow(ntInkTextBox(x)));
     x0 = Math.max(0, x0 - 24); y0 = Math.max(0, y0 - 24); x1 = Math.min(K.W, x1 + 24); y1 = Math.min(K.H, y1 + 24);
     const cw = Math.max(1, x1 - x0), ch = Math.max(1, y1 - y0);
     const k = Math.min(2, edge / Math.max(cw, ch));
@@ -25265,6 +25472,7 @@
     g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
     g.setTransform(k, 0, 0, k, -x0 * k, -y0 * k);
     list.forEach(s => { if (s.t === 'hl') ntInkDraw(g, s); });          // highlights in their tint, under …
+    typed.forEach(x => ntInkText(g, x, '#111'));                        // … the typed lines, dark like a pen, and …
     // … every pen: black as always, or — once the pad uses colour — each coloured pen in its own (dark) colour
     list.forEach(s => { if (s.t !== 'hl') ntInkDraw(g, s, (colors && ntInkPenOk(s.c) && s.c !== 'ink') ? null : '#111'); });
     const d = c.toDataURL(type, q);
@@ -25295,12 +25503,17 @@
   async function ntInkConvert(){
     const K = _ntInk;
     if (!K || K.busy) return;
-    if (!K.strokes.some(s => !s.live && s.pts.length && s.t !== 'hl')) { ptToast('Write something first'); return; }
+    if (!K.texts.length && !K.strokes.some(s => !s.live && s.pts.length && s.t !== 'hl')) { ptToast('Write something first'); return; }
     if (!_ntEls || ntOpenId !== K.nid) { ntInkClose(); return; }
     ntInkSaveNow(K);   // whatever happens next, the ink is safe
     if (!_ntBodyLoaded) { ptToast(navigator.onLine === false ? 'Offline — your handwriting is kept; make clean notes when you’re back' : 'The note is still loading — try again in a moment'); return; }
     K.cancelled = false; K.timedOut = false;
+    // Dictating: it stops (what's said now would miss the pages being read) — but the
+    // phrase said just before the tap is still on its way: it lands on the page, then the pages go.
+    const dd = _ntDict && _ntDict.pad === K ? _ntDict : null;
+    if (dd) { try { ntDictStop(); } catch {} }
     ntInkBusy(K, true);
+    if (dd) { K.hearing = true; try { await ntDictSettled(dd); } finally { K.hearing = false; } }
     await new Promise(r => setTimeout(r, 40));   // the spinner shows before the export's work
     if (_ntInk !== K || K.cancelled) { if (_ntInk === K) ntInkBusy(K, false); return; }
     const ab = K.ab = new AbortController();
@@ -25313,7 +25526,7 @@
         body: JSON.stringify({ pages: img.pages, mediaType: img.type, kind: K.kind === 'auto' ? '' : K.kind, today: todayKey(),
           title: String(_ntEls.title.value || m.title || '').trim(), journal: ntJournalOpen(), day: K.journal ? K.day : undefined,
           // highlights ride along on the pages sent: the server says what the bands are; colours: coloured ink is tagged
-          marks: { hl: K.strokes.some(s => s.t === 'hl' && !s.live && K.strokes.some(q => q.p === s.p && q.t !== 'hl' && !q.live)), colors: img.colors } }) });
+          marks: { hl: K.strokes.some(s => s.t === 'hl' && !s.live && (K.texts.some(x => x.p === s.p) || K.strokes.some(q => q.p === s.p && q.t !== 'hl' && !q.live))), colors: img.colors } }) });
       try { j = await r.json(); } catch { j = null; }
       if (!r.ok) { const e = new Error((j && (j.message || j.error)) || ('HTTP ' + r.status)); e.status = r.status; e.code = j && j.error; throw e; }
       if (!j || j.error) { const e = new Error(''); e.code = j && j.error; throw e; }
@@ -25415,7 +25628,7 @@
     if (s && clear) s.remove();
     else if (s) { s.style.minHeight = s.offsetHeight + 'px'; s.classList.add('kept'); s.innerHTML = '<span>Kept — this page is your draft again. Keep writing.</span>'; }
     if (clear) { ntInkClear(K); ntDraftDel('ink-placed:' + K.nid); }
-    else { const snap = ntInkSnap(K); ntDraftSwap((snap.strokes.length || snap.hl) ? { id: 'ink:' + K.nid, v: 2, ts: Date.now(), ...snap } : null, 'ink-placed:' + K.nid); }
+    else { const snap = ntInkSnap(K); ntDraftSwap(ntInkSnapHas(snap) ? { id: 'ink:' + K.nid, v: 2, ts: Date.now(), ...snap } : null, 'ink-placed:' + K.nid); }
     ntInkSync(K);
   }
   // The placed notes are still in the note (their save may be pending).
@@ -25788,18 +26001,17 @@
   let _ntDict = null;
   function ntDictOn(){ return !!(_ntDict && _ntDict.on); }
   function ntDictToggle(){ if (ntDictOn()) ntDictStop(); else ntDictStart(); }
-  // o.pad (the handwriting pad): the words go into the note without its cursor —
-  // the Journal under the pad's day, other notes at their end — so the editor
-  // never takes focus (no iPad keyboard over the pad).
+  // o.pad (the handwriting pad): the words are typed on the pad's ruled lines
+  // (ntInkDictLines), among the handwriting — never into the note, so the editor
+  // never takes focus (no iPad keyboard over the pad) and the note needn't have loaded.
   function ntDictStart(o){
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { ptToast('Dictation needs Chrome, Edge or Safari'); return; }
     if (!_ntEls || !ntOpenId) { ptToast('Open a note first'); return; }
     if (ntDictOn()) return;
     const pad = o && o.pad || null;
-    if (pad && !_ntBodyLoaded) { ptToast('The note is still loading — try again in a moment'); return; }
     if (!pad) ntSaveRange();
-    const d = { on: true, nid: ntOpenId, r: new SR(), interim: '', heard: false, pad, blk: null };
+    const d = { on: true, nid: ntOpenId, r: new SR(), interim: '', heard: false, pad, padLine: null };   // padLine: the last line typed on the pad
     _ntDict = d;
     d.r.continuous = true; d.r.interimResults = true;
     d.r.lang = navigator.language || 'en-US';
@@ -25843,6 +26055,14 @@
     document.removeEventListener('visibilitychange', ntDictHidden);
     ntDictPaint();
   }
+  // A stopped recognizer (ntDictStop): done once it ends — its last phrase typed —
+  // or once the 1.5s ntDictStop gives a phrase in flight has passed.
+  function ntDictSettled(d){
+    return new Promise(res => {
+      const t = setTimeout(res, 1600);
+      try { const was = d.r.onend; d.r.onend = e => { try { if (was) was(e); } catch {} clearTimeout(t); res(); }; } catch {}
+    });
+  }
   function ntDictKey(e){ if (e.key === 'Escape' && ntDictOn()) { e.preventDefault(); e.stopImmediatePropagation(); ntDictStop(); } }
   function ntDictHidden(){ if (document.hidden) ntDictStop(); }
   // A finished phrase: spoken punctuation and line breaks, then typed in at
@@ -25856,7 +26076,7 @@
       .replace(/\s*\bquestion mark\b/gi, '?')
       .replace(/\s*\bexclamation (?:point|mark)\b/gi, '!')
       .replace(/\s*\bcolon\b/gi, ':');
-    if (d.pad) { if (_ntBodyLoaded) ntDictPadType(d, t); return; }
+    if (d.pad) { ntDictPadType(d, t); return; }
     const s = window.getSelection();
     if (!(s && s.rangeCount && ntInEditor(s.anchorNode))) ntRestoreRange();
     t.split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i).forEach((seg, i) => {
@@ -25872,32 +26092,11 @@
     });
     ntSaveRange();
   }
-  // The pad's dictation: the line it types into — the last line of the pad's
-  // Journal day (the day made if it isn't there), else the note's last line —
-  // reused while empty, else a fresh line after it.
-  function ntDictPadBlock(d){
-    if (d.blk && d.blk.isConnected && ntInEditor(d.blk)) return d.blk;
-    const K = d.pad, ed = _ntEls.editor;
-    let last = null, h = null;
-    if (K && K.journal) { h = ntJournalSectionFor(K.day || todayKey()); for (let n = h.nextElementSibling; n && !/^H[12]$/.test(n.nodeName); n = n.nextElementSibling) last = n; }
-    else last = ed.lastElementChild;
-    let p = last && last.nodeName === 'P' && !ntInkBlockText(last) && !last.querySelector('img, hr') ? last : null;
-    if (!p) { p = document.createElement('p'); p.innerHTML = '<br>'; if (last) last.after(p); else if (h) h.after(p); else ed.appendChild(p); }
-    return (d.blk = p);
-  }
+  // The pad's dictation: typed on its page, on the ruled lines (ntInkDictLines) —
+  // so it mixes with the handwriting and "Make clean notes" reads both.
   function ntDictPadType(d, t){
-    t.split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i).forEach((seg, i) => {
-      let p = ntDictPadBlock(d);
-      if (i && ntInkBlockText(p)) { const q = document.createElement('p'); q.innerHTML = '<br>'; p.after(q); p = d.blk = q; }
-      seg = seg.trim();
-      if (!seg) return;
-      const before = p.textContent || '';
-      if (!before.trim() || /[.!?]\s*$/.test(before)) seg = seg.charAt(0).toUpperCase() + seg.slice(1);
-      if (before && !/\s$/.test(before) && !/^[.,!?:;]/.test(seg)) seg = ' ' + seg;
-      if (p.childNodes.length === 1 && p.firstChild.nodeName === 'BR') p.firstChild.remove();
-      p.appendChild(document.createTextNode(seg));
-    });
-    ntAfterMutation();
+    const K = d.pad;
+    if (K && _ntInk === K) ntInkDictLines(K, t, d);
   }
   function ntDictPaint(){
     const d = _ntDict, on = ntDictOn();
@@ -25917,8 +26116,7 @@
     }
     p.hidden = false;
     p.classList.toggle('pad', !!d.pad);
-    const idle = !d.pad ? 'Listening — speak, and it types where your cursor is'
-      : d.pad.journal ? 'Listening — speak, and it’s typed under ' + ntInkDayLabel(d.pad.day) : 'Listening — speak, and it’s typed at the end of the note';
+    const idle = !d.pad ? 'Listening — speak, and it types where your cursor is' : 'Listening — speak, and it’s typed on your page';
     p.querySelector('.tx').textContent = d.interim || (d.heard ? 'Listening…' : idle);
     try { const r = (_ntEls.doc || _ntEls.editor).getBoundingClientRect(); if (r.width) p.style.left = (r.left + r.width / 2) + 'px'; } catch {}
   }
