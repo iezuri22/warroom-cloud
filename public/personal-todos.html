@@ -4046,6 +4046,8 @@
   .nt-ink-tmr[aria-expanded="true"] { background: var(--accent-soft); color: var(--ink); }
   .nt-ink.bar-1s .nt-ink-tmr:not(.on) .lb, .nt-ink.bar-c .nt-ink-tmr:not(.on) .lb { display: none; }
   .nt-ink.bar-2 .nt-ink-bar > .nt-ink-tmr, .nt-ink.bar-c .nt-ink-bar > .nt-ink-tmr { order: 9; }
+  .nt-ink.bar-2 .nt-ink-bar > .nt-ink-dictb, .nt-ink.bar-c .nt-ink-bar > .nt-ink-dictb { order: 9; }
+  .nt-ink-dictb.on { color: var(--red); background: rgba(220, 75, 62, .11); }
   .nt-ink-tmrrun { margin: 2px 0 8px; font: 800 20px var(--font-family); font-variant-numeric: tabular-nums; color: var(--ink); }
   .nt-ink-tmrs { display: flex; gap: 6px; flex-wrap: wrap; }
   .nt-ink-tmrs button { flex: 1 1 0; min-width: 56px; justify-content: center; background: var(--fill); }
@@ -4201,6 +4203,7 @@
   @media (prefers-reduced-motion: reduce) { .nt-ink-busy .spin { animation-duration: 2.4s; } }
   body.nt-inking .pt-add-top, body.nt-inking .coach-fab, body.nt-inking .tmr-capsule, body.nt-inking .race-restore,
   body.nt-inking .nt-dict, body.nt-inking .nt-imgbar, body.nt-inking .nt-imgsize, body.nt-inking #wr-sync-indicator { display: none !important; }
+  body.nt-inking .nt-dict.pad:not([hidden]) { display: flex !important; z-index: 9450; }   /* the pad's own dictation shows over it */
   .nt-editor .nt-ink-new { animation: ntInkNew 2.6s ease-out; border-radius: 6px; }
   @keyframes ntInkNew { from { background-color: rgba(240, 126, 40, .2); } to { background-color: transparent; } }
   @media (prefers-reduced-motion: reduce) { .nt-editor .nt-ink-new { animation: none; } }
@@ -23859,6 +23862,7 @@
     if (!_ntFocus) { ntSetFocus(true, { noCaret: true }); K.focusByUs = _ntFocus; }
     ntInkWire(K);
     try { ntNoteTmrPaint(); } catch {}
+    try { if (ntDictOn() && !_ntDict.pad) ntDictStop(); } catch {}
     ntInkLayout(K);
     ntInkPagesSync(K);
     if (K.ctx) ntInkCtxRender(K);
@@ -23890,6 +23894,7 @@
       + `<button class="nt-ink-b nt-ink-pagebtn" type="button" data-ink="page" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Page — lines, paper, one-finger scrolling" aria-label="Page">${NT_SVG.lines}<span class="lb">Page</span>${NT_SVG.chevS}</button>`
       // The timer: its clock while one runs (any timer), else "Timer"; a tap opens its menu.
       + `<button class="nt-ink-b nt-ink-tmr" type="button" data-ink="timer" data-ink-pop aria-haspopup="dialog" aria-expanded="false" title="Timer — time this writing: count up, or down from 15 / 25 / 45 / 60 minutes" aria-label="Timer">${NT_SVG.clock}<span class="lb">Timer</span></button>`
+      + `<button class="nt-ink-b nt-ink-dictb" type="button" data-ink="dictate" aria-pressed="false" title="Dictate — speak and it’s typed into the note (the Journal: under the pad’s day) · say “new line”, “period”, “comma”" aria-label="Dictate">${NT_SVG.mic}</button>`
       + '<span class="nt-ink-sp b"></span>'
       + '<div class="nt-ink-hist">' + b('undo', NT_SVG.undo, 'Undo (⌘Z)') + b('redo', NT_SVG.redo, 'Redo (⌘⇧Z)') + '</div>'
       + `<button class="nt-ink-convert" type="button" data-ink="convert" title="Turn the handwriting into clean notes (⌘↵)">${NT_SVG.spark}<span class="full">Make clean notes</span><span class="short">Clean notes</span></button>`
@@ -24012,6 +24017,7 @@
     if (!ntInkDayOk(ds)) { ptToast('Pick a day up to today'); return; }
     ntInkPopClose(K);
     if (ds === K.day) return;
+    try { if (_ntDict && _ntDict.pad) _ntDict.blk = null; } catch {}
     K.day = ds;
     if (K.ctx) { K.ctx.all = false; K.ctx.open.clear(); ntInkCtxRender(K); ntInkScrollToLanding(K); }
     ntInkSync(K); ntInkBarFit(K);
@@ -24275,6 +24281,7 @@
         case 'paper': ntInkPaper(K, b.dataset.v); break;
         case 'page': ntInkPopToggle(K, 'page', b, e); break;
         case 'timer': ntInkPopToggle(K, 'timer', b, e); break;
+        case 'dictate': ntInkPopClose(K); if (ntDictOn()) ntDictStop(); else ntDictStart({ pad: K }); break;
         case 'tmr': ntInkPopClose(K); ntInkTmr(K, b.dataset.v); break;
         case 'finger': ntInkFingers(K, b.dataset.v === 'draw'); break;
         case 'clear': ntInkPopClose(K); ntInkClear(K); break;
@@ -25187,6 +25194,7 @@
   function ntInkClose(o){
     const K = _ntInk;
     if (!K) return;
+    try { if (_ntDict && _ntDict.pad) ntDictStop(); } catch {}
     _ntInk = null;
     ntInkPopClose(K); if (K.two) { clearTimeout(K.two.settleT); K.two = null; } K.late = null;
     if (K.ctx) { try { if (K.ctx.mo) K.ctx.mo.disconnect(); } catch {} clearTimeout(K.ctx.t); }   // before any notes go in (ntInkPlace closes first)
@@ -25780,13 +25788,18 @@
   let _ntDict = null;
   function ntDictOn(){ return !!(_ntDict && _ntDict.on); }
   function ntDictToggle(){ if (ntDictOn()) ntDictStop(); else ntDictStart(); }
-  function ntDictStart(){
+  // o.pad (the handwriting pad): the words go into the note without its cursor —
+  // the Journal under the pad's day, other notes at their end — so the editor
+  // never takes focus (no iPad keyboard over the pad).
+  function ntDictStart(o){
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { ptToast('Dictation needs Chrome, Edge or Safari'); return; }
     if (!_ntEls || !ntOpenId) { ptToast('Open a note first'); return; }
     if (ntDictOn()) return;
-    ntSaveRange();
-    const d = { on: true, nid: ntOpenId, r: new SR(), interim: '', heard: false };
+    const pad = o && o.pad || null;
+    if (pad && !_ntBodyLoaded) { ptToast('The note is still loading — try again in a moment'); return; }
+    if (!pad) ntSaveRange();
+    const d = { on: true, nid: ntOpenId, r: new SR(), interim: '', heard: false, pad, blk: null };
     _ntDict = d;
     d.r.continuous = true; d.r.interimResults = true;
     d.r.lang = navigator.language || 'en-US';
@@ -25837,6 +25850,7 @@
       .replace(/\s*\bquestion mark\b/gi, '?')
       .replace(/\s*\bexclamation (?:point|mark)\b/gi, '!')
       .replace(/\s*\bcolon\b/gi, ':');
+    if (d.pad) { if (_ntBodyLoaded) ntDictPadType(d, t); return; }
     const s = window.getSelection();
     if (!(s && s.rangeCount && ntInEditor(s.anchorNode))) ntRestoreRange();
     t.split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i).forEach((seg, i) => {
@@ -25852,8 +25866,36 @@
     });
     ntSaveRange();
   }
+  // The pad's dictation: the line it types into — the last line of the pad's
+  // Journal day (the day made if it isn't there), else the note's last line —
+  // reused while empty, else a fresh line after it.
+  function ntDictPadBlock(d){
+    if (d.blk && d.blk.isConnected && ntInEditor(d.blk)) return d.blk;
+    const K = d.pad, ed = _ntEls.editor;
+    let last = null, h = null;
+    if (K && K.journal) { h = ntJournalSectionFor(K.day || todayKey()); for (let n = h.nextElementSibling; n && !/^H[12]$/.test(n.nodeName); n = n.nextElementSibling) last = n; }
+    else last = ed.lastElementChild;
+    let p = last && last.nodeName === 'P' && !ntInkBlockText(last) && !last.querySelector('img, hr') ? last : null;
+    if (!p) { p = document.createElement('p'); p.innerHTML = '<br>'; if (last) last.after(p); else if (h) h.after(p); else ed.appendChild(p); }
+    return (d.blk = p);
+  }
+  function ntDictPadType(d, t){
+    t.split(/\s*\b(?:new paragraph|new line|next line)\b\s*/i).forEach((seg, i) => {
+      let p = ntDictPadBlock(d);
+      if (i && ntInkBlockText(p)) { const q = document.createElement('p'); q.innerHTML = '<br>'; p.after(q); p = d.blk = q; }
+      seg = seg.trim();
+      if (!seg) return;
+      const before = p.textContent || '';
+      if (!before.trim() || /[.!?]\s*$/.test(before)) seg = seg.charAt(0).toUpperCase() + seg.slice(1);
+      if (before && !/\s$/.test(before) && !/^[.,!?:;]/.test(seg)) seg = ' ' + seg;
+      if (p.childNodes.length === 1 && p.firstChild.nodeName === 'BR') p.firstChild.remove();
+      p.appendChild(document.createTextNode(seg));
+    });
+    ntAfterMutation();
+  }
   function ntDictPaint(){
     const d = _ntDict, on = ntDictOn();
+    try { const K = _ntInk, pb = K && K.el && K.el.querySelector('.nt-ink-dictb'); if (pb) { pb.classList.toggle('on', on); pb.setAttribute('aria-pressed', on ? 'true' : 'false'); } } catch {}
     try { _ntEls.toolbar.querySelectorAll('[data-nt-cmd="dictate"]').forEach(b => { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); } catch {}
     let p = document.getElementById('ntDictPill');
     if (!on) { if (p) p.hidden = true; return; }
@@ -25867,7 +25909,10 @@
       document.body.appendChild(p);
     }
     p.hidden = false;
-    p.querySelector('.tx').textContent = d.interim || (d.heard ? 'Listening…' : 'Listening — speak, and it types where your cursor is');
+    p.classList.toggle('pad', !!d.pad);
+    const idle = !d.pad ? 'Listening — speak, and it types where your cursor is'
+      : d.pad.journal ? 'Listening — speak, and it’s typed under ' + ntInkDayLabel(d.pad.day) : 'Listening — speak, and it’s typed at the end of the note';
+    p.querySelector('.tx').textContent = d.interim || (d.heard ? 'Listening…' : idle);
     try { const r = (_ntEls.doc || _ntEls.editor).getBoundingClientRect(); if (r.width) p.style.left = (r.left + r.width / 2) + 'px'; } catch {}
   }
   // ---- images and files in a note ----
